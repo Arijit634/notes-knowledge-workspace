@@ -64,10 +64,12 @@ class PostgreSqlCompatibilityTest {
 
         verifyTransactionalDdlRollback();
 
-        assertThat(flyway.info().applied()).isEmpty();
+        assertThat(flyway.info().applied()).singleElement()
+                .satisfies(migration -> assertThat(migration.getScript())
+                        .isEqualTo("V001__platform__spring_session.sql"));
         assertThat(jdbc.queryForObject(
                 "select to_regclass('public.flyway_schema_history') is not null", Boolean.class)).isTrue();
-        assertThat(productRelationCount()).isZero();
+        assertThat(productRelationCount()).isEqualTo(2);
         assertThat(publicNonFrameworkRelationCount()).isZero();
     }
 
