@@ -98,7 +98,7 @@ Commands such as `git reset --hard`, `git clean -fd`, and `git clean -fdx` requi
 
 ## 6. Git and external-action discipline
 
-Git is now initialized locally under the human-approved Phase 1 Work Package 1A. Before every package, inspect repository status, branch, and remotes. Git initialization is complete, but commit, tag, remote, GitHub-repository creation, push, PR, release, and repository-setting changes remain separately authorized actions.
+Git is initialized locally under the human-approved Phase 1 Work Package 1A. The canonical public GitHub repository and `origin` now exist under the separately authorized Work Package 1C-B, and `main` has received its controlled initial publication. Reviewed short-lived branches and pull requests are the normal path for subsequent changes. Before every package, inspect repository status, branch, remotes, and protection state. Commit, tag, push, PR, release, and repository-setting changes remain separately authorized actions; the existence of the public repository grants none of those permissions by itself.
 
 Once Git exists, inspect status before editing; preserve unrelated work; do not force-push, rewrite protected history, bypass protections, or change repository settings without authorization. Coding and committing are separate permissions. Do not commit, tag, push, open a PR, create a GitHub repository, publish a package, or release without explicit authorization.
 
@@ -315,3 +315,5 @@ At this file's creation:
 - no implementation is authorized;
 - no application source exists by authority;
 - after human acceptance of this file, the next required step is separate explicit implementation authorization for Phase 0.
+
+Current operational state is maintained in `PROJECT_CONTEXT_HANDOFF.md`. As of the authorized Phase 1 Work Package 1C-B bootstrap, local Git and canonical `origin` exist, public `main` has been published, and reviewed pull requests are the normal change path. This current state does not rewrite the historical creation facts above and does not authorize another work package, Phase 2, a release, or deployment.
