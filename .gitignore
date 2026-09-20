@@ -1,0 +1,51 @@
+# Backend build output
+target/
+*.class
+
+# Frontend dependencies and generated output
+node_modules/
+dist/
+coverage/
+.vite/
+.vitest/
+playwright-report/
+blob-report/
+test-results/
+
+# Generated reports and runtime artifacts
+reports/
+review-packages/
+logs/
+*.log
+*.pid
+tmp/
+temp/
+uploads/
+.runtime/
+*.db
+*.sqlite*
+
+# Local environment and secret material
+.env
+.env.*
+!.env.example
+!*.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# IDE-local state
+.idea/
+.vscode/
+*.iml
+.classpath
+.project
+.settings/
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini

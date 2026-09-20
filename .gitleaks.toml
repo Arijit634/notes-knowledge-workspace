@@ -1,0 +1,8 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Approved Threat Model load-testing prose; contains no credential material."
+paths = ['''(?:^|/)docs/security/Threat_Model\.md$''']
+regexTarget = "line"
+regexes = ['''^12\. Load/capacity testing must cover Argon2 authentication, FTS/fuzzy/vector/exhaustive/AI work, media parsing, uploads, provider outages, job backlog, and PostgreSQL/executor contention\.$''']
