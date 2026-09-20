@@ -1,0 +1,172 @@
+name: PR CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build-sanity:
+    name: PR / Build sanity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify tracked public tree allowlist
+        shell: bash
+        run: |
+          unexpected="$({
+            git ls-files -z |
+              while IFS= read -r -d '' path; do
+                printf '%s\n' "${path%%/*}"
+              done |
+              sort -u |
+              while IFS= read -r entry; do
+                case "$entry" in
+                  .editorconfig|.gitattributes|.github|.gitignore|.gitleaks.toml|.mvn|.node-version|frontend|mvnw|mvnw.cmd|pom.xml|src|README.md|LICENSE) ;;
+                  *) printf '%s\n' "$entry" ;;
+                esac
+              done
+          } || exit 1)"
+          test -z "$unexpected"
+      - name: Set up Java 25
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "25"
+      - name: Verify Maven Wrapper contract
+        shell: bash
+        run: |
+          grep -Fxq 'distributionType=only-script' .mvn/wrapper/maven-wrapper.properties
+          grep -Fxq 'distributionUrl=https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.9.16/apache-maven-3.9.16-bin.zip' .mvn/wrapper/maven-wrapper.properties
+          ./mvnw --version
+      - name: Package backend without tests
+        run: ./mvnw --batch-mode --no-transfer-progress -DskipTests package
+      - name: Set up exact Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+      - name: Verify npm and lockfile consistency
+        working-directory: frontend
+        shell: bash
+        run: |
+          test "$(node --version)" = "v24.21.0"
+          test "$(npm --version)" = "11.19.0"
+          npm ci --ignore-scripts
+          git diff --exit-code -- package.json package-lock.json
+          git diff --exit-code
+
+  fast:
+    name: PR / FAST
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Java 25
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "25"
+      - name: Run FAST suite
+        run: ./mvnw --batch-mode --no-transfer-progress -Dgroups=FAST test
+
+  frontend:
+    name: PR / FRONTEND
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up exact Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+      - name: Install locked frontend dependencies
+        working-directory: frontend
+        shell: bash
+        run: |
+          test "$(npm --version)" = "11.19.0"
+          npm ci
+      - name: Type-check frontend
+        working-directory: frontend
+        run: npm run typecheck
+      - name: Run frontend component tests
+        working-directory: frontend
+        run: npm test
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+      - name: Install required Chromium payload
+        working-directory: frontend
+        run: npm exec playwright install --with-deps chromium
+      - name: Run bootstrap Chromium smoke
+        working-directory: frontend
+        run: npm run test:e2e
+
+  modulith-architecture:
+    name: PR / Modulith architecture
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Java 25
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "25"
+      - name: Verify seven-module architecture
+        run: ./mvnw --batch-mode --no-transfer-progress -Dtest=ModularityTest test
+
+  secret-scan:
+    name: PR / Secret scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out complete history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Scan repository history with pinned Gitleaks
+        shell: bash
+        run: |
+          docker run --rm \
+            --network none \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --volume "$PWD:/repo:ro" \
+            ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            git --config=/repo/.gitleaks.toml --log-opts="${{ github.event.pull_request.base.sha }}..HEAD" --redact --no-banner --exit-code=1 /repo
+
+  dependency-review:
+    name: PR / Dependency review
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
