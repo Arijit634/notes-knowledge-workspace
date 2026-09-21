@@ -12,6 +12,8 @@ import org.springframework.security.web.csrf.HttpSessionCsrfTokenRepository;
 import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy;
 import org.springframework.session.web.http.DefaultCookieSerializer;
 
+import org.notesknowledge.websupport.ApiProblemWriter;
+
 @Configuration(proxyBeanMethods = false)
 public class SecurityConfiguration {
 
@@ -43,7 +45,8 @@ public class SecurityConfiguration {
     @Bean
     SecurityFilterChain applicationSecurityFilterChain(
             HttpSecurity http,
-            HttpSessionCsrfTokenRepository csrfTokenRepository) throws Exception {
+            HttpSessionCsrfTokenRepository csrfTokenRepository,
+            ApiProblemWriter problemWriter) throws Exception {
         http
                 .csrf(csrf -> csrf.csrfTokenRepository(csrfTokenRepository))
                 .authorizeHttpRequests(authorize -> authorize
@@ -57,6 +60,11 @@ public class SecurityConfiguration {
                 .formLogin(AbstractHttpConfigurer::disable)
                 .logout(AbstractHttpConfigurer::disable)
                 .requestCache(AbstractHttpConfigurer::disable)
+                .exceptionHandling(exceptions -> exceptions
+                        .authenticationEntryPoint((request, response, exception) ->
+                                problemWriter.writeAuthenticationRequired(request, response))
+                        .accessDeniedHandler((request, response, exception) ->
+                                problemWriter.writeAccessDenied(request, response, exception)))
                 .sessionManagement(session -> session
                         .sessionFixation(fixation -> fixation.changeSessionId()))
                 .headers(headers -> headers

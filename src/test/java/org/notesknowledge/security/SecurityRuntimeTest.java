@@ -96,16 +96,16 @@ class SecurityRuntimeTest {
     @Test
     void productionChainDeniesUnmatchedPathsAndExposesNoLoginOrBasicSurface() throws Exception {
         mockMvc.perform(get("/api/not-implemented"))
-                .andExpect(status().isForbidden())
+                .andExpect(status().isUnauthorized())
                 .andExpect(header().doesNotExist(HttpHeaders.WWW_AUTHENTICATE));
 
         mockMvc.perform(get("/login"))
-                .andExpect(status().isForbidden())
+                .andExpect(status().isUnauthorized())
                 .andExpect(header().doesNotExist(HttpHeaders.WWW_AUTHENTICATE));
 
         mockMvc.perform(get("/api/not-implemented")
                         .header(HttpHeaders.AUTHORIZATION, basicAuthorization()))
-                .andExpect(status().isForbidden())
+                .andExpect(status().isUnauthorized())
                 .andExpect(header().doesNotExist(HttpHeaders.WWW_AUTHENTICATE));
     }
 
@@ -124,7 +124,7 @@ class SecurityRuntimeTest {
                 "/actuator/heapdump",
                 "/actuator/loggers",
                 "/actuator/prometheus")) {
-            mockMvc.perform(get(path)).andExpect(status().isForbidden());
+            mockMvc.perform(get(path)).andExpect(status().isUnauthorized());
         }
     }
 
