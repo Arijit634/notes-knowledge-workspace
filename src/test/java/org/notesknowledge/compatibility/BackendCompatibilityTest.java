@@ -14,7 +14,13 @@ import org.springframework.ai.google.genai.text.GoogleGenAiTextEmbeddingModel;
 import org.springframework.ai.vectorstore.pgvector.PgVectorStore;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.core.annotation.Order;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.web.SecurityFilterChain;
 
 import tools.jackson.databind.json.JsonMapper;
 
@@ -26,6 +32,7 @@ import tools.jackson.databind.json.JsonMapper;
         "springdoc.api-docs.enabled=true",
         "management.endpoints.web.exposure.include=health,prometheus"
 })
+@Import(BackendCompatibilityTest.CompatibilityProbeSecurity.class)
 class BackendCompatibilityTest {
 
     @LocalServerPort
@@ -66,5 +73,18 @@ class BackendCompatibilityTest {
                 .GET()
                 .build();
         return HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+    }
+
+    @TestConfiguration(proxyBeanMethods = false)
+    static class CompatibilityProbeSecurity {
+
+        @Bean
+        @Order(1)
+        SecurityFilterChain compatibilityProbeFilterChain(HttpSecurity http) throws Exception {
+            return http
+                    .securityMatcher("/v3/api-docs/**", "/actuator/prometheus")
+                    .authorizeHttpRequests(authorize -> authorize.anyRequest().permitAll())
+                    .build();
+        }
     }
 }
