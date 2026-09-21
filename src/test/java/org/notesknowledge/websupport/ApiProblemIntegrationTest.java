@@ -1,6 +1,7 @@
 package org.notesknowledge.websupport;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -14,6 +15,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
+import java.lang.reflect.Modifier;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
@@ -36,7 +38,6 @@ import org.springframework.context.annotation.Import;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -53,7 +54,10 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -151,6 +155,39 @@ class ApiProblemIntegrationTest {
     }
 
     @Test
+    void malformedTypedQueryUsesSafe400ProblemWithoutEchoingValue() throws Exception {
+        String rejected = "synthetic-private-integer-2c";
+        MvcResult result = mockMvc.perform(get(PROBE + "/typed-query")
+                        .queryParam("count", rejected))
+                .andExpect(status().isBadRequest())
+                .andReturn();
+
+        assertProblem(result, 400, "malformed_request");
+        assertThat(result.getResolvedException())
+                .isInstanceOf(MethodArgumentTypeMismatchException.class);
+        assertThat(result.getResponse().getContentAsString())
+                .doesNotContain(rejected)
+                .doesNotContain("MethodArgumentTypeMismatchException")
+                .doesNotContain("NumberFormatException")
+                .doesNotContain("java.lang.Integer");
+    }
+
+    @Test
+    void mvcMissingResourceUsesSafe404Problem() throws Exception {
+        MvcResult result = mockMvc.perform(get(PROBE + "/missing-resource"))
+                .andExpect(status().isNotFound())
+                .andReturn();
+
+        assertProblem(result, 404, "resource_not_found");
+        assertThat(result.getResolvedException()).isInstanceOf(NoResourceFoundException.class);
+        assertThat(result.getResponse().getContentAsString())
+                .doesNotContain("NoResourceFoundException")
+                .doesNotContain("static resource")
+                .doesNotContain("classpath:")
+                .doesNotContain("file:");
+    }
+
+    @Test
     void validationErrorsAreAllowlistedAndNeverContainRejectedValue() throws Exception {
         String privateMarker = "synthetic-private-validation-value-2c";
         MvcResult result = mockMvc.perform(post(PROBE + "/commands")
@@ -208,21 +245,58 @@ class ApiProblemIntegrationTest {
     void typedFailuresUseStableStatusAndCode(
             String failure,
             int expectedStatus,
-            String expectedCode) throws Exception {
+            String expectedCode,
+            String expectedTitle) throws Exception {
         MvcResult result = mockMvc.perform(get(PROBE + "/failures/" + failure))
                 .andExpect(status().is(expectedStatus))
                 .andReturn();
         assertProblem(result, expectedStatus, expectedCode);
+        assertThat(objectMapper.readTree(result.getResponse().getContentAsByteArray())
+                .path("title").asText()).isEqualTo(expectedTitle);
     }
 
     static Stream<Arguments> typedFailureCases() {
         return Stream.of(
-                Arguments.of("not-found", 404, "resource_not_found"),
-                Arguments.of("conflict", 409, "invalid_lifecycle_transition"),
-                Arguments.of("stale", 412, "stale_write"),
-                Arguments.of("too-large", 413, "request_too_large"),
-                Arguments.of("precondition", 428, "precondition_required"),
-                Arguments.of("unavailable", 503, "service_unavailable"));
+                Arguments.of("not-found", 404, "resource_not_found", "Resource not found"),
+                Arguments.of("conflict", 409, "invalid_lifecycle_transition",
+                        "Request conflicts with current state"),
+                Arguments.of("stale", 412, "stale_write",
+                        "Resource changed since it was loaded"),
+                Arguments.of("too-large", 413, "request_too_large", "Request is too large"),
+                Arguments.of("unsupported", 415, "unsupported_media_type",
+                        "Unsupported media type"),
+                Arguments.of("precondition", 428, "precondition_required",
+                        "Required precondition is missing"),
+                Arguments.of("unavailable", 503, "service_unavailable",
+                        "Required service is unavailable"));
+    }
+
+    @Test
+    void sharedFailureConstructionAcceptsOnlyRegisteredKinds() throws Exception {
+        assertThat(ApiFailureException.class.getDeclaredConstructors())
+                .allMatch(constructor -> Modifier.isPrivate(constructor.getModifiers()));
+        assertThat(ApiFailureException.class.getDeclaredMethods())
+                .filteredOn(method -> Modifier.isPublic(method.getModifiers()))
+                .allMatch(method -> Stream.of(method.getParameterTypes())
+                        .noneMatch(parameter -> parameter == String.class));
+        assertThatThrownBy(() -> ApiFailureException.of(null))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> ApiFailureException.of(
+                ApiFailureException.Kind.RATE_LIMITED))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> ApiFailureException.rateLimited(0))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> ApiFailureException.rateLimited(86_401))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        String privateMarker = "synthetic-private-title-code-2c";
+        MvcResult result = mockMvc.perform(get(PROBE + "/failures/not-found")
+                        .queryParam("title", privateMarker)
+                        .queryParam("code", privateMarker))
+                .andExpect(status().isNotFound())
+                .andReturn();
+        assertProblem(result, 404, "resource_not_found");
+        assertThat(result.getResponse().getContentAsString()).doesNotContain(privateMarker);
     }
 
     @Test
@@ -245,6 +319,8 @@ class ApiProblemIntegrationTest {
                 .andExpect(header().string(HttpHeaders.RETRY_AFTER, "17"))
                 .andReturn();
         assertProblem(result, 429, "rate_limited");
+        assertThat(objectMapper.readTree(result.getResponse().getContentAsByteArray())
+                .path("title").asText()).isEqualTo("Request rate limit reached");
     }
 
     @Test
@@ -383,6 +459,11 @@ class ApiProblemIntegrationTest {
             return ResponseEntity.noContent().build();
         }
 
+        @GetMapping("/typed-query")
+        ResponseEntity<Void> typedQuery(@RequestParam int count) {
+            return ResponseEntity.noContent().build();
+        }
+
         @GetMapping("/forbidden")
         ResponseEntity<Void> forbidden() {
             return ResponseEntity.noContent().build();
@@ -392,34 +473,22 @@ class ApiProblemIntegrationTest {
         ResponseEntity<Void> failure(@PathVariable String kind) {
             throw switch (kind) {
                 case "not-found" -> ApiFailureException.of(
-                        HttpStatus.NOT_FOUND,
-                        "resource_not_found",
-                        "Resource not found");
+                        ApiFailureException.Kind.RESOURCE_NOT_FOUND);
                 case "conflict" -> ApiFailureException.of(
-                        HttpStatus.CONFLICT,
-                        "invalid_lifecycle_transition",
-                        "Request conflicts with current state");
+                        ApiFailureException.Kind.INVALID_LIFECYCLE_TRANSITION);
                 case "stale" -> ApiFailureException.of(
-                        HttpStatus.PRECONDITION_FAILED,
-                        "stale_write",
-                        "Resource changed since it was loaded");
+                        ApiFailureException.Kind.STALE_WRITE);
                 case "too-large" -> ApiFailureException.of(
-                        HttpStatus.CONTENT_TOO_LARGE,
-                        "request_too_large",
-                        "Request is too large");
+                        ApiFailureException.Kind.REQUEST_TOO_LARGE);
+                case "unsupported" -> ApiFailureException.of(
+                        ApiFailureException.Kind.UNSUPPORTED_MEDIA_TYPE);
                 case "precondition" -> ApiFailureException.of(
-                        HttpStatus.PRECONDITION_REQUIRED,
-                        "precondition_required",
-                        "Required precondition is missing");
+                        ApiFailureException.Kind.PRECONDITION_REQUIRED);
                 case "rate-limited" -> ApiFailureException.rateLimited(17);
                 case "unavailable" -> ApiFailureException.of(
-                        HttpStatus.SERVICE_UNAVAILABLE,
-                        "service_unavailable",
-                        "Required service is unavailable");
+                        ApiFailureException.Kind.SERVICE_UNAVAILABLE);
                 default -> ApiFailureException.of(
-                        HttpStatus.NOT_FOUND,
-                        "resource_not_found",
-                        "Resource not found");
+                        ApiFailureException.Kind.RESOURCE_NOT_FOUND);
             };
         }
 

@@ -20,6 +20,8 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import tools.jackson.databind.exc.UnrecognizedPropertyException;
 
@@ -74,6 +76,22 @@ public final class ApiProblemHandler {
             HttpServletRequest request) {
         return response(problemWriter.create(request, HttpStatus.BAD_REQUEST,
                 "malformed_request", "Malformed request"));
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    ResponseEntity<ProblemDetail> malformedArgumentType(
+            MethodArgumentTypeMismatchException exception,
+            HttpServletRequest request) {
+        return response(problemWriter.create(request, HttpStatus.BAD_REQUEST,
+                "malformed_request", "Malformed request"));
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    ResponseEntity<ProblemDetail> resourceNotFound(
+            NoResourceFoundException exception,
+            HttpServletRequest request) {
+        return response(problemWriter.create(request, HttpStatus.NOT_FOUND,
+                "resource_not_found", "Resource not found"));
     }
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)
