@@ -5,6 +5,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -53,8 +55,14 @@ class ProductionSecuritySurfaceTest {
 
         mockMvc.perform(get("/api/not-implemented")
                         .header(HttpHeaders.AUTHORIZATION,
-                                "Basic c3ludGhldGljOnN5bnRoZXRpYw=="))
+                                syntheticBasicAuthorization()))
                 .andExpect(status().isForbidden())
                 .andExpect(header().doesNotExist(HttpHeaders.WWW_AUTHENTICATE));
+    }
+
+    private String syntheticBasicAuthorization() {
+        String value = "synthetic-user:synthetic-password";
+        return "Basic " + Base64.getEncoder()
+                .encodeToString(value.getBytes(StandardCharsets.UTF_8));
     }
 }
