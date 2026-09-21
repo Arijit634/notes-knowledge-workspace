@@ -44,19 +44,20 @@ class ProductionSecuritySurfaceTest {
 
         assertThat(paths)
                 .noneMatch(path -> path.startsWith("/__security-probe"))
+                .noneMatch(path -> path.startsWith("/__api-probe"))
                 .noneMatch(path -> path.startsWith("/api/"));
     }
 
     @Test
     void productionChainHasNoFrameworkLoginOrBasicChallenge() throws Exception {
         mockMvc.perform(get("/login"))
-                .andExpect(status().isForbidden())
+                .andExpect(status().isUnauthorized())
                 .andExpect(header().doesNotExist(HttpHeaders.WWW_AUTHENTICATE));
 
         mockMvc.perform(get("/api/not-implemented")
                         .header(HttpHeaders.AUTHORIZATION,
                                 syntheticBasicAuthorization()))
-                .andExpect(status().isForbidden())
+                .andExpect(status().isUnauthorized())
                 .andExpect(header().doesNotExist(HttpHeaders.WWW_AUTHENTICATE));
     }
 
