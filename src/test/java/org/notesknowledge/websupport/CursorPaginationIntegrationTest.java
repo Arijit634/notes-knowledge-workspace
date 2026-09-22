@@ -13,6 +13,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -122,9 +123,11 @@ class CursorPaginationIntegrationTest {
         state.instant.set(START.plus(Duration.ofMinutes(6)));
         reject("owner", cursor);
 
+        String encodedKey = Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(ProbeState.key((byte) 0x31));
         assertThat(output.getAll()).doesNotContain(cursor, "AEADBadTagException",
                 "synthetic-private-identity", "synthetic-private-filter",
-                "synthetic-private-ordering-marker", "synthetic-cursor-key-material");
+                "synthetic-private-ordering-marker", encodedKey);
     }
 
     @Test
@@ -166,7 +169,9 @@ class CursorPaginationIntegrationTest {
                 .andExpect(jsonPath("$.code").value("malformed_request"))
                 .andReturn();
         assertThat(result.getResponse().getContentAsString())
-                .doesNotContain(cursor, "AEADBadTagException", "synthetic-private");
+                .doesNotContain(cursor, "AEADBadTagException", "synthetic-private",
+                        Base64.getUrlEncoder().withoutPadding()
+                                .encodeToString(ProbeState.key((byte) 0x31)));
     }
 
     @TestConfiguration
