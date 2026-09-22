@@ -16,6 +16,8 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.web.csrf.CsrfException;
 import org.springframework.stereotype.Component;
 
+import org.notesknowledge.security.SecurityControlRejectionEvents;
+
 import tools.jackson.databind.ObjectMapper;
 
 @Component
@@ -26,10 +28,13 @@ public final class ApiProblemWriter {
 
     private final ObjectMapper objectMapper;
     private final RequestTraceContext traceContext;
+    private final SecurityControlRejectionEvents rejectionEvents;
 
-    public ApiProblemWriter(ObjectMapper objectMapper, RequestTraceContext traceContext) {
+    public ApiProblemWriter(ObjectMapper objectMapper, RequestTraceContext traceContext,
+            SecurityControlRejectionEvents rejectionEvents) {
         this.objectMapper = objectMapper;
         this.traceContext = traceContext;
+        this.rejectionEvents = rejectionEvents;
     }
 
     public ProblemDetail create(
@@ -70,10 +75,14 @@ public final class ApiProblemWriter {
             HttpServletResponse response,
             AccessDeniedException exception) throws IOException {
         if (exception instanceof CsrfException) {
+            rejectionEvents.rejected(SecurityControlRejectionEvents.Control.CSRF,
+                    SecurityControlRejectionEvents.SafeReasonClass.INVALID_CSRF);
             write(request, response, HttpStatus.FORBIDDEN,
                     "csrf_invalid", "CSRF validation failed");
             return;
         }
+        rejectionEvents.rejected(SecurityControlRejectionEvents.Control.AUTHORIZATION,
+                SecurityControlRejectionEvents.SafeReasonClass.ACCESS_DENIED);
         write(request, response, HttpStatus.FORBIDDEN,
                 "access_denied", "Access denied");
     }
