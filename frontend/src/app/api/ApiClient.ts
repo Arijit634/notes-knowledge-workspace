@@ -1,16 +1,11 @@
 import { CsrfManager, CsrfUnavailableError } from '../security/CsrfManager'
+import { readResponseMetadata, type ApiResponseMetadata } from './ApiResponseMetadata'
 import { ApiProblemError, ApiProtocolError, decodeProblemDetails } from './ProblemDetailsDecoder'
+
+export type { ApiResponseMetadata } from './ApiResponseMetadata'
 
 export type ApiMethod = 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 export type ApiResponseType = 'json' | 'blob'
-
-export interface ApiResponseMetadata {
-  readonly status: number
-  readonly etag: string | null
-  readonly location: string | null
-  readonly retryAfter: string | null
-  readonly contentRange: string | null
-}
 
 export interface ApiResult<T> {
   readonly body: T | null
@@ -52,11 +47,6 @@ function apiTarget(path: string): string {
     throw new ApiProtocolError()
   }
   return path
-}
-
-function boundedHeader(response: Response, name: string): string | null {
-  const value = response.headers.get(name)
-  return value !== null && value.length <= 256 && !/[\r\n\0]/.test(value) ? value : null
 }
 
 export class ApiClient {
@@ -116,13 +106,7 @@ export class ApiClient {
         throw failure
       }
 
-      const metadata: ApiResponseMetadata = {
-        status: response.status,
-        etag: boundedHeader(response, 'ETag'),
-        location: boundedHeader(response, 'Location'),
-        retryAfter: boundedHeader(response, 'Retry-After'),
-        contentRange: boundedHeader(response, 'Content-Range'),
-      }
+      const metadata = readResponseMetadata(response)
       if (response.status === 204 || method === 'HEAD') return { body: null, metadata }
       if (response.status === 206 && options.responseType !== 'blob') throw new ApiProtocolError()
       if (options.responseType === 'blob') {

@@ -91,6 +91,68 @@ describe('ApiClient transport', () => {
     expect(networkFailure).toHaveBeenCalledTimes(1)
   })
 
+  it('preserves bounded Retry-After on a typed 429 without replaying the mutation', async () => {
+    const csrf = new CsrfManager()
+    csrf.set('synthetic-proof')
+    const fetcher = vi.fn(async () => {
+      const response = problem(429, 'rate_limited')
+      response.headers.set('Retry-After', '7')
+      return response
+    })
+    try {
+      await new ApiClient(csrf, fetcher as typeof fetch)
+        .request('POST', '/api/notes', { json: {} })
+      throw new Error('Expected a rate-limit problem')
+    } catch (error) {
+      expect(error).toBeInstanceOf(ApiProblemError)
+      const failure = error as ApiProblemError
+      expect(failure.problem.code).toBe('rate_limited')
+      expect(failure.metadata.status).toBe(429)
+      expect(failure.metadata.retryAfter).toBe('7')
+    }
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+
+  it('drops oversized or control-character Retry-After values on valid problems', async () => {
+    const oversized = problem(429, 'rate_limited')
+    oversized.headers.set('Retry-After', '7'.repeat(257))
+    const unsafe = problem(429, 'rate_limited')
+    const originalGet = unsafe.headers.get.bind(unsafe.headers)
+    vi.spyOn(unsafe.headers, 'get').mockImplementation(name =>
+      name === 'Retry-After' ? '7\tprivate' : originalGet(name))
+    const fetcher = vi.fn().mockResolvedValueOnce(oversized).mockResolvedValueOnce(unsafe)
+    const client = new ApiClient(new CsrfManager(), fetcher as typeof fetch)
+    for (let index = 0; index < 2; index++) {
+      try {
+        await client.request('GET', '/api/notes')
+        throw new Error('Expected a rate-limit problem')
+      } catch (error) {
+        expect(error).toBeInstanceOf(ApiProblemError)
+        expect((error as ApiProblemError).metadata.retryAfter).toBeNull()
+      }
+    }
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  })
+
+  it('captures bounded stale ETag but never exposes arbitrary response headers', async () => {
+    const response = problem(412, 'stale_write')
+    response.headers.set('ETag', '"current-revision"')
+    response.headers.set('Location', '/api/notes/synthetic')
+    response.headers.set('X-Internal-Secret', 'PRIVATE_MARKER')
+    response.headers.set('Set-Cookie', 'PRIVATE_MARKER')
+    const fetcher = vi.fn(async () => response)
+    try {
+      await new ApiClient(new CsrfManager(), fetcher as typeof fetch).request('GET', '/api/notes')
+      throw new Error('Expected a stale-write problem')
+    } catch (error) {
+      expect(error).toBeInstanceOf(ApiProblemError)
+      const metadata = (error as ApiProblemError).metadata
+      expect(metadata).toEqual({ status: 412, etag: '"current-revision"',
+        location: '/api/notes/synthetic', retryAfter: null, contentRange: null })
+      expect(JSON.stringify(metadata)).not.toContain('PRIVATE_MARKER')
+    }
+  })
+
   it('fails closed when CSRF proof is unavailable before sending', async () => {
     const fetcher = vi.fn()
     await expect(new ApiClient(new CsrfManager(), fetcher as typeof fetch)

@@ -56,4 +56,67 @@ describe('session authority and viewer scope', () => {
     expect(coordinator.viewerScope).toEqual(ANONYMOUS_VIEWER_SCOPE)
     expect(secondCleaner).toHaveBeenCalled()
   })
+
+  it('retries sensitive cleanup before resolving unknown to anonymous', () => {
+    const sensitive = new SensitiveStateRegistry()
+    let shouldFail = false
+    const cleaner = vi.fn(() => { if (shouldFail) throw new Error('private data') })
+    sensitive.register(cleaner)
+    const clearViewerCaches = vi.fn()
+    const coordinator = new SessionCoordinator(new CsrfManager(), sensitive, clearViewerCaches,
+      () => 'synthetic_epoch_1')
+    coordinator.transition('authenticated')
+    shouldFail = true
+    expect(() => coordinator.transition('anonymous')).toThrow('Session transition could not be completed safely.')
+    expect(coordinator.state).toBe('unknown')
+    expect(coordinator.viewerScope).toEqual(ANONYMOUS_VIEWER_SCOPE)
+    const attemptsAfterFailure = cleaner.mock.calls.length
+    shouldFail = false
+    coordinator.transition('anonymous')
+    expect(cleaner).toHaveBeenCalledTimes(attemptsAfterFailure + 1)
+    expect(coordinator.state).toBe('anonymous')
+    expect(coordinator.viewerScope).toEqual(ANONYMOUS_VIEWER_SCOPE)
+    expect(clearViewerCaches).toHaveBeenCalledTimes(attemptsAfterFailure + 1)
+  })
+
+  it('retries viewer-cache cleanup before resolving unknown to anonymous', () => {
+    const sensitive = new SensitiveStateRegistry()
+    const cleaner = vi.fn()
+    sensitive.register(cleaner)
+    let shouldFail = false
+    const clearViewerCaches = vi.fn(() => { if (shouldFail) throw new Error('private cache') })
+    const coordinator = new SessionCoordinator(new CsrfManager(), sensitive, clearViewerCaches,
+      () => 'synthetic_epoch_1')
+    coordinator.transition('authenticated')
+    shouldFail = true
+    expect(() => coordinator.transition('anonymous')).toThrow('Session transition could not be completed safely.')
+    expect(coordinator.state).toBe('unknown')
+    expect(coordinator.viewerScope).toEqual(ANONYMOUS_VIEWER_SCOPE)
+    const attemptsAfterFailure = clearViewerCaches.mock.calls.length
+    shouldFail = false
+    coordinator.transition('anonymous')
+    expect(clearViewerCaches).toHaveBeenCalledTimes(attemptsAfterFailure + 1)
+    expect(cleaner).toHaveBeenCalledTimes(attemptsAfterFailure + 1)
+    expect(coordinator.state).toBe('anonymous')
+  })
+
+  it.each(['anonymous', 'mfaRequired', 'authenticated'] as const)(
+    'requires cleanup before initial unknown resolves to %s', next => {
+      const sensitive = new SensitiveStateRegistry()
+      let shouldFail = true
+      const cleaner = vi.fn(() => { if (shouldFail) throw new Error('private state') })
+      sensitive.register(cleaner)
+      const clearViewerCaches = vi.fn()
+      const coordinator = new SessionCoordinator(new CsrfManager(), sensitive, clearViewerCaches,
+        () => 'synthetic_epoch_1')
+      expect(() => coordinator.transition(next)).toThrow('Session transition could not be completed safely.')
+      expect(coordinator.state).toBe('unknown')
+      expect(coordinator.viewerScope).toEqual(ANONYMOUS_VIEWER_SCOPE)
+      shouldFail = false
+      coordinator.transition(next)
+      expect(coordinator.state).toBe(next)
+      expect(cleaner).toHaveBeenCalledTimes(2)
+      expect(clearViewerCaches).toHaveBeenCalledTimes(2)
+    },
+  )
 })
