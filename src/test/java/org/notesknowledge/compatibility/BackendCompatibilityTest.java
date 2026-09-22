@@ -30,7 +30,8 @@ import tools.jackson.databind.json.JsonMapper;
                 + "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,"
                 + "org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration",
         "springdoc.api-docs.enabled=true",
-        "management.endpoints.web.exposure.include=health,prometheus"
+        "management.endpoints.web.exposure.include=health,prometheus",
+        "management.endpoint.health.validate-group-membership=false"
 })
 @Import(BackendCompatibilityTest.CompatibilityProbeSecurity.class)
 class BackendCompatibilityTest {
