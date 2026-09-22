@@ -1,3 +1,5 @@
+import { readResponseMetadata, type ApiResponseMetadata } from './ApiResponseMetadata'
+
 export interface ValidationProblemField {
   readonly field: string
   readonly code: string
@@ -22,7 +24,7 @@ export class ApiProtocolError extends Error {
 }
 
 export class ApiProblemError extends Error {
-  constructor(readonly problem: SafeProblemDetails) {
+  constructor(readonly problem: SafeProblemDetails, readonly metadata: ApiResponseMetadata) {
     super('The request could not be completed.')
     this.name = 'ApiProblemError'
   }
@@ -94,5 +96,5 @@ export async function decodeProblemDetails(response: Response): Promise<ApiProbl
     traceId: raw.traceId,
     ...(errors === undefined ? {} : { errors }),
   }
-  return new ApiProblemError(problem)
+  return new ApiProblemError(problem, readResponseMetadata(response))
 }

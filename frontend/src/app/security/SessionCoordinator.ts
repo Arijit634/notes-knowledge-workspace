@@ -33,7 +33,9 @@ export class SessionCoordinator {
     this.csrf.clear()
     const wasAuthenticated = this.current === 'authenticated'
     const isAuthenticated = next === 'authenticated'
-    const mustClear = wasAuthenticated || this.current === 'mfaRequired' || isAuthenticated
+    // Unknown can follow a failed cleanup; it is never evidence that memory is clean.
+    const mustClear = this.current === 'unknown' || wasAuthenticated
+      || this.current === 'mfaRequired' || isAuthenticated
     if (mustClear) {
       // Drop authority first; a failed cleaner must not leave an authenticated cache scope.
       this.current = 'unknown'
