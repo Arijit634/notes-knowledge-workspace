@@ -35,24 +35,15 @@ public final class OpaqueCursorCodec {
 
     private final Clock clock;
     private final CursorKeyRing keyRing;
-    private final NonceSource nonces;
+    private final SecureRandom secureRandom;
 
     public OpaqueCursorCodec(Clock clock, CursorKeyRing keyRing) {
-        this(clock, keyRing, new SecureRandom()::nextBytes);
-    }
-
-    OpaqueCursorCodec(Clock clock, CursorKeyRing keyRing, NonceSource nonces) {
         this.clock = Objects.requireNonNull(clock, "clock");
         if (!ZoneOffset.UTC.equals(clock.getZone())) {
             throw new IllegalArgumentException("Cursor clock must use UTC");
         }
         this.keyRing = Objects.requireNonNull(keyRing, "keyRing");
-        this.nonces = Objects.requireNonNull(nonces, "nonces");
-    }
-
-    @FunctionalInterface
-    interface NonceSource {
-        void fill(byte[] nonce);
+        this.secureRandom = new SecureRandom();
     }
 
     /** Server-owned codes, not a URI, raw filter, or client-supplied SQL expression. */
@@ -159,7 +150,7 @@ public final class OpaqueCursorCodec {
         byte[] clear = serialize(context, position, issued, expiry);
         byte[] nonce = new byte[NONCE_BYTES];
         try {
-            nonces.fill(nonce);
+            secureRandom.nextBytes(nonce);
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
             cipher.init(Cipher.ENCRYPT_MODE, active.secretKey(),
                     new GCMParameterSpec(TAG_BITS, nonce));

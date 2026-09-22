@@ -64,7 +64,10 @@ class OpaqueCursorCodecTest {
         assertThat(decodedFirst.position()).isEqualTo(POSITION);
         assertThat(decodedFirst.issuedAt()).isEqualTo(START);
         assertThat(decodedFirst.expiresAt()).isEqualTo(START.plus(Duration.ofMinutes(5)));
-        assertThat(fixture.nonces.issued).isEqualTo(2);
+        byte[] firstPayload = Base64.getUrlDecoder().decode(first.split("\\.")[2]);
+        byte[] secondPayload = Base64.getUrlDecoder().decode(second.split("\\.")[2]);
+        assertThat(Arrays.copyOf(firstPayload, 12))
+                .isNotEqualTo(Arrays.copyOf(secondPayload, 12));
     }
 
     @Test
@@ -265,9 +268,8 @@ class OpaqueCursorCodecTest {
 
     private static final class Fixture {
         private final MutableClock clock = new MutableClock();
-        private final IncrementingNonces nonces = new IncrementingNonces();
         private final MutableKeyRing ring = new MutableKeyRing();
-        private final OpaqueCursorCodec codec = new OpaqueCursorCodec(clock, ring, nonces);
+        private final OpaqueCursorCodec codec = new OpaqueCursorCodec(clock, ring);
     }
 
     private static final class MutableKeyRing implements CursorKeyRing {
@@ -277,16 +279,6 @@ class OpaqueCursorCodecTest {
         @Override
         public KeySnapshot keys() {
             return snapshot;
-        }
-    }
-
-    private static final class IncrementingNonces implements OpaqueCursorCodec.NonceSource {
-        private int issued;
-
-        @Override
-        public void fill(byte[] nonce) {
-            issued++;
-            ByteBuffer.wrap(nonce).putInt(0x1a2b3c4d).putLong(issued);
         }
     }
 
