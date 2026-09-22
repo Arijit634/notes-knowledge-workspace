@@ -5,6 +5,8 @@ import org.springframework.http.HttpStatus;
 public final class ApiFailureException extends RuntimeException {
 
     public enum Kind {
+        MALFORMED_REQUEST(HttpStatus.BAD_REQUEST,
+                "malformed_request", "Malformed request"),
         RESOURCE_NOT_FOUND(HttpStatus.NOT_FOUND,
                 "resource_not_found", "Resource not found"),
         INVALID_LIFECYCLE_TRANSITION(HttpStatus.CONFLICT,
