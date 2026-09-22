@@ -18,6 +18,7 @@ import jakarta.validation.constraints.Size;
 import java.lang.reflect.Modifier;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Tag;
@@ -27,6 +28,9 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.slf4j.MDC;
+import org.notesknowledge.security.RateControlService;
+import org.notesknowledge.security.RateLimitPort;
+import org.notesknowledge.security.SecurityControlRejectionEvents;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -95,6 +99,54 @@ class ApiProblemIntegrationTest {
 
     @Autowired
     ObjectMapper objectMapper;
+
+    @Autowired
+    SyntheticRatePort ratePort;
+
+    @Autowired
+    ApiProbeController probeController;
+
+    @Test
+    @Tag("SECURITY")
+    void rateControlProbeMapsDecisionsBeforeOperationAndKeepsTelemetrySafe(
+            CapturedOutput output) throws Exception {
+        int initialRuns = probeController.rateOperationRuns.get();
+        ratePort.decision = new RateLimitPort.Allowed();
+        mockMvc.perform(get(PROBE + "/rate-control/critical"))
+                .andExpect(status().isNoContent());
+        assertThat(probeController.rateOperationRuns).hasValue(initialRuns + 1);
+        assertThat(output.getAll()).doesNotContain("security.control.rejected");
+
+        ratePort.decision = new RateLimitPort.Throttled(19);
+        mockMvc.perform(get(PROBE + "/rate-control/critical")
+                        .queryParam("private", "synthetic-private-rate-query"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().string(HttpHeaders.RETRY_AFTER, "19"))
+                .andExpect(jsonPath("$.code").value("rate_limited"));
+        mockMvc.perform(get(PROBE + "/rate-control/critical"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().string(HttpHeaders.RETRY_AFTER, "19"));
+        assertThat(probeController.rateOperationRuns).hasValue(initialRuns + 1);
+
+        ratePort.decision = new RateLimitPort.ControlUnavailable();
+        mockMvc.perform(get(PROBE + "/rate-control/critical"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().doesNotExist(HttpHeaders.RETRY_AFTER))
+                .andExpect(jsonPath("$.code").value("service_unavailable"));
+        assertThat(probeController.rateOperationRuns).hasValue(initialRuns + 1);
+
+        mockMvc.perform(get(PROBE + "/rate-control/best-effort"))
+                .andExpect(status().isNoContent());
+        assertThat(probeController.rateOperationRuns).hasValue(initialRuns + 2);
+        long rejectionEventCount = output.getAll().lines()
+                .filter(line -> line.contains("\"logger\":\"org.notesknowledge.security.SecurityControlRejectionEvents\""))
+                .count();
+        assertThat(rejectionEventCount).isEqualTo(2);
+        assertThat(output.getAll())
+                .contains("security.control.rejected", "RATE_CONTROL", "THROTTLED",
+                        "CONTROL_UNAVAILABLE")
+                .doesNotContain("syntheticOpaqueRateKey789", "synthetic-private-rate-query");
+    }
 
     @Test
     void validCommandRemainsOrdinaryJson() throws Exception {
@@ -399,8 +451,19 @@ class ApiProblemIntegrationTest {
     static class ApiProbeConfiguration {
 
         @Bean
-        ApiProbeController apiProbeController() {
-            return new ApiProbeController();
+        SyntheticRatePort syntheticRatePort() {
+            return new SyntheticRatePort();
+        }
+
+        @Bean
+        RateControlService syntheticRateControlService(SyntheticRatePort port,
+                SecurityControlRejectionEvents events) {
+            return new RateControlService(port, events);
+        }
+
+        @Bean
+        ApiProbeController apiProbeController(RateControlService rateControlService) {
+            return new ApiProbeController(rateControlService);
         }
 
         @Bean
@@ -439,6 +502,30 @@ class ApiProblemIntegrationTest {
     @RestController
     @RequestMapping(PROBE)
     static class ApiProbeController {
+
+        private static final RateLimitPort.Request RATE_REQUEST = new RateLimitPort.Request(
+                new RateLimitPort.ControlClass("SYNTHETIC_API_PROBE"),
+                new RateLimitPort.OpaqueKey("syntheticOpaqueRateKey789"), 1);
+
+        private final RateControlService rateControlService;
+        private final AtomicInteger rateOperationRuns = new AtomicInteger();
+
+        ApiProbeController(RateControlService rateControlService) {
+            this.rateControlService = rateControlService;
+        }
+
+        @GetMapping("/rate-control/{policy}")
+        ResponseEntity<Void> rateControl(@PathVariable String policy) {
+            RateControlService.Policy classification = switch (policy) {
+                case "critical" -> RateControlService.Policy.SECURITY_CRITICAL;
+                case "best-effort" -> RateControlService.Policy.BEST_EFFORT;
+                default -> throw ApiFailureException.of(
+                        ApiFailureException.Kind.RESOURCE_NOT_FOUND);
+            };
+            rateControlService.check(RATE_REQUEST, classification);
+            rateOperationRuns.incrementAndGet();
+            return ResponseEntity.noContent().build();
+        }
 
         @PostMapping(
                 path = "/commands",
@@ -497,6 +584,15 @@ class ApiProblemIntegrationTest {
             throw new IllegalStateException(
                     "synthetic-private-exception-2c select * from private_notes "
                             + "provider-secret-2c");
+        }
+    }
+
+    static final class SyntheticRatePort implements RateLimitPort {
+        private volatile Decision decision = new Allowed();
+
+        @Override
+        public Decision evaluate(Request request) {
+            return decision;
         }
     }
 
