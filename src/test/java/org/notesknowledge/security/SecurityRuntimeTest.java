@@ -21,6 +21,7 @@ import java.util.List;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.notesknowledge.DependencyHealthTracker;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -36,6 +37,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.security.authentication.ProviderManager;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -93,6 +95,12 @@ class SecurityRuntimeTest {
     @Autowired
     JdbcIndexedSessionRepository sessions;
 
+    @Autowired
+    DependencyHealthTracker dependencyHealth;
+
+    @Autowired
+    JdbcClient jdbc;
+
     @Test
     void productionChainDeniesUnmatchedPathsAndExposesNoLoginOrBasicSurface() throws Exception {
         mockMvc.perform(get("/api/not-implemented"))
@@ -126,6 +134,47 @@ class SecurityRuntimeTest {
                 "/actuator/prometheus")) {
             mockMvc.perform(get(path)).andExpect(status().isUnauthorized());
         }
+    }
+
+    @Test
+    void optionalFeatureFailureDoesNotChangeCoreHealthOrSecurity(CapturedOutput output)
+            throws Exception {
+        mockMvc.perform(get("/actuator/health/liveness"))
+                .andExpect(status().isOk())
+                .andExpect(content().json("{\"status\":\"UP\"}"));
+        mockMvc.perform(get("/actuator/health/readiness"))
+                .andExpect(status().isOk())
+                .andExpect(content().json("{\"status\":\"UP\"}"));
+        Integer sessionsBefore = jdbc.sql("select count(*) from identity.spring_session")
+                .query(Integer.class).single();
+
+        dependencyHealth.transition(DependencyHealthTracker.Dependency.GEMINI_CHAT,
+                DependencyHealthTracker.State.DOWN,
+                DependencyHealthTracker.FeatureImpact.OPTIONAL_FEATURE,
+                DependencyHealthTracker.SafeReasonClass.UNAVAILABLE);
+        assertThat(jdbc.sql("select count(*) from identity.spring_session")
+                .query(Integer.class).single()).isEqualTo(sessionsBefore);
+        dependencyHealth.transition(DependencyHealthTracker.Dependency.GEMINI_CHAT,
+                DependencyHealthTracker.State.DOWN,
+                DependencyHealthTracker.FeatureImpact.OPTIONAL_FEATURE,
+                DependencyHealthTracker.SafeReasonClass.UNAVAILABLE);
+
+        assertThat(dependencyHealth.status(DependencyHealthTracker.Dependency.GEMINI_CHAT)
+                .state()).isEqualTo(DependencyHealthTracker.State.DOWN);
+        mockMvc.perform(get("/actuator/health/liveness"))
+                .andExpect(status().isOk())
+                .andExpect(content().json("{\"status\":\"UP\"}"));
+        MvcResult readiness = mockMvc.perform(get("/actuator/health/readiness"))
+                .andExpect(status().isOk())
+                .andReturn();
+        assertThat(readiness.getResponse().getContentAsString()).isEqualTo("{\"status\":\"UP\"}");
+        assertThat(readiness.getResponse().getContentAsString())
+                .doesNotContain("GEMINI", "postgres", "identity", "jdbc:", "exception");
+        mockMvc.perform(get("/api/not-implemented")).andExpect(status().isUnauthorized());
+        mockMvc.perform(post(PROBE + "/unsafe")).andExpect(status().isForbidden());
+        assertThat(output.getAll()).contains("dependency.state_change");
+        assertThat(mockMvc.perform(get("/api/dependency-health"))
+                .andReturn().getResponse().getStatus()).isEqualTo(401);
     }
 
     @Test
