@@ -16,7 +16,6 @@ import org.springframework.transaction.annotation.Transactional;
 @Repository
 @IdentityCoreEnabled
 class JdbcSecurityEmailDeliveryAdapter implements SecurityEmailDeliveryRepository {
-    private static final int MAX_ATTEMPTS = 5;
     private static final String RETURNING = """
             returning work.security_email_delivery_id, work.capability_id, work.lease_token,
                       work.attempt_count, work.sealed_token_ciphertext, work.sealed_token_nonce,
@@ -24,8 +23,12 @@ class JdbcSecurityEmailDeliveryAdapter implements SecurityEmailDeliveryRepositor
             """;
 
     private final JdbcClient jdbc;
+    private final SecurityEmailDeliveryProperties properties;
 
-    JdbcSecurityEmailDeliveryAdapter(JdbcClient jdbc) { this.jdbc = jdbc; }
+    JdbcSecurityEmailDeliveryAdapter(JdbcClient jdbc, SecurityEmailDeliveryProperties properties) {
+        this.jdbc = jdbc;
+        this.properties = properties;
+    }
 
     @Override
     public void queueCapability(UUID capabilityId, SecurityEmailMaterialCipher.Envelope envelope,
@@ -105,7 +108,7 @@ class JdbcSecurityEmailDeliveryAdapter implements SecurityEmailDeliveryRepositor
                     submitted_at = null, terminal_at = :now, updated_at = :now,
                     last_failure_code = 'attempt_limit'
                 from candidate where work.security_email_delivery_id = candidate.security_email_delivery_id
-                """).param("maxAttempts", MAX_ATTEMPTS).param("now", Timestamp.from(now))
+                """).param("maxAttempts", properties.maxAttempts()).param("now", Timestamp.from(now))
                 .param("batch", batchSize).update();
     }
 
@@ -114,7 +117,7 @@ class JdbcSecurityEmailDeliveryAdapter implements SecurityEmailDeliveryRepositor
         return jdbc.sql(sql)
                 .param("now", Timestamp.from(now))
                 .param("until", Timestamp.from(now.plus(policy.leaseDuration())))
-                .param("maxAttempts", MAX_ATTEMPTS)
+                .param("maxAttempts", properties.maxAttempts())
                 .param("owner", owner.alias())
                 .param("batch", policy.checkedBatchSize(batchSize))
                 .query((rs, row) -> new Claim(
@@ -128,6 +131,51 @@ class JdbcSecurityEmailDeliveryAdapter implements SecurityEmailDeliveryRepositor
                                 rs.getBytes("sealed_token_tag"),
                                 rs.getString("token_key_version"))))
                 .list();
+    }
+
+    @Override
+    public boolean ownsUsableClaim(Claim claim, Instant now) {
+        return jdbc.sql("""
+                select exists(select 1 from identity.security_email_delivery
+                    where security_email_delivery_id = :id and state = 'claimed'
+                      and lease_token = :token and lease_until > :now)
+                """).param("id", claim.id()).param("token", claim.token().value())
+                .param("now", Timestamp.from(now)).query(Boolean.class).single();
+    }
+
+    @Override
+    @Transactional
+    public boolean releaseUnstarted(Claim claim, Instant now) {
+        return jdbc.sql("""
+                update identity.security_email_delivery
+                set state = 'queued', next_attempt_at = :now,
+                    attempt_count = attempt_count - 1, lease_owner = null,
+                    lease_token = null, lease_until = null, updated_at = :now
+                where security_email_delivery_id = :id and state = 'claimed'
+                  and lease_token = :token and lease_until > :now
+                  and attempt_count > 0
+                """).param("id", claim.id()).param("token", claim.token().value())
+                .param("now", Timestamp.from(now)).update() == 1;
+    }
+
+    @Override
+    @Transactional
+    public boolean deferUnsent(Claim claim, Instant now, Instant retryAt, String safeReason) {
+        if (!safeReason.matches("[a-z][a-z0-9_]{0,47}") || !retryAt.isAfter(now)) {
+            throw new IllegalArgumentException("Invalid safe defer policy");
+        }
+        return jdbc.sql("""
+                update identity.security_email_delivery
+                set state = 'retry_wait', next_attempt_at = :retry,
+                    attempt_count = attempt_count - 1, lease_owner = null,
+                    lease_token = null, lease_until = null,
+                    updated_at = :now, last_failure_code = :reason
+                where security_email_delivery_id = :id and state = 'claimed'
+                  and lease_token = :token and lease_until > :now
+                  and attempt_count > 0
+                """).param("id", claim.id()).param("token", claim.token().value())
+                .param("now", Timestamp.from(now)).param("retry", Timestamp.from(retryAt))
+                .param("reason", safeReason).update() == 1;
     }
 
     @Override
@@ -163,7 +211,8 @@ class JdbcSecurityEmailDeliveryAdapter implements SecurityEmailDeliveryRepositor
                     submitted_at = case when :state = 'submitted'
                         then cast(:now as timestamptz) else null end,
                     terminal_at = :now, updated_at = :now, last_failure_code = :reason
-                where security_email_delivery_id = :id and state = 'claimed' and lease_token = :token
+                where security_email_delivery_id = :id and state = 'claimed'
+                  and lease_token = :token and lease_until > :now
                 """).param("state", state).param("now", Timestamp.from(now))
                 .param("reason", reason).param("id", claim.id())
                 .param("token", claim.token().value()).update();
@@ -180,7 +229,8 @@ class JdbcSecurityEmailDeliveryAdapter implements SecurityEmailDeliveryRepositor
                 set state = 'retry_wait', next_attempt_at = :retry,
                     lease_owner = null, lease_token = null, lease_until = null,
                     updated_at = :now, last_failure_code = :reason
-                where security_email_delivery_id = :id and state = 'claimed' and lease_token = :token
+                where security_email_delivery_id = :id and state = 'claimed'
+                  and lease_token = :token and lease_until > :now
                 """).param("retry", Timestamp.from(retryAt)).param("now", Timestamp.from(now))
                 .param("reason", safeReason).param("id", claim.id())
                 .param("token", claim.token().value()).update() == 1;

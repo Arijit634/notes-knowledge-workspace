@@ -15,28 +15,30 @@ final class RedisRateLimitAdapter implements RateLimitPort {
             return current
             """;
     private final StringRedisTemplate redis;
+    private final IdentityRateProperties properties;
     private final DefaultRedisScript<Long> script = new DefaultRedisScript<>(LUA, Long.class);
 
-    RedisRateLimitAdapter(StringRedisTemplate redis) { this.redis = redis; }
+    RedisRateLimitAdapter(StringRedisTemplate redis, IdentityRateProperties properties) {
+        this.redis = redis;
+        this.properties = properties;
+    }
 
     @Override
     public Decision evaluate(Request request) {
         // The bucket is server-owned, bounded, and never includes raw email, IP, token, or path.
-        int ceiling = switch (request.controlClass().value()) {
-            case "REGISTRATION", "VERIFICATION_REQUEST" -> 6;
-            case "VERIFICATION_CONFIRMATION" -> 12;
-            case "PASSWORD_LOGIN" -> 10;
-            default -> 10;
-        };
+        int ceiling = properties.ceiling(request.controlClass().value());
+        int window = properties.windowSeconds(request.controlClass().value());
         String key = "identity:rate:" + request.controlClass().value() + ":"
                 + request.enforcementKey().value();
         try {
             Long current = redis.execute(script, List.of(key),
-                    Integer.toString(request.cost()), "60");
+                    Integer.toString(request.cost()),
+                    Integer.toString(window));
             if (current == null) {
                 return new ControlUnavailable();
             }
-            return current <= ceiling ? new Allowed() : new Throttled(60);
+            return current <= ceiling ? new Allowed()
+                    : new Throttled(window);
         } catch (RuntimeException exception) {
             return new ControlUnavailable();
         }
