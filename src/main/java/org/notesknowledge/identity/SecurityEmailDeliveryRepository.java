@@ -38,6 +38,9 @@ interface SecurityEmailDeliveryRepository {
     List<Claim> claimReady(Instant now, LeaseOwner owner, LeasePolicy policy, int batchSize);
     List<Claim> reclaimExpired(Instant now, LeaseOwner owner, LeasePolicy policy, int batchSize);
     int failExhausted(Instant now, int batchSize);
+    boolean ownsUsableClaim(Claim claim, Instant now);
+    boolean releaseUnstarted(Claim claim, Instant now);
+    boolean deferUnsent(Claim claim, Instant now, Instant retryAt, String safeReason);
     boolean submitted(Claim claim, Instant now);
     boolean obsolete(Claim claim, Instant now, String safeReason);
     boolean retry(Claim claim, Instant now, Instant retryAt, String safeReason);

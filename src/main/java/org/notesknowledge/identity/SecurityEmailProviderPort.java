@@ -2,5 +2,7 @@ package org.notesknowledge.identity;
 
 /** Only an explicitly configured adapter may reach a real email provider. */
 interface SecurityEmailProviderPort {
-    void submit(String recipient, SecurityEmailMessageRenderer.Message message);
+    enum Outcome { SUBMITTED, RETRYABLE, NON_RETRYABLE, AMBIGUOUS }
+
+    Outcome submit(String recipient, SecurityEmailMessageRenderer.Message message);
 }
