@@ -8,17 +8,20 @@ record IdentityRateProperties(int windowSeconds, int providerWindowSeconds,
         int registrationCeiling,
         int verificationRequestCeiling, int verificationConfirmationCeiling,
         int passwordLoginCeiling, int aggregateCeiling, int providerCeiling) {
+    private static final int MAX_RATE_CEILING = 1_000_000;
+
     IdentityRateProperties {
         if (windowSeconds < 1 || windowSeconds > 86_400
                 || providerWindowSeconds < 1 || providerWindowSeconds > 86_400
                 || registrationCeiling < 1 || verificationRequestCeiling < 1
                 || verificationConfirmationCeiling < 1 || passwordLoginCeiling < 1
                 || aggregateCeiling < 1 || providerCeiling < 1
-                || registrationCeiling > 1_000_000
-                || verificationRequestCeiling > 1_000_000
-                || verificationConfirmationCeiling > 1_000_000
-                || passwordLoginCeiling > 1_000_000
-                || aggregateCeiling > 1_000_000 || providerCeiling > 1_000_000) {
+                || registrationCeiling > MAX_RATE_CEILING
+                || verificationRequestCeiling > MAX_RATE_CEILING
+                || verificationConfirmationCeiling > MAX_RATE_CEILING
+                || passwordLoginCeiling > MAX_RATE_CEILING
+                || aggregateCeiling > MAX_RATE_CEILING
+                || providerCeiling > MAX_RATE_CEILING) {
             throw new IllegalArgumentException("Invalid Identity rate-control policy");
         }
     }
