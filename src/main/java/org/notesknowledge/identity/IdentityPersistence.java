@@ -136,21 +136,20 @@ class IdentityPersistence {
     }
 
     Optional<String> currentVerificationDestination(UUID deliveryId, UUID capabilityId,
-            UUID leaseToken, Instant now) {
+            Instant now) {
         return jdbc.sql("""
                 select a.display_email
                 from identity.security_email_delivery d
                 join identity.identity_capability c on c.capability_id = d.capability_id
                 join identity.account a on a.user_id = c.user_id
                 where d.security_email_delivery_id = :delivery and d.capability_id = :capability
-                  and d.state = 'claimed' and d.lease_token = :lease
-                  and d.lease_until > :now and d.delivery_kind = 'capability_link'
+                  and d.delivery_kind = 'capability_link'
                   and c.purpose = 'email_verification' and c.consumed_at is null
                   and c.superseded_at is null and c.revoked_at is null and c.expires_at > :now
                   and a.account_state = 'pending_verification' and a.email_verified_at is null
                   and a.canonical_email = lower(a.display_email)
                 """).param("delivery", deliveryId).param("capability", capabilityId)
-                .param("lease", leaseToken).param("now", Timestamp.from(now))
+                .param("now", Timestamp.from(now))
                 .query(String.class).optional();
     }
 }

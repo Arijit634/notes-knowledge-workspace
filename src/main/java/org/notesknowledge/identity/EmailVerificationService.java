@@ -10,6 +10,8 @@ import org.notesknowledge.DatabaseUuidV7Generator;
 import org.notesknowledge.websupport.ApiFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 @IdentityCoreEnabled
@@ -20,39 +22,40 @@ class EmailVerificationService {
     private final SecurityEmailMaterialCipher cipher;
     private final DatabaseUuidV7Generator ids;
     private final Clock clock;
+    private final TransactionTemplate transactions;
 
     EmailVerificationService(IdentityPersistence identity,
             SecurityEmailDeliveryRepository delivery, SecurityEmailMaterialCipher cipher,
-            DatabaseUuidV7Generator ids, Clock clock) {
+            DatabaseUuidV7Generator ids, Clock clock,
+            PlatformTransactionManager transactionManager) {
         this.identity = identity;
         this.delivery = delivery;
         this.cipher = cipher;
         this.ids = ids;
         this.clock = clock;
+        this.transactions = new TransactionTemplate(transactionManager);
     }
 
-    @Transactional
     void request(String email) {
         String canonical = IdentityInput.canonicalEmail(email);
-        var pending = identity.pendingAccountForUpdate(canonical);
-        if (pending.isEmpty()) {
-            // No fake Account or capability is written for an unknown/ineligible target.
-            UUID dummyId = ids.generate();
-            String dummy = VerificationToken.issue(dummyId);
-            cipher.seal(dummyId, dummy);
-            VerificationToken.digest(dummy);
-            return;
-        }
-        UUID userId = pending.get();
         Instant now = clock.instant();
         UUID capabilityId = ids.generate();
         String token = VerificationToken.issue(capabilityId);
         var sealed = cipher.seal(capabilityId, token);
-        identity.supersede(userId, now);
-        identity.issue(capabilityId, userId, VerificationToken.digest(token), now,
-                now.plus(VERIFICATION_LIFETIME));
-        delivery.queueCapability(capabilityId, sealed, now);
-        identity.audit(userId, "email_verification", "requested", now);
+        byte[] digest = VerificationToken.digest(token);
+        transactions.executeWithoutResult(status -> {
+            // Eligibility is rechecked under the lock; prepared material grants no authority.
+            var pending = identity.pendingAccountForUpdate(canonical);
+            if (pending.isEmpty()) {
+                return; // No fake Account, capability, or delivery for unknown targets.
+            }
+            UUID userId = pending.get();
+            identity.supersede(userId, now);
+            identity.issue(capabilityId, userId, digest, now,
+                    now.plus(VERIFICATION_LIFETIME));
+            delivery.queueCapability(capabilityId, sealed, now);
+            identity.audit(userId, "email_verification", "requested", now);
+        });
     }
 
     @Transactional

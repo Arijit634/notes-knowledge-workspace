@@ -24,7 +24,8 @@ class RedisRateLimitAdapterTest {
         try {
             var template = new StringRedisTemplate(factory);
             template.afterPropertiesSet();
-            var adapter = new RedisRateLimitAdapter(template);
+            var adapter = new RedisRateLimitAdapter(template,
+                    new IdentityRateProperties(60, 86400, 6, 6, 12, 10, 1200, 250));
             var request = new RateLimitPort.Request(
                     new RateLimitPort.ControlClass("REGISTRATION"),
                     new RateLimitPort.OpaqueKey("syntheticOpaqueRateKey789"), 1);
@@ -38,5 +39,54 @@ class RedisRateLimitAdapterTest {
         } finally {
             factory.destroy();
         }
+    }
+
+    @Test
+    void rotatingBothSpecificDimensionsStillHitsSharedGlobalAndKeysStayOpaque() {
+        var factory = new LettuceConnectionFactory(redis.getHost(), redis.getMappedPort(6379));
+        factory.afterPropertiesSet();
+        try {
+            var template = new StringRedisTemplate(factory);
+            template.afterPropertiesSet();
+            var adapter = new RedisRateLimitAdapter(template,
+                    new IdentityRateProperties(60, 86400, 10, 10, 10, 10, 3, 2));
+            var keys = new RateKeyDeriver(
+                    "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=");
+            for (int index = 0; index < 4; index++) {
+                String candidate = "candidate-" + index + "@example.test";
+                String source = "192.0.2." + (index + 1);
+                var global = request("IDENTITY_GLOBAL",
+                        keys.derive("IDENTITY_GLOBAL", "whole-deployment"));
+                var globalDecision = adapter.evaluate(global);
+                if (index == 3) {
+                    assertThat(globalDecision).isEqualTo(new RateLimitPort.Throttled(60));
+                    break;
+                }
+                assertThat(globalDecision).isInstanceOf(RateLimitPort.Allowed.class);
+                assertThat(adapter.evaluate(request("VERIFICATION_REQUEST",
+                        keys.derive("VERIFICATION_REQUEST", "source:" + source))))
+                        .isInstanceOf(RateLimitPort.Allowed.class);
+                assertThat(adapter.evaluate(request("VERIFICATION_REQUEST",
+                        keys.derive("VERIFICATION_REQUEST", "candidate:" + candidate))))
+                        .isInstanceOf(RateLimitPort.Allowed.class);
+            }
+            assertThat(adapter.evaluate(request("SECURITY_EMAIL_PROVIDER",
+                    keys.derive("SECURITY_EMAIL_PROVIDER", "whole-deployment"))))
+                    .isInstanceOf(RateLimitPort.Allowed.class);
+            assertThat(adapter.evaluate(request("SECURITY_EMAIL_PROVIDER",
+                    keys.derive("SECURITY_EMAIL_PROVIDER", "whole-deployment"))))
+                    .isInstanceOf(RateLimitPort.Allowed.class);
+            assertThat(adapter.evaluate(request("SECURITY_EMAIL_PROVIDER",
+                    keys.derive("SECURITY_EMAIL_PROVIDER", "whole-deployment"))))
+                    .isEqualTo(new RateLimitPort.Throttled(86400));
+            assertThat(template.keys("identity:rate:*")).allSatisfy(key ->
+                    assertThat(key).doesNotContain("@", "192.0.2", "candidate-"));
+        } finally {
+            factory.destroy();
+        }
+    }
+
+    private RateLimitPort.Request request(String control, RateLimitPort.OpaqueKey key) {
+        return new RateLimitPort.Request(new RateLimitPort.ControlClass(control), key, 1);
     }
 }
