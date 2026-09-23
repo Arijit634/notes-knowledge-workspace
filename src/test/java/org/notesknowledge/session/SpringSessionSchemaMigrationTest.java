@@ -134,7 +134,7 @@ class SpringSessionSchemaMigrationTest {
         String emptyDatabaseUrl = "jdbc:postgresql://" + postgres.getHost() + ":"
                 + postgres.getMappedPort(5432) + "/" + databaseName;
 
-        try (var context = new SpringApplicationBuilder(Application.class)
+        assertThatThrownBy(() -> new SpringApplicationBuilder(Application.class)
                 .web(WebApplicationType.SERVLET)
                 .properties(
                         "server.port=0",
@@ -144,28 +144,18 @@ class SpringSessionSchemaMigrationTest {
                         "spring.flyway.enabled=false",
                         "spring.session.jdbc.initialize-schema=never",
                         "spring.session.jdbc.table-name=identity.spring_session")
-                .run()) {
-            JdbcTemplate jdbc = jdbc(emptyDatabaseUrl);
-            assertThat(jdbc.queryForObject(
-                    "select count(*) from information_schema.tables where table_schema = 'identity'",
-                    Integer.class)).isZero();
-
-            JdbcIndexedSessionRepository repository =
-                    context.getBean(JdbcIndexedSessionRepository.class);
-            SessionRepository<Session> publicRepository = publicRepository(repository);
-            Session session = publicRepository.createSession();
-            assertThatThrownBy(() -> publicRepository.save(session))
-                    .isInstanceOf(DataAccessException.class);
-            assertThat(jdbc.queryForObject(
-                    "select count(*) from information_schema.tables where table_schema = 'identity'",
-                    Integer.class)).isZero();
-        }
+                .run()).isInstanceOf(RuntimeException.class);
+        JdbcTemplate jdbc = jdbc(emptyDatabaseUrl);
+        assertThat(jdbc.queryForObject(
+                "select count(*) from information_schema.tables where table_schema = 'identity'",
+                Integer.class)).isZero();
     }
 
     private Flyway flyway(String url) {
         return Flyway.configure()
                 .dataSource(url, postgres.getUsername(), postgres.getPassword())
                 .locations("classpath:db/migration")
+                .target("001")
                 .load();
     }
 

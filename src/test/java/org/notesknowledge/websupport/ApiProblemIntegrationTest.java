@@ -451,11 +451,13 @@ class ApiProblemIntegrationTest {
     static class ApiProbeConfiguration {
 
         @Bean
+        @org.springframework.context.annotation.Primary
         SyntheticRatePort syntheticRatePort() {
             return new SyntheticRatePort();
         }
 
         @Bean
+        @org.springframework.context.annotation.Primary
         RateControlService syntheticRateControlService(SyntheticRatePort port,
                 SecurityControlRejectionEvents events) {
             return new RateControlService(port, events);

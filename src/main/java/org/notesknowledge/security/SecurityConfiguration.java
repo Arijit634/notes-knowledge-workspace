@@ -2,12 +2,21 @@ package org.notesknowledge.security;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpMethod;
-import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.authentication.AuthenticationServiceException;
+import java.util.List;
+
+import org.notesknowledge.identity.IdentityEligibilityFilter;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.session.ChangeSessionIdAuthenticationStrategy;
+import org.springframework.security.web.authentication.session.CompositeSessionAuthenticationStrategy;
+import org.springframework.security.web.authentication.session.SessionAuthenticationStrategy;
+import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
+import org.springframework.security.web.context.SecurityContextHolderFilter;
+import org.springframework.security.web.context.SecurityContextRepository;
+import org.springframework.security.web.csrf.CsrfAuthenticationStrategy;
 import org.springframework.security.web.csrf.HttpSessionCsrfTokenRepository;
 import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy;
 import org.springframework.session.web.http.DefaultCookieSerializer;
@@ -36,24 +45,43 @@ public class SecurityConfiguration {
     }
 
     @Bean
-    AuthenticationManager unavailableProductAuthenticationManager() {
-        return authentication -> {
-            throw new AuthenticationServiceException("Product authentication is not implemented");
-        };
+    SecurityContextRepository securityContextRepository() {
+        return new HttpSessionSecurityContextRepository();
+    }
+
+    @Bean
+    SessionAuthenticationStrategy identitySessionAuthenticationStrategy(
+            HttpSessionCsrfTokenRepository csrfTokenRepository) {
+        return new CompositeSessionAuthenticationStrategy(List.of(
+                new ChangeSessionIdAuthenticationStrategy(),
+                new CsrfAuthenticationStrategy(csrfTokenRepository)));
     }
 
     @Bean
     SecurityFilterChain applicationSecurityFilterChain(
             HttpSecurity http,
             HttpSessionCsrfTokenRepository csrfTokenRepository,
+            SecurityContextRepository securityContextRepository,
+            ObjectProvider<IdentityEligibilityFilter> eligibilityFilter,
             ApiProblemWriter problemWriter) throws Exception {
+        IdentityEligibilityFilter identityCore = eligibilityFilter.getIfAvailable();
         http
                 .csrf(csrf -> csrf.csrfTokenRepository(csrfTokenRepository))
+                .securityContext(context -> context.securityContextRepository(securityContextRepository))
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(HttpMethod.GET, "/actuator/health", "/actuator/health/**")
                         .permitAll()
                         .requestMatchers(HttpMethod.HEAD, "/actuator/health", "/actuator/health/**")
                         .permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/auth/csrf", "/api/auth/session")
+                        .access((authentication, context) -> new org.springframework.security.authorization.AuthorizationDecision(
+                                identityCore != null))
+                        .requestMatchers(HttpMethod.POST, "/api/auth/registrations",
+                                "/api/auth/email-verification/requests",
+                                "/api/auth/email-verification/confirmations",
+                                "/api/auth/login/password")
+                        .access((authentication, context) -> new org.springframework.security.authorization.AuthorizationDecision(
+                                identityCore != null))
                         .anyRequest()
                         .denyAll())
                 .httpBasic(AbstractHttpConfigurer::disable)
@@ -70,6 +98,9 @@ public class SecurityConfiguration {
                 .headers(headers -> headers
                         .referrerPolicy(policy -> policy.policy(ReferrerPolicy.NO_REFERRER)));
 
+        if (identityCore != null) {
+            http.addFilterAfter(identityCore, SecurityContextHolderFilter.class);
+        }
         return http.build();
     }
 }

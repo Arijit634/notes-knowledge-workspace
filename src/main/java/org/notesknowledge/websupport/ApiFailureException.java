@@ -7,6 +7,10 @@ public final class ApiFailureException extends RuntimeException {
     public enum Kind {
         MALFORMED_REQUEST(HttpStatus.BAD_REQUEST,
                 "malformed_request", "Malformed request"),
+        INVALID_INPUT(HttpStatus.UNPROCESSABLE_CONTENT,
+                "validation_failed", "Request validation failed"),
+        INVALID_CREDENTIALS(HttpStatus.UNAUTHORIZED,
+                "invalid_credentials", "Authentication failed"),
         RESOURCE_NOT_FOUND(HttpStatus.NOT_FOUND,
                 "resource_not_found", "Resource not found"),
         INVALID_LIFECYCLE_TRANSITION(HttpStatus.CONFLICT,
