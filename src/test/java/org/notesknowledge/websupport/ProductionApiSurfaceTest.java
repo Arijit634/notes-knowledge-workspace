@@ -17,7 +17,8 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
         "spring.autoconfigure.exclude="
                 + "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,"
                 + "org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration",
-        "management.endpoint.health.validate-group-membership=false"
+        "management.endpoint.health.validate-group-membership=false",
+        "identity.core.enabled=false"
 })
 class ProductionApiSurfaceTest {
 

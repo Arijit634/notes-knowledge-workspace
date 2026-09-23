@@ -70,6 +70,13 @@ public final class ApiProblemWriter {
                 "authentication_required", "Authentication required");
     }
 
+    public void writeServiceUnavailable(
+            HttpServletRequest request,
+            HttpServletResponse response) throws IOException {
+        write(request, response, HttpStatus.SERVICE_UNAVAILABLE,
+                "service_unavailable", "Required service is unavailable");
+    }
+
     public void writeAccessDenied(
             HttpServletRequest request,
             HttpServletResponse response,
