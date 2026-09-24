@@ -49,6 +49,8 @@ import tools.jackson.databind.ObjectMapper;
 @ExtendWith(OutputCaptureExtension.class)
 class MfaCoreIntegrationTest {
     private static final String PASSWORD = "SyntheticMfaPassword-2026!";
+    private static final java.util.concurrent.atomic.AtomicBoolean FAIL_LOGOUT_AUDIT =
+            new java.util.concurrent.atomic.AtomicBoolean();
     @Container static final PostgreSQLContainer postgres = new PostgreSQLContainer(
             "pgvector/pgvector:0.8.6-pg18-trixie")
             .withDatabaseName("mfa_core").withUsername("mfa_migrator")
@@ -76,6 +78,9 @@ class MfaCoreIntegrationTest {
     @Autowired MfaManagementService management;
     @Autowired MfaChallengeService challenges;
     @Autowired SyntheticRates rates;
+    @Autowired FaultyCompletionCheckpoint completionFault;
+    @Autowired org.springframework.session.jdbc.JdbcIndexedSessionRepository sessionRepository;
+    @Autowired org.springframework.session.web.http.DefaultCookieSerializer cookieSerializer;
 
     @Test void passwordLoginEnrollmentTotpAndRecoveryAreSessionAndReplaySafe(
             CapturedOutput output) throws Exception {
@@ -172,6 +177,14 @@ class MfaCoreIntegrationTest {
         Browser totpFull = csrf(elevated.getResponse().getCookie("SESSION"));
         assertThat(state(totpFull)).isEqualTo("authenticated");
         assertThat(state(pre)).isEqualTo("anonymous");
+        assertThat(auditCount(user, "mfa_challenge", "totp_accepted")).isEqualTo(1);
+        assertThat((Object) ((org.springframework.session.Session) sessionRepository
+                .findById(cookieId(totpFull)))
+                .getAttribute(IdentitySessionState.CHALLENGE_ATTRIBUTE)).isNull();
+        mvc.perform(post("/api/auth/logout").cookie(totpFull.cookie())
+                .header("X-CSRF-TOKEN", pre.csrf()))
+                .andExpect(status().isForbidden());
+        assertThat(state(totpFull)).isEqualTo("authenticated");
         Browser replay = login(csrf(null), email, 202);
         mvc.perform(post("/api/auth/mfa/challenges/" + replay.challengeId() + "/totp")
                 .cookie(replay.cookie()).header("X-CSRF-TOKEN", replay.csrf())
@@ -187,6 +200,7 @@ class MfaCoreIntegrationTest {
                 .andExpect(status().isOk()).andReturn();
         Browser recoveredFull = csrf(recovered.getResponse().getCookie("SESSION"));
         assertThat(state(recoveredFull)).isEqualTo("authenticated");
+        assertThat(auditCount(user, "mfa_challenge", "recovery_accepted")).isEqualTo(1);
         Browser reused = login(csrf(null), email, 202);
         mvc.perform(post("/api/auth/mfa/challenges/" + reused.challengeId() + "/recovery-code")
                 .cookie(reused.cookie()).header("X-CSRF-TOKEN", reused.csrf())
@@ -220,8 +234,199 @@ class MfaCoreIntegrationTest {
         int recoveryWins = concurrent(() -> repository.consumeRecovery(user,
                 new RecoveryCodeService(new MfaProperties(java.time.Duration.ofMinutes(5),
                         java.time.Duration.ofMinutes(10), java.time.Duration.ofMinutes(5),
-                        30, 6, 1, 8)).digest(recoveryCode), clock.instant()));
+                        30, 6, 1, 8, 5)).digest(recoveryCode), clock.instant()));
         assertThat(recoveryWins).isEqualTo(1);
+    }
+
+    @Test void totpSessionFailureRollsBackProofAuditAndFullAuthority() throws Exception {
+        UUID user = account();
+        var setup = management.begin(user);
+        String enrollmentCode = totp.codeAt(decodeBase32(setup.manualSecret()),
+                clock.instant().getEpochSecond() / 30);
+        management.confirm(user, setup.enrollmentId(), enrollmentCode);
+        clock.advanceSeconds(30);
+        Browser pre = login(csrf(null), email(user), 202);
+        String proof = totp.codeAt(decodeBase32(setup.manualSecret()),
+                clock.instant().getEpochSecond() / 30);
+        Long before = jdbc.queryForObject("select last_accepted_timestep from identity.mfa_configuration where user_id = ?",
+                Long.class, user);
+        completionFault.fail = true;
+        try {
+            mvc.perform(post("/api/auth/mfa/challenges/" + pre.challengeId() + "/totp")
+                    .cookie(pre.cookie()).header("X-CSRF-TOKEN", pre.csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"code\":\"" + proof + "\"}"))
+                    .andExpect(status().is5xxServerError());
+        } finally { completionFault.fail = false; }
+        assertThat(completionFault.observedInTransaction).isTrue();
+        assertThat(jdbc.queryForObject("select last_accepted_timestep from identity.mfa_configuration where user_id = ?",
+                Long.class, user)).isEqualTo(before);
+        assertThat(auditCount(user, "mfa_challenge", "totp_accepted")).isZero();
+        assertThat(fullSessionCount(user)).isZero();
+        assertThat(state(pre)).isNotEqualTo("authenticated");
+    }
+
+    @Test void primaryLoginSessionFailureRollsBackVerifierAuditAndAuthority() throws Exception {
+        UUID fullUser = account();
+        Browser anonymous = csrf(null);
+        completionFault.fail = true;
+        try {
+            mvc.perform(post("/api/auth/login/password")
+                    .cookie(anonymous.cookie()).header("X-CSRF-TOKEN", anonymous.csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"email\":\"" + email(fullUser) + "\",\"password\":\"" + PASSWORD + "\"}"))
+                    .andExpect(status().is5xxServerError());
+        } finally { completionFault.fail = false; }
+        assertThat(completionFault.observedInTransaction).isTrue();
+        assertThat(jdbc.queryForObject("select last_authenticated_at from identity.account where user_id = ?",
+                java.sql.Timestamp.class, fullUser)).isNull();
+        assertThat(auditCount(fullUser, "password_login", "success")).isZero();
+        assertThat(fullSessionCount(fullUser)).isZero();
+        assertThat(state(anonymous)).isEqualTo("anonymous");
+
+        UUID preUser = account();
+        var setup = management.begin(preUser);
+        String proof = totp.codeAt(decodeBase32(setup.manualSecret()),
+                clock.instant().getEpochSecond() / 30);
+        management.confirm(preUser, setup.enrollmentId(), proof);
+        Browser secondAnonymous = csrf(null);
+        completionFault.observedInTransaction = false;
+        completionFault.fail = true;
+        try {
+            mvc.perform(post("/api/auth/login/password")
+                    .cookie(secondAnonymous.cookie()).header("X-CSRF-TOKEN", secondAnonymous.csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"email\":\"" + email(preUser) + "\",\"password\":\"" + PASSWORD + "\"}"))
+                    .andExpect(status().is5xxServerError());
+        } finally { completionFault.fail = false; }
+        assertThat(completionFault.observedInTransaction).isTrue();
+        assertThat(jdbc.queryForObject("select last_authenticated_at from identity.account where user_id = ?",
+                java.sql.Timestamp.class, preUser)).isNull();
+        assertThat(auditCount(preUser, "password_login", "success")).isZero();
+        assertThat(state(secondAnonymous)).isEqualTo("anonymous");
+    }
+
+    @Test void recoverySessionFailureRollsBackConsumptionAuditAndFullAuthority() throws Exception {
+        UUID user = account();
+        var setup = management.begin(user);
+        String enrollmentCode = totp.codeAt(decodeBase32(setup.manualSecret()),
+                clock.instant().getEpochSecond() / 30);
+        String code = management.confirm(user, setup.enrollmentId(), enrollmentCode).get(0);
+        Browser pre = login(csrf(null), email(user), 202);
+        completionFault.fail = true;
+        try {
+            mvc.perform(post("/api/auth/mfa/challenges/" + pre.challengeId() + "/recovery-code")
+                    .cookie(pre.cookie()).header("X-CSRF-TOKEN", pre.csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"code\":\"" + code + "\"}"))
+                    .andExpect(status().is5xxServerError());
+        } finally { completionFault.fail = false; }
+        assertThat(completionFault.observedInTransaction).isTrue();
+        assertThat(jdbc.queryForObject("select count(*) from identity.mfa_recovery_code where user_id = ? and consumed_at is not null",
+                Integer.class, user)).isZero();
+        assertThat(auditCount(user, "mfa_challenge", "recovery_accepted")).isZero();
+        assertThat(fullSessionCount(user)).isZero();
+        assertThat(state(pre)).isNotEqualTo("authenticated");
+    }
+
+    @Test void invalidProofBudgetIsSessionOnlyAndRestartedByPrimaryLogin() throws Exception {
+        UUID user = account();
+        var setup = management.begin(user);
+        String enrollmentCode = totp.codeAt(decodeBase32(setup.manualSecret()),
+                clock.instant().getEpochSecond() / 30);
+        management.confirm(user, setup.enrollmentId(), enrollmentCode);
+        Browser pre = login(csrf(null), email(user), 202);
+        for (int attempt = 1; attempt <= 5; attempt++) {
+            MvcResult denied = mvc.perform(post("/api/auth/mfa/challenges/"
+                    + pre.challengeId() + "/totp")
+                    .cookie(pre.cookie()).header("X-CSRF-TOKEN", pre.csrf())
+                    .contentType(MediaType.APPLICATION_JSON).content("{\"code\":\"bad\"}"))
+                    .andExpect(status().isUnauthorized()).andReturn();
+            assertThat(denied.getResponse().getContentAsString())
+                    .doesNotContain("failedAttempts", "maxChallengeFailures");
+            var challenge = ((org.springframework.session.Session) sessionRepository
+                    .findById(cookieId(pre)))
+                    .getAttribute(IdentitySessionState.CHALLENGE_ATTRIBUTE);
+            if (attempt < 5) {
+                assertThat(((IdentitySessionState.Challenge) challenge).failedAttempts())
+                        .isEqualTo(attempt);
+            } else {
+                assertThat(challenge).isNull();
+            }
+        }
+        mvc.perform(post("/api/auth/mfa/challenges/" + pre.challengeId() + "/totp")
+                .cookie(pre.cookie()).header("X-CSRF-TOKEN", pre.csrf())
+                .contentType(MediaType.APPLICATION_JSON).content("{\"code\":\"bad\"}"))
+                .andExpect(status().isNotFound());
+        Browser fresh = login(csrf(null), email(user), 202);
+        assertThat(((IdentitySessionState.Challenge) ((org.springframework.session.Session)
+                sessionRepository.findById(cookieId(fresh)))
+                .getAttribute(IdentitySessionState.CHALLENGE_ATTRIBUTE)).failedAttempts()).isZero();
+    }
+
+    @Test void logoutAuditIsAttributableAndContainsOnlySafeFacts() throws Exception {
+        UUID fullUser = account();
+        Browser full = login(csrf(null), email(fullUser), 200);
+        UUID preUser = account();
+        var setup = management.begin(preUser);
+        String proof = totp.codeAt(decodeBase32(setup.manualSecret()),
+                clock.instant().getEpochSecond() / 30);
+        management.confirm(preUser, setup.enrollmentId(), proof);
+        Browser pre = login(csrf(null), email(preUser), 202);
+        Browser anon = csrf(null);
+        mvc.perform(post("/api/auth/logout").cookie(full.cookie())
+                .header("X-CSRF-TOKEN", full.csrf())).andExpect(status().isNoContent());
+        mvc.perform(post("/api/auth/logout").cookie(pre.cookie())
+                .header("X-CSRF-TOKEN", pre.csrf())).andExpect(status().isNoContent());
+        mvc.perform(post("/api/auth/logout").cookie(anon.cookie())
+                .header("X-CSRF-TOKEN", anon.csrf())).andExpect(status().isNoContent());
+        assertThat(auditCount(fullUser, "logout", "success")).isEqualTo(1);
+        assertThat(auditCount(preUser, "logout", "success")).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from identity.security_audit_fact where event_category = 'logout' and actor_user_id = target_user_id and actor_user_id in (?, ?)",
+                Integer.class, fullUser, preUser)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("select count(*) from identity.security_audit_fact where event_category = 'logout' and target_user_id is null",
+                Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from identity.security_audit_fact where event_category = 'logout' and (reason_code is not null or correlation_id is not null)",
+                Integer.class)).isZero();
+        assertThat(state(full)).isEqualTo("anonymous");
+        assertThat(state(pre)).isEqualTo("anonymous");
+    }
+
+    @Test void logoutAuditFailureCannotPreserveSessionAuthority() throws Exception {
+        UUID user = account();
+        Browser full = login(csrf(null), email(user), 200);
+        FAIL_LOGOUT_AUDIT.set(true);
+        try {
+            mvc.perform(post("/api/auth/logout").cookie(full.cookie())
+                    .header("X-CSRF-TOKEN", full.csrf()))
+                    .andExpect(status().isNoContent());
+        } finally { FAIL_LOGOUT_AUDIT.set(false); }
+        assertThat(state(full)).isEqualTo("anonymous");
+        assertThat(auditCount(user, "logout", "success")).isZero();
+    }
+
+    private int auditCount(UUID user, String category, String outcome) {
+        return jdbc.queryForObject("select count(*) from identity.security_audit_fact where target_user_id = ? and event_category = ? and outcome_code = ?",
+                Integer.class, user, category, outcome);
+    }
+
+    private String cookieId(Browser browser) {
+        var request = new org.springframework.mock.web.MockHttpServletRequest();
+        request.setCookies(browser.cookie());
+        return cookieSerializer.readCookieValues(request).get(0);
+    }
+
+    private int fullSessionCount(UUID user) {
+        return (int) jdbc.query("select session_id from identity.spring_session where principal_name = ?",
+                (rs, row) -> rs.getString(1), user.toString()).stream().filter(id -> {
+                    var session = (org.springframework.session.Session) sessionRepository.findById(id);
+                    if (session == null) return false;
+                    var context = (org.springframework.security.core.context.SecurityContext)
+                            session.getAttribute("SPRING_SECURITY_CONTEXT");
+                    return context != null && context.getAuthentication() != null
+                            && context.getAuthentication().getAuthorities().stream()
+                            .anyMatch(a -> "ROLE_USER".equals(a.getAuthority()));
+                }).count();
     }
 
     @Test void rateControlUnavailableFailsClosedBeforeMfaProof() throws Exception {
@@ -239,6 +444,9 @@ class MfaCoreIntegrationTest {
                     .content("{\"code\":\"123456\"}"))
                     .andExpect(status().isServiceUnavailable());
         } finally { rates.unavailable = false; }
+        assertThat(((IdentitySessionState.Challenge) ((org.springframework.session.Session)
+                sessionRepository.findById(cookieId(pre)))
+                .getAttribute(IdentitySessionState.CHALLENGE_ATTRIBUTE)).failedAttempts()).isZero();
     }
 
     @Test void pendingReplacementExpiresOldHandleAndChallengeExpiresOrLosesEligibility()
@@ -260,6 +468,9 @@ class MfaCoreIntegrationTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"code\":\"123456\"}"))
                 .andExpect(status().isNotFound());
+        assertThat((Object) ((org.springframework.session.Session) sessionRepository
+                .findById(cookieId(pre))).getAttribute(IdentitySessionState.CHALLENGE_ATTRIBUTE))
+                .isNull();
         pre = login(csrf(null), email(user), 202);
         jdbc.update("update identity.account set account_state = 'suspended' where user_id = ?", user);
         mvc.perform(post("/api/auth/mfa/challenges/" + pre.challengeId() + "/totp")
@@ -288,6 +499,7 @@ class MfaCoreIntegrationTest {
                 .header("X-CSRF-TOKEN", pre.csrf()))
                 .andExpect(status().isNoContent());
         assertThat(state(pre)).isEqualTo("anonymous");
+        assertThat(sessionRepository.findById(cookieId(pre))).isNull();
         Browser anonymous = csrf(null);
         mvc.perform(post("/api/auth/logout").cookie(anonymous.cookie())
                 .header("X-CSRF-TOKEN", anonymous.csrf()))
@@ -414,9 +626,53 @@ class MfaCoreIntegrationTest {
         }
     }
 
+    static final class FaultyCompletionCheckpoint extends IdentitySessionTransitionCheckpoint {
+        @Autowired JdbcTemplate jdbc;
+        volatile boolean fail;
+        volatile boolean observedInTransaction;
+
+        @Override void afterSessionMutation(jakarta.servlet.http.HttpServletRequest request) {
+            if (!fail) return;
+            var principal = (IdentitySessionPrincipal) org.springframework.security.core.context
+                    .SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+            observedInTransaction = org.springframework.transaction.support.TransactionSynchronizationManager
+                    .isActualTransactionActive()
+                    && jdbc.queryForObject("select count(*) from identity.spring_session where session_id = ?",
+                            Integer.class, request.getSession(false).getId()) == 1
+                    && jdbc.queryForObject("""
+                            select count(*) from identity.spring_session_attributes a
+                            join identity.spring_session s on s.primary_id = a.session_primary_id
+                            where s.session_id = ? and a.attribute_name = 'SPRING_SECURITY_CONTEXT'
+                            """, Integer.class, request.getSession(false).getId()) == 1
+                    && jdbc.queryForObject("""
+                            select count(*) from identity.security_audit_fact
+                            where target_user_id = ? and
+                              ((event_category = 'mfa_challenge' and outcome_code in
+                                  ('totp_accepted', 'recovery_accepted'))
+                               or (event_category = 'password_login' and outcome_code = 'success'))
+                            """, Integer.class, principal.userId()) >= 1;
+            throw new IllegalStateException("synthetic_mfa_completion_failure");
+        }
+    }
+
+    static class FaultyLogoutAudit extends IdentityPersistence {
+        FaultyLogoutAudit(org.springframework.jdbc.core.simple.JdbcClient jdbc) { super(jdbc); }
+        @Override void auditLogout(UUID userId, Instant now) {
+            if (FAIL_LOGOUT_AUDIT.get()) throw new IllegalStateException("synthetic_audit_unavailable");
+            super.auditLogout(userId, now);
+        }
+    }
+
     @TestConfiguration(proxyBeanMethods = false)
     static class Doubles {
         @Bean @Primary MutableClock syntheticClock() { return new MutableClock(); }
         @Bean @Primary SyntheticRates syntheticRates() { return new SyntheticRates(); }
+        @Bean @Primary FaultyCompletionCheckpoint faultyCompletionCheckpoint() {
+            return new FaultyCompletionCheckpoint();
+        }
+        @Bean @Primary FaultyLogoutAudit faultyLogoutAudit(
+                org.springframework.jdbc.core.simple.JdbcClient jdbc) {
+            return new FaultyLogoutAudit(jdbc);
+        }
     }
 }

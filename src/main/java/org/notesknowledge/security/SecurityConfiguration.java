@@ -20,11 +20,31 @@ import org.springframework.security.web.csrf.CsrfAuthenticationStrategy;
 import org.springframework.security.web.csrf.HttpSessionCsrfTokenRepository;
 import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy;
 import org.springframework.session.web.http.DefaultCookieSerializer;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionOperations;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import org.notesknowledge.websupport.ApiProblemWriter;
 
 @Configuration(proxyBeanMethods = false)
 public class SecurityConfiguration {
+
+    /** Spring Session writes join an enclosing Identity security transition. */
+    @Bean("springSessionTransactionOperations")
+    TransactionOperations springSessionTransactionOperations(
+            ObjectProvider<PlatformTransactionManager> managers) {
+        // Database-less compatibility profiles do not instantiate the JDBC repository.
+        // Resolve the manager only when Spring Session performs an actual JDBC operation.
+        return new TransactionOperations() {
+            @Override
+            public <T> T execute(org.springframework.transaction.support.TransactionCallback<T> callback) {
+                TransactionTemplate operations = new TransactionTemplate(managers.getObject());
+                operations.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRED);
+                return operations.execute(callback);
+            }
+        };
+    }
 
     @Bean
     HttpSessionCsrfTokenRepository csrfTokenRepository() {

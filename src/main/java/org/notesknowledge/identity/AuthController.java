@@ -25,6 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
 @IdentityCoreEnabled
 @RequestMapping("/api/auth")
 final class AuthController {
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(AuthController.class);
     record EmailInput(String email) { }
     record RegistrationInput(String email, String password) { }
     record ConfirmationInput(String token) { }
@@ -36,15 +37,12 @@ final class AuthController {
     private final IdentityPersistence identity;
     private final RateControlService rates;
     private final RateKeyDeriver rateKeys;
-    private final MfaSessionTransitions sessions;
-    private final MfaChallengeService challenges;
     private final MfaRateControl mfaRates;
     private final java.time.Clock clock;
 
     AuthController(RegistrationService registration, EmailVerificationService verification,
             PasswordAuthenticationService passwords, IdentityPersistence identity,
             RateControlService rates, RateKeyDeriver rateKeys,
-            MfaSessionTransitions sessions, MfaChallengeService challenges,
             MfaRateControl mfaRates, java.time.Clock clock) {
         this.registration = registration;
         this.verification = verification;
@@ -52,8 +50,6 @@ final class AuthController {
         this.identity = identity;
         this.rates = rates;
         this.rateKeys = rateKeys;
-        this.sessions = sessions;
-        this.challenges = challenges;
         this.mfaRates = mfaRates;
         this.clock = clock;
     }
@@ -128,13 +124,10 @@ final class AuthController {
             throw ApiFailureException.of(ApiFailureException.Kind.INVALID_INPUT);
         }
         rate("PASSWORD_LOGIN", input.email(), request);
-        UUID userId = passwords.authenticate(input.email(), input.password());
-        boolean mfaRequired = challenges.active(userId);
-        sessions.establish(userId, !mfaRequired, request, response);
-        if (mfaRequired) {
-            String challengeId = challenges.begin(userId, request);
+        var result = passwords.authenticate(input.email(), input.password(), request, response);
+        if (result.mfaRequired()) {
             return ResponseEntity.accepted().cacheControl(CacheControl.noStore())
-                    .body(Map.of("challengeId", challengeId, "state", "mfaRequired"));
+                    .body(Map.of("challengeId", result.challengeId(), "state", "mfaRequired"));
         }
         return ResponseEntity.ok().cacheControl(CacheControl.noStore())
                 .body(Map.of("state", "authenticated"));
@@ -155,9 +148,21 @@ final class AuthController {
 
     @PostMapping("/logout")
     ResponseEntity<Void> logout(HttpServletRequest request) {
+        var authentication = SecurityContextHolder.getContext().getAuthentication();
+        UUID userId = authentication != null
+                && authentication.getPrincipal() instanceof IdentitySessionPrincipal principal
+                ? principal.userId() : null;
         var session = request.getSession(false);
         if (session != null) session.invalidate();
         SecurityContextHolder.clearContext();
+        if (userId != null) {
+            try {
+                identity.auditLogout(userId, clock.instant());
+            } catch (RuntimeException failure) {
+                // Revocation has already happened. Never restore authority for audit availability.
+                LOG.warn("logout_audit_failed");
+            }
+        }
         return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
     }
 

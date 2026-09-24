@@ -45,8 +45,7 @@ final class MfaController {
         UUID userId = IdentitySessionState.principal("ROLE_MFA_PENDING");
         rates.check("MFA_TOTP", userId, request);
         if (input == null) throw ApiFailureException.of(ApiFailureException.Kind.INVALID_INPUT);
-        challenges.completeTotp(userId, challengeId, input.code(), request);
-        sessions.establish(userId, true, request, response);
+        challenges.completeTotp(userId, challengeId, input.code(), request, response);
         return ResponseEntity.ok().cacheControl(CacheControl.noStore())
                 .body(Map.of("state", "authenticated"));
     }
@@ -57,8 +56,7 @@ final class MfaController {
         UUID userId = IdentitySessionState.principal("ROLE_MFA_PENDING");
         rates.check("MFA_RECOVERY", userId, request);
         if (input == null) throw ApiFailureException.of(ApiFailureException.Kind.INVALID_INPUT);
-        challenges.completeRecovery(userId, challengeId, input.code(), request);
-        sessions.establish(userId, true, request, response);
+        challenges.completeRecovery(userId, challengeId, input.code(), request, response);
         return ResponseEntity.ok().cacheControl(CacheControl.noStore())
                 .body(Map.of("state", "authenticated"));
     }

@@ -16,9 +16,20 @@ final class IdentitySessionState {
     static final String CHALLENGE_ATTRIBUTE = "IDENTITY_MFA_CHALLENGE";
     static final String RECENT_ATTRIBUTE = "IDENTITY_RECENT_PASSWORD_AUTH";
 
-    record Challenge(String id, UUID userId, Instant activation, Instant expiresAt)
+    record Challenge(String id, UUID userId, Instant activation, Instant expiresAt,
+            int failedAttempts)
             implements Serializable {
         @Serial private static final long serialVersionUID = 1L;
+
+        Challenge {
+            if (failedAttempts < 0 || failedAttempts > 8) {
+                throw new IllegalArgumentException("Invalid MFA challenge failure count");
+            }
+        }
+
+        Challenge failed() {
+            return new Challenge(id, userId, activation, expiresAt, failedAttempts + 1);
+        }
     }
 
     private IdentitySessionState() { }

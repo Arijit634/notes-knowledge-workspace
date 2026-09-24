@@ -16,7 +16,7 @@ import org.notesknowledge.websupport.ApiFailureException;
 @Tag("FAST") @Tag("SECURITY")
 class MfaPrimitivesTest {
     private static final MfaProperties POLICY = new MfaProperties(Duration.ofMinutes(5),
-            Duration.ofMinutes(10), Duration.ofMinutes(5), 30, 6, 1, 8);
+            Duration.ofMinutes(10), Duration.ofMinutes(5), 30, 6, 1, 8, 5);
     private static final String KEY = Base64.getEncoder().encodeToString(new byte[32]);
 
     @Test void rfc6238VectorAndBoundedReplayWindow() {
@@ -64,10 +64,13 @@ class MfaPrimitivesTest {
 
     @Test void invalidPolicyIsRejected() {
         assertThatThrownBy(() -> new MfaProperties(Duration.ofHours(1),
-                Duration.ofMinutes(10), Duration.ofMinutes(5), 30, 6, 1, 8))
+                Duration.ofMinutes(10), Duration.ofMinutes(5), 30, 6, 1, 8, 5))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new MfaProperties(Duration.ofMinutes(5),
-                Duration.ofMinutes(10), Duration.ofMinutes(5), 30, 6, 2, 8))
+                Duration.ofMinutes(10), Duration.ofMinutes(5), 30, 6, 2, 8, 5))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new MfaProperties(Duration.ofMinutes(5),
+                Duration.ofMinutes(10), Duration.ofMinutes(5), 30, 6, 1, 8, 0))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }

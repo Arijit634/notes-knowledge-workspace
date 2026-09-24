@@ -143,6 +143,15 @@ class IdentityPersistence {
                 .param("outcome", outcome).param("now", Timestamp.from(now)).update();
     }
 
+    void auditLogout(UUID userId, Instant now) {
+        jdbc.sql("""
+                insert into identity.security_audit_fact
+                    (audit_fact_id, actor_user_id, target_user_id,
+                     event_category, outcome_code, occurred_at)
+                values (uuidv7(), :user, :user, 'logout', 'success', :now)
+                """).param("user", userId).param("now", Timestamp.from(now)).update();
+    }
+
     Optional<String> currentVerificationDestination(UUID deliveryId, UUID capabilityId,
             Instant now) {
         return jdbc.sql("""
