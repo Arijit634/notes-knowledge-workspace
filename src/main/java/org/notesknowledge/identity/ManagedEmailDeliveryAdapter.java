@@ -1,5 +1,10 @@
 package org.notesknowledge.identity;
 
+import jakarta.mail.Address;
+import jakarta.mail.SendFailedException;
+import org.eclipse.angus.mail.smtp.SMTPAddressFailedException;
+import org.eclipse.angus.mail.smtp.SMTPSendFailedException;
+import org.eclipse.angus.mail.smtp.SMTPSenderFailedException;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.MailAuthenticationException;
@@ -71,9 +76,48 @@ final class ManagedEmailDeliveryAdapter implements SecurityEmailProviderPort {
                 | MailPreparationException exception) {
             return Outcome.NON_RETRYABLE;
         } catch (MailSendException exception) {
-            return Outcome.AMBIGUOUS;
+            return classifySendFailure(exception, recipient);
         } catch (MailException exception) {
+            return Outcome.AMBIGUOUS;
+        }
+    }
+
+    private Outcome classifySendFailure(MailSendException exception, String recipient) {
+        // This adapter sends exactly one message to exactly one intended recipient.
+        // A failed-message map without precisely one typed failure cannot prove acceptance.
+        if (exception.getFailedMessages().size() != 1) {
+            return Outcome.AMBIGUOUS;
+        }
+        Exception failure = exception.getFailedMessages().values().iterator().next();
+        if (failure instanceof SendFailedException sendFailure
+                && hasAcceptedRecipient(sendFailure.getValidSentAddresses())) {
+            return Outcome.AMBIGUOUS;
+        }
+        if (failure instanceof SMTPSendFailedException smtp) {
+            return smtpFailure(smtp.getReturnCode());
+        }
+        if (failure instanceof SMTPSenderFailedException smtp) {
+            return smtpFailure(smtp.getReturnCode());
+        }
+        if (failure instanceof SMTPAddressFailedException smtp
+                && smtp.getAddress() != null
+                && recipient.equalsIgnoreCase(smtp.getAddress().getAddress())) {
+            return smtpFailure(smtp.getReturnCode());
+        }
+        return Outcome.AMBIGUOUS;
+    }
+
+    private boolean hasAcceptedRecipient(Address[] addresses) {
+        return addresses != null && addresses.length != 0;
+    }
+
+    private Outcome smtpFailure(int status) {
+        if (status >= 500 && status < 600) {
+            return Outcome.NON_RETRYABLE;
+        }
+        if (status >= 400 && status < 500) {
             return Outcome.RETRYABLE;
         }
+        return Outcome.AMBIGUOUS;
     }
 }

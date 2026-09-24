@@ -2,6 +2,8 @@ package org.notesknowledge.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.time.Duration;
+
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
@@ -81,6 +83,30 @@ class RedisRateLimitAdapterTest {
                     .isEqualTo(new RateLimitPort.Throttled(86400));
             assertThat(template.keys("identity:rate:*")).allSatisfy(key ->
                     assertThat(key).doesNotContain("@", "192.0.2", "candidate-"));
+        } finally {
+            factory.destroy();
+        }
+    }
+
+    @Test
+    void providerRetryAfterUsesAtomicRemainingWindowRatherThanFullDay() {
+        var factory = new LettuceConnectionFactory(redis.getHost(), redis.getMappedPort(6379));
+        factory.afterPropertiesSet();
+        try {
+            var template = new StringRedisTemplate(factory);
+            template.afterPropertiesSet();
+            var adapter = new RedisRateLimitAdapter(template,
+                    new IdentityRateProperties(60, 86400, 6, 6, 12, 10, 1200, 1));
+            String key = "identity:rate:SECURITY_EMAIL_PROVIDER:syntheticOpaqueTtlKey789";
+            var request = request("SECURITY_EMAIL_PROVIDER",
+                    new RateLimitPort.OpaqueKey("syntheticOpaqueTtlKey789"));
+            assertThat(adapter.evaluate(request)).isInstanceOf(RateLimitPort.Allowed.class);
+            assertThat(template.expire(key, Duration.ofSeconds(3))).isTrue();
+            var decision = adapter.evaluate(request);
+            assertThat(decision).isInstanceOf(RateLimitPort.Throttled.class);
+            assertThat(((RateLimitPort.Throttled) decision).retryAfterSeconds())
+                    .isBetween(1, 3);
+            assertThat(template.getExpire(key)).isBetween(1L, 3L);
         } finally {
             factory.destroy();
         }
