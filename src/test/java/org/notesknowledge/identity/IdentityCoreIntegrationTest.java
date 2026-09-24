@@ -532,7 +532,27 @@ class IdentityCoreIntegrationTest {
                     "select count(*) from identity.security_email_delivery", Integer.class))
                     .isEqualTo(deliveriesBefore);
             assertThat(ratePort.count("IDENTITY_GLOBAL", "whole-deployment")).isEqualTo(1);
+
+            ratePort.enableThresholds(10, 100, 100);
+            ratePort.unavailableControl = "IDENTITY_GLOBAL";
+            mvc.perform(post("/api/auth/registrations")
+                    .with(request -> { request.setRemoteAddr("192.0.2.91"); return request; })
+                    .cookie(browser.cookie()).header("X-CSRF-TOKEN", browser.csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"email\":\"global-unavailable@example.test\","
+                            + "\"password\":\"SyntheticPassword-2026!\"}"))
+                    .andExpect(status().isServiceUnavailable());
+            assertThat(ratePort.count("REGISTRATION", "source:192.0.2.91")).isEqualTo(1);
+            assertThat(ratePort.count("REGISTRATION",
+                    "candidate:global-unavailable@example.test")).isEqualTo(1);
+            assertThat(ratePort.count("IDENTITY_GLOBAL", "whole-deployment")).isZero();
+            assertThat(jdbc.queryForObject("select count(*) from identity.account",
+                    Integer.class)).isEqualTo(accountsBefore);
+            assertThat(jdbc.queryForObject(
+                    "select count(*) from identity.security_email_delivery", Integer.class))
+                    .isEqualTo(deliveriesBefore);
         } finally {
+            ratePort.unavailableControl = null;
             ratePort.disableThresholds();
         }
     }
@@ -1161,6 +1181,7 @@ class IdentityCoreIntegrationTest {
         volatile int specificCeiling;
         volatile int aggregateCeiling;
         volatile int providerCeiling;
+        volatile String unavailableControl;
 
         void enableThresholds(int specific, int aggregate, int provider) {
             counts.clear();
@@ -1187,6 +1208,9 @@ class IdentityCoreIntegrationTest {
                 return decision;
             }
             String control = request.controlClass().value();
+            if (control.equals(unavailableControl)) {
+                return new RateLimitPort.ControlUnavailable();
+            }
             String key = control + ":" + request.enforcementKey().value();
             int current = counts.computeIfAbsent(key, unused -> new AtomicInteger())
                     .incrementAndGet();
