@@ -471,6 +471,158 @@ class IdentityCoreIntegrationTest {
         }
     }
 
+    @Test
+    void specificRateRejectionsNeverDrainTheSharedGlobalBucket() throws Exception {
+        Browser browser = bootstrap();
+        ratePort.enableThresholds(2, 3, 100);
+        try {
+            for (int index = 0; index < 2; index++) {
+                verificationRequest(browser, "source-" + index + "@example.test",
+                        "192.0.2.60", 202);
+            }
+            int before = jdbc.queryForObject("select count(*) from identity.identity_capability",
+                    Integer.class);
+            verificationRequest(browser, "source-rejected@example.test", "192.0.2.60", 429);
+            assertThat(ratePort.count("IDENTITY_GLOBAL", "whole-deployment")).isEqualTo(2);
+            assertThat(jdbc.queryForObject("select count(*) from identity.identity_capability",
+                    Integer.class)).isEqualTo(before);
+            verificationRequest(browser, "source-elsewhere@example.test", "192.0.2.61", 202);
+            assertThat(ratePort.count("IDENTITY_GLOBAL", "whole-deployment")).isEqualTo(3);
+
+            ratePort.enableThresholds(2, 3, 100);
+            for (int index = 0; index < 2; index++) {
+                verificationRequest(browser, "candidate-repeated@example.test",
+                        "192.0.2." + (70 + index), 202);
+            }
+            verificationRequest(browser, "candidate-repeated@example.test", "192.0.2.72", 429);
+            assertThat(ratePort.count("IDENTITY_GLOBAL", "whole-deployment")).isEqualTo(2);
+            verificationRequest(browser, "candidate-elsewhere@example.test", "192.0.2.73", 202);
+            assertThat(ratePort.count("IDENTITY_GLOBAL", "whole-deployment")).isEqualTo(3);
+
+            ratePort.enableThresholds(2, 3, 100);
+            for (int index = 0; index < 3; index++) {
+                verificationRequest(browser, "rotated-both-" + index + "@example.test",
+                        "192.0.2." + (80 + index), 202);
+            }
+            verificationRequest(browser, "rotated-both-over@example.test", "192.0.2.83", 429);
+            assertThat(ratePort.count("IDENTITY_GLOBAL", "whole-deployment")).isEqualTo(4);
+
+            ratePort.enableThresholds(1, 100, 100);
+            String registrationBody = "{\"email\":\"rate-first-" + UUID.randomUUID()
+                    + "@example.test\",\"password\":\"SyntheticPassword-2026!\"}";
+            mvc.perform(post("/api/auth/registrations")
+                    .with(request -> { request.setRemoteAddr("192.0.2.90"); return request; })
+                    .cookie(browser.cookie()).header("X-CSRF-TOKEN", browser.csrf())
+                    .contentType(MediaType.APPLICATION_JSON).content(registrationBody))
+                    .andExpect(status().isAccepted());
+            int accountsBefore = jdbc.queryForObject("select count(*) from identity.account",
+                    Integer.class);
+            int deliveriesBefore = jdbc.queryForObject(
+                    "select count(*) from identity.security_email_delivery", Integer.class);
+            mvc.perform(post("/api/auth/registrations")
+                    .with(request -> { request.setRemoteAddr("192.0.2.90"); return request; })
+                    .cookie(browser.cookie()).header("X-CSRF-TOKEN", browser.csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"email\":\"rate-rejected@example.test\","
+                            + "\"password\":\"SyntheticPassword-2026!\"}"))
+                    .andExpect(status().isTooManyRequests());
+            assertThat(jdbc.queryForObject("select count(*) from identity.account",
+                    Integer.class)).isEqualTo(accountsBefore);
+            assertThat(jdbc.queryForObject(
+                    "select count(*) from identity.security_email_delivery", Integer.class))
+                    .isEqualTo(deliveriesBefore);
+            assertThat(ratePort.count("IDENTITY_GLOBAL", "whole-deployment")).isEqualTo(1);
+        } finally {
+            ratePort.disableThresholds();
+        }
+    }
+
+    @Test
+    void providerCapacityUsesRemainingResetAndUnavailableEventuallyFailsWithoutSending() {
+        String throttledEmail = "capacity-throttle-" + UUID.randomUUID() + "@example.test";
+        registrationService.begin(throttledEmail, "SyntheticPassword-2026!");
+        Instant at = clock.instant();
+        var throttleClaim = delivery.claimReady(at, new LeaseOwner("capacity_throttle"),
+                new LeasePolicy(Duration.ofMinutes(2), 10), 10).stream()
+                .filter(c -> accountEmail(c.capabilityId()).equals(throttledEmail))
+                .findFirst().orElseThrow();
+        int submissionsBefore = provider.submissions.get();
+        ratePort.decision = new RateLimitPort.Throttled(17);
+        try {
+            workerAt(at.plusSeconds(1)).process(throttleClaim);
+        } finally {
+            ratePort.decision = new RateLimitPort.Allowed();
+        }
+        assertThat(state(throttleClaim.id())).isEqualTo("retry_wait");
+        assertThat(provider.submissions.get()).isEqualTo(submissionsBefore);
+        assertThat(jdbc.queryForObject("""
+                select attempt_count from identity.security_email_delivery
+                where security_email_delivery_id = ?
+                """, Integer.class, throttleClaim.id())).isZero();
+        Instant nextAttempt = jdbc.queryForObject("""
+                select next_attempt_at from identity.security_email_delivery
+                where security_email_delivery_id = ?
+                """, java.sql.Timestamp.class, throttleClaim.id()).toInstant();
+        Instant capabilityExpiry = jdbc.queryForObject("""
+                select expires_at from identity.identity_capability where capability_id = ?
+                """, java.sql.Timestamp.class, throttleClaim.capabilityId()).toInstant();
+        assertThat(nextAttempt).isCloseTo(at.plusSeconds(18),
+                org.assertj.core.api.Assertions.within(Duration.ofMillis(1)))
+                .isBefore(capabilityExpiry);
+        var resumed = delivery.claimReady(nextAttempt, new LeaseOwner("capacity_resumed"),
+                new LeasePolicy(Duration.ofMinutes(2), 10), 10).stream()
+                .filter(c -> c.id().equals(throttleClaim.id())).findFirst().orElseThrow();
+        assertThat(resumed.attempt()).isEqualTo(1);
+        workerAt(nextAttempt.plusSeconds(1)).process(resumed);
+        assertThat(state(resumed.id())).isEqualTo("submitted");
+
+        String unavailableEmail = "capacity-unavailable-" + UUID.randomUUID()
+                + "@example.test";
+        registrationService.begin(unavailableEmail, "SyntheticPassword-2026!");
+        at = clock.instant();
+        ratePort.decision = new RateLimitPort.ControlUnavailable();
+        try {
+            for (int attempt = 1; attempt <= deliverySettings.maxAttempts(); attempt++) {
+                var claim = delivery.claimReady(at, new LeaseOwner("capacity_unavailable"),
+                        new LeasePolicy(Duration.ofMinutes(2), 10), 10).stream()
+                        .filter(c -> accountEmail(c.capabilityId()).equals(unavailableEmail))
+                        .findFirst().orElseThrow();
+                assertThat(claim.attempt()).isEqualTo(attempt);
+                workerAt(at.plusSeconds(1), () -> 0.0).process(claim);
+                assertThat(provider.submissions.get()).isEqualTo(submissionsBefore + 1);
+                at = at.plus(deliverySettings.maxBackoff()).plusSeconds(2);
+            }
+        } finally {
+            ratePort.decision = new RateLimitPort.Allowed();
+        }
+        UUID failedId = jdbc.queryForObject("""
+                select d.security_email_delivery_id from identity.security_email_delivery d
+                join identity.identity_capability c on c.capability_id = d.capability_id
+                join identity.account a on a.user_id = c.user_id
+                where a.canonical_email = ?
+                """, UUID.class, unavailableEmail);
+        assertThat(state(failedId)).isEqualTo("failed");
+        assertThat(jdbc.queryForObject("""
+                select sealed_token_ciphertext is null from identity.security_email_delivery
+                where security_email_delivery_id = ?
+                """, Boolean.class, failedId)).isTrue();
+    }
+
+    @Test
+    void retryJitterIsDeterministicallyTestableAndBounded() {
+        var low = workerAt(clock.instant(), () -> 0.0);
+        var high = workerAt(clock.instant(), () -> 0.99);
+        assertThat(low.retryDelay(1)).isEqualTo(deliverySettings.minBackoff());
+        assertThat(high.retryDelay(1)).isGreaterThan(low.retryDelay(1))
+                .isLessThanOrEqualTo(deliverySettings.maxBackoff());
+        for (int attempt = 1; attempt <= deliverySettings.maxAttempts(); attempt++) {
+            assertThat(high.retryDelay(attempt)).isGreaterThanOrEqualTo(
+                    deliverySettings.minBackoff()).isLessThanOrEqualTo(
+                    deliverySettings.maxBackoff());
+        }
+        assertThat(high.retryDelay(20)).isEqualTo(deliverySettings.maxBackoff());
+    }
+
     private void verificationRequest(Browser browser, String email, String source,
             int expectedStatus) throws Exception {
         mvc.perform(post("/api/auth/email-verification/requests")
@@ -846,7 +998,11 @@ class IdentityCoreIntegrationTest {
         }
         assertThat(provider.submissions.get()).isEqualTo(submissionsBefore + 1);
         String firstBody = provider.lastMessage.body();
-        var second = delivery.claimReady(now.plusSeconds(31),
+        Instant retryAt = jdbc.queryForObject("""
+                select next_attempt_at from identity.security_email_delivery
+                where security_email_delivery_id = ?
+                """, java.sql.Timestamp.class, first.id()).toInstant();
+        var second = delivery.claimReady(retryAt,
                 new LeaseOwner("synthetic_retry_worker"), policy, 10)
                 .stream().filter(c -> c.id().equals(first.id())).findFirst().orElseThrow();
         worker.process(second);
@@ -933,6 +1089,13 @@ class IdentityCoreIntegrationTest {
                 Clock.fixed(instant, ZoneOffset.UTC), deliverySettings, capacity, capacityKeys);
     }
 
+    private SecurityEmailWorker workerAt(Instant instant,
+            java.util.function.DoubleSupplier retryRandom) {
+        return new SecurityEmailWorker(identity, delivery, cipher, renderer, providerPort,
+                Clock.fixed(instant, ZoneOffset.UTC), deliverySettings, capacity,
+                capacityKeys, retryRandom);
+    }
+
     private String state(UUID deliveryId) {
         return jdbc.queryForObject("""
                 select state from identity.security_email_delivery
@@ -1009,6 +1172,14 @@ class IdentityCoreIntegrationTest {
         void disableThresholds() {
             specificCeiling = 0;
             counts.clear();
+        }
+
+        int count(String control, String material) {
+            String key = control + ":" + new RateKeyDeriver(
+                    "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")
+                    .derive(control, material).value();
+            var counter = counts.get(key);
+            return counter == null ? 0 : counter.get();
         }
 
         @Override public Decision evaluate(Request request) {

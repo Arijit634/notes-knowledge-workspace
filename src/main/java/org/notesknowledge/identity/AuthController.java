@@ -140,21 +140,21 @@ final class AuthController {
     }
 
     private void rate(String control, String candidate, HttpServletRequest request) {
-        rateGlobal();
-        rateSourceOnly(control, request);
         String canonical = IdentityInput.canonicalEmail(candidate);
+        rateSourceOnly(control, request);
         rates.check(new RateLimitPort.Request(new RateLimitPort.ControlClass(control),
                 rateKeys.derive(control, "candidate:" + canonical), 1),
                 RateControlService.Policy.SECURITY_CRITICAL);
+        rateGlobal();
     }
 
     private void rateSourceOnly(String control, HttpServletRequest request) {
-        if ("VERIFICATION_CONFIRMATION".equals(control)) {
-            rateGlobal();
-        }
         rates.check(new RateLimitPort.Request(new RateLimitPort.ControlClass(control),
                 rateKeys.derive(control, "source:" + request.getRemoteAddr()), 1),
                 RateControlService.Policy.SECURITY_CRITICAL);
+        if ("VERIFICATION_CONFIRMATION".equals(control)) {
+            rateGlobal();
+        }
     }
 
     private void rateGlobal() {

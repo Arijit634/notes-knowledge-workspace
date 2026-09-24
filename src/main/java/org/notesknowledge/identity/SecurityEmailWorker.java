@@ -3,6 +3,9 @@ package org.notesknowledge.identity;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Objects;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.DoubleSupplier;
 
 import org.springframework.beans.factory.ObjectProvider;
 import org.notesknowledge.security.RateKeyDeriver;
@@ -23,12 +26,23 @@ final class SecurityEmailWorker {
     private final SecurityEmailDeliveryProperties policy;
     private final RateLimitPort capacity;
     private final RateKeyDeriver capacityKeys;
+    private final DoubleSupplier retryRandom;
 
+    @org.springframework.beans.factory.annotation.Autowired
     SecurityEmailWorker(IdentityPersistence identity, SecurityEmailDeliveryRepository delivery,
             SecurityEmailMaterialCipher cipher, SecurityEmailMessageRenderer renderer,
             ObjectProvider<SecurityEmailProviderPort> provider, Clock clock,
             SecurityEmailDeliveryProperties policy, RateLimitPort capacity,
             RateKeyDeriver capacityKeys) {
+        this(identity, delivery, cipher, renderer, provider, clock, policy, capacity,
+                capacityKeys, () -> ThreadLocalRandom.current().nextDouble());
+    }
+
+    SecurityEmailWorker(IdentityPersistence identity, SecurityEmailDeliveryRepository delivery,
+            SecurityEmailMaterialCipher cipher, SecurityEmailMessageRenderer renderer,
+            ObjectProvider<SecurityEmailProviderPort> provider, Clock clock,
+            SecurityEmailDeliveryProperties policy, RateLimitPort capacity,
+            RateKeyDeriver capacityKeys, DoubleSupplier retryRandom) {
         this.identity = identity;
         this.delivery = delivery;
         this.cipher = cipher;
@@ -38,6 +52,7 @@ final class SecurityEmailWorker {
         this.policy = policy;
         this.capacity = capacity;
         this.capacityKeys = capacityKeys;
+        this.retryRandom = Objects.requireNonNull(retryRandom);
     }
 
     void process(SecurityEmailDeliveryRepository.Claim claim) {
@@ -94,7 +109,7 @@ final class SecurityEmailWorker {
                     new RateLimitPort.ControlClass("SECURITY_EMAIL_PROVIDER"),
                     capacityKeys.derive("SECURITY_EMAIL_PROVIDER", "whole-deployment"), 1));
         } catch (RuntimeException exception) {
-            defer(claim, "provider_capacity_unavailable", policy.minBackoff());
+            retryOrFail(claim, "provider_capacity_unavailable");
             return;
         }
         if (capacityDecision instanceof RateLimitPort.Throttled throttled) {
@@ -102,7 +117,7 @@ final class SecurityEmailWorker {
             return;
         }
         if (!(capacityDecision instanceof RateLimitPort.Allowed)) {
-            defer(claim, "provider_capacity_unavailable", policy.minBackoff());
+            retryOrFail(claim, "provider_capacity_unavailable");
             return;
         }
         now = clock.instant();
@@ -136,11 +151,25 @@ final class SecurityEmailWorker {
         if (claim.attempt() >= policy.maxAttempts()) {
             delivery.failed(claim, now, reason);
         } else {
-            long factor = 1L << Math.min(claim.attempt() - 1, 20);
-            long millis = Math.min(policy.maxBackoff().toMillis(),
-                    Math.multiplyExact(policy.minBackoff().toMillis(), factor));
-            delivery.retry(claim, now, now.plus(Duration.ofMillis(millis)), reason);
+            delivery.retry(claim, now, now.plus(retryDelay(claim.attempt())), reason);
         }
+    }
+
+    Duration retryDelay(int attempt) {
+        if (attempt < 1) {
+            throw new IllegalArgumentException("Retry attempt must be positive");
+        }
+        long factor = 1L << Math.min(attempt - 1, 20);
+        long millis = Math.min(policy.maxBackoff().toMillis(),
+                Math.multiplyExact(policy.minBackoff().toMillis(), factor));
+        long jitterBound = Math.min(policy.retryJitter().toMillis(),
+                policy.maxBackoff().toMillis() - millis);
+        double draw = retryRandom.getAsDouble();
+        if (!Double.isFinite(draw) || draw < 0 || draw >= 1) {
+            throw new IllegalStateException("Invalid security-email retry jitter source");
+        }
+        long jitterMillis = (long) (draw * (jitterBound + 1));
+        return Duration.ofMillis(millis + jitterMillis);
     }
 
     private void defer(SecurityEmailDeliveryRepository.Claim claim, String reason, Duration delay) {

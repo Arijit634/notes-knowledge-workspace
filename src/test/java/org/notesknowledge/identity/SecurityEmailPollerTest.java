@@ -118,7 +118,8 @@ class SecurityEmailPollerTest {
     private SecurityEmailDeliveryProperties settings(int batch, int workers, int queue) {
         return new SecurityEmailDeliveryProperties(batch, workers, queue,
                 Duration.ofSeconds(5), Duration.ofSeconds(1), 5,
-                Duration.ofSeconds(1), Duration.ofMinutes(1), Duration.ofSeconds(1),
+                Duration.ofSeconds(1), Duration.ofMinutes(1), Duration.ofMillis(500),
+                Duration.ofSeconds(1),
                 "synthetic_worker");
     }
 }
