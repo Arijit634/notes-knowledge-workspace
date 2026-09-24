@@ -114,6 +114,13 @@ public final class ApiProblemWriter {
 
     private URI safeInstance(HttpServletRequest request) {
         String path = request.getRequestURI();
+        // MFA continuation/enrollment locators are sensitive even in failure responses.
+        if (path != null && path.startsWith("/api/auth/mfa/challenges/")) {
+            return URI.create("/api/auth/mfa/challenges");
+        }
+        if (path != null && path.startsWith("/api/me/security/mfa/totp/enrollments/")) {
+            return URI.create("/api/me/security/mfa/totp/enrollments");
+        }
         if (path == null
                 || path.isBlank()
                 || path.length() > 512

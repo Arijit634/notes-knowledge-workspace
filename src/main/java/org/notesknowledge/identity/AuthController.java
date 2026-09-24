@@ -13,11 +13,7 @@ import org.notesknowledge.websupport.ApiFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.web.authentication.session.SessionAuthenticationStrategy;
-import org.springframework.security.web.context.SecurityContextRepository;
 import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -40,22 +36,26 @@ final class AuthController {
     private final IdentityPersistence identity;
     private final RateControlService rates;
     private final RateKeyDeriver rateKeys;
-    private final SessionAuthenticationStrategy sessionStrategy;
-    private final SecurityContextRepository contextRepository;
+    private final MfaSessionTransitions sessions;
+    private final MfaChallengeService challenges;
+    private final MfaRateControl mfaRates;
+    private final java.time.Clock clock;
 
     AuthController(RegistrationService registration, EmailVerificationService verification,
             PasswordAuthenticationService passwords, IdentityPersistence identity,
             RateControlService rates, RateKeyDeriver rateKeys,
-            SessionAuthenticationStrategy sessionStrategy,
-            SecurityContextRepository contextRepository) {
+            MfaSessionTransitions sessions, MfaChallengeService challenges,
+            MfaRateControl mfaRates, java.time.Clock clock) {
         this.registration = registration;
         this.verification = verification;
         this.passwords = passwords;
         this.identity = identity;
         this.rates = rates;
         this.rateKeys = rateKeys;
-        this.sessionStrategy = sessionStrategy;
-        this.contextRepository = contextRepository;
+        this.sessions = sessions;
+        this.challenges = challenges;
+        this.mfaRates = mfaRates;
+        this.clock = clock;
     }
 
     @GetMapping("/csrf")
@@ -75,7 +75,9 @@ final class AuthController {
         if (authentication != null && authentication.isAuthenticated()
                 && authentication.getPrincipal() instanceof IdentitySessionPrincipal principal
                 && identity.isActive(principal.userId())) {
-            state = "authenticated";
+            state = authentication.getAuthorities().stream()
+                    .anyMatch(a -> "ROLE_USER".equals(a.getAuthority()))
+                    ? "authenticated" : "mfaRequired";
         }
         return ResponseEntity.ok().cacheControl(CacheControl.noStore())
                 .body(Map.of("state", state));
@@ -127,16 +129,36 @@ final class AuthController {
         }
         rate("PASSWORD_LOGIN", input.email(), request);
         UUID userId = passwords.authenticate(input.email(), input.password());
-        var authentication = UsernamePasswordAuthenticationToken.authenticated(
-                new IdentitySessionPrincipal(userId), null,
-                java.util.List.of(new SimpleGrantedAuthority("ROLE_USER")));
-        sessionStrategy.onAuthentication(authentication, request, response);
-        var context = SecurityContextHolder.createEmptyContext();
-        context.setAuthentication(authentication);
-        SecurityContextHolder.setContext(context);
-        contextRepository.saveContext(context, request, response);
+        boolean mfaRequired = challenges.active(userId);
+        sessions.establish(userId, !mfaRequired, request, response);
+        if (mfaRequired) {
+            String challengeId = challenges.begin(userId, request);
+            return ResponseEntity.accepted().cacheControl(CacheControl.noStore())
+                    .body(Map.of("challengeId", challengeId, "state", "mfaRequired"));
+        }
         return ResponseEntity.ok().cacheControl(CacheControl.noStore())
                 .body(Map.of("state", "authenticated"));
+    }
+
+    @PostMapping("/reauth/password")
+    ResponseEntity<Void> reauthenticate(@RequestBody LoginInput input, HttpServletRequest request) {
+        UUID userId = IdentitySessionState.principal("ROLE_USER");
+        mfaRates.check("PASSWORD_REAUTH", userId, request);
+        if (input == null || input.email() != null) {
+            throw ApiFailureException.of(ApiFailureException.Kind.INVALID_INPUT);
+        }
+        passwords.reauthenticate(userId, input.password());
+        request.getSession().setAttribute(IdentitySessionState.RECENT_ATTRIBUTE,
+                new IdentitySessionState.RecentPassword(userId, clock.instant()));
+        return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
+    }
+
+    @PostMapping("/logout")
+    ResponseEntity<Void> logout(HttpServletRequest request) {
+        var session = request.getSession(false);
+        if (session != null) session.invalidate();
+        SecurityContextHolder.clearContext();
+        return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
     }
 
     private void rate(String control, String candidate, HttpServletRequest request) {

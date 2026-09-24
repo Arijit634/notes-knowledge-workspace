@@ -11,6 +11,8 @@ public final class ApiFailureException extends RuntimeException {
                 "validation_failed", "Request validation failed"),
         INVALID_CREDENTIALS(HttpStatus.UNAUTHORIZED,
                 "invalid_credentials", "Authentication failed"),
+        RECENT_AUTHENTICATION_REQUIRED(HttpStatus.FORBIDDEN,
+                "recent_authentication_required", "Recent authentication required"),
         RESOURCE_NOT_FOUND(HttpStatus.NOT_FOUND,
                 "resource_not_found", "Resource not found"),
         INVALID_LIFECYCLE_TRANSITION(HttpStatus.CONFLICT,

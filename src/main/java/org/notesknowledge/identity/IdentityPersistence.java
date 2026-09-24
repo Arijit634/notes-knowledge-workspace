@@ -38,6 +38,14 @@ class IdentityPersistence {
                 """).param("id", userId).query(Boolean.class).single();
     }
 
+    Optional<String> currentPasswordVerifier(UUID userId) {
+        return jdbc.sql("""
+                select password_verifier from identity.account
+                where user_id = :id and account_state = 'active'
+                  and email_verified_at is not null
+                """).param("id", userId).query(String.class).optional();
+    }
+
     Optional<UUID> pendingAccountForUpdate(String email) {
         return jdbc.sql("""
                 select user_id from identity.account

@@ -51,6 +51,23 @@ final class PasswordAuthenticationService {
         return candidate.id();
     }
 
+    void reauthenticate(UUID userId, String password) {
+        if (password == null || password.length() > 256) {
+            throw ApiFailureException.of(ApiFailureException.Kind.INVALID_INPUT);
+        }
+        String verifier = identity.currentPasswordVerifier(userId).orElse(null);
+        boolean matched = false;
+        if (verifier != null) {
+            try { matched = passwords.matches(password, verifier); }
+            catch (RuntimeException ignored) { matched = false; }
+        }
+        if (!matched) {
+            identity.audit(userId, "password_reauth", "denied", clock.instant());
+            throw ApiFailureException.of(ApiFailureException.Kind.INVALID_CREDENTIALS);
+        }
+        identity.audit(userId, "password_reauth", "success", clock.instant());
+    }
+
     private void deny() {
         identity.audit(null, "password_login", "denied", clock.instant());
         throw ApiFailureException.of(ApiFailureException.Kind.INVALID_CREDENTIALS);

@@ -81,7 +81,19 @@ public class SecurityConfiguration {
                                 "/api/auth/email-verification/confirmations",
                                 "/api/auth/login/password")
                         .access((authentication, context) -> new org.springframework.security.authorization.AuthorizationDecision(
+                                identityCore != null && !(authentication.get().getPrincipal()
+                                        instanceof org.notesknowledge.identity.IdentitySessionPrincipal)))
+                        .requestMatchers(HttpMethod.POST, "/api/auth/logout")
+                        .access((authentication, context) -> new org.springframework.security.authorization.AuthorizationDecision(
                                 identityCore != null))
+                        .requestMatchers(HttpMethod.POST,
+                                "/api/auth/mfa/challenges/{challengeId}/totp",
+                                "/api/auth/mfa/challenges/{challengeId}/recovery-code")
+                        .hasAuthority("ROLE_MFA_PENDING")
+                        .requestMatchers(HttpMethod.POST, "/api/auth/reauth/password",
+                                "/api/me/security/mfa/totp/enrollments",
+                                "/api/me/security/mfa/totp/enrollments/{enrollmentId}/confirmation")
+                        .hasAuthority("ROLE_USER")
                         .anyRequest()
                         .denyAll())
                 .httpBasic(AbstractHttpConfigurer::disable)
