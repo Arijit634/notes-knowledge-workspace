@@ -38,6 +38,14 @@ class IdentityPersistence {
                 """).param("id", userId).query(Boolean.class).single();
     }
 
+    Optional<String> currentPasswordVerifier(UUID userId) {
+        return jdbc.sql("""
+                select password_verifier from identity.account
+                where user_id = :id and account_state = 'active'
+                  and email_verified_at is not null
+                """).param("id", userId).query(String.class).optional();
+    }
+
     Optional<UUID> pendingAccountForUpdate(String email) {
         return jdbc.sql("""
                 select user_id from identity.account
@@ -133,6 +141,15 @@ class IdentityPersistence {
                 values (uuidv7(), :target, :category, :outcome, :now)
                 """).param("target", target, java.sql.Types.OTHER).param("category", category)
                 .param("outcome", outcome).param("now", Timestamp.from(now)).update();
+    }
+
+    void auditLogout(UUID userId, Instant now) {
+        jdbc.sql("""
+                insert into identity.security_audit_fact
+                    (audit_fact_id, actor_user_id, target_user_id,
+                     event_category, outcome_code, occurred_at)
+                values (uuidv7(), :user, :user, 'logout', 'success', :now)
+                """).param("user", userId).param("now", Timestamp.from(now)).update();
     }
 
     Optional<String> currentVerificationDestination(UUID deliveryId, UUID capabilityId,

@@ -80,6 +80,10 @@ class IdentityCoreIntegrationTest {
         registry.add("spring.datasource.password", postgres::getPassword);
         registry.add("identity.delivery.key-base64", () ->
                 "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
+        registry.add("identity.mfa.key-base64", () ->
+                "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=");
+        registry.add("identity.mfa.handle-key-base64", () ->
+                "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=");
         registry.add("identity.rate.key-base64", () ->
                 "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=");
         registry.add("identity.delivery.public-origin", () -> "https://example.test");
@@ -111,7 +115,7 @@ class IdentityCoreIntegrationTest {
     RequestMappingHandlerMapping mappings;
 
     @Test
-    void onlyTheSixAuthorizedProductPathsAreMapped() {
+    void onlyTheTwelveAuthorizedProductPathsAreMapped() {
         Set<String> paths = mappings.getHandlerMethods().keySet().stream()
                 .flatMap(mapping -> mapping.getPatternValues().stream())
                 .filter(path -> path.startsWith("/api/"))
@@ -120,7 +124,12 @@ class IdentityCoreIntegrationTest {
                 "/api/auth/csrf", "/api/auth/session", "/api/auth/registrations",
                 "/api/auth/email-verification/requests",
                 "/api/auth/email-verification/confirmations",
-                "/api/auth/login/password");
+                "/api/auth/login/password",
+                "/api/auth/mfa/challenges/{challengeId}/totp",
+                "/api/auth/mfa/challenges/{challengeId}/recovery-code",
+                "/api/auth/logout", "/api/auth/reauth/password",
+                "/api/me/security/mfa/totp/enrollments",
+                "/api/me/security/mfa/totp/enrollments/{enrollmentId}/confirmation");
     }
 
     @Test

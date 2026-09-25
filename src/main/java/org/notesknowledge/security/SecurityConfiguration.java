@@ -20,11 +20,31 @@ import org.springframework.security.web.csrf.CsrfAuthenticationStrategy;
 import org.springframework.security.web.csrf.HttpSessionCsrfTokenRepository;
 import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy;
 import org.springframework.session.web.http.DefaultCookieSerializer;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionOperations;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import org.notesknowledge.websupport.ApiProblemWriter;
 
 @Configuration(proxyBeanMethods = false)
 public class SecurityConfiguration {
+
+    /** Spring Session writes join an enclosing Identity security transition. */
+    @Bean("springSessionTransactionOperations")
+    TransactionOperations springSessionTransactionOperations(
+            ObjectProvider<PlatformTransactionManager> managers) {
+        // Database-less compatibility profiles do not instantiate the JDBC repository.
+        // Resolve the manager only when Spring Session performs an actual JDBC operation.
+        return new TransactionOperations() {
+            @Override
+            public <T> T execute(org.springframework.transaction.support.TransactionCallback<T> callback) {
+                TransactionTemplate operations = new TransactionTemplate(managers.getObject());
+                operations.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRED);
+                return operations.execute(callback);
+            }
+        };
+    }
 
     @Bean
     HttpSessionCsrfTokenRepository csrfTokenRepository() {
@@ -81,7 +101,19 @@ public class SecurityConfiguration {
                                 "/api/auth/email-verification/confirmations",
                                 "/api/auth/login/password")
                         .access((authentication, context) -> new org.springframework.security.authorization.AuthorizationDecision(
+                                identityCore != null && !(authentication.get().getPrincipal()
+                                        instanceof org.notesknowledge.identity.IdentitySessionPrincipal)))
+                        .requestMatchers(HttpMethod.POST, "/api/auth/logout")
+                        .access((authentication, context) -> new org.springframework.security.authorization.AuthorizationDecision(
                                 identityCore != null))
+                        .requestMatchers(HttpMethod.POST,
+                                "/api/auth/mfa/challenges/{challengeId}/totp",
+                                "/api/auth/mfa/challenges/{challengeId}/recovery-code")
+                        .hasAuthority("ROLE_MFA_PENDING")
+                        .requestMatchers(HttpMethod.POST, "/api/auth/reauth/password",
+                                "/api/me/security/mfa/totp/enrollments",
+                                "/api/me/security/mfa/totp/enrollments/{enrollmentId}/confirmation")
+                        .hasAuthority("ROLE_USER")
                         .anyRequest()
                         .denyAll())
                 .httpBasic(AbstractHttpConfigurer::disable)

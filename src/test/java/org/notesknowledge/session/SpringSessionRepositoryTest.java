@@ -51,8 +51,12 @@ class SpringSessionRepositoryTest {
                 .isEqualTo("never");
         assertThat(environment.getProperty("spring.session.jdbc.table-name"))
                 .isEqualTo("identity.spring_session");
+        assertThat(environment.getProperty("spring.session.jdbc.flush-mode"))
+                .isEqualTo("immediate");
         assertThat(ReflectionTestUtils.getField(sessions, "tableName"))
                 .isEqualTo("identity.spring_session");
+        assertThat(ReflectionTestUtils.getField(sessions, "flushMode"))
+                .isEqualTo(org.springframework.session.FlushMode.IMMEDIATE);
 
         FindByIndexNameSessionRepository<Session> repository = publicRepository(sessions);
         Session session = repository.createSession();

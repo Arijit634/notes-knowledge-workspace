@@ -27,7 +27,7 @@ class RedisRateLimitAdapterTest {
             var template = new StringRedisTemplate(factory);
             template.afterPropertiesSet();
             var adapter = new RedisRateLimitAdapter(template,
-                    new IdentityRateProperties(60, 86400, 6, 6, 12, 10, 1200, 250));
+                    new IdentityRateProperties(60, 86400, 6, 6, 12, 10, 1200, 250, 8, 6, 8));
             var request = new RateLimitPort.Request(
                     new RateLimitPort.ControlClass("REGISTRATION"),
                     new RateLimitPort.OpaqueKey("syntheticOpaqueRateKey789"), 1);
@@ -51,7 +51,7 @@ class RedisRateLimitAdapterTest {
             var template = new StringRedisTemplate(factory);
             template.afterPropertiesSet();
             var adapter = new RedisRateLimitAdapter(template,
-                    new IdentityRateProperties(60, 86400, 10, 10, 10, 10, 3, 2));
+                    new IdentityRateProperties(60, 86400, 10, 10, 10, 10, 3, 2, 8, 6, 8));
             var keys = new RateKeyDeriver(
                     "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=");
             for (int index = 0; index < 4; index++) {
@@ -96,7 +96,7 @@ class RedisRateLimitAdapterTest {
             var template = new StringRedisTemplate(factory);
             template.afterPropertiesSet();
             var adapter = new RedisRateLimitAdapter(template,
-                    new IdentityRateProperties(60, 86400, 6, 6, 12, 10, 1200, 1));
+                    new IdentityRateProperties(60, 86400, 6, 6, 12, 10, 1200, 1, 8, 6, 8));
             String key = "identity:rate:SECURITY_EMAIL_PROVIDER:syntheticOpaqueTtlKey789";
             var request = request("SECURITY_EMAIL_PROVIDER",
                     new RateLimitPort.OpaqueKey("syntheticOpaqueTtlKey789"));

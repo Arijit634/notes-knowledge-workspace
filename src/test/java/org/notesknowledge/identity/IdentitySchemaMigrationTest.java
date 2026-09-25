@@ -29,19 +29,24 @@ class IdentitySchemaMigrationTest {
             .withPassword("synthetic-identity-migrator-password");
 
     @Test
-    void forwardMigrationCreatesOnlyFourNewRelationsAndKeepsV001Intact() throws Exception {
+    void forwardMigrationCreatesOnlyApprovedMfaRelationsAndKeepsV001Intact() throws Exception {
         Flyway flyway = Flyway.configure()
                 .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
                 .locations("classpath:db/migration").load();
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(2);
+        flyway.migrate();
         assertThat(flyway.validateWithResult().validationSuccessful).isTrue();
         assertThat(flyway.info().applied()).extracting(m -> m.getScript())
                 .containsExactly("V001__platform__spring_session.sql",
-                        "V002__identity__account_verification_and_security_email.sql");
+                        "V002__identity__account_verification_and_security_email.sql",
+                        "V003__identity__mfa_core.sql");
         byte[] v001 = Files.readAllBytes(Path.of("src/main/resources/db/migration/"
                 + "V001__platform__spring_session.sql"));
         assertThat(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(v001)))
                 .isEqualTo("9c4099d9f67f889181cd97dcebd347de2a9f1a3e58b384625aebe79717ea2258");
+        byte[] v002 = Files.readAllBytes(Path.of("src/main/resources/db/migration/"
+                + "V002__identity__account_verification_and_security_email.sql"));
+        assertThat(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(v002)))
+                .isEqualTo("8697914be30364a9b7a3c5aa317496dadd7df23248644d0342063657b78f131a");
 
         JdbcTemplate jdbc = jdbc(postgres.getUsername(), postgres.getPassword());
         assertThat(jdbc.queryForList("""
@@ -51,6 +56,7 @@ class IdentitySchemaMigrationTest {
                 order by table_schema, table_name
                 """, String.class)).containsExactly(
                         "identity.account", "identity.identity_capability",
+                        "identity.mfa_configuration", "identity.mfa_recovery_code",
                         "identity.security_audit_fact", "identity.security_email_delivery",
                         "identity.spring_session", "identity.spring_session_attributes");
         assertThat(jdbc.queryForList("""
@@ -105,6 +111,62 @@ class IdentitySchemaMigrationTest {
                 create table identity.forbidden_probe(id integer)
                 """)).isInstanceOf(org.springframework.dao.DataAccessException.class)
                 .hasRootCauseInstanceOf(org.postgresql.util.PSQLException.class);
+    }
+
+    @Test
+    void mfaConstraintsRejectInvalidShapeAndPreserveOneRowPerAccount() {
+        Flyway.configure()
+                .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
+                .locations("classpath:db/migration").load().migrate();
+        JdbcTemplate jdbc = jdbc(postgres.getUsername(), postgres.getPassword());
+        java.util.UUID user = jdbc.queryForObject("select uuidv7()", java.util.UUID.class);
+        String email = "mfa-schema-" + user + "@example.test";
+        jdbc.update("""
+                insert into identity.account
+                    (user_id, canonical_email, display_email, email_verified_at,
+                     account_state, created_at, updated_at)
+                values (?, ?, ?, now(), 'active', now(), now())
+                """, user, email, email);
+        byte[] seed = new byte[20], nonce = new byte[12], tag = new byte[16];
+        assertThatThrownBy(() -> jdbc.update("""
+                insert into identity.mfa_configuration
+                    (user_id, state, seed_ciphertext, seed_nonce, seed_tag,
+                     key_version, enrolled_at)
+                values (?, 'invalid', ?, ?, ?, 'v1', now())
+                """, user, seed, nonce, tag)).isInstanceOf(
+                        org.springframework.dao.DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbc.update("""
+                insert into identity.mfa_configuration
+                    (user_id, state, seed_ciphertext, seed_nonce, seed_tag,
+                     key_version, enrolled_at)
+                values (?, 'enrollment_pending', ?, ?, ?, 'v1', now())
+                """, user, new byte[19], nonce, tag)).isInstanceOf(
+                        org.springframework.dao.DataIntegrityViolationException.class);
+        jdbc.update("""
+                insert into identity.mfa_configuration
+                    (user_id, state, seed_ciphertext, seed_nonce, seed_tag,
+                     key_version, enrolled_at)
+                values (?, 'enrollment_pending', ?, ?, ?, 'v1', now())
+                """, user, seed, nonce, tag);
+        assertThatThrownBy(() -> jdbc.update("""
+                insert into identity.mfa_configuration
+                    (user_id, state, seed_ciphertext, seed_nonce, seed_tag,
+                     key_version, enrolled_at)
+                values (?, 'enrollment_pending', ?, ?, ?, 'v1', now())
+                """, user, seed, nonce, tag)).isInstanceOf(
+                        org.springframework.dao.DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbc.update("""
+                insert into identity.mfa_recovery_code
+                    (recovery_code_id, user_id, set_generation, verifier_digest, issued_at)
+                values (uuidv7(), ?, 0, ?, now())
+                """, user, new byte[32])).isInstanceOf(
+                        org.springframework.dao.DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbc.update("""
+                insert into identity.mfa_recovery_code
+                    (recovery_code_id, user_id, set_generation, verifier_digest, issued_at)
+                values (uuidv7(), ?, 1, ?, now())
+                """, user, new byte[31])).isInstanceOf(
+                        org.springframework.dao.DataIntegrityViolationException.class);
     }
 
     private JdbcTemplate jdbc(String username, String password) {

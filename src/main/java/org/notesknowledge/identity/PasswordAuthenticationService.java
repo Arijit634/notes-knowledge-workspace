@@ -2,6 +2,8 @@ package org.notesknowledge.identity;
 
 import java.time.Clock;
 import java.util.UUID;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 
 import org.notesknowledge.websupport.ApiFailureException;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -24,7 +26,8 @@ final class PasswordAuthenticationService {
         this.commit = commit;
     }
 
-    UUID authenticate(String email, String password) {
+    LoginCommitService.LoginResult authenticate(String email, String password,
+            HttpServletRequest request, HttpServletResponse response) {
         String canonical = IdentityInput.canonicalEmail(email);
         if (password == null || password.length() > 256) {
             throw ApiFailureException.of(ApiFailureException.Kind.INVALID_INPUT);
@@ -47,8 +50,36 @@ final class PasswordAuthenticationService {
         }
         String upgraded = passwords.upgradeEncoding(candidate.verifier())
                 ? passwords.encode(password) : null;
-        commit.commit(candidate.id(), candidate.verifier(), upgraded, clock.instant());
-        return candidate.id();
+        try {
+            return commit.commit(candidate.id(), candidate.verifier(), upgraded,
+                    clock.instant(), request, response);
+        } catch (RuntimeException failure) {
+            // A rolled-back immediate flush may leave a mutated request wrapper.
+            try {
+                var session = request.getSession(false);
+                if (session != null) session.invalidate();
+            } finally {
+                org.springframework.security.core.context.SecurityContextHolder.clearContext();
+            }
+            throw failure;
+        }
+    }
+
+    void reauthenticate(UUID userId, String password) {
+        if (password == null || password.length() > 256) {
+            throw ApiFailureException.of(ApiFailureException.Kind.INVALID_INPUT);
+        }
+        String verifier = identity.currentPasswordVerifier(userId).orElse(null);
+        boolean matched = false;
+        if (verifier != null) {
+            try { matched = passwords.matches(password, verifier); }
+            catch (RuntimeException ignored) { matched = false; }
+        }
+        if (!matched) {
+            identity.audit(userId, "password_reauth", "denied", clock.instant());
+            throw ApiFailureException.of(ApiFailureException.Kind.INVALID_CREDENTIALS);
+        }
+        identity.audit(userId, "password_reauth", "success", clock.instant());
     }
 
     private void deny() {
