@@ -21,12 +21,16 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.notesknowledge.security.RateLimitPort;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
@@ -48,6 +52,7 @@ import tools.jackson.databind.ObjectMapper;
 
 @Tag("DATABASE") @Tag("API") @Tag("SECURITY")
 @Testcontainers
+@ExtendWith(OutputCaptureExtension.class)
 @SpringBootTest
 @AutoConfigureMockMvc
 @Import(OidcCoreIntegrationTest.Doubles.class)
@@ -84,7 +89,7 @@ class OidcCoreIntegrationTest {
     @Test void verifiedNewPrincipalCreatesOnePasswordlessAccountAndRotatesSession() throws Exception {
         Browser anonymous = csrf(null);
         String subject = "sub-" + UUID.randomUUID();
-        String email = "oidc-" + UUID.randomUUID() + "@example.test";
+        String email = "oidc-" + UUID.randomUUID() + "@gmail.com";
         String code = protocol.accept(subject, email, true);
         String state = start(anonymous, false);
         MvcResult result = callback(anonymous, state, code, false, 200);
@@ -114,7 +119,8 @@ class OidcCoreIntegrationTest {
         String collisionSubject = "sub-" + UUID.randomUUID();
         String state = start(anonymous, false);
         MvcResult collision = callback(anonymous, state,
-                protocol.accept(collisionSubject, email, true), false, 409);
+                protocol.accept(collisionSubject, email, true,
+                        "workspace.example.test", clock.instant()), false, 409);
         assertThat(collision.getResponse().getContentAsString())
                 .contains("oidc_account_action_required")
                 .doesNotContain(email, existing.toString(), collisionSubject);
@@ -124,7 +130,7 @@ class OidcCoreIntegrationTest {
         assertThat(sessionState(anonymous)).isEqualTo("anonymous");
         Browser another = csrf(null);
         callback(another, start(another, false), protocol.accept("sub-" + UUID.randomUUID(),
-                "unverified-" + UUID.randomUUID() + "@example.test", false), false, 401);
+                "unverified-" + UUID.randomUUID() + "@example.test", false), false, 409);
     }
 
     @Test void linkedLoginRequiresApplicationMfaAndOldCsrfIsNotAuthority() throws Exception {
@@ -190,6 +196,12 @@ class OidcCoreIntegrationTest {
         callback(full, wrongState,
                 protocol.accept("unlinked-" + UUID.randomUUID(), email(user), true), true, 401);
         assertThat(sessionState(full)).isEqualTo("authenticated");
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.security_audit_fact
+                where target_user_id = ? and event_category = 'oidc_recent_auth'
+                  and outcome_code = 'denied'
+                  and reason_code = 'recent_auth_identity_mismatch'
+                """, Integer.class, user)).isGreaterThanOrEqualTo(1);
         assertThat(jdbc.queryForObject("select count(*) from identity.external_identity_link",
                 Integer.class)).isGreaterThanOrEqualTo(1);
     }
@@ -248,8 +260,10 @@ class OidcCoreIntegrationTest {
         String secondState = start(second, false);
         String subject = "same-" + UUID.randomUUID();
         String email = "same-" + UUID.randomUUID() + "@example.test";
-        String firstCode = protocol.accept(subject, email, true);
-        String secondCode = protocol.accept(subject, email, true);
+        String firstCode = protocol.accept(subject, email, true,
+                "workspace.example.test", clock.instant());
+        String secondCode = protocol.accept(subject, email, true,
+                "workspace.example.test", clock.instant());
         checkpoint.barrier.set(new CountDownLatch(2));
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             var a = executor.submit(() -> callback(first, firstState, firstCode, false, -1));
@@ -273,7 +287,8 @@ class OidcCoreIntegrationTest {
         String state = start(browser, false);
         String subject = "sub-" + UUID.randomUUID();
         String email = "race-" + UUID.randomUUID() + "@example.test";
-        String code = protocol.accept(subject, email, true);
+        String code = protocol.accept(subject, email, true,
+                "workspace.example.test", clock.instant());
         checkpoint.barrier.set(new CountDownLatch(2));
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             var a = executor.submit(() -> callback(browser, state, code, false, -1));
@@ -317,6 +332,169 @@ class OidcCoreIntegrationTest {
                 """, Integer.class, user)).isEqualTo(1);
     }
 
+    @Test void verifiedWorkspaceHostedDomainBootstrapsButThirdPartyMailDoesNot()
+            throws Exception {
+        String workspaceSubject = "workspace-" + UUID.randomUUID();
+        String workspaceEmail = "member-" + UUID.randomUUID() + "@external.test";
+        Browser workspace = csrf(null);
+        callback(workspace, start(workspace, false), protocol.accept(workspaceSubject,
+                workspaceEmail, true, "workspace.example.test", clock.instant()), false, 200);
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.account a
+                join identity.external_identity_link l on l.user_id = a.user_id
+                where l.subject = ? and a.canonical_email = ?
+                  and a.email_verified_at is not null and a.account_state = 'active'
+                """, Integer.class, workspaceSubject, workspaceEmail)).isEqualTo(1);
+
+        assertRejectedBootstrap("third-party-" + UUID.randomUUID(),
+                "person@external.test", true, null);
+        assertRejectedBootstrap("fake-workspace-" + UUID.randomUUID(),
+                "person@workspace.example.test", true, null);
+        assertRejectedBootstrap("malformed-hosted-" + UUID.randomUUID(),
+                "person@external.test", true, "not a domain");
+        assertRejectedBootstrap("unverified-" + UUID.randomUUID(),
+                "person@external.test", false, "workspace.example.test");
+    }
+
+    @Test void existingLinkUsesIssuerAndSubjectEvenWhenEmailChangedOrUnverified()
+            throws Exception {
+        UUID user = account();
+        String subject = "linked-" + UUID.randomUUID();
+        link(user, subject);
+        Browser browser = csrf(null);
+        callback(browser, start(browser, false), protocol.accept(subject,
+                "changed@external.test", false), false, 200);
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.external_identity_link
+                where subject = ? and user_id = ?
+                """, Integer.class, subject, user)).isEqualTo(1);
+    }
+
+    @Test void recentAuthenticationRejectsMissingStaleAndFutureProviderAuthTime()
+            throws Exception {
+        UUID user = account();
+        String subject = "recent-" + UUID.randomUUID();
+        link(user, subject);
+        Browser anonymous = csrf(null);
+        MvcResult primary = callback(anonymous, start(anonymous, false),
+                protocol.accept(subject, email(user), true), false, 200);
+        Browser full = csrf(primary.getResponse().getCookie("SESSION"));
+        int linksBefore = jdbc.queryForObject(
+                "select count(*) from identity.external_identity_link", Integer.class);
+        for (Instant rejected : new Instant[] {null, clock.instant().minusSeconds(301),
+                clock.instant().plusSeconds(61)}) {
+            callback(full, start(full, true), protocol.accept(subject, email(user), true,
+                    null, rejected), true, 401);
+        }
+        org.springframework.session.Session persisted = sessionRepository.findById(cookieId(full));
+        Object recentFact = persisted.getAttribute(IdentitySessionState.RECENT_ATTRIBUTE);
+        assertThat(recentFact).isNull();
+        assertThat(jdbc.queryForObject(
+                "select count(*) from identity.external_identity_link", Integer.class))
+                .isEqualTo(linksBefore);
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.security_audit_fact
+                where target_user_id = ? and event_category = 'oidc_recent_auth'
+                  and outcome_code = 'denied' and reason_code = 'recent_auth_stale'
+                """, Integer.class, user)).isGreaterThanOrEqualTo(3);
+        // The protocol double represents an ID token that may have an iat but no auth_time.
+        callback(full, start(full, true), protocol.accept(subject, email(user), true,
+                null, clock.instant().minusSeconds(20)), true, 204);
+        org.springframework.session.Session refreshed = sessionRepository.findById(cookieId(full));
+        assertThat(((IdentitySessionState.RecentAuthentication) refreshed
+                .getAttribute(IdentitySessionState.RECENT_ATTRIBUTE))
+                .userId()).isEqualTo(user);
+    }
+
+    @Test void authorizationResponseIssuerIsRequiredBeforeExchangeOnBothCallbacks()
+            throws Exception {
+        Browser anonymous = csrf(null);
+        String loginState = start(anonymous, false);
+        String loginCode = protocol.accept("issuer-" + UUID.randomUUID(),
+                "issuer-" + UUID.randomUUID() + "@gmail.com", true);
+        int calls = protocol.verificationCalls.get();
+        callbackWithIssuer(anonymous, loginState, loginCode, false, 401, null);
+        callbackWithIssuer(anonymous, loginState, loginCode, false, 401,
+                "https://wrong.example.test");
+        callbackWithIssuer(anonymous, loginState, loginCode, false, 401,
+                "x".repeat(300));
+        assertThat(protocol.verificationCalls.get()).isEqualTo(calls);
+        MvcResult primary = callback(anonymous, loginState, loginCode, false, 200);
+        assertThat(protocol.verificationCalls.get()).isEqualTo(calls + 1);
+
+        Browser full = csrf(primary.getResponse().getCookie("SESSION"));
+        String recentState = start(full, true);
+        String recentCode = protocol.accept("unlinked-" + UUID.randomUUID(),
+                "changed@external.test", true);
+        calls = protocol.verificationCalls.get();
+        callbackWithIssuer(full, recentState, recentCode, true, 401, null);
+        callbackWithIssuer(full, recentState, recentCode, true, 401,
+                "https://wrong.example.test");
+        assertThat(protocol.verificationCalls.get()).isEqualTo(calls);
+        callback(full, recentState, recentCode, true, 401);
+        assertThat(protocol.verificationCalls.get()).isEqualTo(calls + 1);
+        org.springframework.session.Session persisted = sessionRepository.findById(cookieId(full));
+        Object recentFact = persisted.getAttribute(IdentitySessionState.RECENT_ATTRIBUTE);
+        assertThat(recentFact).isNull();
+    }
+
+    @Test void recentAuthIsRecheckedAfterProtocolWorkBeforeSessionCommit() throws Exception {
+        UUID user = account();
+        String subject = "delayed-" + UUID.randomUUID();
+        link(user, subject);
+        Browser anonymous = csrf(null);
+        MvcResult primary = callback(anonymous, start(anonymous, false),
+                protocol.accept(subject, email(user), true), false, 200);
+        Browser full = csrf(primary.getResponse().getCookie("SESSION"));
+        String state = start(full, true);
+        String code = protocol.accept(subject, email(user), true);
+        checkpoint.advanceBeforeCommitSeconds.set(301L);
+        callback(full, state, code, true, 401);
+        org.springframework.session.Session persisted = sessionRepository.findById(cookieId(full));
+        Object recentFact = persisted.getAttribute(IdentitySessionState.RECENT_ATTRIBUTE);
+        assertThat(recentFact).isNull();
+    }
+
+    @Test void oidcFailureAuditUsesOnlyBoundedReasonsAndNoCanaries(CapturedOutput output)
+            throws Exception {
+        Browser browser = csrf(null);
+        String state = start(browser, false);
+        String canary = "synthetic-oidc-canary-" + UUID.randomUUID();
+        String code = protocol.accept("subject-" + UUID.randomUUID(),
+                "person@gmail.com", true);
+        callback(browser, "wrong-state", code, false, 401);
+        callback(browser, state, canary, false, 401);
+        callback(browser, state, "provider-down", false, 503);
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.security_audit_fact
+                where event_category = 'oidc_login' and outcome_code = 'denied'
+                  and reason_code in ('protocol_state_invalid',
+                                      'provider_validation_failed', 'provider_unavailable')
+                """, Integer.class)).isGreaterThanOrEqualTo(3);
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.security_audit_fact
+                where event_category like 'oidc%' and
+                  (event_category || outcome_code || coalesce(reason_code, '')) like ?
+                """, Integer.class, "%" + canary + "%")).isZero();
+        assertThat(output.getAll()).doesNotContain(canary);
+    }
+
+    private void assertRejectedBootstrap(String subject, String email, boolean verified,
+            String hostedDomain) throws Exception {
+        Browser browser = csrf(null);
+        MvcResult rejected = callback(browser, start(browser, false),
+                protocol.accept(subject, email, verified, hostedDomain, clock.instant()),
+                false, 409);
+        assertThat(rejected.getResponse().getContentAsString())
+                .contains("oidc_account_action_required").doesNotContain(email, subject);
+        assertThat(jdbc.queryForObject(
+                "select count(*) from identity.external_identity_link where subject = ?",
+                Integer.class, subject)).isZero();
+        assertThat(jdbc.queryForObject(
+                "select count(*) from identity.account where canonical_email = ?",
+                Integer.class, email)).isZero();
+    }
+
     private UUID account() {
         UUID id = jdbc.queryForObject("select uuidv7()", UUID.class);
         jdbc.update("""
@@ -358,10 +536,17 @@ class OidcCoreIntegrationTest {
 
     private MvcResult callback(Browser browser, String state, String code,
             boolean recent, int expected) throws Exception {
+        return callbackWithIssuer(browser, state, code, recent, expected,
+                "https://accounts.google.com");
+    }
+
+    private MvcResult callbackWithIssuer(Browser browser, String state, String code,
+            boolean recent, int expected, String issuer) throws Exception {
         String path = recent ? "/api/auth/reauth/oidc/google/callback"
                 : "/api/auth/oidc/google/callback";
-        MvcResult result = mvc.perform(get(path).cookie(browser.cookie())
-                .param("state", state).param("code", code)).andReturn();
+        var request = get(path).cookie(browser.cookie()).param("state", state).param("code", code);
+        if (issuer != null) request.param("iss", issuer);
+        MvcResult result = mvc.perform(request).andReturn();
         if (expected >= 0) assertThat(result.getResponse().getStatus()).isEqualTo(expected);
         return result;
     }
@@ -400,9 +585,13 @@ class OidcCoreIntegrationTest {
 
     static final class OidcCheckpoint extends IdentitySessionTransitionCheckpoint {
         @Autowired JdbcTemplate jdbc;
+        @Autowired MutableClock clock;
         final AtomicReference<CountDownLatch> barrier = new AtomicReference<>();
         final AtomicReference<UUID> suspendBeforeCommit = new AtomicReference<>();
+        final AtomicReference<Long> advanceBeforeCommitSeconds = new AtomicReference<>();
         @Override void beforeOidcLock(jakarta.servlet.http.HttpServletRequest request) {
+            Long advance = advanceBeforeCommitSeconds.getAndSet(null);
+            if (advance != null) clock.advanceSeconds(advance);
             UUID user = suspendBeforeCommit.getAndSet(null);
             if (user != null) jdbc.update("""
                     update identity.account set account_state = 'suspended' where user_id = ?
@@ -422,18 +611,26 @@ class OidcCoreIntegrationTest {
     static final class SyntheticProtocol implements OidcProtocolPort {
         private final SecureRandom random = new SecureRandom();
         private final Map<String, ValidatedPrincipal> accepted = new ConcurrentHashMap<>();
+        private final AtomicInteger verificationCalls = new AtomicInteger();
+        @Autowired MutableClock clock;
 
         String accept(String subject, String email, boolean verified) {
+            return accept(subject, email, verified, null, clock.instant());
+        }
+
+        String accept(String subject, String email, boolean verified, String hostedDomain,
+                Instant authTime) {
             String code = "synthetic-" + UUID.randomUUID();
             accepted.put(code, new ValidatedPrincipal("https://accounts.google.com",
-                    subject, email, verified));
+                    subject, email, verified, hostedDomain, authTime));
             return code;
         }
 
         void overrideIssuer(String code, String issuer) {
             ValidatedPrincipal existing = accepted.get(code);
             accepted.put(code, new ValidatedPrincipal(issuer, existing.subject(),
-                    existing.email(), existing.emailVerified()));
+                    existing.email(), existing.emailVerified(), existing.hostedDomain(),
+                    existing.authTime()));
         }
 
         @Override public OAuth2AuthorizationRequest begin(Action action) {
@@ -454,6 +651,7 @@ class OidcCoreIntegrationTest {
 
         @Override public ValidatedPrincipal verify(Action action,
                 OAuth2AuthorizationRequest authorization, String code, String returnedState) {
+            verificationCalls.incrementAndGet();
             if ("provider-down".equals(code)) throw org.notesknowledge.websupport.ApiFailureException
                     .of(org.notesknowledge.websupport.ApiFailureException.Kind.SERVICE_UNAVAILABLE);
             ValidatedPrincipal principal = accepted.get(code);

@@ -66,7 +66,21 @@ class GoogleOidcProtocolAdapterTest {
                                 .digest(rawNonce.getBytes(StandardCharsets.US_ASCII))));
         assertThat(request.getAuthorizationRequestUri())
                 .contains("response_type=code", "code_challenge=", "nonce=", "state=")
-                .doesNotContain("client-secret", "code_verifier");
+                .doesNotContain("client-secret", "code_verifier", "max_age=", "claims=");
+    }
+
+    @Test void recentAuthorizationRequiresActiveReauthenticationAndIdTokenAuthTime() {
+        var adapter = adapter();
+        ReflectionTestUtils.setField(adapter, "recent", registration("google-recent",
+                "/api/auth/reauth/oidc/google/callback"));
+        var request = adapter.begin(OidcProtocolPort.Action.RECENT_AUTH);
+        assertThat(request.getAdditionalParameters()).containsEntry("max_age", "0")
+                .containsEntry("claims",
+                        "{\"id_token\":{\"auth_time\":{\"essential\":true}}}");
+        assertThat(request.getAuthorizationRequestUri()).contains("max_age=0", "claims=")
+                .doesNotContain("prompt=consent", "prompt=select_account");
+        assertThat(request.getAdditionalParameters().get("code_challenge_method"))
+                .isEqualTo("S256");
     }
 
     @Test void validatedClaimsEnforceIssuerAudienceAuthorizedPartyAndTime() {
@@ -99,6 +113,16 @@ class GoogleOidcProtocolAdapterTest {
         unverified.put("email_verified", false);
         assertThat(adapter.validatedClaims(user(unverified), registration).emailVerified())
                 .isFalse();
+        Map<String, Object> recent = claims();
+        Instant authentication = Instant.now().minusSeconds(30);
+        recent.put("auth_time", authentication);
+        recent.put("hd", "workspace.example.test");
+        var validated = adapter.validatedClaims(user(recent), registration);
+        assertThat(validated.authTime()).isEqualTo(authentication);
+        assertThat(validated.hostedDomain()).isEqualTo("workspace.example.test");
+        assertThat(adapter.validatedClaims(user(claims()), registration).authTime()).isNull();
+        recent.put("auth_time", "not-an-oidc-time");
+        assertThat(adapter.validatedClaims(user(recent), registration).authTime()).isNull();
     }
 
     @Test void springProviderIntegrationEnforcesStateNonceAndDecoderFailuresWithoutInternet() {
@@ -132,6 +156,18 @@ class GoogleOidcProtocolAdapterTest {
         assertThatThrownBy(() -> adapter.verify(OidcProtocolPort.Action.LOGIN, authorization,
                 "synthetic-code", authorization.getState()))
                 .isInstanceOf(ApiFailureException.class).hasMessage("invalid_credentials");
+
+        var recentRegistration = registration("google-recent",
+                "/api/auth/reauth/oidc/google/callback");
+        var recentAdapter = new GoogleOidcProtocolAdapter(properties(), provider,
+                null, recentRegistration);
+        var recentRequest = recentAdapter.begin(OidcProtocolPort.Action.RECENT_AUTH);
+        Instant authenticatedAt = Instant.now();
+        provider.setJwtDecoderFactory(ignored -> encoded -> jwt(
+                recentRequest.getAdditionalParameters().get("nonce").toString(), authenticatedAt));
+        var recentPrincipal = recentAdapter.verify(OidcProtocolPort.Action.RECENT_AUTH,
+                recentRequest, "synthetic-code", recentRequest.getState());
+        assertThat(recentPrincipal.authTime()).isEqualTo(authenticatedAt);
         provider.setJwtDecoderFactory(ignored -> encoded -> {
             throw new BadJwtException("synthetic invalid signature");
         });
@@ -161,7 +197,11 @@ class GoogleOidcProtocolAdapterTest {
     }
 
     private Jwt jwt(String nonce) {
-        return Jwt.withTokenValue("synthetic-id-token")
+        return jwt(nonce, null);
+    }
+
+    private Jwt jwt(String nonce, Instant authTime) {
+        var builder = Jwt.withTokenValue("synthetic-id-token")
                 .header("alg", "RS256")
                 .issuer(ISSUER).subject("synthetic-subject")
                 .audience(List.of(CLIENT))
@@ -169,7 +209,9 @@ class GoogleOidcProtocolAdapterTest {
                 .expiresAt(Instant.now().plusSeconds(3600))
                 .claim("nonce", nonce)
                 .claim("email", "synthetic@example.test")
-                .claim("email_verified", true).build();
+                .claim("email_verified", true);
+        if (authTime != null) builder.claim("auth_time", authTime);
+        return builder.build();
     }
 
     private ClientRegistration registration(String id, String path) {

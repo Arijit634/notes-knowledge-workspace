@@ -68,6 +68,10 @@ public final class ApiFailureException extends RuntimeException {
         return new ApiFailureException(Kind.RATE_LIMITED, retryAfterSeconds);
     }
 
+    public Kind kind() {
+        return kind;
+    }
+
     HttpStatus status() {
         return kind.status;
     }

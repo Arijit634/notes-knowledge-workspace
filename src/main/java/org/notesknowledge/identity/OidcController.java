@@ -31,9 +31,10 @@ final class OidcController {
     @GetMapping("/oidc/google/callback")
     ResponseEntity<Map<String, String>> login(@RequestParam(required = false) String state,
             @RequestParam(required = false) String code,
+            @RequestParam(required = false) String iss,
             @RequestParam(required = false) String error,
             HttpServletRequest request, HttpServletResponse response) {
-        var result = flows.complete(OidcProtocolPort.Action.LOGIN, state,
+        var result = flows.complete(OidcProtocolPort.Action.LOGIN, state, iss,
                 error == null ? code : null, request, response);
         if (result.mfaRequired()) {
             return ResponseEntity.accepted().cacheControl(CacheControl.noStore())
@@ -52,9 +53,10 @@ final class OidcController {
     @GetMapping("/reauth/oidc/google/callback")
     ResponseEntity<Void> recent(@RequestParam(required = false) String state,
             @RequestParam(required = false) String code,
+            @RequestParam(required = false) String iss,
             @RequestParam(required = false) String error,
             HttpServletRequest request, HttpServletResponse response) {
-        flows.complete(OidcProtocolPort.Action.RECENT_AUTH, state,
+        flows.complete(OidcProtocolPort.Action.RECENT_AUTH, state, iss,
                 error == null ? code : null, request, response);
         return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
     }

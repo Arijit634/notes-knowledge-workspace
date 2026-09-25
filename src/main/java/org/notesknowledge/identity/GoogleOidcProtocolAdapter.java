@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets;
 import java.net.URI;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.time.DateTimeException;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.List;
@@ -66,7 +67,15 @@ final class GoogleOidcProtocolAdapter implements OidcProtocolPort {
                 .scopes(registration.getScopes())
                 .state(randomValue())
                 .attributes(attributes -> attributes.put("nonce", nonce))
-                .additionalParameters(parameters -> parameters.put("nonce", sha256(nonce)));
+                .additionalParameters(parameters -> {
+                    parameters.put("nonce", sha256(nonce));
+                    if (action == Action.RECENT_AUTH) {
+                        // Google documents this narrow claims request for ID-token auth_time.
+                        parameters.put("max_age", "0");
+                        parameters.put("claims",
+                                "{\"id_token\":{\"auth_time\":{\"essential\":true}}}");
+                    }
+                });
         OAuth2AuthorizationRequestCustomizers.withPkce().accept(builder);
         OAuth2AuthorizationRequest authorization = builder.build();
         if (!"S256".equals(authorization.getAdditionalParameters().get("code_challenge_method"))
@@ -112,21 +121,34 @@ final class GoogleOidcProtocolAdapter implements OidcProtocolPort {
     }
 
     ValidatedPrincipal validatedClaims(OidcUser user, ClientRegistration registration) {
-            var idToken = user.getIdToken();
-            String issuer = idToken.getIssuer() == null ? null : idToken.getIssuer().toString();
-            String subject = idToken.getSubject();
-            String authorizedParty = idToken.getClaimAsString("azp");
-            if (!properties.issuer().equals(issuer) || subject == null || subject.isBlank()
-                    || subject.length() > 255 || idToken.getAudience() == null
-                    || !idToken.getAudience().contains(registration.getClientId())
-                    || (idToken.getAudience().size() > 1 && authorizedParty == null)
-                    || (authorizedParty != null && !registration.getClientId().equals(authorizedParty))
-                    || idToken.getExpiresAt() == null
-                    || !idToken.getExpiresAt().isAfter(Instant.now())) {
-                throw ApiFailureException.of(ApiFailureException.Kind.INVALID_CREDENTIALS);
-            }
-            return new ValidatedPrincipal(issuer, subject, idToken.getClaimAsString("email"),
-                    Boolean.TRUE.equals(idToken.getClaimAsBoolean("email_verified")));
+        var idToken = user.getIdToken();
+        String issuer = idToken.getIssuer() == null ? null : idToken.getIssuer().toString();
+        String subject = idToken.getSubject();
+        String authorizedParty = idToken.getClaimAsString("azp");
+        if (!properties.issuer().equals(issuer) || subject == null || subject.isBlank()
+                || subject.length() > 255 || idToken.getAudience() == null
+                || !idToken.getAudience().contains(registration.getClientId())
+                || (idToken.getAudience().size() > 1 && authorizedParty == null)
+                || (authorizedParty != null && !registration.getClientId().equals(authorizedParty))
+                || idToken.getExpiresAt() == null
+                || !idToken.getExpiresAt().isAfter(Instant.now())) {
+            throw ApiFailureException.of(ApiFailureException.Kind.INVALID_CREDENTIALS);
+        }
+        Object hd = idToken.getClaim("hd");
+        return new ValidatedPrincipal(issuer, subject, idToken.getClaimAsString("email"),
+                Boolean.TRUE.equals(idToken.getClaimAsBoolean("email_verified")),
+                hd instanceof String domain ? domain : null, trustedAuthTime(idToken.getClaim("auth_time")));
+    }
+
+    private Instant trustedAuthTime(Object claim) {
+        try {
+            if (claim instanceof Instant instant) return instant;
+            if (claim instanceof Long seconds) return Instant.ofEpochSecond(seconds);
+            if (claim instanceof Integer seconds) return Instant.ofEpochSecond(seconds);
+        } catch (DateTimeException invalid) {
+            return null;
+        }
+        return null;
     }
 
     private ClientRegistration registration(Action action) {
