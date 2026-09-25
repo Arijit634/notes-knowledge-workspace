@@ -7,7 +7,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 record IdentityRateProperties(int windowSeconds, int providerWindowSeconds,
         int registrationCeiling,
         int verificationRequestCeiling, int verificationConfirmationCeiling,
-        int passwordLoginCeiling, int aggregateCeiling, int providerCeiling,
+        int passwordLoginCeiling, int passwordResetRequestCeiling,
+        int passwordResetConfirmationCeiling, int aggregateCeiling, int providerCeiling,
         int mfaCeiling, int mfaManagementCeiling, int recentAuthCeiling) {
     private static final int MAX_RATE_CEILING = 1_000_000;
 
@@ -16,12 +17,15 @@ record IdentityRateProperties(int windowSeconds, int providerWindowSeconds,
                 || providerWindowSeconds < 1 || providerWindowSeconds > 86_400
                 || registrationCeiling < 1 || verificationRequestCeiling < 1
                 || verificationConfirmationCeiling < 1 || passwordLoginCeiling < 1
+                || passwordResetRequestCeiling < 1 || passwordResetConfirmationCeiling < 1
                 || aggregateCeiling < 1 || providerCeiling < 1
                 || mfaCeiling < 1 || mfaManagementCeiling < 1 || recentAuthCeiling < 1
                 || registrationCeiling > MAX_RATE_CEILING
                 || verificationRequestCeiling > MAX_RATE_CEILING
                 || verificationConfirmationCeiling > MAX_RATE_CEILING
                 || passwordLoginCeiling > MAX_RATE_CEILING
+                || passwordResetRequestCeiling > MAX_RATE_CEILING
+                || passwordResetConfirmationCeiling > MAX_RATE_CEILING
                 || aggregateCeiling > MAX_RATE_CEILING
                 || providerCeiling > MAX_RATE_CEILING || mfaCeiling > MAX_RATE_CEILING
                 || mfaManagementCeiling > MAX_RATE_CEILING
@@ -36,6 +40,8 @@ record IdentityRateProperties(int windowSeconds, int providerWindowSeconds,
             case "VERIFICATION_REQUEST" -> verificationRequestCeiling;
             case "VERIFICATION_CONFIRMATION" -> verificationConfirmationCeiling;
             case "PASSWORD_LOGIN" -> passwordLoginCeiling;
+            case "PASSWORD_RESET_REQUEST" -> passwordResetRequestCeiling;
+            case "PASSWORD_RESET_CONFIRMATION" -> passwordResetConfirmationCeiling;
             case "MFA_TOTP", "MFA_RECOVERY" -> mfaCeiling;
             case "MFA_ENROLL", "MFA_CONFIRM" -> mfaManagementCeiling;
             case "PASSWORD_REAUTH" -> recentAuthCeiling;

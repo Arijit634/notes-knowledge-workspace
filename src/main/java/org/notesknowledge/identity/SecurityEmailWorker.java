@@ -60,25 +60,41 @@ final class SecurityEmailWorker {
         if (!delivery.ownsUsableClaim(claim, now)) {
             return; // Expiry or loss is not capability revocation; leave it reclaimable.
         }
-        var destination = identity.currentVerificationDestination(claim.id(), claim.capabilityId(), now);
+        String purpose = null;
+        if ("capability_link".equals(claim.kind()) && claim.capabilityId() != null) {
+            purpose = identity.capabilityPurpose(claim.capabilityId()).orElse(null);
+        } else if (!"security_notice".equals(claim.kind())
+                || !"password_reset_completed".equals(claim.noticeKind())
+                || claim.subjectUserId() == null || claim.capabilityId() != null) {
+            delivery.obsolete(claim, now, "invalid_work_kind");
+            return;
+        }
+        var destination = destination(claim, purpose, now);
         if (destination.isEmpty()) {
             delivery.obsolete(claim, now, "authority_not_current");
             return;
         }
-        final String rawToken;
-        try {
-            rawToken = cipher.open(claim.capabilityId(), claim.envelope());
-            if (!claim.capabilityId().equals(VerificationToken.locator(rawToken))) {
-                delivery.failed(claim, clock.instant(), "material_invalid");
+        String rawToken = null;
+        if ("capability_link".equals(claim.kind())) {
+            try {
+                rawToken = cipher.open(purpose, claim.capabilityId(), claim.envelope());
+                if (!claim.capabilityId().equals(VerificationToken.locator(rawToken))) {
+                    delivery.failed(claim, clock.instant(), "material_invalid");
+                    return;
+                }
+            } catch (RuntimeException exception) {
+                delivery.failed(claim, clock.instant(), "material_unavailable");
                 return;
             }
-        } catch (RuntimeException exception) {
-            delivery.failed(claim, clock.instant(), "material_unavailable");
-            return;
         }
         final SecurityEmailMessageRenderer.Message message;
         try {
-            message = renderer.verification(rawToken);
+            if ("security_notice".equals(claim.kind())) {
+                message = renderer.passwordResetCompleted();
+            } else {
+                message = "password_reset".equals(purpose)
+                        ? renderer.passwordReset(rawToken) : renderer.verification(rawToken);
+            }
         } catch (RuntimeException exception) {
             retryOrFail(claim, "render_unavailable");
             return;
@@ -90,8 +106,7 @@ final class SecurityEmailWorker {
         if (!delivery.ownsUsableClaim(claim, now)) {
             return;
         }
-        var currentDestination = identity.currentVerificationDestination(claim.id(),
-                claim.capabilityId(), now);
+        var currentDestination = destination(claim, purpose, now);
         if (currentDestination.isEmpty() || !currentDestination.get().equals(destination.get())) {
             delivery.obsolete(claim, clock.instant(), "authority_not_current");
             return;
@@ -124,8 +139,7 @@ final class SecurityEmailWorker {
         if (!delivery.ownsUsableClaim(claim, now)) {
             return;
         }
-        var dispatchDestination = identity.currentVerificationDestination(
-                claim.id(), claim.capabilityId(), now);
+        var dispatchDestination = destination(claim, purpose, now);
         if (dispatchDestination.isEmpty() || !dispatchDestination.get().equals(destination.get())) {
             delivery.obsolete(claim, now, "authority_not_current");
             return;
@@ -144,6 +158,20 @@ final class SecurityEmailWorker {
             case RETRYABLE -> retryOrFail(claim, "provider_retryable");
             case AMBIGUOUS -> retryOrFail(claim, "provider_ambiguous");
         }
+    }
+
+    private java.util.Optional<String> destination(SecurityEmailDeliveryRepository.Claim claim,
+            String purpose, Instant now) {
+        if ("security_notice".equals(claim.kind())) {
+            return identity.currentResetNoticeDestination(claim.id(), claim.subjectUserId());
+        }
+        if ("password_reset".equals(purpose)) {
+            return identity.currentResetDestination(claim.id(), claim.capabilityId(), now);
+        }
+        if ("email_verification".equals(purpose)) {
+            return identity.currentVerificationDestination(claim.id(), claim.capabilityId(), now);
+        }
+        return java.util.Optional.empty();
     }
 
     private void retryOrFail(SecurityEmailDeliveryRepository.Claim claim, String reason) {

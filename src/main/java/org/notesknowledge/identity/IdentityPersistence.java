@@ -14,6 +14,8 @@ import org.springframework.stereotype.Repository;
 @IdentityCoreEnabled
 class IdentityPersistence {
     record Capability(UUID id, UUID userId, String purpose, byte[] digest, Instant expiresAt) { }
+    record ResetState(Instant expiresAt, Instant consumedAt, Instant supersededAt,
+            Instant revokedAt) { }
     record LoginAccount(UUID id, String verifier, String state, Instant verifiedAt) { }
 
     private final JdbcClient jdbc;
@@ -54,6 +56,15 @@ class IdentityPersistence {
                 """).param("email", email).query(UUID.class).optional();
     }
 
+    Optional<UUID> activeAccountForUpdate(String email) {
+        return jdbc.sql("""
+                select user_id from identity.account
+                where canonical_email = :email and account_state = 'active'
+                  and email_verified_at is not null
+                for update
+                """).param("email", email).query(UUID.class).optional();
+    }
+
     Optional<Capability> capability(UUID id) {
         return jdbc.sql("""
                 select capability_id, user_id, purpose, verifier_digest, expires_at
@@ -64,12 +75,145 @@ class IdentityPersistence {
                 rs.getTimestamp("expires_at").toInstant())).optional();
     }
 
+    Optional<ResetState> resetStateForUpdate(UUID id) {
+        return jdbc.sql("""
+                select expires_at, consumed_at, superseded_at, revoked_at
+                from identity.identity_capability
+                where capability_id = :id and purpose = 'password_reset'
+                for update
+                """).param("id", id).query((rs, row) -> new ResetState(
+                rs.getTimestamp("expires_at").toInstant(),
+                instantOrNull(rs.getTimestamp("consumed_at")),
+                instantOrNull(rs.getTimestamp("superseded_at")),
+                instantOrNull(rs.getTimestamp("revoked_at")))).optional();
+    }
+
+    private static Instant instantOrNull(Timestamp timestamp) {
+        return timestamp == null ? null : timestamp.toInstant();
+    }
+
+    Optional<String> capabilityPurpose(UUID id) {
+        return jdbc.sql("select purpose from identity.identity_capability where capability_id = :id")
+                .param("id", id).query(String.class).optional();
+    }
+
     boolean lockPendingAccount(UUID userId) {
         return jdbc.sql("""
                 select user_id from identity.account
                 where user_id = :id and account_state = 'pending_verification'
                 for update
                 """).param("id", userId).query(UUID.class).optional().isPresent();
+    }
+
+    boolean lockActiveAccount(UUID userId) {
+        return jdbc.sql("""
+                select user_id from identity.account
+                where user_id = :id and account_state = 'active'
+                  and email_verified_at is not null
+                for update
+                """).param("id", userId).query(UUID.class).optional().isPresent();
+    }
+
+    void supersedeReset(UUID userId, Instant now) {
+        List<UUID> previous = jdbc.sql("""
+                update identity.identity_capability set superseded_at = :now
+                where user_id = :id and purpose = 'password_reset'
+                  and consumed_at is null and superseded_at is null and revoked_at is null
+                returning capability_id
+                """).param("now", Timestamp.from(now)).param("id", userId)
+                .query(UUID.class).list();
+        for (UUID id : previous) {
+            jdbc.sql("""
+                    update identity.security_email_delivery
+                    set state = 'obsolete', next_attempt_at = null,
+                        lease_owner = null, lease_token = null, lease_until = null,
+                        sealed_token_ciphertext = null, sealed_token_nonce = null,
+                        sealed_token_tag = null, token_key_version = null,
+                        terminal_at = :now, updated_at = :now,
+                        last_failure_code = 'superseded'
+                    where capability_id = :id and state in ('queued','retry_wait','claimed')
+                    """).param("now", Timestamp.from(now)).param("id", id).update();
+        }
+    }
+
+    void issueReset(UUID id, UUID userId, byte[] digest, Instant now, Instant expiry) {
+        jdbc.sql("""
+                insert into identity.identity_capability
+                    (capability_id, user_id, purpose, verifier_digest, issued_at, expires_at)
+                values (:id, :user, 'password_reset', :digest, :now, :expiry)
+                """).param("id", id).param("user", userId).param("digest", digest)
+                .param("now", Timestamp.from(now)).param("expiry", Timestamp.from(expiry)).update();
+    }
+
+    int consumeReset(UUID id, byte[] digest, Instant now) {
+        return jdbc.sql("""
+                update identity.identity_capability set consumed_at = :now
+                where capability_id = :id and purpose = 'password_reset'
+                  and consumed_at is null and superseded_at is null and revoked_at is null
+                  and expires_at > :now and verifier_digest = :digest
+                """).param("id", id).param("digest", digest)
+                .param("now", Timestamp.from(now)).update();
+    }
+
+    void obsoleteConsumedReset(UUID id, Instant now) {
+        jdbc.sql("""
+                update identity.security_email_delivery
+                set state = 'obsolete', next_attempt_at = null,
+                    lease_owner = null, lease_token = null, lease_until = null,
+                    sealed_token_ciphertext = null, sealed_token_nonce = null,
+                    sealed_token_tag = null, token_key_version = null,
+                    terminal_at = :now, updated_at = :now,
+                    last_failure_code = 'consumed'
+                where capability_id = :id and state in ('queued','retry_wait','claimed')
+                """).param("id", id).param("now", Timestamp.from(now)).update();
+    }
+
+    int replacePassword(UUID userId, String verifier, Instant now) {
+        return jdbc.sql("""
+                update identity.account set password_verifier = :verifier, updated_at = :now
+                where user_id = :id and account_state = 'active'
+                  and email_verified_at is not null
+                """).param("id", userId).param("verifier", verifier)
+                .param("now", Timestamp.from(now)).update();
+    }
+
+    void auditResetCompleted(UUID userId, UUID eventId, Instant now) {
+        jdbc.sql("""
+                insert into identity.security_audit_fact
+                    (audit_fact_id, target_user_id, event_category, outcome_code,
+                     correlation_id, occurred_at)
+                values (uuidv7(), :user, 'password_reset', 'completed', :event, :now)
+                """).param("user", userId).param("event", eventId)
+                .param("now", Timestamp.from(now)).update();
+    }
+
+    Optional<String> currentResetDestination(UUID deliveryId, UUID capabilityId, Instant now) {
+        return jdbc.sql("""
+                select a.display_email from identity.security_email_delivery d
+                join identity.identity_capability c on c.capability_id = d.capability_id
+                join identity.account a on a.user_id = c.user_id
+                where d.security_email_delivery_id = :delivery and d.capability_id = :capability
+                  and d.delivery_kind = 'capability_link' and c.purpose = 'password_reset'
+                  and c.consumed_at is null and c.superseded_at is null
+                  and c.revoked_at is null and c.expires_at > :now
+                  and a.account_state = 'active' and a.email_verified_at is not null
+                  and a.canonical_email = lower(a.display_email)
+                """).param("delivery", deliveryId).param("capability", capabilityId)
+                .param("now", Timestamp.from(now)).query(String.class).optional();
+    }
+
+    Optional<String> currentResetNoticeDestination(UUID deliveryId, UUID subjectId) {
+        return jdbc.sql("""
+                select a.display_email from identity.security_email_delivery d
+                join identity.account a on a.user_id = d.subject_user_id
+                where d.security_email_delivery_id = :delivery
+                  and d.subject_user_id = :subject
+                  and d.delivery_kind = 'security_notice'
+                  and d.notice_kind = 'password_reset_completed'
+                  and a.account_state = 'active' and a.email_verified_at is not null
+                  and a.canonical_email = lower(a.display_email)
+                """).param("delivery", deliveryId).param("subject", subjectId)
+                .query(String.class).optional();
     }
 
     void supersede(UUID userId, Instant now) {

@@ -115,7 +115,7 @@ class IdentityCoreIntegrationTest {
     RequestMappingHandlerMapping mappings;
 
     @Test
-    void onlyTheSixteenAuthorizedProductPathsAreMapped() {
+    void onlyTheEighteenAuthorizedProductPathsAreMapped() {
         Set<String> paths = mappings.getHandlerMethods().keySet().stream()
                 .flatMap(mapping -> mapping.getPatternValues().stream())
                 .filter(path -> path.startsWith("/api/"))
@@ -124,6 +124,8 @@ class IdentityCoreIntegrationTest {
                 "/api/auth/csrf", "/api/auth/session", "/api/auth/registrations",
                 "/api/auth/email-verification/requests",
                 "/api/auth/email-verification/confirmations",
+                "/api/auth/password-reset/requests",
+                "/api/auth/password-reset/confirmations",
                 "/api/auth/login/password",
                 "/api/auth/mfa/challenges/{challengeId}/totp",
                 "/api/auth/mfa/challenges/{challengeId}/recovery-code",

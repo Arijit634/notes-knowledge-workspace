@@ -30,10 +30,12 @@ final class AuthController {
     record RegistrationInput(String email, String password) { }
     record ConfirmationInput(String token) { }
     record LoginInput(String email, String password) { }
+    record PasswordResetInput(String token, String newPassword) { }
 
     private final RegistrationService registration;
     private final EmailVerificationService verification;
     private final PasswordAuthenticationService passwords;
+    private final PasswordRecoveryService recovery;
     private final IdentityPersistence identity;
     private final RateControlService rates;
     private final RateKeyDeriver rateKeys;
@@ -41,12 +43,14 @@ final class AuthController {
     private final java.time.Clock clock;
 
     AuthController(RegistrationService registration, EmailVerificationService verification,
-            PasswordAuthenticationService passwords, IdentityPersistence identity,
+            PasswordAuthenticationService passwords, PasswordRecoveryService recovery,
+            IdentityPersistence identity,
             RateControlService rates, RateKeyDeriver rateKeys,
             MfaRateControl mfaRates, java.time.Clock clock) {
         this.registration = registration;
         this.verification = verification;
         this.passwords = passwords;
+        this.recovery = recovery;
         this.identity = identity;
         this.rates = rates;
         this.rateKeys = rateKeys;
@@ -133,6 +137,26 @@ final class AuthController {
                 .body(Map.of("state", "authenticated"));
     }
 
+    @PostMapping("/password-reset/requests")
+    ResponseEntity<Void> requestPasswordReset(@RequestBody EmailInput input,
+            HttpServletRequest request) {
+        if (input == null) throw ApiFailureException.of(ApiFailureException.Kind.INVALID_INPUT);
+        rate("PASSWORD_RESET_REQUEST", input.email(), request);
+        recovery.request(input.email());
+        return ResponseEntity.accepted().cacheControl(CacheControl.noStore()).build();
+    }
+
+    @PostMapping("/password-reset/confirmations")
+    ResponseEntity<Void> confirmPasswordReset(@RequestBody PasswordResetInput input,
+            HttpServletRequest request) {
+        if (input == null || input.token() == null || input.token().length() > 128) {
+            throw ApiFailureException.of(ApiFailureException.Kind.INVALID_INPUT);
+        }
+        rateSourceOnly("PASSWORD_RESET_CONFIRMATION", request);
+        recovery.confirm(input.token(), input.newPassword());
+        return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
+    }
+
     @PostMapping("/reauth/password")
     ResponseEntity<Void> reauthenticate(@RequestBody LoginInput input, HttpServletRequest request) {
         UUID userId = IdentitySessionState.principal("ROLE_USER");
@@ -179,7 +203,8 @@ final class AuthController {
         rates.check(new RateLimitPort.Request(new RateLimitPort.ControlClass(control),
                 rateKeys.derive(control, "source:" + request.getRemoteAddr()), 1),
                 RateControlService.Policy.SECURITY_CRITICAL);
-        if ("VERIFICATION_CONFIRMATION".equals(control)) {
+        if ("VERIFICATION_CONFIRMATION".equals(control)
+                || "PASSWORD_RESET_CONFIRMATION".equals(control)) {
             rateGlobal();
         }
     }

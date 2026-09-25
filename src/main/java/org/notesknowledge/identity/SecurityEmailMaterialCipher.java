@@ -38,6 +38,10 @@ final class SecurityEmailMaterialCipher {
     }
 
     Envelope seal(UUID capabilityId, String token) {
+        return seal("email_verification", capabilityId, token);
+    }
+
+    Envelope seal(String purpose, UUID capabilityId, String token) {
         if (currentKey == null) {
             throw ApiFailureException.of(ApiFailureException.Kind.SERVICE_UNAVAILABLE);
         }
@@ -46,7 +50,7 @@ final class SecurityEmailMaterialCipher {
         try {
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
             cipher.init(Cipher.ENCRYPT_MODE, currentKey, new GCMParameterSpec(128, nonce));
-            cipher.updateAAD(aad(capabilityId));
+            cipher.updateAAD(aad(purpose, capabilityId));
             byte[] combined = cipher.doFinal(token.getBytes(StandardCharsets.US_ASCII));
             byte[] content = java.util.Arrays.copyOf(combined, combined.length - 16);
             byte[] tag = java.util.Arrays.copyOfRange(combined, combined.length - 16, combined.length);
@@ -57,6 +61,10 @@ final class SecurityEmailMaterialCipher {
     }
 
     String open(UUID capabilityId, Envelope envelope) {
+        return open("email_verification", capabilityId, envelope);
+    }
+
+    String open(String purpose, UUID capabilityId, Envelope envelope) {
         SecretKey key = envelope.keyVersion().equals(currentVersion) ? currentKey
                 : envelope.keyVersion().equals(previousVersion) ? previousKey : null;
         if (key == null) {
@@ -68,15 +76,18 @@ final class SecurityEmailMaterialCipher {
         try {
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
             cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(128, envelope.nonce()));
-            cipher.updateAAD(aad(capabilityId));
+            cipher.updateAAD(aad(purpose, capabilityId));
             return new String(cipher.doFinal(combined), StandardCharsets.US_ASCII);
         } catch (GeneralSecurityException exception) {
             throw new IllegalStateException("Delivery material invalid");
         }
     }
 
-    private byte[] aad(UUID id) {
-        return ("capability_link:email_verification:" + id).getBytes(StandardCharsets.US_ASCII);
+    private byte[] aad(String purpose, UUID id) {
+        if (!"email_verification".equals(purpose) && !"password_reset".equals(purpose)) {
+            throw new IllegalArgumentException("Unsupported capability purpose");
+        }
+        return ("capability_link:" + purpose + ":" + id).getBytes(StandardCharsets.US_ASCII);
     }
 
     private static SecretKey key(String encoded) {

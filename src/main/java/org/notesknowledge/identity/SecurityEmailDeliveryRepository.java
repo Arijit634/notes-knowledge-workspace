@@ -12,14 +12,21 @@ interface SecurityEmailDeliveryRepository {
     final class Claim {
         private final UUID id;
         private final UUID capabilityId;
+        private final UUID subjectUserId;
+        private final String kind;
+        private final String noticeKind;
         private final LeaseToken token;
         private final int attempt;
         private final SecurityEmailMaterialCipher.Envelope envelope;
 
-        Claim(UUID id, UUID capabilityId, LeaseToken token, int attempt,
+        Claim(UUID id, UUID capabilityId, UUID subjectUserId, String kind, String noticeKind,
+                LeaseToken token, int attempt,
                 SecurityEmailMaterialCipher.Envelope envelope) {
             this.id = id;
             this.capabilityId = capabilityId;
+            this.subjectUserId = subjectUserId;
+            this.kind = kind;
+            this.noticeKind = noticeKind;
             this.token = token;
             this.attempt = attempt;
             this.envelope = envelope;
@@ -27,6 +34,9 @@ interface SecurityEmailDeliveryRepository {
 
         UUID id() { return id; }
         UUID capabilityId() { return capabilityId; }
+        UUID subjectUserId() { return subjectUserId; }
+        String kind() { return kind; }
+        String noticeKind() { return noticeKind; }
         LeaseToken token() { return token; }
         int attempt() { return attempt; }
         SecurityEmailMaterialCipher.Envelope envelope() { return envelope; }
@@ -35,6 +45,7 @@ interface SecurityEmailDeliveryRepository {
     }
 
     void queueCapability(UUID capabilityId, SecurityEmailMaterialCipher.Envelope envelope, Instant now);
+    void queueResetNotice(UUID subjectUserId, UUID eventId, Instant now);
     List<Claim> claimReady(Instant now, LeaseOwner owner, LeasePolicy policy, int batchSize);
     List<Claim> reclaimExpired(Instant now, LeaseOwner owner, LeasePolicy policy, int batchSize);
     int failExhausted(Instant now, int batchSize);
