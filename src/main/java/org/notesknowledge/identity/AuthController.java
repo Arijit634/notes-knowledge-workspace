@@ -142,7 +142,7 @@ final class AuthController {
         }
         passwords.reauthenticate(userId, input.password());
         request.getSession().setAttribute(IdentitySessionState.RECENT_ATTRIBUTE,
-                new IdentitySessionState.RecentPassword(userId, clock.instant()));
+                new IdentitySessionState.RecentAuthentication(userId, clock.instant(), "password"));
         return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
     }
 

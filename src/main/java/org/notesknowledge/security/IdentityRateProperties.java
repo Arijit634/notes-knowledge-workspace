@@ -39,6 +39,8 @@ record IdentityRateProperties(int windowSeconds, int providerWindowSeconds,
             case "MFA_TOTP", "MFA_RECOVERY" -> mfaCeiling;
             case "MFA_ENROLL", "MFA_CONFIRM" -> mfaManagementCeiling;
             case "PASSWORD_REAUTH" -> recentAuthCeiling;
+            case "OIDC_LOGIN_START", "OIDC_LOGIN_CALLBACK", "OIDC_REAUTH_START",
+                    "OIDC_REAUTH_CALLBACK" -> recentAuthCeiling;
             case "IDENTITY_GLOBAL" -> aggregateCeiling;
             case "SECURITY_EMAIL_PROVIDER" -> providerCeiling;
             default -> throw new IllegalArgumentException("Unknown Identity rate class");

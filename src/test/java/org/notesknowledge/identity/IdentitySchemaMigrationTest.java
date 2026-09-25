@@ -29,7 +29,8 @@ class IdentitySchemaMigrationTest {
             .withPassword("synthetic-identity-migrator-password");
 
     @Test
-    void forwardMigrationCreatesOnlyApprovedMfaRelationsAndKeepsV001Intact() throws Exception {
+    void forwardMigrationKeepsEarlierIdentityRelationsAndAddsOnlyApprovedOidcLink()
+            throws Exception {
         Flyway flyway = Flyway.configure()
                 .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
                 .locations("classpath:db/migration").load();
@@ -38,7 +39,8 @@ class IdentitySchemaMigrationTest {
         assertThat(flyway.info().applied()).extracting(m -> m.getScript())
                 .containsExactly("V001__platform__spring_session.sql",
                         "V002__identity__account_verification_and_security_email.sql",
-                        "V003__identity__mfa_core.sql");
+                        "V003__identity__mfa_core.sql",
+                        "V004__identity__google_oidc_core.sql");
         byte[] v001 = Files.readAllBytes(Path.of("src/main/resources/db/migration/"
                 + "V001__platform__spring_session.sql"));
         assertThat(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(v001)))
@@ -55,8 +57,9 @@ class IdentitySchemaMigrationTest {
                     'publishing','discovery','moderation') and table_type = 'BASE TABLE'
                 order by table_schema, table_name
                 """, String.class)).containsExactly(
-                        "identity.account", "identity.identity_capability",
-                        "identity.mfa_configuration", "identity.mfa_recovery_code",
+                        "identity.account", "identity.external_identity_link",
+                        "identity.identity_capability", "identity.mfa_configuration",
+                        "identity.mfa_recovery_code",
                         "identity.security_audit_fact", "identity.security_email_delivery",
                         "identity.spring_session", "identity.spring_session_attributes");
         assertThat(jdbc.queryForList("""

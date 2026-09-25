@@ -68,10 +68,11 @@ class PostgreSqlCompatibilityTest {
                 .extracting(migration -> migration.getScript())
                 .containsExactly("V001__platform__spring_session.sql",
                         "V002__identity__account_verification_and_security_email.sql",
-                        "V003__identity__mfa_core.sql");
+                        "V003__identity__mfa_core.sql",
+                        "V004__identity__google_oidc_core.sql");
         assertThat(jdbc.queryForObject(
                 "select to_regclass('public.flyway_schema_history') is not null", Boolean.class)).isTrue();
-        assertThat(productRelationCount()).isEqualTo(8);
+        assertThat(productRelationCount()).isEqualTo(9);
         assertThat(publicNonFrameworkRelationCount()).isZero();
     }
 
