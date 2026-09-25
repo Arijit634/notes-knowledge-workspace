@@ -99,18 +99,25 @@ public class SecurityConfiguration {
                         .requestMatchers(HttpMethod.POST, "/api/auth/registrations",
                                 "/api/auth/email-verification/requests",
                                 "/api/auth/email-verification/confirmations",
-                                "/api/auth/login/password")
+                                "/api/auth/login/password",
+                                "/api/auth/oidc/google/authorizations")
                         .access((authentication, context) -> new org.springframework.security.authorization.AuthorizationDecision(
                                 identityCore != null && !(authentication.get().getPrincipal()
                                         instanceof org.notesknowledge.identity.IdentitySessionPrincipal)))
                         .requestMatchers(HttpMethod.POST, "/api/auth/logout")
                         .access((authentication, context) -> new org.springframework.security.authorization.AuthorizationDecision(
                                 identityCore != null))
+                        .requestMatchers(HttpMethod.GET, "/api/auth/oidc/google/callback")
+                        .access((authentication, context) -> new org.springframework.security.authorization.AuthorizationDecision(
+                                identityCore != null))
+                        .requestMatchers(HttpMethod.GET, "/api/auth/reauth/oidc/google/callback")
+                        .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.POST,
                                 "/api/auth/mfa/challenges/{challengeId}/totp",
                                 "/api/auth/mfa/challenges/{challengeId}/recovery-code")
                         .hasAuthority("ROLE_MFA_PENDING")
                         .requestMatchers(HttpMethod.POST, "/api/auth/reauth/password",
+                                "/api/auth/reauth/oidc/google/authorizations",
                                 "/api/me/security/mfa/totp/enrollments",
                                 "/api/me/security/mfa/totp/enrollments/{enrollmentId}/confirmation")
                         .hasAuthority("ROLE_USER")

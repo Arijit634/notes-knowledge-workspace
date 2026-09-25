@@ -14,10 +14,10 @@ import org.springframework.security.core.context.SecurityContextHolder;
 /** Server-only Spring Session facts; none are client credentials. */
 final class IdentitySessionState {
     static final String CHALLENGE_ATTRIBUTE = "IDENTITY_MFA_CHALLENGE";
-    static final String RECENT_ATTRIBUTE = "IDENTITY_RECENT_PASSWORD_AUTH";
+    static final String RECENT_ATTRIBUTE = "IDENTITY_RECENT_AUTH";
 
     record Challenge(String id, UUID userId, Instant activation, Instant expiresAt,
-            int failedAttempts)
+            int failedAttempts, String primaryMethod)
             implements Serializable {
         @Serial private static final long serialVersionUID = 1L;
 
@@ -25,10 +25,14 @@ final class IdentitySessionState {
             if (failedAttempts < 0 || failedAttempts > 8) {
                 throw new IllegalArgumentException("Invalid MFA challenge failure count");
             }
+            if (!"password".equals(primaryMethod) && !"oidc".equals(primaryMethod)) {
+                throw new IllegalArgumentException("Invalid MFA primary method");
+            }
         }
 
         Challenge failed() {
-            return new Challenge(id, userId, activation, expiresAt, failedAttempts + 1);
+            return new Challenge(id, userId, activation, expiresAt, failedAttempts + 1,
+                    primaryMethod);
         }
     }
 
@@ -49,14 +53,14 @@ final class IdentitySessionState {
             Instant now, MfaProperties policy) {
         HttpSession session = request.getSession(false);
         Object value = session == null ? null : session.getAttribute(RECENT_ATTRIBUTE);
-        if (!(value instanceof RecentPassword recent) || !userId.equals(recent.userId())
+        if (!(value instanceof RecentAuthentication recent) || !userId.equals(recent.userId())
                 || recent.at().isAfter(now)
                 || !recent.at().plus(policy.recentAuthLifetime()).isAfter(now)) {
             throw ApiFailureException.of(ApiFailureException.Kind.RECENT_AUTHENTICATION_REQUIRED);
         }
     }
 
-    record RecentPassword(UUID userId, Instant at) implements Serializable {
+    record RecentAuthentication(UUID userId, Instant at, String method) implements Serializable {
         @Serial private static final long serialVersionUID = 1L;
     }
 }

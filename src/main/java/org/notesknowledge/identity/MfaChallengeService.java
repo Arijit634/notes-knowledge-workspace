@@ -60,13 +60,17 @@ final class MfaChallengeService {
     }
 
     String begin(UUID userId, HttpServletRequest request) {
+        return begin(userId, request, "password");
+    }
+
+    String begin(UUID userId, HttpServletRequest request, String primaryMethod) {
         MfaRepository.Configuration config = activeConfiguration(userId);
         byte[] randomId = new byte[32];
         random.nextBytes(randomId);
         String id = Base64.getUrlEncoder().withoutPadding().encodeToString(randomId);
         request.getSession().setAttribute(IdentitySessionState.CHALLENGE_ATTRIBUTE,
                 new IdentitySessionState.Challenge(id, userId, config.activatedAt(),
-                        clock.instant().plus(policy.challengeLifetime()), 0));
+                        clock.instant().plus(policy.challengeLifetime()), 0, primaryMethod));
         return id;
     }
 

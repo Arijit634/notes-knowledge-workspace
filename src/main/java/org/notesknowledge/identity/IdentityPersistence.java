@@ -143,6 +143,16 @@ class IdentityPersistence {
                 .param("outcome", outcome).param("now", Timestamp.from(now)).update();
     }
 
+    void auditFailure(UUID target, String category, String reason, Instant now) {
+        jdbc.sql("""
+                insert into identity.security_audit_fact
+                    (audit_fact_id, target_user_id, event_category, outcome_code,
+                     reason_code, occurred_at)
+                values (uuidv7(), :target, :category, 'denied', :reason, :now)
+                """).param("target", target, java.sql.Types.OTHER).param("category", category)
+                .param("reason", reason).param("now", Timestamp.from(now)).update();
+    }
+
     void auditLogout(UUID userId, Instant now) {
         jdbc.sql("""
                 insert into identity.security_audit_fact

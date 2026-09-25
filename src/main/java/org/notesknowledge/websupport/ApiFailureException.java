@@ -17,6 +17,8 @@ public final class ApiFailureException extends RuntimeException {
                 "resource_not_found", "Resource not found"),
         INVALID_LIFECYCLE_TRANSITION(HttpStatus.CONFLICT,
                 "invalid_lifecycle_transition", "Request conflicts with current state"),
+        OIDC_ACCOUNT_ACTION_REQUIRED(HttpStatus.CONFLICT,
+                "oidc_account_action_required", "Additional account action required"),
         STALE_WRITE(HttpStatus.PRECONDITION_FAILED,
                 "stale_write", "Resource changed since it was loaded"),
         REQUEST_TOO_LARGE(HttpStatus.CONTENT_TOO_LARGE,
@@ -64,6 +66,10 @@ public final class ApiFailureException extends RuntimeException {
             throw new IllegalArgumentException("retryAfterSeconds is outside the allowed range");
         }
         return new ApiFailureException(Kind.RATE_LIMITED, retryAfterSeconds);
+    }
+
+    public Kind kind() {
+        return kind;
     }
 
     HttpStatus status() {
