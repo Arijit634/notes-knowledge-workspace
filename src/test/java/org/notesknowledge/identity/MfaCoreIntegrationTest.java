@@ -15,6 +15,7 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -238,6 +239,131 @@ class MfaCoreIntegrationTest {
         assertThat(recoveryWins).isEqualTo(1);
     }
 
+    @Test void fiveConcurrentInvalidProofsExhaustOnePersistedChallenge() throws Exception {
+        UUID user = account();
+        var setup = management.begin(user);
+        String enrollmentCode = totp.codeAt(decodeBase32(setup.manualSecret()),
+                clock.instant().getEpochSecond() / 30);
+        management.confirm(user, setup.enrollmentId(), enrollmentCode);
+        Browser pre = login(csrf(null), email(user), 202);
+        String path = "/api/auth/mfa/challenges/" + pre.challengeId() + "/totp";
+        var results = raceMfa(pre, java.util.Collections.nCopies(5, path),
+                java.util.Collections.nCopies(5, "bad"));
+        assertThat(results).allSatisfy(result ->
+                assertThat(result.getResponse().getStatus()).isEqualTo(401));
+        SessionChallenge current = challenge(pre);
+        assertThat(current.existingSession()).isTrue();
+        assertThat(current.challenge()).isNull();
+        assertThat(auditCount(user, "mfa_challenge", "denied")).isEqualTo(5);
+        assertThat(auditCount(user, "mfa_challenge", "totp_accepted")).isZero();
+        assertThat(auditCount(user, "mfa_challenge", "recovery_accepted")).isZero();
+        assertThat(fullSessionCount(user)).isZero();
+        assertThat(state(pre)).isEqualTo("mfaRequired");
+        mvc.perform(post(path).cookie(pre.cookie()).header("X-CSRF-TOKEN", pre.csrf())
+                .contentType(MediaType.APPLICATION_JSON).content("{\"code\":\"bad\"}"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test void totpAndRecoveryRacingOnOneChallengeHaveOneWinner() throws Exception {
+        UUID user = account();
+        var setup = management.begin(user);
+        String enrollmentCode = totp.codeAt(decodeBase32(setup.manualSecret()),
+                clock.instant().getEpochSecond() / 30);
+        String recoveryCode = management.confirm(user, setup.enrollmentId(), enrollmentCode).get(0);
+        clock.advanceSeconds(30);
+        Browser pre = login(csrf(null), email(user), 202);
+        String totpCode = totp.codeAt(decodeBase32(setup.manualSecret()),
+                clock.instant().getEpochSecond() / 30);
+        Long beforeStep = jdbc.queryForObject("select last_accepted_timestep from identity.mfa_configuration where user_id = ?",
+                Long.class, user);
+        String base = "/api/auth/mfa/challenges/" + pre.challengeId();
+        var results = raceMfa(pre, java.util.List.of(base + "/totp", base + "/recovery-code"),
+                java.util.List.of(totpCode, recoveryCode));
+        assertOneAccepted(results);
+        int totpAccepted = auditCount(user, "mfa_challenge", "totp_accepted");
+        int recoveryAccepted = auditCount(user, "mfa_challenge", "recovery_accepted");
+        assertThat(totpAccepted + recoveryAccepted).isEqualTo(1);
+        assertThat(results.get(0).getResponse().getStatus() == 200).isEqualTo(totpAccepted == 1);
+        assertThat(results.get(1).getResponse().getStatus() == 200).isEqualTo(recoveryAccepted == 1);
+        Long afterStep = jdbc.queryForObject("select last_accepted_timestep from identity.mfa_configuration where user_id = ?",
+                Long.class, user);
+        int consumed = jdbc.queryForObject("select count(*) from identity.mfa_recovery_code where user_id = ? and consumed_at is not null",
+                Integer.class, user);
+        if (totpAccepted == 1) {
+            assertThat(afterStep).isGreaterThan(beforeStep);
+            assertThat(consumed).isZero();
+        } else {
+            assertThat(afterStep).isEqualTo(beforeStep);
+            assertThat(consumed).isEqualTo(1);
+        }
+        Cookie winningCookie = results.stream().filter(r -> r.getResponse().getStatus() == 200)
+                .findFirst().orElseThrow().getResponse().getCookie("SESSION");
+        assertThat(winningCookie).isNotNull();
+        assertThat(sessionRepository.findById(cookieId(new Browser(winningCookie, "", null))))
+                .isNotNull();
+        assertThat(fullSessionCount(user)).isEqualTo(1);
+        assertThat(state(pre)).isEqualTo("anonymous");
+        assertThat(sessionRepository.findById(cookieId(pre))).isNull();
+    }
+
+    @Test void sameFactorHttpRacesCannotElevateOneChallengeTwice() throws Exception {
+        UUID user = account();
+        var setup = management.begin(user);
+        String enrollmentCode = totp.codeAt(decodeBase32(setup.manualSecret()),
+                clock.instant().getEpochSecond() / 30);
+        String recoveryCode = management.confirm(user, setup.enrollmentId(), enrollmentCode).get(0);
+        clock.advanceSeconds(30);
+        Browser totpPre = login(csrf(null), email(user), 202);
+        String totpCode = totp.codeAt(decodeBase32(setup.manualSecret()),
+                clock.instant().getEpochSecond() / 30);
+        String totpPath = "/api/auth/mfa/challenges/" + totpPre.challengeId() + "/totp";
+        assertOneAccepted(raceMfa(totpPre, java.util.List.of(totpPath, totpPath),
+                java.util.List.of(totpCode, totpCode)));
+        assertThat(auditCount(user, "mfa_challenge", "totp_accepted")).isEqualTo(1);
+        Browser recoveryPre = login(csrf(null), email(user), 202);
+        String recoveryPath = "/api/auth/mfa/challenges/" + recoveryPre.challengeId() + "/recovery-code";
+        assertOneAccepted(raceMfa(recoveryPre,
+                java.util.List.of(recoveryPath, recoveryPath),
+                java.util.List.of(recoveryCode, recoveryCode)));
+        assertThat(auditCount(user, "mfa_challenge", "recovery_accepted")).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from identity.mfa_recovery_code where user_id = ? and consumed_at is not null",
+                Integer.class, user)).isEqualTo(1);
+    }
+
+    private void assertOneAccepted(java.util.List<MvcResult> results) {
+        assertThat(results.stream().filter(result -> result.getResponse().getStatus() == 200).count())
+                .isEqualTo(1);
+        assertThat(results.stream().filter(result -> result.getResponse().getStatus() != 200))
+                .allSatisfy(result -> assertThat(result.getResponse().getStatus())
+                        .isIn(401, 404));
+    }
+
+    private java.util.List<MvcResult> raceMfa(Browser pre, java.util.List<String> paths,
+            java.util.List<String> proofs) throws Exception {
+        completionFault.challengeBarrier.set(new CountDownLatch(paths.size()));
+        try (var pool = Executors.newFixedThreadPool(paths.size())) {
+            var tasks = java.util.stream.IntStream.range(0, paths.size()).mapToObj(index ->
+                    pool.submit(() -> mvc.perform(post(paths.get(index))
+                            .cookie(pre.cookie()).header("X-CSRF-TOKEN", pre.csrf())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"code\":\"" + proofs.get(index) + "\"}"))
+                            .andReturn())).toList();
+            var results = new java.util.ArrayList<MvcResult>();
+            for (var task : tasks) results.add(task.get(30, java.util.concurrent.TimeUnit.SECONDS));
+            return results;
+        } finally {
+            completionFault.challengeBarrier.set(null);
+        }
+    }
+
+    private SessionChallenge challenge(Browser browser) {
+        var persisted = (org.springframework.session.Session) sessionRepository.findById(cookieId(browser));
+        return persisted == null ? new SessionChallenge(false, null)
+                : new SessionChallenge(true, persisted.getAttribute(IdentitySessionState.CHALLENGE_ATTRIBUTE));
+    }
+
+    record SessionChallenge(boolean existingSession, Object challenge) { }
+
     @Test void totpSessionFailureRollsBackProofAuditAndFullAuthority() throws Exception {
         UUID user = account();
         var setup = management.begin(user);
@@ -417,13 +543,16 @@ class MfaCoreIntegrationTest {
     }
 
     private int fullSessionCount(UUID user) {
-        return (int) jdbc.query("select session_id from identity.spring_session where principal_name = ?",
-                (rs, row) -> rs.getString(1), user.toString()).stream().filter(id -> {
+        return (int) jdbc.query("select session_id from identity.spring_session",
+                (rs, row) -> rs.getString(1)).stream().filter(id -> {
                     var session = (org.springframework.session.Session) sessionRepository.findById(id);
                     if (session == null) return false;
                     var context = (org.springframework.security.core.context.SecurityContext)
                             session.getAttribute("SPRING_SECURITY_CONTEXT");
                     return context != null && context.getAuthentication() != null
+                            && context.getAuthentication().getPrincipal()
+                                instanceof IdentitySessionPrincipal principal
+                            && user.equals(principal.userId())
                             && context.getAuthentication().getAuthorities().stream()
                             .anyMatch(a -> "ROLE_USER".equals(a.getAuthority()));
                 }).count();
@@ -630,6 +759,21 @@ class MfaCoreIntegrationTest {
         @Autowired JdbcTemplate jdbc;
         volatile boolean fail;
         volatile boolean observedInTransaction;
+        final AtomicReference<CountDownLatch> challengeBarrier = new AtomicReference<>();
+
+        @Override void beforeChallengeLock(jakarta.servlet.http.HttpServletRequest request) {
+            CountDownLatch barrier = challengeBarrier.get();
+            if (barrier == null) return;
+            barrier.countDown();
+            try {
+                if (!barrier.await(20, java.util.concurrent.TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("synthetic_mfa_race_barrier_timeout");
+                }
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("synthetic_mfa_race_interrupted", interrupted);
+            }
+        }
 
         @Override void afterSessionMutation(jakarta.servlet.http.HttpServletRequest request) {
             if (!fail) return;

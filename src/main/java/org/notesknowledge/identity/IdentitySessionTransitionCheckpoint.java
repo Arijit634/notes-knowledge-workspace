@@ -7,5 +7,6 @@ import org.springframework.stereotype.Component;
 @Component
 @IdentityCoreEnabled
 class IdentitySessionTransitionCheckpoint {
+    void beforeChallengeLock(HttpServletRequest request) { }
     void afterSessionMutation(HttpServletRequest request) { }
 }
