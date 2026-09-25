@@ -7,18 +7,20 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import jakarta.servlet.http.Cookie;
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.CountDownLatch;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -37,6 +39,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.dao.DataAccessException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -146,7 +149,7 @@ class PasswordRecoveryIntegrationTest {
                 .isInstanceOf(org.notesknowledge.websupport.ApiFailureException.class);
         String current = resetToken(eligible);
         var link = delivery.claimReady(clock.instant(), new LeaseOwner("reset_link"),
-                new LeasePolicy(Duration.ofMinutes(2), 10), 10).stream()
+                new LeasePolicy(Duration.ofMinutes(2), 1_000), 1_000).stream()
                 .filter(claim -> PasswordResetToken.locator(current).equals(claim.capabilityId()))
                 .findFirst().orElseThrow();
         worker.process(link);
@@ -233,7 +236,7 @@ class PasswordRecoveryIntegrationTest {
                   and sealed_token_ciphertext is null and sealed_recipient_ciphertext is null
                 """, Integer.class, userId)).isEqualTo(1);
         var notice = delivery.claimReady(clock.instant(), new LeaseOwner("reset_notice"),
-                new LeasePolicy(Duration.ofMinutes(2), 10), 10).stream()
+                new LeasePolicy(Duration.ofMinutes(2), 1_000), 1_000).stream()
                 .filter(claim -> userId.equals(claim.subjectUserId())).findFirst().orElseThrow();
         worker.process(notice);
         assertThat(provider.lastRecipient).isEqualTo(email);
@@ -243,6 +246,168 @@ class PasswordRecoveryIntegrationTest {
                 select state from identity.security_email_delivery
                 where security_email_delivery_id = ?
                 """, String.class, notice.id())).isEqualTo("submitted");
+    }
+
+    @Test
+    void unrelatedLegacyRowLockDoesNotBlockTargetRevocation() throws Exception {
+        String targetEmail = activeAccount();
+        String otherEmail = activeAccount();
+        UUID target = userId(targetEmail);
+        UUID other = userId(otherEmail);
+        String targetSession = persistedSession(target, "ROLE_USER", false);
+        String otherSession = persistedSession(other, "ROLE_USER", false);
+        jdbc.update("update identity.spring_session set principal_name = ? where session_id = ?",
+                "IdentitySessionPrincipal[REDACTED]", targetSession);
+        jdbc.update("update identity.spring_session set principal_name = ? where session_id = ?",
+                "IdentitySessionPrincipal[REDACTED]", otherSession);
+        request(bootstrap(), targetEmail);
+        String token = resetToken(targetEmail);
+        CountDownLatch otherLocked = new CountDownLatch(1);
+        CountDownLatch releaseOther = new CountDownLatch(1);
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var holder = pool.submit(() -> new TransactionTemplate(transactionManager)
+                    .executeWithoutResult(status -> {
+                        jdbc.queryForObject("""
+                                select primary_id from identity.spring_session
+                                where session_id = ? for update
+                                """, String.class, otherSession);
+                        otherLocked.countDown();
+                        try {
+                            if (!releaseOther.await(15, TimeUnit.SECONDS)) {
+                                throw new IllegalStateException("Synthetic lock was not released");
+                            }
+                        } catch (InterruptedException interrupted) {
+                            Thread.currentThread().interrupt();
+                            throw new IllegalStateException(interrupted);
+                        }
+                    }));
+            assertThat(otherLocked.await(5, TimeUnit.SECONDS)).isTrue();
+            try {
+                var reset = pool.submit(() -> recovery.confirm(token,
+                        "NewSyntheticPassword-2026!"));
+                reset.get(8, TimeUnit.SECONDS);
+            } finally {
+                releaseOther.countDown();
+            }
+            holder.get(5, TimeUnit.SECONDS);
+        }
+        assertThat(sessions.findById(targetSession)).isNull();
+        assertThat(sessions.findById(otherSession)).isNotNull();
+        assertThat(mvc.perform(get("/api/auth/session")
+                .cookie(sessionCookie(otherSession)))
+                .andReturn().getResponse().getContentAsString()).contains("authenticated");
+    }
+
+    @Test
+    void staleInFlightSessionSaveCannotResurrectResetAuthority() throws Exception {
+        String email = activeAccount();
+        UUID userId = userId(email);
+        String id = persistedSession(userId, "ROLE_USER", true);
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        SessionRepository<Session> repository = (SessionRepository) sessions;
+        CountDownLatch staleLoaded = new CountDownLatch(1);
+        CountDownLatch resetCommitted = new CountDownLatch(1);
+        try (var pool = Executors.newSingleThreadExecutor()) {
+            var inFlight = pool.submit(() -> {
+                Session stale = repository.findById(id);
+                if (stale == null) throw new IllegalStateException("Session not persisted");
+                staleLoaded.countDown();
+                if (!resetCommitted.await(15, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("Reset did not commit");
+                }
+                stale.setLastAccessedTime(clock.instant().plusSeconds(1));
+                try {
+                    repository.save(stale);
+                } catch (DataAccessException rejectedStaleWrite) {
+                    // A rejected stale update is safe; it must not recreate the row.
+                }
+                return null;
+            });
+            assertThat(staleLoaded.await(5, TimeUnit.SECONDS)).isTrue();
+            try {
+                request(bootstrap(), email);
+                recovery.confirm(resetToken(email), "NewSyntheticPassword-2026!");
+            } finally {
+                resetCommitted.countDown();
+            }
+            inFlight.get(5, TimeUnit.SECONDS);
+        }
+        assertThat(repository.findById(id)).isNull();
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.spring_session where session_id = ?
+                """, Integer.class, id)).isZero();
+        Cookie oldCookie = sessionCookie(id);
+        assertThat(mvc.perform(get("/api/auth/session").cookie(oldCookie))
+                .andReturn().getResponse().getContentAsString()).contains("anonymous");
+        mvc.perform(get("/api/auth/reauth/oidc/google/callback").cookie(oldCookie))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void attributableResetDenialsAreDurablyAuditedWithoutSecrets(CapturedOutput output)
+            throws Exception {
+        String email = activeAccount();
+        UUID userId = userId(email);
+        Browser browser = bootstrap();
+        request(browser, email);
+        String first = resetToken(email);
+        UUID firstId = PasswordResetToken.locator(first);
+        String wrong = first.substring(0, first.length() - 1)
+                + (first.endsWith("A") ? "B" : "A");
+        String publicDenial = rejectedConfirmation(browser, wrong);
+        jdbc.update("""
+                update identity.identity_capability
+                set issued_at = now() - interval '2 hours',
+                    expires_at = now() - interval '1 hour'
+                where capability_id = ?
+                """, firstId);
+        assertThat(rejectedConfirmation(browser, first)).isEqualTo(publicDenial);
+        jdbc.update("""
+                update identity.identity_capability
+                set issued_at = now() - interval '30 minutes',
+                    expires_at = now() + interval '30 minutes'
+                where capability_id = ?
+                """, firstId);
+        request(browser, email);
+        assertThat(rejectedConfirmation(browser, first)).isEqualTo(publicDenial);
+        String second = resetToken(email);
+        recovery.confirm(second, "NewSyntheticPassword-2026!");
+        assertThat(rejectedConfirmation(browser, second)).isEqualTo(publicDenial);
+
+        String ineligibleEmail = activeAccount();
+        UUID ineligibleUser = userId(ineligibleEmail);
+        request(browser, ineligibleEmail);
+        String ineligibleToken = resetToken(ineligibleEmail);
+        jdbc.update("update identity.account set account_state = 'suspended' where user_id = ?",
+                ineligibleUser);
+        assertThat(rejectedConfirmation(browser, ineligibleToken)).isEqualTo(publicDenial);
+        int beforeUnknown = deniedResetCount();
+        assertThat(rejectedConfirmation(browser, PasswordResetToken.issue(ids.generate())))
+                .isEqualTo(publicDenial);
+        assertThat(deniedResetCount()).isEqualTo(beforeUnknown);
+        assertThat(jdbc.queryForList("""
+                select reason_code from identity.security_audit_fact
+                where target_user_id = ? and event_category = 'password_reset'
+                  and outcome_code = 'denied' order by occurred_at
+                """, String.class, userId))
+                .containsExactlyInAnyOrder("invalid_proof", "expired", "superseded", "replayed");
+        assertThat(jdbc.queryForList("""
+                select reason_code from identity.security_audit_fact
+                where target_user_id = ? and event_category = 'password_reset'
+                  and outcome_code = 'denied'
+                """, String.class, ineligibleUser)).containsExactly("account_ineligible");
+        assertThat(jdbc.queryForObject("""
+                select password_verifier from identity.account where user_id = ?
+                """, String.class, ineligibleUser)).satisfies(verifier ->
+                assertThat(passwords.matches("SyntheticPassword-2026!", verifier)).isTrue());
+        assertThat(jdbc.queryForObject("""
+                select string_agg(to_jsonb(f)::text, ',')
+                from identity.security_audit_fact f
+                where event_category = 'password_reset' and outcome_code = 'denied'
+                """, String.class)).doesNotContain(first, second, wrong,
+                ineligibleToken, "NewSyntheticPassword-2026!");
+        assertThat(output.getAll()).doesNotContain(first, second, wrong,
+                ineligibleToken, "NewSyntheticPassword-2026!");
     }
 
     @Test
@@ -408,8 +573,8 @@ class PasswordRecoveryIntegrationTest {
         recovery.confirm(resetToken(email), "NewSyntheticPassword-2026!");
         UUID userId = jdbc.queryForObject(
                 "select user_id from identity.account where canonical_email = ?", UUID.class, email);
-        LeasePolicy lease = new LeasePolicy(Duration.ofMinutes(2), 10);
-        var first = delivery.claimReady(clock.instant(), new LeaseOwner("notice_first"), lease, 10)
+        LeasePolicy lease = new LeasePolicy(Duration.ofMinutes(2), 1_000);
+        var first = delivery.claimReady(clock.instant(), new LeaseOwner("notice_first"), lease, 1_000)
                 .stream().filter(claim -> userId.equals(claim.subjectUserId()))
                 .findFirst().orElseThrow();
         provider.nextOutcome = SecurityEmailProviderPort.Outcome.RETRYABLE;
@@ -423,7 +588,7 @@ class PasswordRecoveryIntegrationTest {
                     select next_attempt_at from identity.security_email_delivery
                     where security_email_delivery_id = ?
                     """, java.sql.Timestamp.class, first.id()).toInstant().plusMillis(1);
-            var second = delivery.claimReady(retryAt, new LeaseOwner("notice_second"), lease, 10)
+            var second = delivery.claimReady(retryAt, new LeaseOwner("notice_second"), lease, 1_000)
                     .stream().filter(claim -> claim.id().equals(first.id()))
                     .findFirst().orElseThrow();
             assertThat(delivery.submitted(first, retryAt)).isFalse();
@@ -440,7 +605,7 @@ class PasswordRecoveryIntegrationTest {
 
     @Test
     void resetNoticePermanentAndAmbiguousOutcomesStayFenced() throws Exception {
-        LeasePolicy lease = new LeasePolicy(Duration.ofMinutes(2), 10);
+        LeasePolicy lease = new LeasePolicy(Duration.ofMinutes(2), 1_000);
         String permanentEmail = activeAccount();
         request(bootstrap(), permanentEmail);
         recovery.confirm(resetToken(permanentEmail), "NewSyntheticPassword-2026!");
@@ -448,7 +613,7 @@ class PasswordRecoveryIntegrationTest {
                 "select user_id from identity.account where canonical_email = ?",
                 UUID.class, permanentEmail);
         var permanent = delivery.claimReady(clock.instant(),
-                new LeaseOwner("notice_permanent"), lease, 10).stream()
+                new LeaseOwner("notice_permanent"), lease, 1_000).stream()
                 .filter(claim -> permanentUser.equals(claim.subjectUserId()))
                 .findFirst().orElseThrow();
         provider.nextOutcome = SecurityEmailProviderPort.Outcome.NON_RETRYABLE;
@@ -469,7 +634,7 @@ class PasswordRecoveryIntegrationTest {
                 "select user_id from identity.account where canonical_email = ?",
                 UUID.class, ambiguousEmail);
         var first = delivery.claimReady(clock.instant(),
-                new LeaseOwner("notice_ambiguous"), lease, 10).stream()
+                new LeaseOwner("notice_ambiguous"), lease, 1_000).stream()
                 .filter(claim -> ambiguousUser.equals(claim.subjectUserId()))
                 .findFirst().orElseThrow();
         provider.throwAfterCapture = true;
@@ -484,7 +649,7 @@ class PasswordRecoveryIntegrationTest {
                 where security_email_delivery_id = ?
                 """, java.sql.Timestamp.class, first.id()).toInstant().plusMillis(1);
         var reclaimed = delivery.claimReady(retryAt,
-                new LeaseOwner("notice_after_ambiguity"), lease, 10).stream()
+                new LeaseOwner("notice_after_ambiguity"), lease, 1_000).stream()
                 .filter(claim -> claim.id().equals(first.id())).findFirst().orElseThrow();
         workerAt(retryAt).process(reclaimed);
         assertThat(provider.lastMessage.body()).isEqualTo(firstBody);
@@ -615,6 +780,37 @@ class PasswordRecoveryIntegrationTest {
         registration.begin(email, "SyntheticPassword-2026!");
         verification.confirm(verificationToken(email));
         return email;
+    }
+
+    private UUID userId(String email) {
+        return jdbc.queryForObject(
+                "select user_id from identity.account where canonical_email = ?",
+                UUID.class, email);
+    }
+
+    private Cookie sessionCookie(String sessionId) {
+        return new Cookie("SESSION", Base64.getEncoder().encodeToString(
+                sessionId.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    private int deniedResetCount() {
+        return jdbc.queryForObject("""
+                select count(*) from identity.security_audit_fact
+                where event_category = 'password_reset' and outcome_code = 'denied'
+                """, Integer.class);
+    }
+
+    private String rejectedConfirmation(Browser browser, String token) throws Exception {
+        var response = mvc.perform(post("/api/auth/password-reset/confirmations")
+                .cookie(browser.cookie()).header("X-CSRF-TOKEN", browser.csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"token\":\"" + token
+                        + "\",\"newPassword\":\"NewSyntheticPassword-2026!\"}"))
+                .andExpect(status().isConflict()).andReturn().getResponse();
+        String body = response.getContentAsString();
+        assertThat(body).contains("invalid_lifecycle_transition")
+                .doesNotContain(token, "NewSyntheticPassword-2026!");
+        return body.replaceAll("\"traceId\":\"[^\"]+\"", "\"traceId\":\"opaque\"");
     }
 
     private SecurityEmailWorker workerAt(Instant instant) {

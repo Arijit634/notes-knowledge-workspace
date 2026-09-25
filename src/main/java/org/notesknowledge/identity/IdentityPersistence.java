@@ -14,6 +14,8 @@ import org.springframework.stereotype.Repository;
 @IdentityCoreEnabled
 class IdentityPersistence {
     record Capability(UUID id, UUID userId, String purpose, byte[] digest, Instant expiresAt) { }
+    record ResetState(Instant expiresAt, Instant consumedAt, Instant supersededAt,
+            Instant revokedAt) { }
     record LoginAccount(UUID id, String verifier, String state, Instant verifiedAt) { }
 
     private final JdbcClient jdbc;
@@ -71,6 +73,23 @@ class IdentityPersistence {
                 rs.getObject("capability_id", UUID.class), rs.getObject("user_id", UUID.class),
                 rs.getString("purpose"), rs.getBytes("verifier_digest"),
                 rs.getTimestamp("expires_at").toInstant())).optional();
+    }
+
+    Optional<ResetState> resetStateForUpdate(UUID id) {
+        return jdbc.sql("""
+                select expires_at, consumed_at, superseded_at, revoked_at
+                from identity.identity_capability
+                where capability_id = :id and purpose = 'password_reset'
+                for update
+                """).param("id", id).query((rs, row) -> new ResetState(
+                rs.getTimestamp("expires_at").toInstant(),
+                instantOrNull(rs.getTimestamp("consumed_at")),
+                instantOrNull(rs.getTimestamp("superseded_at")),
+                instantOrNull(rs.getTimestamp("revoked_at")))).optional();
+    }
+
+    private static Instant instantOrNull(Timestamp timestamp) {
+        return timestamp == null ? null : timestamp.toInstant();
     }
 
     Optional<String> capabilityPurpose(UUID id) {

@@ -11,6 +11,7 @@ import org.notesknowledge.websupport.ApiFailureException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
@@ -25,6 +26,7 @@ final class PasswordRecoveryService {
     private final PasswordEncoder passwords;
     private final Clock clock;
     private final TransactionTemplate transactions;
+    private final TransactionTemplate denialAuditTransactions;
 
     PasswordRecoveryService(IdentityPersistence identity,
             SecurityEmailDeliveryRepository delivery, SecurityEmailMaterialCipher cipher,
@@ -39,6 +41,9 @@ final class PasswordRecoveryService {
         this.passwords = passwords;
         this.clock = clock;
         this.transactions = new TransactionTemplate(transactionManager);
+        this.denialAuditTransactions = new TransactionTemplate(transactionManager);
+        this.denialAuditTransactions.setPropagationBehavior(
+                TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     void request(String email) {
@@ -70,25 +75,41 @@ final class PasswordRecoveryService {
         IdentityInput.password(newPassword);
         byte[] digest = PasswordResetToken.digest(token);
         var candidate = identity.capability(id).orElseThrow(PasswordRecoveryService::invalidReset);
-        if (!"password_reset".equals(candidate.purpose())
-                || !MessageDigest.isEqual(candidate.digest(), digest)) {
+        if (!"password_reset".equals(candidate.purpose())) {
             throw invalidReset();
+        }
+        if (!MessageDigest.isEqual(candidate.digest(), digest)) {
+            deny(candidate.userId(), "invalid_proof");
         }
         // Argon2 and any key preparation stay outside the account/session row locks.
         String verifier = passwords.encode(newPassword);
-        transactions.executeWithoutResult(status -> {
-            if (!identity.lockActiveAccount(candidate.userId())) throw invalidReset();
+        String denial = transactions.execute(status -> {
+            if (!identity.lockActiveAccount(candidate.userId())) return "account_ineligible";
             Instant now = clock.instant();
-            if (identity.consumeReset(id, digest, now) != 1
-                    || identity.replacePassword(candidate.userId(), verifier, now) != 1) {
-                throw invalidReset();
+            var state = identity.resetStateForUpdate(id).orElse(null);
+            if (state == null) return "invalid_proof";
+            if (state.consumedAt() != null) return "replayed";
+            if (state.supersededAt() != null) return "superseded";
+            if (state.revokedAt() != null) return "invalid_proof";
+            if (!state.expiresAt().isAfter(now)) return "expired";
+            if (identity.consumeReset(id, digest, now) != 1) return "invalid_proof";
+            if (identity.replacePassword(candidate.userId(), verifier, now) != 1) {
+                throw new IllegalStateException("Locked account became ineligible");
             }
             identity.obsoleteConsumedReset(id, now);
             sessions.revokeAll(candidate.userId());
             UUID eventId = ids.generate();
             identity.auditResetCompleted(candidate.userId(), eventId, now);
             delivery.queueResetNotice(candidate.userId(), eventId, now);
+            return null;
         });
+        if (denial != null) deny(candidate.userId(), denial);
+    }
+
+    private void deny(UUID userId, String reason) {
+        denialAuditTransactions.executeWithoutResult(status ->
+                identity.auditFailure(userId, "password_reset", reason, clock.instant()));
+        throw invalidReset();
     }
 
     private static ApiFailureException invalidReset() {
