@@ -53,6 +53,10 @@ final class IdentitySessionState {
             Instant now, MfaProperties policy) {
         HttpSession session = request.getSession(false);
         Object value = session == null ? null : session.getAttribute(RECENT_ATTRIBUTE);
+        requireRecent(value, userId, now, policy);
+    }
+
+    static void requireRecent(Object value, UUID userId, Instant now, MfaProperties policy) {
         if (!(value instanceof RecentAuthentication recent) || !userId.equals(recent.userId())
                 || recent.at().isAfter(now)
                 || !recent.at().plus(policy.recentAuthLifetime()).isAfter(now)) {

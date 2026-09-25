@@ -123,6 +123,10 @@ public class SecurityConfiguration {
                                 "/api/me/security/mfa/totp/enrollments",
                                 "/api/me/security/mfa/totp/enrollments/{enrollmentId}/confirmation")
                         .hasAuthority("ROLE_USER")
+                        .requestMatchers(HttpMethod.GET, "/api/me/security")
+                        .hasAuthority("ROLE_USER")
+                        .requestMatchers(HttpMethod.PUT, "/api/me/security/password")
+                        .hasAuthority("ROLE_USER")
                         .anyRequest()
                         .denyAll())
                 .httpBasic(AbstractHttpConfigurer::disable)
