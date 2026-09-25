@@ -99,6 +99,8 @@ public class SecurityConfiguration {
                         .requestMatchers(HttpMethod.POST, "/api/auth/registrations",
                                 "/api/auth/email-verification/requests",
                                 "/api/auth/email-verification/confirmations",
+                                "/api/auth/password-reset/requests",
+                                "/api/auth/password-reset/confirmations",
                                 "/api/auth/login/password",
                                 "/api/auth/oidc/google/authorizations")
                         .access((authentication, context) -> new org.springframework.security.authorization.AuthorizationDecision(

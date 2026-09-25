@@ -17,7 +17,8 @@ import org.springframework.transaction.annotation.Transactional;
 @IdentityCoreEnabled
 class JdbcSecurityEmailDeliveryAdapter implements SecurityEmailDeliveryRepository {
     private static final String RETURNING = """
-            returning work.security_email_delivery_id, work.capability_id, work.lease_token,
+            returning work.security_email_delivery_id, work.capability_id,
+                      work.subject_user_id, work.delivery_kind, work.notice_kind, work.lease_token,
                       work.attempt_count, work.sealed_token_ciphertext, work.sealed_token_nonce,
                       work.sealed_token_tag, work.token_key_version
             """;
@@ -43,6 +44,23 @@ class JdbcSecurityEmailDeliveryAdapter implements SecurityEmailDeliveryRepositor
                 """).param("capability", capabilityId).param("now", Timestamp.from(now))
                 .param("ciphertext", envelope.ciphertext()).param("nonce", envelope.nonce())
                 .param("tag", envelope.tag()).param("version", envelope.keyVersion()).update();
+    }
+
+    @Override
+    public void queueResetNotice(UUID subjectUserId, UUID eventId, Instant now) {
+        if (!org.springframework.transaction.support.TransactionSynchronizationManager
+                .isActualTransactionActive()) {
+            throw new IllegalStateException("Security notice requires the Identity transaction");
+        }
+        jdbc.sql("""
+                insert into identity.security_email_delivery
+                    (security_email_delivery_id, delivery_kind, subject_user_id,
+                     security_event_id, notice_kind, state, next_attempt_at,
+                     created_at, updated_at)
+                values (uuidv7(), 'security_notice', :subject, :event,
+                        'password_reset_completed', 'queued', :now, :now, :now)
+                """).param("subject", subjectUserId).param("event", eventId)
+                .param("now", Timestamp.from(now)).update();
     }
 
     @Override
@@ -123,6 +141,8 @@ class JdbcSecurityEmailDeliveryAdapter implements SecurityEmailDeliveryRepositor
                 .query((rs, row) -> new Claim(
                         rs.getObject("security_email_delivery_id", UUID.class),
                         rs.getObject("capability_id", UUID.class),
+                        rs.getObject("subject_user_id", UUID.class),
+                        rs.getString("delivery_kind"), rs.getString("notice_kind"),
                         LeaseToken.fromDatabase(rs.getObject("lease_token", UUID.class)),
                         rs.getInt("attempt_count"),
                         new SecurityEmailMaterialCipher.Envelope(
