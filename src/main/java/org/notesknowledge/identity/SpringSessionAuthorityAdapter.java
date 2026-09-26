@@ -1,6 +1,7 @@
 package org.notesknowledge.identity;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -16,6 +17,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 class SpringSessionAuthorityAdapter {
     private static final String LEGACY_INDEX = "IdentitySessionPrincipal[REDACTED]";
     private record CandidateLocation(String sessionId, long expiryTime) { }
+    private record IndexedSession(String primaryId, String sessionId) { }
+    record CurrentSession(String primaryId, Session persisted) { }
     private final JdbcClient jdbc;
     private final JdbcIndexedSessionRepository sessions;
 
@@ -25,17 +28,39 @@ class SpringSessionAuthorityAdapter {
     }
 
     int revokeAll(UUID userId) {
-        if (!TransactionSynchronizationManager.isActualTransactionActive()) {
-            throw new IllegalStateException("Session revocation requires the Identity transaction");
-        }
+        return revokeMatching(userId, null);
+    }
+
+    int revokeOthers(UUID userId, String currentPrimaryId) {
+        return revokeMatching(userId, Objects.requireNonNull(currentPrimaryId));
+    }
+
+    CurrentSession lockCurrent(UUID userId, String sessionId) {
+        requireTransaction();
+        String primaryId = jdbc.sql("""
+                select primary_id from identity.spring_session
+                where session_id = :id for update
+                """).param("id", sessionId).query(String.class).optional().orElse(null);
+        if (primaryId == null) return null;
+        Session persisted = sessions.findById(sessionId);
+        if (!belongsTo(persisted, userId)) return null;
+        SecurityContext context = persisted.getAttribute("SPRING_SECURITY_CONTEXT");
+        if (context.getAuthentication().getAuthorities().stream()
+                .noneMatch(a -> "ROLE_USER".equals(a.getAuthority()))) return null;
+        return new CurrentSession(primaryId, persisted);
+    }
+
+    private int revokeMatching(UUID userId, String excludedPrimaryId) {
+        requireTransaction();
         // The legacy index is shared by every old principal. Inspect it without
         // locking, then lock only an identified owner's stable primary row.
-        int revoked = revokeIndexed(userId);
+        int revoked = revokeIndexed(userId, excludedPrimaryId);
         List<String> legacyRows = jdbc.sql("""
                 select primary_id from identity.spring_session
                 where principal_name = :legacy order by primary_id
                 """).param("legacy", LEGACY_INDEX).query(String.class).list();
         for (String primaryId : legacyRows) {
+            if (primaryId.equals(excludedPrimaryId)) continue;
             Session candidate = findStableCandidate(primaryId);
             if (!belongsTo(candidate, userId)) continue;
             String lockedId = jdbc.sql("""
@@ -48,18 +73,27 @@ class SpringSessionAuthorityAdapter {
             }
         }
         // A legacy row may have migrated to the per-user index during inspection.
-        return revoked + revokeIndexed(userId);
+        return revoked + revokeIndexed(userId, excludedPrimaryId);
     }
 
-    private int revokeIndexed(UUID userId) {
-        List<String> ids = jdbc.sql("""
-                select session_id from identity.spring_session
+    private void requireTransaction() {
+        if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new IllegalStateException("Session revocation requires the Identity transaction");
+        }
+    }
+
+    private int revokeIndexed(UUID userId, String excludedPrimaryId) {
+        List<IndexedSession> indexed = jdbc.sql("""
+                select primary_id, session_id from identity.spring_session
                 where principal_name = :owner order by primary_id for update
-                """).param("owner", userId.toString()).query(String.class).list();
+                """).param("owner", userId.toString())
+                .query((rs, row) -> new IndexedSession(
+                        rs.getString("primary_id"), rs.getString("session_id"))).list();
         int revoked = 0;
-        for (String id : ids) {
-            if (belongsTo(sessions.findById(id), userId)) {
-                sessions.deleteById(id);
+        for (IndexedSession indexedSession : indexed) {
+            if (indexedSession.primaryId().equals(excludedPrimaryId)) continue;
+            if (belongsTo(sessions.findById(indexedSession.sessionId()), userId)) {
+                sessions.deleteById(indexedSession.sessionId());
                 revoked++;
             }
         }
