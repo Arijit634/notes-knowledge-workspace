@@ -11,5 +11,7 @@ class IdentitySessionTransitionCheckpoint {
     void beforeOidcLock(HttpServletRequest request) { }
     void afterSessionMutation(HttpServletRequest request) { }
     void afterPasswordMutation(HttpServletRequest request) { }
+    void afterEmailMutation(HttpServletRequest request) { }
+    void afterEmailNoticeIntents(HttpServletRequest request) { }
     void afterOtherSessionRevocation(HttpServletRequest request) { }
 }

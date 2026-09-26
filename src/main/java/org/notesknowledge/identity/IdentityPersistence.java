@@ -17,6 +17,10 @@ class IdentityPersistence {
     record ResetState(Instant expiresAt, Instant consumedAt, Instant supersededAt,
             Instant revokedAt) { }
     record LoginAccount(UUID id, String verifier, String state, Instant verifiedAt) { }
+    record EmailChangeState(UUID userId, String oldEmail, String oldDisplayEmail,
+            String candidateEmail,
+            Instant expiresAt, Instant consumedAt, Instant supersededAt, Instant revokedAt,
+            byte[] digest) { }
 
     private final JdbcClient jdbc;
     IdentityPersistence(JdbcClient jdbc) {
@@ -112,6 +116,137 @@ class IdentityPersistence {
                   and email_verified_at is not null
                 for update
                 """).param("id", userId).query(UUID.class).optional().isPresent();
+    }
+
+    Optional<String> activeEmail(UUID userId) {
+        return jdbc.sql("""
+                select canonical_email from identity.account
+                where user_id = :id and account_state = 'active'
+                  and email_verified_at is not null
+                """).param("id", userId).query(String.class).optional();
+    }
+
+    boolean emailOccupied(String canonical) {
+        return jdbc.sql("select exists(select 1 from identity.account where canonical_email = :email)")
+                .param("email", canonical).query(Boolean.class).single();
+    }
+
+    Optional<EmailChangeState> emailChangeState(UUID id, boolean lock) {
+        return jdbc.sql("""
+                select c.user_id, a.canonical_email, a.display_email,
+                       c.candidate_canonical_email,
+                       c.expires_at, c.consumed_at, c.superseded_at, c.revoked_at,
+                       c.verifier_digest
+                from identity.identity_capability c
+                join identity.account a on a.user_id = c.user_id
+                where c.capability_id = :id and c.purpose = 'email_change'
+                """ + (lock ? " for update of c" : ""))
+                .param("id", id).query((rs, row) -> new EmailChangeState(
+                        rs.getObject("user_id", UUID.class), rs.getString("canonical_email"),
+                        rs.getString("display_email"),
+                        rs.getString("candidate_canonical_email"),
+                        rs.getTimestamp("expires_at").toInstant(),
+                        instantOrNull(rs.getTimestamp("consumed_at")),
+                        instantOrNull(rs.getTimestamp("superseded_at")),
+                        instantOrNull(rs.getTimestamp("revoked_at")),
+                        rs.getBytes("verifier_digest"))).optional();
+    }
+
+    void supersedeEmailChange(UUID userId, Instant now) {
+        List<UUID> previous = jdbc.sql("""
+                update identity.identity_capability set superseded_at = :now
+                where user_id = :user and purpose = 'email_change'
+                  and consumed_at is null and superseded_at is null and revoked_at is null
+                returning capability_id
+                """).param("now", Timestamp.from(now)).param("user", userId)
+                .query(UUID.class).list();
+        for (UUID id : previous) {
+            jdbc.sql("""
+                    update identity.security_email_delivery
+                    set state = 'obsolete', next_attempt_at = null,
+                        lease_owner = null, lease_token = null, lease_until = null,
+                        sealed_token_ciphertext = null, sealed_token_nonce = null,
+                        sealed_token_tag = null, token_key_version = null,
+                        terminal_at = :now, updated_at = :now,
+                        last_failure_code = 'superseded'
+                    where capability_id = :id and state in ('queued','retry_wait','claimed')
+                    """).param("now", Timestamp.from(now)).param("id", id).update();
+        }
+    }
+
+    void issueEmailChange(UUID id, UUID userId, String candidate, byte[] digest,
+            Instant now, Instant expiry) {
+        jdbc.sql("""
+                insert into identity.identity_capability
+                    (capability_id, user_id, purpose, candidate_canonical_email,
+                     verifier_digest, issued_at, expires_at)
+                values (:id, :user, 'email_change', :candidate, :digest, :now, :expiry)
+                """).param("id", id).param("user", userId).param("candidate", candidate)
+                .param("digest", digest).param("now", Timestamp.from(now))
+                .param("expiry", Timestamp.from(expiry)).update();
+    }
+
+    int consumeEmailChange(UUID id, byte[] digest, Instant now) {
+        return jdbc.sql("""
+                update identity.identity_capability set consumed_at = :now
+                where capability_id = :id and purpose = 'email_change'
+                  and consumed_at is null and superseded_at is null and revoked_at is null
+                  and expires_at > :now and verifier_digest = :digest
+                """).param("id", id).param("digest", digest)
+                .param("now", Timestamp.from(now)).update();
+    }
+
+    int changeEmail(UUID userId, String expectedOld, String candidate, Instant now) {
+        return jdbc.sql("""
+                update identity.account
+                set canonical_email = :candidate, display_email = :candidate,
+                    email_verified_at = :now, updated_at = :now
+                where user_id = :user and canonical_email = :old
+                  and account_state = 'active' and email_verified_at is not null
+                """).param("user", userId).param("old", expectedOld)
+                .param("candidate", candidate).param("now", Timestamp.from(now)).update();
+    }
+
+    void auditEmailChange(UUID userId, UUID eventId, Instant now) {
+        jdbc.sql("""
+                insert into identity.security_audit_fact
+                    (audit_fact_id, target_user_id, event_category, outcome_code,
+                     correlation_id, occurred_at)
+                values (uuidv7(), :user, 'email_change', 'completed', :event, :now)
+                """).param("user", userId).param("event", eventId)
+                .param("now", Timestamp.from(now)).update();
+    }
+
+    Optional<String> currentEmailChangeDestination(UUID deliveryId, UUID capabilityId,
+            Instant now) {
+        return jdbc.sql("""
+                select c.candidate_canonical_email from identity.security_email_delivery d
+                join identity.identity_capability c on c.capability_id = d.capability_id
+                join identity.account a on a.user_id = c.user_id
+                where d.security_email_delivery_id = :delivery and d.capability_id = :capability
+                  and d.delivery_kind = 'capability_link' and c.purpose = 'email_change'
+                  and c.consumed_at is null and c.superseded_at is null
+                  and c.revoked_at is null and c.expires_at > :now
+                  and a.account_state = 'active' and a.email_verified_at is not null
+                  and a.canonical_email <> c.candidate_canonical_email
+                  and not exists(select 1 from identity.account occupied
+                      where occupied.canonical_email = c.candidate_canonical_email)
+                """).param("delivery", deliveryId).param("capability", capabilityId)
+                .param("now", Timestamp.from(now)).query(String.class).optional();
+    }
+
+    boolean activeNoticeSubject(UUID deliveryId, UUID subjectId, UUID eventId,
+            String noticeKind) {
+        return jdbc.sql("""
+                select exists(select 1 from identity.security_email_delivery d
+                join identity.account a on a.user_id = d.subject_user_id
+                where d.security_email_delivery_id = :delivery and d.subject_user_id = :subject
+                  and d.security_event_id = :event and d.notice_kind = :kind
+                  and d.delivery_kind = 'security_notice' and a.account_state = 'active'
+                  and a.email_verified_at is not null)
+                """).param("delivery", deliveryId).param("subject", subjectId)
+                .param("event", eventId).param("kind", noticeKind)
+                .query(Boolean.class).single();
     }
 
     void supersedeReset(UUID userId, Instant now) {

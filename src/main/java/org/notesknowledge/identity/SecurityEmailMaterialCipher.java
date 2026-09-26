@@ -42,6 +42,19 @@ final class SecurityEmailMaterialCipher {
     }
 
     Envelope seal(String purpose, UUID capabilityId, String token) {
+        return encrypt(aad(purpose, capabilityId), token);
+    }
+
+    Envelope sealRecipient(UUID eventId, String noticeKind, String recipient) {
+        if (!"email_change_old_address".equals(noticeKind)
+                && !"email_change_new_address".equals(noticeKind)) {
+            throw new IllegalArgumentException("Unsupported recipient purpose");
+        }
+        return encrypt(("security_notice:" + noticeKind + ":" + eventId)
+                .getBytes(StandardCharsets.US_ASCII), recipient);
+    }
+
+    private Envelope encrypt(byte[] associatedData, String material) {
         if (currentKey == null) {
             throw ApiFailureException.of(ApiFailureException.Kind.SERVICE_UNAVAILABLE);
         }
@@ -50,8 +63,8 @@ final class SecurityEmailMaterialCipher {
         try {
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
             cipher.init(Cipher.ENCRYPT_MODE, currentKey, new GCMParameterSpec(128, nonce));
-            cipher.updateAAD(aad(purpose, capabilityId));
-            byte[] combined = cipher.doFinal(token.getBytes(StandardCharsets.US_ASCII));
+            cipher.updateAAD(associatedData);
+            byte[] combined = cipher.doFinal(material.getBytes(StandardCharsets.UTF_8));
             byte[] content = java.util.Arrays.copyOf(combined, combined.length - 16);
             byte[] tag = java.util.Arrays.copyOfRange(combined, combined.length - 16, combined.length);
             return new Envelope(content, nonce, tag, currentVersion);
@@ -65,6 +78,19 @@ final class SecurityEmailMaterialCipher {
     }
 
     String open(String purpose, UUID capabilityId, Envelope envelope) {
+        return decrypt(aad(purpose, capabilityId), envelope);
+    }
+
+    String openRecipient(UUID eventId, String noticeKind, Envelope envelope) {
+        if (!"email_change_old_address".equals(noticeKind)
+                && !"email_change_new_address".equals(noticeKind)) {
+            throw new IllegalArgumentException("Unsupported recipient purpose");
+        }
+        return decrypt(("security_notice:" + noticeKind + ":" + eventId)
+                .getBytes(StandardCharsets.US_ASCII), envelope);
+    }
+
+    private String decrypt(byte[] associatedData, Envelope envelope) {
         SecretKey key = envelope.keyVersion().equals(currentVersion) ? currentKey
                 : envelope.keyVersion().equals(previousVersion) ? previousKey : null;
         if (key == null) {
@@ -76,15 +102,16 @@ final class SecurityEmailMaterialCipher {
         try {
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
             cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(128, envelope.nonce()));
-            cipher.updateAAD(aad(purpose, capabilityId));
-            return new String(cipher.doFinal(combined), StandardCharsets.US_ASCII);
+            cipher.updateAAD(associatedData);
+            return new String(cipher.doFinal(combined), StandardCharsets.UTF_8);
         } catch (GeneralSecurityException exception) {
             throw new IllegalStateException("Delivery material invalid");
         }
     }
 
     private byte[] aad(String purpose, UUID id) {
-        if (!"email_verification".equals(purpose) && !"password_reset".equals(purpose)) {
+        if (!"email_verification".equals(purpose) && !"password_reset".equals(purpose)
+                && !"email_change".equals(purpose)) {
             throw new IllegalArgumentException("Unsupported capability purpose");
         }
         return ("capability_link:" + purpose + ":" + id).getBytes(StandardCharsets.US_ASCII);

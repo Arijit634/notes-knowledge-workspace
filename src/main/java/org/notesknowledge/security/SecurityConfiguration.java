@@ -127,6 +127,10 @@ public class SecurityConfiguration {
                         .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.PUT, "/api/me/security/password")
                         .hasAuthority("ROLE_USER")
+                        .requestMatchers(HttpMethod.POST,
+                                "/api/me/security/email-change/requests",
+                                "/api/me/security/email-change/confirmations")
+                        .hasAuthority("ROLE_USER")
                         .anyRequest()
                         .denyAll())
                 .httpBasic(AbstractHttpConfigurer::disable)

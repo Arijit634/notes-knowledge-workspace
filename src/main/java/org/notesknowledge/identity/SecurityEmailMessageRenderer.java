@@ -38,6 +38,23 @@ final class SecurityEmailMessageRenderer {
                 "Your account password was reset. If this was not you, contact support.");
     }
 
+    Message emailChange(String token) {
+        String link = continuation("/confirm-email-change#token=", token);
+        return new Message("Confirm your Notes & Knowledge Workspace new email",
+                "To confirm this address as your account email, open this link: " + link
+                + "\nThis link expires in 24 hours. If you did not request it, ignore this message.");
+    }
+
+    Message emailChangeOldAddress() {
+        return new Message("Your Notes & Knowledge Workspace email changed",
+                "Your account email address was changed. If this was not you, contact support.");
+    }
+
+    Message emailChangeNewAddress() {
+        return new Message("Your Notes & Knowledge Workspace email changed",
+                "This address is now your account email. If this was not you, contact support.");
+    }
+
     private String continuation(String path, String token) {
         if (origin.isBlank()) {
             throw new IllegalStateException("Public origin unavailable");
