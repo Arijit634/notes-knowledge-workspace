@@ -64,6 +64,16 @@ final class IdentitySessionState {
         }
     }
 
+    static String requireIndependentRecent(Object value, UUID userId, Instant now,
+            MfaProperties policy) {
+        requireRecent(value, userId, now, policy);
+        String method = ((RecentAuthentication) value).method();
+        if (!"password".equals(method) && !"oidc".equals(method)) {
+            throw ApiFailureException.of(ApiFailureException.Kind.RECENT_AUTHENTICATION_REQUIRED);
+        }
+        return method;
+    }
+
     record RecentAuthentication(UUID userId, Instant at, String method) implements Serializable {
         @Serial private static final long serialVersionUID = 1L;
     }

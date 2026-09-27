@@ -1,5 +1,9 @@
 package org.notesknowledge.identity;
 
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpSession;
+
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Instant;
@@ -8,6 +12,8 @@ import java.util.List;
 import java.util.UUID;
 
 import org.notesknowledge.websupport.ApiFailureException;
+import org.notesknowledge.DatabaseUuidV7Generator;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -21,6 +27,12 @@ final class MfaManagementService {
     private final TotpEngine totp;
     private final RecoveryCodeService recovery;
     private final IdentityPersistence identity;
+    private final SecurityEmailDeliveryRepository delivery;
+    private final DatabaseUuidV7Generator ids;
+    private final SpringSessionAuthorityAdapter sessions;
+    private final MfaSessionTransitions transitions;
+    private final MfaSessionChallengeRepository staleRequests;
+    private final IdentitySessionTransitionCheckpoint checkpoint;
     private final TransactionTemplate transactions;
     private final Clock clock;
     private final MfaProperties policy;
@@ -28,7 +40,11 @@ final class MfaManagementService {
 
     MfaManagementService(MfaRepository repository, MfaSecretCipher cipher,
             MfaEnrollmentHandle handles, TotpEngine totp, RecoveryCodeService recovery,
-            IdentityPersistence identity, org.springframework.transaction.PlatformTransactionManager manager,
+            IdentityPersistence identity, SecurityEmailDeliveryRepository delivery,
+            DatabaseUuidV7Generator ids, SpringSessionAuthorityAdapter sessions,
+            MfaSessionTransitions transitions, MfaSessionChallengeRepository staleRequests,
+            IdentitySessionTransitionCheckpoint checkpoint,
+            org.springframework.transaction.PlatformTransactionManager manager,
             Clock clock, MfaProperties policy) {
         this.repository = repository;
         this.cipher = cipher;
@@ -36,6 +52,12 @@ final class MfaManagementService {
         this.totp = totp;
         this.recovery = recovery;
         this.identity = identity;
+        this.delivery = delivery;
+        this.ids = ids;
+        this.sessions = sessions;
+        this.transitions = transitions;
+        this.staleRequests = staleRequests;
+        this.checkpoint = checkpoint;
         this.transactions = new TransactionTemplate(manager);
         this.clock = clock;
         this.policy = policy;
@@ -96,6 +118,97 @@ final class MfaManagementService {
             identity.audit(userId, "mfa_enrollment", "activated", now);
         });
         return codes;
+    }
+
+    void disable(UUID userId, HttpServletRequest request, HttpServletResponse response) {
+        securityChange(userId, request, response, false, List.of());
+    }
+
+    List<String> regenerateRecovery(UUID userId, HttpServletRequest request,
+            HttpServletResponse response) {
+        List<String> codes = recovery.issue();
+        // Digest computation and entropy generation finish before any authoritative lock.
+        List<byte[]> digests = codes.stream().map(recovery::digest).toList();
+        securityChange(userId, request, response, true, digests);
+        return codes;
+    }
+
+    private void securityChange(UUID userId, HttpServletRequest request,
+            HttpServletResponse response, boolean regenerate, List<byte[]> digests) {
+        HttpSession requestSession = request.getSession(false);
+        if (requestSession == null) throw unauthenticated();
+        String originalSessionId = requestSession.getId();
+        UUID eventId = ids.generate();
+        boolean[] sessionMutationStarted = {false};
+        try {
+            transactions.executeWithoutResult(status -> {
+                if (!identity.lockActiveAccount(userId)) throw unauthenticated();
+                var current = sessions.lockCurrent(userId, originalSessionId);
+                if (current == null) {
+                    staleRequests.discardStaleRequestSession(request);
+                    throw unauthenticated();
+                }
+                Instant now = clock.instant();
+                Object persistedRecent = current.persisted().getAttribute(
+                        IdentitySessionState.RECENT_ATTRIBUTE);
+                String method = IdentitySessionState.requireIndependentRecent(
+                        persistedRecent, userId, now, policy);
+                if (("password".equals(method)
+                        && identity.currentPasswordVerifier(userId).isEmpty())
+                        || ("oidc".equals(method) && !identity.hasActiveGoogleLink(userId))) {
+                    throw ApiFailureException.of(
+                            ApiFailureException.Kind.RECENT_AUTHENTICATION_REQUIRED);
+                }
+                var active = repository.activeForUpdate(userId).orElseThrow(() ->
+                        ApiFailureException.of(
+                                ApiFailureException.Kind.INVALID_LIFECYCLE_TRANSITION));
+                if (regenerate) {
+                    long next;
+                    try {
+                        next = Math.addExact(active.recoveryGeneration(), 1);
+                    } catch (ArithmeticException overflow) {
+                        throw ApiFailureException.of(
+                                ApiFailureException.Kind.INVALID_LIFECYCLE_TRANSITION);
+                    }
+                    repository.revokeUnusedRecovery(userId, now);
+                    if (repository.advanceRecoveryGeneration(userId,
+                            active.recoveryGeneration(), next) != 1) {
+                        throw new IllegalStateException("Locked MFA generation did not advance");
+                    }
+                    for (byte[] digest : digests) {
+                        repository.insertRecovery(userId, next, digest, now);
+                    }
+                } else {
+                    repository.deleteRecovery(userId);
+                    if (repository.deleteActive(userId) != 1) {
+                        throw new IllegalStateException("Locked MFA configuration did not delete");
+                    }
+                }
+                checkpoint.afterMfaMutation(request);
+                sessions.revokeOthers(userId, current.primaryId());
+                checkpoint.afterOtherSessionRevocation(request);
+                sessionMutationStarted[0] = true;
+                transitions.establish(userId, true, request, response);
+                checkpoint.afterSessionMutation(request);
+                identity.auditMfaChange(userId, eventId,
+                        regenerate ? "mfa_recovery" : "mfa",
+                        regenerate ? "regenerated" : "disabled", now);
+                checkpoint.afterMfaAudit(request);
+                delivery.queueMfaNotice(userId, eventId,
+                        regenerate ? "mfa_reset" : "mfa_disabled", now);
+                checkpoint.afterMfaNoticeIntent(request);
+            });
+        } catch (RuntimeException failure) {
+            if (sessionMutationStarted[0]) {
+                staleRequests.discardStaleRequestSession(request);
+                SecurityContextHolder.clearContext();
+            }
+            throw failure;
+        }
+    }
+
+    private static ApiFailureException unauthenticated() {
+        return ApiFailureException.of(ApiFailureException.Kind.INVALID_CREDENTIALS);
     }
 
     private static String base32(byte[] bytes) {

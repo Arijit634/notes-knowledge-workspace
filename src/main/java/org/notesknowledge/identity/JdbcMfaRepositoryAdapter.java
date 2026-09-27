@@ -15,11 +15,20 @@ class JdbcMfaRepositoryAdapter implements MfaRepository {
     JdbcMfaRepositoryAdapter(JdbcClient jdbc) { this.jdbc = jdbc; }
 
     @Override public Optional<Configuration> configuration(UUID userId) {
+        return configuration(userId, false);
+    }
+
+    @Override public Optional<Configuration> activeForUpdate(UUID userId) {
+        return configuration(userId, true).filter(c -> "active".equals(c.state()));
+    }
+
+    private Optional<Configuration> configuration(UUID userId, boolean lock) {
         return jdbc.sql("""
                 select user_id, state, seed_ciphertext, seed_nonce, seed_tag, key_version,
                        last_accepted_timestep, current_recovery_generation, enrolled_at, activated_at
                 from identity.mfa_configuration where user_id = :user
-                """).param("user", userId).query((rs, row) -> new Configuration(
+                """ + (lock ? " for update" : "")).param("user", userId)
+                .query((rs, row) -> new Configuration(
                 rs.getObject("user_id", UUID.class), rs.getString("state"),
                 new MfaSecretCipher.Envelope(rs.getBytes("seed_ciphertext"),
                         rs.getBytes("seed_nonce"), rs.getBytes("seed_tag"),
@@ -29,6 +38,32 @@ class JdbcMfaRepositoryAdapter implements MfaRepository {
                 rs.getTimestamp("enrolled_at").toInstant(),
                 rs.getTimestamp("activated_at") == null ? null
                         : rs.getTimestamp("activated_at").toInstant())).optional();
+    }
+
+    @Override public int deleteRecovery(UUID userId) {
+        return jdbc.sql("delete from identity.mfa_recovery_code where user_id = :user")
+                .param("user", userId).update();
+    }
+
+    @Override public int deleteActive(UUID userId) {
+        return jdbc.sql("delete from identity.mfa_configuration where user_id = :user and state = 'active'")
+                .param("user", userId).update();
+    }
+
+    @Override public int revokeUnusedRecovery(UUID userId, Instant now) {
+        return jdbc.sql("""
+                update identity.mfa_recovery_code set revoked_at = :now
+                where user_id = :user and consumed_at is null and revoked_at is null
+                """).param("user", userId).param("now", Timestamp.from(now)).update();
+    }
+
+    @Override public int advanceRecoveryGeneration(UUID userId, long expected, long next) {
+        return jdbc.sql("""
+                update identity.mfa_configuration set current_recovery_generation = :next
+                where user_id = :user and state = 'active'
+                  and current_recovery_generation = :expected
+                """).param("user", userId).param("expected", expected)
+                .param("next", next).update();
     }
 
     @Override public int begin(UUID userId, MfaSecretCipher.Envelope seed, Instant now) {

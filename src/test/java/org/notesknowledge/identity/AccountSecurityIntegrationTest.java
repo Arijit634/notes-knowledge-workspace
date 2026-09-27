@@ -2,6 +2,7 @@ package org.notesknowledge.identity;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -95,6 +96,8 @@ class AccountSecurityIntegrationTest {
     @Autowired OidcIdentityRepository oidc;
     @Autowired MfaRepository mfa;
     @Autowired MfaSecretCipher mfaCipher;
+    @Autowired RecoveryCodeService recoveryCodes;
+    @Autowired MfaProperties mfaPolicy;
     @Autowired FaultCheckpoint faults;
     @Autowired SyntheticRates rates;
     @Autowired PlatformTransactionManager transactionManager;
@@ -608,6 +611,453 @@ class AccountSecurityIntegrationTest {
                 .andExpect(status().isUnauthorized());
     }
 
+    @Test void disablingMfaRemovesAuthorityRotatesSessionAndQueuesCurrentRecipientNotice(
+            CapturedOutput output) throws Exception {
+        UUID owner = account(true);
+        UUID unrelated = account(true);
+        oidc.createLink(owner, "https://accounts.google.com", "subject-" + UUID.randomUUID(),
+                clock.instant());
+        activateMfa(owner);
+        String oldCode = recoveryCodes.issue().getFirst();
+        mfa.insertRecovery(owner, 1, recoveryCodes.digest(oldCode), clock.instant());
+        Browser current = csrf(cookie(session(owner, "ROLE_USER", "password")));
+        String other = session(owner, "ROLE_USER", null);
+        String preMfa = session(owner, "ROLE_MFA_PENDING", null);
+        String unrelatedSession = session(unrelated, "ROLE_USER", null);
+        var response = disable(current).andExpect(status().isNoContent())
+                .andReturn().getResponse();
+        assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+        Cookie rotated = response.getCookie("SESSION");
+        assertThat(rotated).isNotNull();
+        assertThat(rotated.getValue()).isNotEqualTo(current.cookie().getValue());
+        assertThat(mfa.configuration(owner)).isEmpty();
+        assertThat(jdbc.queryForObject("select count(*) from identity.mfa_recovery_code where user_id = ?",
+                Integer.class, owner)).isZero();
+        assertThat(sessions.findById(raw(current.cookie()))).isNull();
+        assertThat(sessions.findById(other)).isNull();
+        assertThat(sessions.findById(preMfa)).isNull();
+        assertThat(sessions.findById(unrelatedSession)).isNotNull();
+        assertThat((Object) repository().findById(raw(rotated)).getAttribute(
+                IdentitySessionState.RECENT_ATTRIBUTE)).isNull();
+        assertThat(mvc.perform(get("/api/me/security").cookie(rotated))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString())
+                .contains("\"mfaState\":\"disabled\"");
+        Browser oldCsrf = new Browser(rotated, current.csrf());
+        disable(oldCsrf).andExpect(status().isForbidden());
+        Browser fresh = csrf(rotated);
+        assertThat(fresh.csrf()).isNotEqualTo(current.csrf());
+        assertThat(passwords.matches(OLD, verifier(owner))).isTrue();
+        assertThat(jdbc.queryForObject("select count(*) from identity.external_identity_link where user_id = ? and revoked_at is null",
+                Integer.class, owner)).isEqualTo(1);
+        assertThat(email(owner)).isEqualTo(accountEmail(owner));
+        assertThat(mfaAudits(owner, "mfa", "disabled")).isEqualTo(1);
+        assertThat(notices(owner, "mfa_disabled")).isEqualTo(1);
+        assertThat(mfaNoticeCorrelatesAudit(owner, "mfa_disabled", "mfa", "disabled"))
+                .isTrue();
+        var claim = claimNotice(owner, "mfa_disabled");
+        assertThat(claim.capabilityId()).isNull();
+        assertThat(claim.recipientEnvelope().ciphertext()).isNull();
+        assertThat(claim.envelope().ciphertext()).isNull();
+        deliveryWorker.process(claim);
+        assertThat(mail.lastRecipient).isEqualTo(email(owner));
+        assertThat(mail.lastMessage.body()).doesNotContain(oldCode);
+        assertThat(output.getAll()).doesNotContain(oldCode, current.csrf(),
+                current.cookie().getValue());
+        Browser anonymous = csrf(null);
+        mvc.perform(post("/api/auth/login/password").cookie(anonymous.cookie())
+                .header("X-CSRF-TOKEN", anonymous.csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"" + email(owner) + "\",\"password\":\"" + OLD + "\"}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test void regeneratingRecoveryCodesAdvancesGenerationAndKeepsTotpActive(
+            CapturedOutput output) throws Exception {
+        UUID owner = account(true);
+        activateMfa(owner);
+        byte[] originalSeed = mfa.configuration(owner).orElseThrow().seed().ciphertext();
+        String oldCode = recoveryCodes.issue().getFirst();
+        mfa.insertRecovery(owner, 1, recoveryCodes.digest(oldCode), clock.instant());
+        String consumedOld = recoveryCodes.issue().getFirst();
+        mfa.insertRecovery(owner, 1, recoveryCodes.digest(consumedOld), clock.instant());
+        assertThat(mfa.consumeRecovery(owner, recoveryCodes.digest(consumedOld), clock.instant()))
+                .isTrue();
+        Browser current = csrf(cookie(session(owner, "ROLE_USER", "password")));
+        String other = session(owner, "ROLE_USER", null);
+        var response = regenerate(current).andExpect(status().isOk())
+                .andReturn().getResponse();
+        assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+        String json = response.getContentAsString();
+        assertThat(json).contains("\"recoveryCodes\"").doesNotContain(owner.toString());
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("[A-Za-z0-9_-]{43}")
+                .matcher(json);
+        List<String> codes = new java.util.ArrayList<>();
+        while (matcher.find()) codes.add(matcher.group());
+        assertThat(codes).hasSize(mfaPolicy.recoveryCodeCount());
+        assertThat(mfa.configuration(owner).orElseThrow().recoveryGeneration()).isEqualTo(2);
+        assertThat(mfa.configuration(owner).orElseThrow().seed().ciphertext())
+                .containsExactly(originalSeed);
+        assertThat(jdbc.queryForObject("select count(*) from identity.mfa_recovery_code where user_id = ? and set_generation = 2 and revoked_at is null",
+                Integer.class, owner)).isEqualTo(codes.size());
+        assertThat(jdbc.queryForObject("select count(*) from identity.mfa_recovery_code where user_id = ? and set_generation = 1 and revoked_at is not null",
+                Integer.class, owner)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from identity.mfa_recovery_code where user_id = ? and set_generation = 1 and consumed_at is not null and revoked_at is null",
+                Integer.class, owner)).isEqualTo(1);
+        assertThat(mfa.consumeRecovery(owner, recoveryCodes.digest(oldCode), clock.instant()))
+                .isFalse();
+        assertThat(mfa.consumeRecovery(owner, recoveryCodes.digest(consumedOld), clock.instant()))
+                .isFalse();
+        assertThat(mfa.consumeRecovery(owner, recoveryCodes.digest(codes.getFirst()), clock.instant()))
+                .isTrue();
+        assertThat(mfa.consumeRecovery(owner, recoveryCodes.digest(codes.getFirst()), clock.instant()))
+                .isFalse();
+        Browser anonymous = csrf(null);
+        var login = mvc.perform(post("/api/auth/login/password")
+                .cookie(anonymous.cookie()).header("X-CSRF-TOKEN", anonymous.csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"" + email(owner) + "\",\"password\":\"" + OLD + "\"}"))
+                .andExpect(status().isAccepted()).andReturn().getResponse();
+        String challenge = java.util.regex.Pattern.compile("\"challengeId\":\"([^\"]+)\"")
+                .matcher(login.getContentAsString()).results().findFirst().orElseThrow().group(1);
+        Browser pre = csrf(login.getCookie("SESSION"));
+        mvc.perform(post("/api/auth/mfa/challenges/" + challenge + "/recovery-code")
+                .cookie(pre.cookie()).header("X-CSRF-TOKEN", pre.csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"code\":\"" + codes.get(1) + "\"}"))
+                .andExpect(status().isOk());
+        Browser secondAnonymous = csrf(null);
+        var secondLogin = mvc.perform(post("/api/auth/login/password")
+                .cookie(secondAnonymous.cookie())
+                .header("X-CSRF-TOKEN", secondAnonymous.csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"" + email(owner) + "\",\"password\":\"" + OLD + "\"}"))
+                .andExpect(status().isAccepted()).andReturn().getResponse();
+        String secondChallenge = java.util.regex.Pattern.compile("\"challengeId\":\"([^\"]+)\"")
+                .matcher(secondLogin.getContentAsString()).results().findFirst()
+                .orElseThrow().group(1);
+        Browser secondPre = csrf(secondLogin.getCookie("SESSION"));
+        mvc.perform(post("/api/auth/mfa/challenges/" + secondChallenge + "/recovery-code")
+                .cookie(secondPre.cookie()).header("X-CSRF-TOKEN", secondPre.csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"code\":\"" + codes.get(1) + "\"}"))
+                .andExpect(status().isUnauthorized());
+        for (String code : codes) {
+            assertThat(output.getAll()).doesNotContain(code);
+            assertThat(jdbc.queryForObject("select count(*) from identity.mfa_recovery_code where verifier_digest = ?",
+                    Integer.class, code.getBytes(StandardCharsets.US_ASCII))).isZero();
+        }
+        assertThat(mvc.perform(get("/api/me/security").cookie(response.getCookie("SESSION")))
+                .andReturn().getResponse().getContentAsString())
+                .contains("\"mfaState\":\"active\"");
+        assertThat(sessions.findById(raw(current.cookie()))).isNull();
+        assertThat(sessions.findById(other)).isNull();
+        assertThat(mfaAudits(owner, "mfa_recovery", "regenerated")).isEqualTo(1);
+        assertThat(notices(owner, "mfa_reset")).isEqualTo(1);
+        assertThat(mfaNoticeCorrelatesAudit(owner, "mfa_reset", "mfa_recovery",
+                "regenerated")).isTrue();
+        var claim = claimNotice(owner, "mfa_reset");
+        deliveryWorker.process(claim);
+        assertThat(mail.lastRecipient).isEqualTo(email(owner));
+        for (String code : codes) assertThat(mail.lastMessage.body()).doesNotContain(code);
+    }
+
+    @Test void mfaManagementRejectsMissingAuthorityAndInactiveLifecycle() throws Exception {
+        UUID owner = account(true);
+        Browser anonymous = csrf(null);
+        disable(anonymous).andExpect(status().isUnauthorized());
+        regenerate(anonymous).andExpect(status().isUnauthorized());
+        Browser pending = csrf(cookie(session(owner, "ROLE_MFA_PENDING", "password")));
+        disable(pending).andExpect(status().isForbidden());
+        regenerate(pending).andExpect(status().isForbidden());
+        Browser current = csrf(cookie(session(owner, "ROLE_USER", "password")));
+        disable(current).andExpect(status().isConflict());
+        regenerate(current).andExpect(status().isConflict());
+        var seed = mfaCipher.seal(owner, new byte[20]);
+        mfa.begin(owner, seed, clock.instant());
+        disable(current).andExpect(status().isConflict());
+        regenerate(current).andExpect(status().isConflict());
+        mfa.activate(owner, seed.nonce(), 0, clock.instant());
+        Browser noRecent = csrf(cookie(session(owner, "ROLE_USER", null)));
+        disable(noRecent).andExpect(status().isForbidden());
+        regenerate(noRecent).andExpect(status().isForbidden());
+        Browser expired = csrf(cookie(session(owner, "ROLE_USER", "expired")));
+        disable(expired).andExpect(status().isForbidden());
+        regenerate(expired).andExpect(status().isForbidden());
+        Browser bogusMethod = csrf(cookie(session(owner, "ROLE_USER", "email")));
+        disable(bogusMethod).andExpect(status().isForbidden());
+        regenerate(bogusMethod).andExpect(status().isForbidden());
+        Browser wrongUser = csrf(cookie(session(owner, "ROLE_USER", "password")));
+        Session wrongPersisted = repository().findById(raw(wrongUser.cookie()));
+        wrongPersisted.setAttribute(IdentitySessionState.RECENT_ATTRIBUTE,
+                new IdentitySessionState.RecentAuthentication(UUID.randomUUID(),
+                        clock.instant(), "password"));
+        repository().save(wrongPersisted);
+        disable(wrongUser).andExpect(status().isForbidden());
+        regenerate(wrongUser).andExpect(status().isForbidden());
+        Browser future = csrf(cookie(session(owner, "ROLE_USER", "password")));
+        Session futurePersisted = repository().findById(raw(future.cookie()));
+        futurePersisted.setAttribute(IdentitySessionState.RECENT_ATTRIBUTE,
+                new IdentitySessionState.RecentAuthentication(owner,
+                        clock.instant().plusSeconds(60), "password"));
+        repository().save(futurePersisted);
+        disable(future).andExpect(status().isForbidden());
+        regenerate(future).andExpect(status().isForbidden());
+        mvc.perform(delete("/api/me/security/mfa/totp").cookie(current.cookie()))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/me/security/mfa/recovery-codes").cookie(current.cookie()))
+                .andExpect(status().isForbidden());
+        rates.unavailable = true;
+        try {
+            disable(current).andExpect(status().isServiceUnavailable());
+            regenerate(current).andExpect(status().isServiceUnavailable());
+        } finally { rates.unavailable = false; }
+        rates.throttled = true;
+        try {
+            disable(current).andExpect(status().isTooManyRequests());
+            regenerate(current).andExpect(status().isTooManyRequests());
+        } finally { rates.throttled = false; }
+        jdbc.update("update identity.account set account_state = 'suspended' where user_id = ?", owner);
+        assertThat(disable(current).andReturn().getResponse().getStatus()).isIn(401, 403);
+        assertThat(regenerate(current).andReturn().getResponse().getStatus()).isIn(401, 403);
+    }
+
+    @Test void mfaManagementFaultsRollBackEveryAuthoritativeParticipant() throws Exception {
+        for (boolean regeneration : List.of(false, true)) {
+            for (int point = 1; point <= 5; point++) {
+                UUID owner = account(true);
+                activateMfa(owner);
+                String oldCode = recoveryCodes.issue().getFirst();
+                mfa.insertRecovery(owner, 1, recoveryCodes.digest(oldCode), clock.instant());
+                Browser current = csrf(cookie(session(owner, "ROLE_USER", "password")));
+                String other = session(owner, "ROLE_USER", null);
+                faults.failAt = point;
+                try {
+                    if (regeneration) regenerate(current).andExpect(status().is5xxServerError());
+                    else disable(current).andExpect(status().is5xxServerError());
+                } finally { faults.failAt = 0; }
+                assertThat(mfa.configuration(owner).orElseThrow().state()).isEqualTo("active");
+                assertThat(mfa.configuration(owner).orElseThrow().recoveryGeneration()).isEqualTo(1);
+                assertThat(mfa.consumeRecovery(owner, recoveryCodes.digest(oldCode),
+                        clock.instant())).isTrue();
+                assertThat(sessions.findById(raw(current.cookie()))).isNotNull();
+                assertThat(sessions.findById(other)).isNotNull();
+                assertThat(mfaAudits(owner, regeneration ? "mfa_recovery" : "mfa",
+                        regeneration ? "regenerated" : "disabled")).isZero();
+                assertThat(notices(owner, regeneration ? "mfa_reset" : "mfa_disabled"))
+                        .isZero();
+            }
+        }
+    }
+
+    @Test void concurrentRegenerationConsumesOnlyOneCurrentSessionAuthority() throws Exception {
+        UUID owner = account(true);
+        activateMfa(owner);
+        Browser current = csrf(cookie(session(owner, "ROLE_USER", "password")));
+        int[] outcomes = race(current, true);
+        assertThat(outcomes).containsExactlyInAnyOrder(200, 401);
+        assertThat(mfa.configuration(owner).orElseThrow().recoveryGeneration()).isEqualTo(2);
+        assertThat(mfaAudits(owner, "mfa_recovery", "regenerated")).isEqualTo(1);
+        assertThat(notices(owner, "mfa_reset")).isEqualTo(1);
+    }
+
+    @Test void disablingAndRegeneratingCannotCommitIncompatibleAuthority() throws Exception {
+        UUID owner = account(true);
+        activateMfa(owner);
+        Browser current = csrf(cookie(session(owner, "ROLE_USER", "password")));
+        int[] outcomes = race(current, false);
+        assertThat(outcomes).contains(401);
+        assertThat(outcomes[0] == 204 || outcomes[1] == 204
+                || outcomes[0] == 200 || outcomes[1] == 200).isTrue();
+        if (mfa.configuration(owner).isEmpty()) {
+            assertThat(jdbc.queryForObject("select count(*) from identity.mfa_recovery_code where user_id = ?",
+                    Integer.class, owner)).isZero();
+            assertThat(mfaAudits(owner, "mfa", "disabled")).isEqualTo(1);
+            assertThat(notices(owner, "mfa_disabled")).isEqualTo(1);
+            assertThat(notices(owner, "mfa_reset")).isZero();
+        } else {
+            assertThat(mfa.configuration(owner).orElseThrow().recoveryGeneration()).isEqualTo(2);
+            assertThat(mfaAudits(owner, "mfa_recovery", "regenerated")).isEqualTo(1);
+            assertThat(notices(owner, "mfa_reset")).isEqualTo(1);
+            assertThat(notices(owner, "mfa_disabled")).isZero();
+        }
+    }
+
+    @Test void staleInFlightSessionCannotResurrectAfterMfaDisable() throws Exception {
+        UUID owner = account(true);
+        activateMfa(owner);
+        Browser current = csrf(cookie(session(owner, "ROLE_USER", "password")));
+        String staleId = session(owner, "ROLE_USER", null);
+        CountDownLatch loaded = new CountDownLatch(1);
+        CountDownLatch disabled = new CountDownLatch(1);
+        try (var pool = Executors.newSingleThreadExecutor()) {
+            var inFlight = pool.submit(() -> {
+                Session stale = repository().findById(staleId);
+                loaded.countDown();
+                if (!disabled.await(15, TimeUnit.SECONDS)) throw new IllegalStateException();
+                stale.setLastAccessedTime(clock.instant().plusSeconds(1));
+                try { repository().save(stale); }
+                catch (DataAccessException rejected) { /* Deleted authority remains absent. */ }
+                return null;
+            });
+            assertThat(loaded.await(5, TimeUnit.SECONDS)).isTrue();
+            try { disable(current).andExpect(status().isNoContent()); }
+            finally { disabled.countDown(); }
+            inFlight.get(5, TimeUnit.SECONDS);
+        }
+        assertThat(repository().findById(staleId)).isNull();
+        mvc.perform(get("/api/me/security").cookie(cookie(staleId)))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test void oidcRecentRequiresCurrentLinkForMfaSecurityChanges() throws Exception {
+        UUID owner = account(false);
+        activateMfa(owner);
+        Browser unlinked = csrf(cookie(session(owner, "ROLE_USER", "oidc")));
+        disable(unlinked).andExpect(status().isForbidden());
+        regenerate(unlinked).andExpect(status().isForbidden());
+        oidc.createLink(owner, "https://accounts.google.com", "subject-" + UUID.randomUUID(),
+                clock.instant());
+        regenerate(unlinked).andExpect(status().isOk());
+        Browser fresh = csrf(cookie(session(owner, "ROLE_USER", "oidc")));
+        disable(fresh).andExpect(status().isNoContent());
+    }
+
+    @Test void mfaNoticesUseCurrentRecipientAndExistingRetryFencing() throws Exception {
+        UUID owner = account(true);
+        activateMfa(owner);
+        Browser current = csrf(cookie(session(owner, "ROLE_USER", "password")));
+        disable(current).andExpect(status().isNoContent());
+        String newer = "new-mfa-" + UUID.randomUUID() + "@example.test";
+        jdbc.update("update identity.account set canonical_email = ?, display_email = ? where user_id = ?",
+                newer, newer, owner);
+        var claim = claimNotice(owner, "mfa_disabled");
+        mail.nextOutcome = SecurityEmailProviderPort.Outcome.RETRYABLE;
+        try { deliveryWorker.process(claim); }
+        finally { mail.nextOutcome = SecurityEmailProviderPort.Outcome.SUBMITTED; }
+        assertThat(mail.lastRecipient).isEqualTo(newer);
+        assertThat(jdbc.queryForObject("select state from identity.security_email_delivery where security_email_delivery_id = ?",
+                String.class, claim.id())).isEqualTo("retry_wait");
+        assertThat(delivery.submitted(claim, clock.instant())).isFalse();
+        Instant due = jdbc.queryForObject("select next_attempt_at from identity.security_email_delivery where security_email_delivery_id = ?",
+                Timestamp.class, claim.id()).toInstant();
+        var retried = delivery.claimReady(due, new LeaseOwner("mfa_notice_retry"),
+                new LeasePolicy(Duration.ofMinutes(2), 100), 100).stream()
+                .filter(c -> claim.id().equals(c.id())).findFirst().orElseThrow();
+        assertThat(retried.token()).isNotEqualTo(claim.token());
+        assertThat(delivery.submitted(claim, due)).isFalse();
+        assertThat(delivery.submitted(retried, due.plusSeconds(1))).isTrue();
+        assertThat(jdbc.queryForObject("select state from identity.security_email_delivery where security_email_delivery_id = ?",
+                String.class, claim.id())).isEqualTo("submitted");
+        assertThat(jdbc.queryForObject("select count(*) from identity.security_email_delivery where security_email_delivery_id = ? and sealed_token_ciphertext is null and sealed_recipient_ciphertext is null",
+                Integer.class, claim.id())).isEqualTo(1);
+    }
+
+    @Test void bothMfaNoticeKindsKeepBoundedFailureAndLeaseSemantics() throws Exception {
+        for (boolean regeneration : List.of(false, true)) {
+            for (SecurityEmailProviderPort.Outcome outcome : List.of(
+                    SecurityEmailProviderPort.Outcome.NON_RETRYABLE,
+                    SecurityEmailProviderPort.Outcome.AMBIGUOUS)) {
+                UUID owner = account(true);
+                activateMfa(owner);
+                Browser current = csrf(cookie(session(owner, "ROLE_USER", "password")));
+                if (regeneration) regenerate(current).andExpect(status().isOk());
+                else disable(current).andExpect(status().isNoContent());
+                String kind = regeneration ? "mfa_reset" : "mfa_disabled";
+                var claim = claimNotice(owner, kind);
+                mail.nextOutcome = outcome;
+                try { deliveryWorker.process(claim); }
+                finally { mail.nextOutcome = SecurityEmailProviderPort.Outcome.SUBMITTED; }
+                assertThat(mail.lastRecipient).isEqualTo(email(owner));
+                String expected = outcome == SecurityEmailProviderPort.Outcome.NON_RETRYABLE
+                        ? "failed" : "retry_wait";
+                assertThat(jdbc.queryForObject("select state from identity.security_email_delivery where security_email_delivery_id = ?",
+                        String.class, claim.id())).isEqualTo(expected);
+                if (outcome == SecurityEmailProviderPort.Outcome.NON_RETRYABLE) {
+                    assertThat(jdbc.queryForObject("select count(*) from identity.security_email_delivery where security_email_delivery_id = ? and sealed_token_ciphertext is null and sealed_recipient_ciphertext is null and lease_token is null",
+                            Integer.class, claim.id())).isEqualTo(1);
+                }
+                assertThat(mfaAudits(owner, regeneration ? "mfa_recovery" : "mfa",
+                        regeneration ? "regenerated" : "disabled")).isEqualTo(1);
+            }
+        }
+
+        UUID owner = account(true);
+        activateMfa(owner);
+        Browser current = csrf(cookie(session(owner, "ROLE_USER", "password")));
+        regenerate(current).andExpect(status().isOk());
+        var first = claimNotice(owner, "mfa_reset");
+        Instant expired = clock.instant().plus(Duration.ofMinutes(3));
+        var reclaimed = delivery.reclaimExpired(expired, new LeaseOwner("mfa_notice_reclaim"),
+                new LeasePolicy(Duration.ofMinutes(2), 100), 100).stream()
+                .filter(c -> c.id().equals(first.id())).findFirst().orElseThrow();
+        assertThat(reclaimed.token()).isNotEqualTo(first.token());
+        assertThat(delivery.submitted(first, expired)).isFalse();
+        assertThat(delivery.submitted(reclaimed, expired.plusSeconds(1))).isTrue();
+    }
+
+    private int[] race(Browser browser, boolean bothRegenerate) throws Exception {
+        CountDownLatch start = new CountDownLatch(1);
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var first = pool.submit(() -> {
+                start.await();
+                return (bothRegenerate ? regenerate(browser) : disable(browser))
+                        .andReturn().getResponse().getStatus();
+            });
+            var second = pool.submit(() -> {
+                start.await();
+                return regenerate(browser).andReturn().getResponse().getStatus();
+            });
+            start.countDown();
+            return new int[]{first.get(30, TimeUnit.SECONDS),
+                    second.get(30, TimeUnit.SECONDS)};
+        }
+    }
+
+    private void activateMfa(UUID owner) {
+        var seed = mfaCipher.seal(owner, new byte[20]);
+        assertThat(mfa.begin(owner, seed, clock.instant())).isEqualTo(1);
+        assertThat(mfa.activate(owner, seed.nonce(), 0, clock.instant())).isEqualTo(1);
+    }
+
+    private org.springframework.test.web.servlet.ResultActions disable(Browser browser)
+            throws Exception {
+        return mvc.perform(delete("/api/me/security/mfa/totp")
+                .cookie(browser.cookie()).header("X-CSRF-TOKEN", browser.csrf()));
+    }
+
+    private org.springframework.test.web.servlet.ResultActions regenerate(Browser browser)
+            throws Exception {
+        return mvc.perform(post("/api/me/security/mfa/recovery-codes")
+                .cookie(browser.cookie()).header("X-CSRF-TOKEN", browser.csrf()));
+    }
+
+    private int mfaAudits(UUID user, String category, String outcome) {
+        return jdbc.queryForObject("select count(*) from identity.security_audit_fact where target_user_id = ? and event_category = ? and outcome_code = ?",
+                Integer.class, user, category, outcome);
+    }
+
+    private int notices(UUID user, String kind) {
+        return jdbc.queryForObject("select count(*) from identity.security_email_delivery where subject_user_id = ? and notice_kind = ?",
+                Integer.class, user, kind);
+    }
+
+    private boolean mfaNoticeCorrelatesAudit(UUID user, String notice, String category,
+            String outcome) {
+        return jdbc.queryForObject("""
+                select exists(select 1 from identity.security_email_delivery d
+                join identity.security_audit_fact a on a.correlation_id = d.security_event_id
+                where d.subject_user_id = ? and a.target_user_id = ?
+                  and d.notice_kind = ? and a.event_category = ? and a.outcome_code = ?)
+                """, Boolean.class, user, user, notice, category, outcome);
+    }
+
+    private SecurityEmailDeliveryRepository.Claim claimNotice(UUID user, String kind) {
+        return delivery.claimReady(clock.instant(), new LeaseOwner("mfa_notice_test"),
+                new LeasePolicy(Duration.ofMinutes(2), 100), 100).stream()
+                .filter(c -> user.equals(c.subjectUserId()) && kind.equals(c.noticeKind()))
+                .findFirst().orElseThrow();
+    }
+
     @Test void passwordChangeRotatesCurrentAndRevokesOnlyOwnerSessions(CapturedOutput output)
             throws Exception {
         UUID owner = account(true);
@@ -968,6 +1418,15 @@ class AccountSecurityIntegrationTest {
         volatile int failAt;
         @Override void afterPasswordMutation(jakarta.servlet.http.HttpServletRequest request) {
             if (failAt == 1) throw new IllegalStateException("synthetic_password_fault");
+        }
+        @Override void afterMfaMutation(jakarta.servlet.http.HttpServletRequest request) {
+            if (failAt == 1) throw new IllegalStateException("synthetic_mfa_mutation_fault");
+        }
+        @Override void afterMfaAudit(jakarta.servlet.http.HttpServletRequest request) {
+            if (failAt == 4) throw new IllegalStateException("synthetic_mfa_audit_fault");
+        }
+        @Override void afterMfaNoticeIntent(jakarta.servlet.http.HttpServletRequest request) {
+            if (failAt == 5) throw new IllegalStateException("synthetic_mfa_notice_fault");
         }
         @Override void afterEmailMutation(jakarta.servlet.http.HttpServletRequest request) {
             if (failAt == 1) throw new IllegalStateException("synthetic_email_fault");
