@@ -115,7 +115,7 @@ class IdentityCoreIntegrationTest {
     RequestMappingHandlerMapping mappings;
 
     @Test
-    void onlyTheThirtyOneAuthorizedProductPathsAreMapped() {
+    void onlyTheThirtyTwoAuthorizedProductPathsAreMapped() {
         Set<String> paths = mappings.getHandlerMethods().keySet().stream()
                 .flatMap(mapping -> mapping.getPatternValues().stream())
                 .filter(path -> path.startsWith("/api/"))
@@ -147,7 +147,8 @@ class IdentityCoreIntegrationTest {
                 "/api/me/security/sessions",
                 "/api/me/security/sessions/{sessionHandle}",
                 "/api/me/security/sessions/revoke-others",
-                "/api/me/security/sessions/revoke-all");
+                "/api/me/security/sessions/revoke-all",
+                "/api/me/account");
     }
 
     @Test

@@ -172,6 +172,7 @@ final class CredentialManagementService {
         // Argon2 must finish before any Account or Spring Session row lock.
         String verifier = passwords.encode(newPassword);
         String originalSessionId = requestSession.getId();
+        checkpoint.beforePasswordMutationLock(request);
         boolean[] sessionMutationStarted = {false};
         try {
             transactions.executeWithoutResult(status -> {

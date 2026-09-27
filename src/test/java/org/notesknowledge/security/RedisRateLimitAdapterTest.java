@@ -151,6 +151,36 @@ class RedisRateLimitAdapterTest {
         }
     }
 
+    @Test
+    void accountDeletionUsesRecentAuthCeilingAndOpaqueTtlBackedThrottle() {
+        var factory = new LettuceConnectionFactory(redis.getHost(), redis.getMappedPort(6379));
+        factory.afterPropertiesSet();
+        try {
+            var template = new StringRedisTemplate(factory);
+            template.afterPropertiesSet();
+            var adapter = new RedisRateLimitAdapter(template,
+                    new IdentityRateProperties(60, 86400, 6, 6, 12, 10, 6, 12,
+                            1200, 250, 8, 6, 8));
+            var keys = new RateKeyDeriver(
+                    "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=");
+            var opaque = keys.derive("ACCOUNT_DELETE", "subject:synthetic-user-b");
+            var request = request("ACCOUNT_DELETE", opaque);
+            for (int attempt = 0; attempt < 8; attempt++) {
+                assertThat(adapter.evaluate(request)).isInstanceOf(RateLimitPort.Allowed.class);
+            }
+            String redisKey = "identity:rate:ACCOUNT_DELETE:" + opaque.value();
+            assertThat(template.expire(redisKey, Duration.ofSeconds(3))).isTrue();
+            var decision = adapter.evaluate(request);
+            assertThat(decision).isInstanceOf(RateLimitPort.Throttled.class);
+            assertThat(((RateLimitPort.Throttled) decision).retryAfterSeconds()).isBetween(1, 3);
+            assertThat(template.keys("identity:rate:ACCOUNT_DELETE:*")).hasSize(1)
+                    .allSatisfy(key -> assertThat(key)
+                            .doesNotContain("synthetic-user-b", "subject:", "@"));
+        } finally {
+            factory.destroy();
+        }
+    }
+
     private RateLimitPort.Request request(String control, RateLimitPort.OpaqueKey key) {
         return new RateLimitPort.Request(new RateLimitPort.ControlClass(control), key, 1);
     }
