@@ -55,6 +55,16 @@ final class SecurityEmailMessageRenderer {
                 "This address is now your account email. If this was not you, contact support.");
     }
 
+    Message mfaDisabled() {
+        return new Message("MFA was disabled on your Notes & Knowledge Workspace account",
+                "Multi-factor authentication was disabled on your account. If this was not you, contact support.");
+    }
+
+    Message mfaRecoveryReset() {
+        return new Message("MFA recovery codes were regenerated",
+                "Your multi-factor recovery codes were regenerated. If this was not you, contact support.");
+    }
+
     private String continuation(String path, String token) {
         if (origin.isBlank()) {
             throw new IllegalStateException("Public origin unavailable");

@@ -12,6 +12,7 @@ import org.notesknowledge.websupport.ApiFailureException;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -79,6 +80,24 @@ final class MfaController {
         if (input == null) throw ApiFailureException.of(ApiFailureException.Kind.INVALID_INPUT);
         List<String> codes = management.confirm(userId, enrollmentId, input.code());
         sessions.establish(userId, true, request, response);
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore())
+                .body(Map.of("recoveryCodes", codes));
+    }
+
+    @DeleteMapping("/api/me/security/mfa/totp")
+    ResponseEntity<Void> disable(HttpServletRequest request, HttpServletResponse response) {
+        UUID userId = IdentitySessionState.principal("ROLE_USER");
+        rates.check("MFA_DISABLE", userId, request);
+        management.disable(userId, request, response);
+        return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
+    }
+
+    @PostMapping("/api/me/security/mfa/recovery-codes")
+    ResponseEntity<Map<String, List<String>>> regenerate(HttpServletRequest request,
+            HttpServletResponse response) {
+        UUID userId = IdentitySessionState.principal("ROLE_USER");
+        rates.check("MFA_RECOVERY_REGENERATE", userId, request);
+        List<String> codes = management.regenerateRecovery(userId, request, response);
         return ResponseEntity.ok().cacheControl(CacheControl.noStore())
                 .body(Map.of("recoveryCodes", codes));
     }

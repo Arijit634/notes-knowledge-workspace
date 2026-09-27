@@ -13,5 +13,8 @@ class IdentitySessionTransitionCheckpoint {
     void afterPasswordMutation(HttpServletRequest request) { }
     void afterEmailMutation(HttpServletRequest request) { }
     void afterEmailNoticeIntents(HttpServletRequest request) { }
+    void afterMfaMutation(HttpServletRequest request) { }
+    void afterMfaAudit(HttpServletRequest request) { }
+    void afterMfaNoticeIntent(HttpServletRequest request) { }
     void afterOtherSessionRevocation(HttpServletRequest request) { }
 }

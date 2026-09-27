@@ -67,6 +67,27 @@ class JdbcSecurityEmailDeliveryAdapter implements SecurityEmailDeliveryRepositor
     }
 
     @Override
+    public void queueMfaNotice(UUID subjectUserId, UUID eventId, String noticeKind,
+            Instant now) {
+        if (!org.springframework.transaction.support.TransactionSynchronizationManager
+                .isActualTransactionActive()) {
+            throw new IllegalStateException("Security notice requires the Identity transaction");
+        }
+        if (!"mfa_disabled".equals(noticeKind) && !"mfa_reset".equals(noticeKind)) {
+            throw new IllegalArgumentException("Unsupported MFA notice kind");
+        }
+        jdbc.sql("""
+                insert into identity.security_email_delivery
+                    (security_email_delivery_id, delivery_kind, subject_user_id,
+                     security_event_id, notice_kind, state, next_attempt_at,
+                     created_at, updated_at)
+                values (uuidv7(), 'security_notice', :subject, :event,
+                        :kind, 'queued', :now, :now, :now)
+                """).param("subject", subjectUserId).param("event", eventId)
+                .param("kind", noticeKind).param("now", Timestamp.from(now)).update();
+    }
+
+    @Override
     public void queueEmailChangeNotice(UUID subjectUserId, UUID eventId, String noticeKind,
             SecurityEmailMaterialCipher.Envelope recipient, Instant now) {
         if (!org.springframework.transaction.support.TransactionSynchronizationManager
