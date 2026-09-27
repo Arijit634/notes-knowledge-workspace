@@ -128,6 +128,15 @@ public class SecurityConfiguration {
                         .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.GET, "/api/me/security")
                         .hasAuthority("ROLE_USER")
+                        .requestMatchers(HttpMethod.GET, "/api/me/security/sessions")
+                        .hasAuthority("ROLE_USER")
+                        .requestMatchers(HttpMethod.DELETE,
+                                "/api/me/security/sessions/{sessionHandle}")
+                        .hasAuthority("ROLE_USER")
+                        .requestMatchers(HttpMethod.POST,
+                                "/api/me/security/sessions/revoke-others",
+                                "/api/me/security/sessions/revoke-all")
+                        .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.DELETE, "/api/me/security/mfa/totp")
                         .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.DELETE, "/api/me/security/oidc-links/{linkId}")

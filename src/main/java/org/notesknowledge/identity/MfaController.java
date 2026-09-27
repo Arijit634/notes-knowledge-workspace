@@ -78,8 +78,8 @@ final class MfaController {
         rates.check("MFA_CONFIRM", userId, request);
         IdentitySessionState.requireRecent(request, userId, clock.instant(), policy);
         if (input == null) throw ApiFailureException.of(ApiFailureException.Kind.INVALID_INPUT);
-        List<String> codes = management.confirm(userId, enrollmentId, input.code());
-        sessions.establish(userId, true, request, response);
+        List<String> codes = management.confirm(userId, enrollmentId, input.code(),
+                request, response);
         return ResponseEntity.ok().cacheControl(CacheControl.noStore())
                 .body(Map.of("recoveryCodes", codes));
     }

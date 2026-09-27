@@ -20,4 +20,6 @@ class IdentitySessionTransitionCheckpoint {
     void afterMfaAudit(HttpServletRequest request) { }
     void afterMfaNoticeIntent(HttpServletRequest request) { }
     void afterOtherSessionRevocation(HttpServletRequest request) { }
+    void afterSessionManagementLock(HttpServletRequest request) { }
+    void beforePasswordLoginCommit(HttpServletRequest request) { }
 }

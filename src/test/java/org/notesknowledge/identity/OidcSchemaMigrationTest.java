@@ -30,12 +30,13 @@ class OidcSchemaMigrationTest {
                 .containsExactly("V001__platform__spring_session.sql",
                         "V002__identity__account_verification_and_security_email.sql",
                         "V003__identity__mfa_core.sql",
-                        "V004__identity__google_oidc_core.sql");
+                        "V004__identity__google_oidc_core.sql",
+                        "V005__identity__application_session_descriptor.sql");
         JdbcTemplate jdbc = migrator();
         assertThat(jdbc.queryForObject("""
                 select count(*) from information_schema.tables
                 where table_schema = 'identity' and table_type = 'BASE TABLE'
-                """, Integer.class)).isEqualTo(9);
+                """, Integer.class)).isEqualTo(10);
         assertThat(jdbc.queryForList("""
                 select column_name from information_schema.columns
                 where table_schema = 'identity' and table_name = 'external_identity_link'

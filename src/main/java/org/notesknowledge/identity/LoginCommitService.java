@@ -30,6 +30,7 @@ class LoginCommitService {
     @Transactional
     LoginResult commit(UUID userId, String priorVerifier, String replacement, Instant now,
             HttpServletRequest request, HttpServletResponse response) {
+        checkpoint.beforePasswordLoginCommit(request);
         if (identity.authenticated(userId, priorVerifier, replacement, now) != 1) {
             throw ApiFailureException.of(ApiFailureException.Kind.INVALID_CREDENTIALS);
         }

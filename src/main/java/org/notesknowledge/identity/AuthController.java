@@ -41,12 +41,18 @@ final class AuthController {
     private final RateKeyDeriver rateKeys;
     private final MfaRateControl mfaRates;
     private final java.time.Clock clock;
+    private final SpringSessionAuthorityAdapter sessionAuthority;
+    private final ApplicationSessionDescriptorRepository sessionDescriptors;
+    private final org.springframework.transaction.support.TransactionTemplate transactions;
 
     AuthController(RegistrationService registration, EmailVerificationService verification,
             PasswordAuthenticationService passwords, PasswordRecoveryService recovery,
             IdentityPersistence identity,
             RateControlService rates, RateKeyDeriver rateKeys,
-            MfaRateControl mfaRates, java.time.Clock clock) {
+            MfaRateControl mfaRates, java.time.Clock clock,
+            SpringSessionAuthorityAdapter sessionAuthority,
+            ApplicationSessionDescriptorRepository sessionDescriptors,
+            org.springframework.transaction.PlatformTransactionManager manager) {
         this.registration = registration;
         this.verification = verification;
         this.passwords = passwords;
@@ -56,6 +62,9 @@ final class AuthController {
         this.rateKeys = rateKeys;
         this.mfaRates = mfaRates;
         this.clock = clock;
+        this.sessionAuthority = sessionAuthority;
+        this.sessionDescriptors = sessionDescriptors;
+        this.transactions = new org.springframework.transaction.support.TransactionTemplate(manager);
     }
 
     @GetMapping("/csrf")
@@ -177,7 +186,17 @@ final class AuthController {
                 && authentication.getPrincipal() instanceof IdentitySessionPrincipal principal
                 ? principal.userId() : null;
         var session = request.getSession(false);
-        if (session != null) session.invalidate();
+        if (session != null) {
+            transactions.executeWithoutResult(status -> {
+                if (userId != null) {
+                    var current = sessionAuthority.lockBySessionId(session.getId());
+                    if (current != null) {
+                        sessionDescriptors.revoke(userId, current.primaryId(), clock.instant());
+                    }
+                }
+                session.invalidate();
+            });
+        }
         SecurityContextHolder.clearContext();
         if (userId != null) {
             try {
