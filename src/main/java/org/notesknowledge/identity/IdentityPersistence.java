@@ -153,6 +153,50 @@ class IdentityPersistence {
                 """).param("id", userId).query(UUID.class).optional().isPresent();
     }
 
+    void revokeOutstandingForDeletion(UUID userId, Instant now) {
+        jdbc.sql("""
+                update identity.identity_capability set revoked_at = :now
+                where user_id = :user and consumed_at is null
+                  and superseded_at is null and revoked_at is null
+                """).param("user", userId).param("now", Timestamp.from(now)).update();
+        // Claimed work is fenced by its now-terminal row. A send already in flight
+        // cannot be cancelled externally, but its capability grants no authority.
+        jdbc.sql("""
+                update identity.security_email_delivery
+                set state = 'obsolete', next_attempt_at = null,
+                    lease_owner = null, lease_token = null, lease_until = null,
+                    sealed_token_ciphertext = null, sealed_token_nonce = null,
+                    sealed_token_tag = null, token_key_version = null,
+                    sealed_recipient_ciphertext = null, sealed_recipient_nonce = null,
+                    sealed_recipient_tag = null, recipient_key_version = null,
+                    terminal_at = :now, updated_at = :now,
+                    last_failure_code = 'account_deleted'
+                where state in ('queued', 'retry_wait', 'claimed')
+                  and (subject_user_id = :user or capability_id in
+                      (select capability_id from identity.identity_capability
+                       where user_id = :user))
+                """).param("user", userId).param("now", Timestamp.from(now)).update();
+    }
+
+    int markLogicallyDeleted(UUID userId, Instant now) {
+        return jdbc.sql("""
+                update identity.account
+                set account_state = 'logically_deleted', updated_at = :now
+                where user_id = :user and account_state = 'active'
+                  and email_verified_at is not null
+                """).param("user", userId).param("now", Timestamp.from(now)).update();
+    }
+
+    void auditAccountDeletion(UUID userId, Instant now) {
+        jdbc.sql("""
+                insert into identity.security_audit_fact
+                    (audit_fact_id, actor_user_id, target_user_id,
+                     event_category, outcome_code, occurred_at)
+                values (uuidv7(), :user, :user, 'account_deletion',
+                        'logically_deleted', :now)
+                """).param("user", userId).param("now", Timestamp.from(now)).update();
+    }
+
     Optional<String> activeEmail(UUID userId) {
         return jdbc.sql("""
                 select canonical_email from identity.account

@@ -133,6 +133,8 @@ public class SecurityConfiguration {
                         .requestMatchers(HttpMethod.DELETE,
                                 "/api/me/security/sessions/{sessionHandle}")
                         .hasAuthority("ROLE_USER")
+                        .requestMatchers(HttpMethod.DELETE, "/api/me/account")
+                        .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.POST,
                                 "/api/me/security/sessions/revoke-others",
                                 "/api/me/security/sessions/revoke-all")

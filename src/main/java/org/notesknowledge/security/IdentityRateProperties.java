@@ -47,7 +47,8 @@ record IdentityRateProperties(int windowSeconds, int providerWindowSeconds,
                     "MFA_RECOVERY_REGENERATE" -> mfaManagementCeiling;
             case "PASSWORD_REAUTH", "PASSWORD_CHANGE", "EMAIL_CHANGE_REQUEST",
                     "EMAIL_CHANGE_CONFIRMATION", "SESSION_REVOKE_ONE",
-                    "SESSION_REVOKE_OTHERS", "SESSION_REVOKE_ALL" -> recentAuthCeiling;
+                    "SESSION_REVOKE_OTHERS", "SESSION_REVOKE_ALL",
+                    "ACCOUNT_DELETE" -> recentAuthCeiling;
             case "OIDC_LOGIN_START", "OIDC_LOGIN_CALLBACK", "OIDC_REAUTH_START",
                     "OIDC_REAUTH_CALLBACK", "OIDC_LINK_START", "OIDC_LINK_CALLBACK",
                     "OIDC_UNLINK" -> recentAuthCeiling;

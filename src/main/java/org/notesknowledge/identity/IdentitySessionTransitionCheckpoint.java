@@ -22,4 +22,11 @@ class IdentitySessionTransitionCheckpoint {
     void afterOtherSessionRevocation(HttpServletRequest request) { }
     void afterSessionManagementLock(HttpServletRequest request) { }
     void beforePasswordLoginCommit(HttpServletRequest request) { }
+    void beforePasswordMutationLock(HttpServletRequest request) { }
+    void afterProfileDeletionConsequence(HttpServletRequest request) { }
+    void afterPublishingDeletionConsequence(HttpServletRequest request) { }
+    void afterDeletionCapabilityInvalidation(HttpServletRequest request) { }
+    void afterDeletionSessionRevocation(HttpServletRequest request) { }
+    void afterAccountDeletionMutation(HttpServletRequest request) { }
+    void afterAccountDeletionAudit(HttpServletRequest request) { }
 }
