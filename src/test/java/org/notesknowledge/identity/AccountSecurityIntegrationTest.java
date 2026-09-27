@@ -711,6 +711,36 @@ class AccountSecurityIntegrationTest {
                 .isTrue();
         assertThat(mfa.consumeRecovery(owner, recoveryCodes.digest(codes.getFirst()), clock.instant()))
                 .isFalse();
+        Browser anonymous = csrf(null);
+        var login = mvc.perform(post("/api/auth/login/password")
+                .cookie(anonymous.cookie()).header("X-CSRF-TOKEN", anonymous.csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"" + email(owner) + "\",\"password\":\"" + OLD + "\"}"))
+                .andExpect(status().isAccepted()).andReturn().getResponse();
+        String challenge = java.util.regex.Pattern.compile("\"challengeId\":\"([^\"]+)\"")
+                .matcher(login.getContentAsString()).results().findFirst().orElseThrow().group(1);
+        Browser pre = csrf(login.getCookie("SESSION"));
+        mvc.perform(post("/api/auth/mfa/challenges/" + challenge + "/recovery-code")
+                .cookie(pre.cookie()).header("X-CSRF-TOKEN", pre.csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"code\":\"" + codes.get(1) + "\"}"))
+                .andExpect(status().isOk());
+        Browser secondAnonymous = csrf(null);
+        var secondLogin = mvc.perform(post("/api/auth/login/password")
+                .cookie(secondAnonymous.cookie())
+                .header("X-CSRF-TOKEN", secondAnonymous.csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"" + email(owner) + "\",\"password\":\"" + OLD + "\"}"))
+                .andExpect(status().isAccepted()).andReturn().getResponse();
+        String secondChallenge = java.util.regex.Pattern.compile("\"challengeId\":\"([^\"]+)\"")
+                .matcher(secondLogin.getContentAsString()).results().findFirst()
+                .orElseThrow().group(1);
+        Browser secondPre = csrf(secondLogin.getCookie("SESSION"));
+        mvc.perform(post("/api/auth/mfa/challenges/" + secondChallenge + "/recovery-code")
+                .cookie(secondPre.cookie()).header("X-CSRF-TOKEN", secondPre.csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"code\":\"" + codes.get(1) + "\"}"))
+                .andExpect(status().isUnauthorized());
         for (String code : codes) {
             assertThat(output.getAll()).doesNotContain(code);
             assertThat(jdbc.queryForObject("select count(*) from identity.mfa_recovery_code where verifier_digest = ?",
