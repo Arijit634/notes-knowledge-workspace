@@ -27,6 +27,14 @@ final class MfaRateControl {
         require("IDENTITY_GLOBAL", "whole-deployment");
     }
 
+    void checkEmailChangeRequest(UUID userId, String candidate, HttpServletRequest request) {
+        String control = "EMAIL_CHANGE_REQUEST";
+        require(control, "source:" + request.getRemoteAddr());
+        require(control, "subject:" + userId);
+        require(control, "candidate:" + candidate);
+        require("IDENTITY_GLOBAL", "whole-deployment");
+    }
+
     private void require(String control, String material) {
         rates.check(new RateLimitPort.Request(new RateLimitPort.ControlClass(control),
                 keys.derive(control, material), 1), RateControlService.Policy.SECURITY_CRITICAL);

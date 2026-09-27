@@ -64,12 +64,19 @@ final class SecurityEmailWorker {
         if ("capability_link".equals(claim.kind()) && claim.capabilityId() != null) {
             purpose = identity.capabilityPurpose(claim.capabilityId()).orElse(null);
         } else if (!"security_notice".equals(claim.kind())
-                || !"password_reset_completed".equals(claim.noticeKind())
-                || claim.subjectUserId() == null || claim.capabilityId() != null) {
+                || !supportedNotice(claim.noticeKind())
+                || claim.subjectUserId() == null || claim.securityEventId() == null
+                || claim.capabilityId() != null) {
             delivery.obsolete(claim, now, "invalid_work_kind");
             return;
         }
-        var destination = destination(claim, purpose, now);
+        final java.util.Optional<String> destination;
+        try {
+            destination = destination(claim, purpose, now);
+        } catch (RuntimeException exception) {
+            delivery.failed(claim, clock.instant(), "material_unavailable");
+            return;
+        }
         if (destination.isEmpty()) {
             delivery.obsolete(claim, now, "authority_not_current");
             return;
@@ -90,10 +97,17 @@ final class SecurityEmailWorker {
         final SecurityEmailMessageRenderer.Message message;
         try {
             if ("security_notice".equals(claim.kind())) {
-                message = renderer.passwordResetCompleted();
+                message = switch (claim.noticeKind()) {
+                    case "password_reset_completed" -> renderer.passwordResetCompleted();
+                    case "email_change_old_address" -> renderer.emailChangeOldAddress();
+                    case "email_change_new_address" -> renderer.emailChangeNewAddress();
+                    default -> throw new IllegalStateException("Unsupported notice kind");
+                };
             } else {
                 message = "password_reset".equals(purpose)
-                        ? renderer.passwordReset(rawToken) : renderer.verification(rawToken);
+                        ? renderer.passwordReset(rawToken)
+                        : "email_change".equals(purpose) ? renderer.emailChange(rawToken)
+                        : renderer.verification(rawToken);
             }
         } catch (RuntimeException exception) {
             retryOrFail(claim, "render_unavailable");
@@ -106,7 +120,7 @@ final class SecurityEmailWorker {
         if (!delivery.ownsUsableClaim(claim, now)) {
             return;
         }
-        var currentDestination = destination(claim, purpose, now);
+        var currentDestination = safeDestination(claim, purpose, now);
         if (currentDestination.isEmpty() || !currentDestination.get().equals(destination.get())) {
             delivery.obsolete(claim, clock.instant(), "authority_not_current");
             return;
@@ -139,7 +153,7 @@ final class SecurityEmailWorker {
         if (!delivery.ownsUsableClaim(claim, now)) {
             return;
         }
-        var dispatchDestination = destination(claim, purpose, now);
+        var dispatchDestination = safeDestination(claim, purpose, now);
         if (dispatchDestination.isEmpty() || !dispatchDestination.get().equals(destination.get())) {
             delivery.obsolete(claim, now, "authority_not_current");
             return;
@@ -163,7 +177,13 @@ final class SecurityEmailWorker {
     private java.util.Optional<String> destination(SecurityEmailDeliveryRepository.Claim claim,
             String purpose, Instant now) {
         if ("security_notice".equals(claim.kind())) {
-            return identity.currentResetNoticeDestination(claim.id(), claim.subjectUserId());
+            if ("password_reset_completed".equals(claim.noticeKind())) {
+                return identity.currentResetNoticeDestination(claim.id(), claim.subjectUserId());
+            }
+            if (!identity.activeNoticeSubject(claim.id(), claim.subjectUserId(),
+                    claim.securityEventId(), claim.noticeKind())) return java.util.Optional.empty();
+            return java.util.Optional.of(cipher.openRecipient(claim.securityEventId(),
+                    claim.noticeKind(), claim.recipientEnvelope()));
         }
         if ("password_reset".equals(purpose)) {
             return identity.currentResetDestination(claim.id(), claim.capabilityId(), now);
@@ -171,7 +191,26 @@ final class SecurityEmailWorker {
         if ("email_verification".equals(purpose)) {
             return identity.currentVerificationDestination(claim.id(), claim.capabilityId(), now);
         }
+        if ("email_change".equals(purpose)) {
+            return identity.currentEmailChangeDestination(claim.id(), claim.capabilityId(), now);
+        }
         return java.util.Optional.empty();
+    }
+
+    private java.util.Optional<String> safeDestination(SecurityEmailDeliveryRepository.Claim claim,
+            String purpose, Instant now) {
+        try {
+            return destination(claim, purpose, now);
+        } catch (RuntimeException exception) {
+            delivery.failed(claim, clock.instant(), "material_unavailable");
+            return java.util.Optional.empty();
+        }
+    }
+
+    private static boolean supportedNotice(String noticeKind) {
+        return "password_reset_completed".equals(noticeKind)
+                || "email_change_old_address".equals(noticeKind)
+                || "email_change_new_address".equals(noticeKind);
     }
 
     private void retryOrFail(SecurityEmailDeliveryRepository.Claim claim, String reason) {

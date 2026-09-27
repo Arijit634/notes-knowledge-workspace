@@ -13,6 +13,7 @@ import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -55,6 +56,35 @@ final class AccountSecurityController {
             throw ApiFailureException.of(ApiFailureException.Kind.INVALID_INPUT);
         }
         credentials.setPassword(userId, password, request, response);
+        return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
+    }
+
+    @PostMapping("/email-change/requests")
+    ResponseEntity<Void> requestEmailChange(@RequestBody Map<String, Object> input,
+            HttpServletRequest request) {
+        UUID userId = IdentitySessionState.principal("ROLE_USER");
+        IdentitySessionState.requireRecent(request, userId, clock.instant(), policy);
+        if (input == null || !input.keySet().equals(Set.of("newEmail"))
+                || !(input.get("newEmail") instanceof String email)) {
+            throw ApiFailureException.of(ApiFailureException.Kind.INVALID_INPUT);
+        }
+        String candidate = IdentityInput.canonicalEmail(email);
+        rates.checkEmailChangeRequest(userId, candidate, request);
+        credentials.requestEmailChange(userId, candidate, request);
+        return ResponseEntity.accepted().cacheControl(CacheControl.noStore()).build();
+    }
+
+    @PostMapping("/email-change/confirmations")
+    ResponseEntity<Void> confirmEmailChange(@RequestBody Map<String, Object> input,
+            HttpServletRequest request, HttpServletResponse response) {
+        UUID userId = IdentitySessionState.principal("ROLE_USER");
+        rates.check("EMAIL_CHANGE_CONFIRMATION", userId, request);
+        IdentitySessionState.requireRecent(request, userId, clock.instant(), policy);
+        if (input == null || !input.keySet().equals(Set.of("token"))
+                || !(input.get("token") instanceof String token)) {
+            throw ApiFailureException.of(ApiFailureException.Kind.INVALID_INPUT);
+        }
+        credentials.confirmEmailChange(userId, token, request, response);
         return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
     }
 }

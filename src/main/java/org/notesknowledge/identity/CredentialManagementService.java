@@ -6,9 +6,13 @@ import jakarta.servlet.http.HttpSession;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.time.Duration;
+import java.security.MessageDigest;
 import java.util.UUID;
 
+import org.notesknowledge.DatabaseUuidV7Generator;
 import org.notesknowledge.websupport.ApiFailureException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -19,7 +23,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Service
 @IdentityCoreEnabled
 final class CredentialManagementService {
+    private static final Duration EMAIL_CHANGE_LIFETIME = Duration.ofHours(24);
     private final IdentityPersistence identity;
+    private final SecurityEmailDeliveryRepository delivery;
+    private final SecurityEmailMaterialCipher cipher;
+    private final DatabaseUuidV7Generator ids;
     private final SpringSessionAuthorityAdapter sessions;
     private final MfaSessionTransitions transitions;
     private final MfaSessionChallengeRepository staleRequests;
@@ -30,11 +38,16 @@ final class CredentialManagementService {
     private final TransactionTemplate transactions;
 
     CredentialManagementService(IdentityPersistence identity,
+            SecurityEmailDeliveryRepository delivery, SecurityEmailMaterialCipher cipher,
+            DatabaseUuidV7Generator ids,
             SpringSessionAuthorityAdapter sessions, MfaSessionTransitions transitions,
             MfaSessionChallengeRepository staleRequests,
             IdentitySessionTransitionCheckpoint checkpoint, PasswordEncoder passwords,
             Clock clock, MfaProperties policy, PlatformTransactionManager manager) {
         this.identity = identity;
+        this.delivery = delivery;
+        this.cipher = cipher;
+        this.ids = ids;
         this.sessions = sessions;
         this.transitions = transitions;
         this.staleRequests = staleRequests;
@@ -43,6 +56,109 @@ final class CredentialManagementService {
         this.clock = clock;
         this.policy = policy;
         this.transactions = new TransactionTemplate(manager);
+    }
+
+    void requestEmailChange(UUID userId, String candidate, HttpServletRequest request) {
+        HttpSession requestSession = request.getSession(false);
+        if (requestSession == null) throw unauthenticated();
+        String originalSessionId = requestSession.getId();
+        UUID capabilityId = ids.generate();
+        String token = EmailChangeToken.issue(capabilityId);
+        byte[] digest = EmailChangeToken.digest(token);
+        var envelope = cipher.seal("email_change", capabilityId, token);
+        transactions.executeWithoutResult(status -> {
+            if (!identity.lockActiveAccount(userId)) throw unauthenticated();
+            var current = sessions.lockCurrent(userId, originalSessionId);
+            if (current == null) {
+                staleRequests.discardStaleRequestSession(request);
+                throw unauthenticated();
+            }
+            Object persistedRecent = current.persisted().getAttribute(
+                    IdentitySessionState.RECENT_ATTRIBUTE);
+            IdentitySessionState.requireRecent(persistedRecent, userId, clock.instant(), policy);
+            // A collision is deliberately indistinguishable from an issued request.
+            if (identity.emailOccupied(candidate)) return;
+            Instant now = clock.instant();
+            identity.supersedeEmailChange(userId, now);
+            identity.issueEmailChange(capabilityId, userId, candidate, digest,
+                    now, now.plus(EMAIL_CHANGE_LIFETIME));
+            delivery.queueCapability(capabilityId, envelope, now);
+            identity.audit(userId, "email_change", "requested", now);
+        });
+    }
+
+    void confirmEmailChange(UUID userId, String token, HttpServletRequest request,
+            HttpServletResponse response) {
+        final UUID capabilityId;
+        try {
+            capabilityId = EmailChangeToken.locator(token);
+        } catch (IllegalArgumentException exception) {
+            throw invalidChange();
+        }
+        var prepared = identity.emailChangeState(capabilityId, false).orElseThrow(
+                CredentialManagementService::invalidChange);
+        byte[] digest = EmailChangeToken.digest(token);
+        if (!userId.equals(prepared.userId())
+                || !MessageDigest.isEqual(prepared.digest(), digest)) throw invalidChange();
+        UUID eventId = ids.generate();
+        var oldRecipient = cipher.sealRecipient(eventId, "email_change_old_address",
+                prepared.oldDisplayEmail());
+        var newRecipient = cipher.sealRecipient(eventId, "email_change_new_address",
+                prepared.candidateEmail());
+        HttpSession requestSession = request.getSession(false);
+        if (requestSession == null) throw unauthenticated();
+        String originalSessionId = requestSession.getId();
+        boolean[] sessionMutationStarted = {false};
+        try {
+            transactions.executeWithoutResult(status -> {
+                if (!identity.lockActiveAccount(userId)) throw unauthenticated();
+                var current = sessions.lockCurrent(userId, originalSessionId);
+                if (current == null) {
+                    staleRequests.discardStaleRequestSession(request);
+                    throw unauthenticated();
+                }
+                Instant now = clock.instant();
+                Object persistedRecent = current.persisted().getAttribute(
+                        IdentitySessionState.RECENT_ATTRIBUTE);
+                IdentitySessionState.requireRecent(persistedRecent, userId, now, policy);
+                var actual = identity.emailChangeState(capabilityId, true)
+                        .orElseThrow(CredentialManagementService::invalidChange);
+                if (!userId.equals(actual.userId()) || actual.consumedAt() != null
+                        || actual.supersededAt() != null || actual.revokedAt() != null
+                        || !actual.expiresAt().isAfter(now)
+                        || !prepared.oldEmail().equals(actual.oldEmail())
+                        || !prepared.oldDisplayEmail().equals(actual.oldDisplayEmail())
+                        || !prepared.candidateEmail().equals(actual.candidateEmail())
+                        || !MessageDigest.isEqual(actual.digest(), digest)
+                        || identity.emailOccupied(actual.candidateEmail())) throw invalidChange();
+                if (identity.consumeEmailChange(capabilityId, digest, now) != 1
+                        || identity.changeEmail(userId, prepared.oldEmail(),
+                                prepared.candidateEmail(), now) != 1) throw invalidChange();
+                checkpoint.afterEmailMutation(request);
+                sessions.revokeOthers(userId, current.primaryId());
+                checkpoint.afterOtherSessionRevocation(request);
+                sessionMutationStarted[0] = true;
+                transitions.establish(userId, true, request, response);
+                checkpoint.afterSessionMutation(request);
+                identity.auditEmailChange(userId, eventId, now);
+                delivery.queueEmailChangeNotice(userId, eventId,
+                        "email_change_old_address", oldRecipient, now);
+                delivery.queueEmailChangeNotice(userId, eventId,
+                        "email_change_new_address", newRecipient, now);
+                checkpoint.afterEmailNoticeIntents(request);
+            });
+        } catch (RuntimeException failure) {
+            if (sessionMutationStarted[0]) {
+                staleRequests.discardStaleRequestSession(request);
+                SecurityContextHolder.clearContext();
+            }
+            if (failure instanceof DataIntegrityViolationException) throw invalidChange();
+            throw failure;
+        }
+    }
+
+    private static ApiFailureException invalidChange() {
+        return ApiFailureException.of(ApiFailureException.Kind.INVALID_LIFECYCLE_TRANSITION);
     }
 
     void setPassword(UUID userId, String newPassword, HttpServletRequest request,

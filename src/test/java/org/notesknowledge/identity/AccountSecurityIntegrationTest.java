@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
@@ -23,6 +24,8 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.notesknowledge.security.RateLimitPort;
+import org.notesknowledge.LeaseOwner;
+import org.notesknowledge.LeasePolicy;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -95,6 +98,459 @@ class AccountSecurityIntegrationTest {
     @Autowired FaultCheckpoint faults;
     @Autowired SyntheticRates rates;
     @Autowired PlatformTransactionManager transactionManager;
+    @Autowired SecurityEmailDeliveryRepository delivery;
+    @Autowired SecurityEmailMaterialCipher deliveryCipher;
+    @Autowired SecurityEmailWorker deliveryWorker;
+    @Autowired IdentityCoreIntegrationTest.CapturingProvider mail;
+
+    @Test void emailChangeRequestIsBlindAndCandidateLinkIsPurposeBound(CapturedOutput output)
+            throws Exception {
+        UUID owner = account(true);
+        UUID occupied = account(true);
+        Browser browser = csrf(cookie(session(owner, "ROLE_USER", "password")));
+        String first = "first-" + UUID.randomUUID() + "@example.test";
+        var collision = emailRequest(browser, email(occupied)).andExpect(status().isAccepted())
+                .andReturn().getResponse();
+        assertThat(collision.getHeader("Location")).isNull();
+        assertThat(collision.getContentAsString()).isEmpty();
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.identity_capability
+                where user_id = ? and purpose = 'email_change'
+                """, Integer.class, owner)).isZero();
+        var issued = emailRequest(browser, first.toUpperCase())
+                .andExpect(status().isAccepted()).andReturn().getResponse();
+        assertThat(issued.getHeader("Location")).isNull();
+        assertThat(issued.getContentAsString()).isEqualTo(collision.getContentAsString());
+        assertThat(email(owner)).isEqualTo(accountEmail(owner));
+        UUID firstId = currentEmailChange(owner);
+        String firstToken = emailChangeToken(firstId);
+        var claim = delivery.claimReady(clock.instant(), new LeaseOwner("email_change_test"),
+                new LeasePolicy(Duration.ofMinutes(2), 100), 100).stream()
+                .filter(c -> firstId.equals(c.capabilityId())).findFirst().orElseThrow();
+        deliveryWorker.process(claim);
+        assertThat(mail.lastRecipient).isEqualTo(first);
+        assertThat(mail.lastMessage.body()).contains("/confirm-email-change#token=");
+        String second = "second-" + UUID.randomUUID() + "@example.test";
+        emailRequest(browser, second).andExpect(status().isAccepted());
+        assertThat(jdbc.queryForObject("""
+                select superseded_at is not null from identity.identity_capability
+                where capability_id = ?
+                """, Boolean.class, firstId)).isTrue();
+        assertThat(jdbc.queryForObject("""
+                select state from identity.security_email_delivery where capability_id = ?
+                """, String.class, firstId)).isEqualTo("submitted");
+        // Submitted mail cannot be retracted, but its superseded token cannot be consumed.
+        emailConfirm(browser, firstToken).andExpect(status().isConflict());
+        UUID secondId = currentEmailChange(owner);
+        assertThat(secondId).isNotEqualTo(firstId);
+        String secondToken = emailChangeToken(secondId);
+        emailRequest(browser, "third-" + UUID.randomUUID() + "@example.test")
+                .andExpect(status().isAccepted());
+        assertThat(jdbc.queryForObject("""
+                select state from identity.security_email_delivery where capability_id = ?
+                """, String.class, secondId)).isEqualTo("obsolete");
+        assertThat(jdbc.queryForObject("""
+                select sealed_token_ciphertext is null from identity.security_email_delivery
+                where capability_id = ?
+                """, Boolean.class, secondId)).isTrue();
+        emailConfirm(browser, secondToken).andExpect(status().isConflict());
+        assertThat(output.getAll()).doesNotContain(firstToken, first, second,
+                browser.csrf(), browser.cookie().getValue());
+    }
+
+    @Test void emailChangeConfirmationRotatesSessionsAndRetainsHistoricalNotices()
+            throws Exception {
+        UUID owner = account(true);
+        UUID unrelatedOwner = account(true);
+        String original = email(owner);
+        String second = "candidate-" + UUID.randomUUID() + "@example.test";
+        String third = "later-" + UUID.randomUUID() + "@example.test";
+        Browser current = csrf(cookie(session(owner, "ROLE_USER", "password")));
+        String otherFull = session(owner, "ROLE_USER", null);
+        String otherPreMfa = session(owner, "ROLE_MFA_PENDING", null);
+        String otherRecent = session(owner, "ROLE_USER", "oidc");
+        String unrelated = session(unrelatedOwner, "ROLE_USER", null);
+        emailRequest(current, second).andExpect(status().isAccepted());
+        String token = emailChangeToken(currentEmailChange(owner));
+        var result = emailConfirm(current, token).andExpect(status().isNoContent()).andReturn();
+        Cookie rotated = result.getResponse().getCookie("SESSION");
+        assertThat(rotated).isNotNull();
+        assertThat(rotated.getValue()).isNotEqualTo(current.cookie().getValue());
+        assertThat(accountEmail(owner)).isEqualTo(second);
+        assertThat(jdbc.queryForObject("""
+                select email_verified_at is not null from identity.account where user_id = ?
+                """, Boolean.class, owner)).isTrue();
+        assertThat(passwords.matches(OLD, verifier(owner))).isTrue();
+        for (String id : List.of(raw(current.cookie()), otherFull, otherPreMfa, otherRecent)) {
+            assertThat(sessions.findById(id)).isNull();
+        }
+        assertThat(sessions.findById(unrelated)).isNotNull();
+        mvc.perform(get("/api/me/security").cookie(rotated)).andExpect(status().isOk());
+        assertThat((Object) repository().findById(raw(rotated)).getAttribute(
+                IdentitySessionState.RECENT_ATTRIBUTE)).isNull();
+        emailConfirm(new Browser(rotated, current.csrf()), token)
+                .andExpect(status().isForbidden());
+        Browser fresh = csrf(rotated);
+        addRecent(fresh.cookie(), owner);
+        emailConfirm(fresh, token).andExpect(status().isConflict());
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.security_email_delivery
+                where subject_user_id = ? and notice_kind like 'email_change_%'
+                """, Integer.class, owner)).isEqualTo(2);
+        UUID firstEvent = jdbc.queryForObject("""
+                select security_event_id from identity.security_email_delivery
+                where subject_user_id = ? and notice_kind = 'email_change_old_address'
+                """, UUID.class, owner);
+        assertEventRecipients(owner, firstEvent, original, second);
+        Browser secondCurrent = csrf(fresh.cookie());
+        emailRequest(secondCurrent, third).andExpect(status().isAccepted());
+        String secondToken = emailChangeToken(currentEmailChange(owner));
+        emailConfirm(secondCurrent, secondToken).andExpect(status().isNoContent());
+        assertEventRecipients(owner, firstEvent, original, second);
+        UUID secondEvent = jdbc.queryForObject("""
+                select security_event_id from identity.security_email_delivery
+                where subject_user_id = ? and notice_kind = 'email_change_new_address'
+                  and security_event_id <> ?
+                """, UUID.class, owner, firstEvent);
+        assertEventRecipients(owner, secondEvent, second, third);
+        assertThat(accountEmail(owner)).isEqualTo(third);
+        var claims = delivery.claimReady(clock.instant(), new LeaseOwner("notice_test"),
+                new LeasePolicy(Duration.ofMinutes(2), 100), 100);
+        for (var claim : claims) {
+            if (firstEvent.equals(claim.securityEventId())) {
+                deliveryWorker.process(claim);
+                assertThat(mail.lastRecipient).isEqualTo(
+                        "email_change_old_address".equals(claim.noticeKind())
+                                ? original : second);
+                assertThat(jdbc.queryForObject("""
+                        select sealed_recipient_ciphertext is null
+                        from identity.security_email_delivery
+                        where security_email_delivery_id = ?
+                        """, Boolean.class, claim.id())).isTrue();
+            }
+        }
+    }
+
+    @Test void emailChangeRejectsMissingAuthorityCsrfAndUnavailableRateControl()
+            throws Exception {
+        UUID owner = account(true);
+        String candidate = "candidate-" + UUID.randomUUID() + "@example.test";
+        Browser noRecent = csrf(cookie(session(owner, "ROLE_USER", null)));
+        emailRequest(noRecent, candidate).andExpect(status().isForbidden());
+        Browser preMfa = csrf(cookie(session(owner, "ROLE_MFA_PENDING", "password")));
+        emailRequest(preMfa, candidate).andExpect(status().isForbidden());
+        Browser current = csrf(cookie(session(owner, "ROLE_USER", "password")));
+        mvc.perform(post("/api/me/security/email-change/requests")
+                .cookie(current.cookie()).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"newEmail\":\"" + candidate + "\"}"))
+                .andExpect(status().isForbidden());
+        emailRequest(current, "not-an-email").andExpect(status().isUnprocessableEntity());
+        rates.unavailable = true;
+        emailRequest(current, candidate).andExpect(status().isServiceUnavailable());
+        rates.unavailable = false;
+        rates.throttled = true;
+        emailRequest(current, candidate).andExpect(status().isTooManyRequests());
+        rates.throttled = false;
+        emailRequest(current, candidate).andExpect(status().isAccepted());
+        String token = emailChangeToken(currentEmailChange(owner));
+        rates.unavailable = true;
+        emailConfirm(current, token).andExpect(status().isServiceUnavailable());
+        rates.unavailable = false;
+        rates.throttled = true;
+        emailConfirm(current, token).andExpect(status().isTooManyRequests());
+        rates.throttled = false;
+        emailConfirm(current, token.substring(0, 37)
+                + (token.charAt(37) == 'A' ? "B" : "A") + token.substring(38))
+                .andExpect(status().isConflict());
+        UUID another = account(true);
+        Browser other = csrf(cookie(session(another, "ROLE_USER", "password")));
+        emailConfirm(other, token).andExpect(status().isConflict());
+        jdbc.update("update identity.account set account_state = 'suspended' where user_id = ?",
+                owner);
+        assertThat(emailConfirm(current, token).andReturn().getResponse().getStatus())
+                .isIn(401, 403);
+    }
+
+    @Test void emailChangeRejectsExpiredReusedAndWrongPurposeCapabilities() throws Exception {
+        UUID owner = account(true);
+        Browser browser = csrf(cookie(session(owner, "ROLE_USER", "password")));
+        String candidate = "expiring-" + UUID.randomUUID() + "@example.test";
+        emailRequest(browser, candidate).andExpect(status().isAccepted());
+        UUID capability = currentEmailChange(owner);
+        String token = emailChangeToken(capability);
+        jdbc.update("""
+                update identity.identity_capability set issued_at = ?, expires_at = ?
+                where capability_id = ?
+                """, Timestamp.from(clock.instant().minusSeconds(3600)),
+                Timestamp.from(clock.instant().minusSeconds(1)), capability);
+        emailConfirm(browser, token).andExpect(status().isConflict());
+        assertThat(accountEmail(owner)).isEqualTo(email(owner));
+        emailRequest(browser, candidate).andExpect(status().isAccepted());
+        UUID second = currentEmailChange(owner);
+        String secondToken = emailChangeToken(second);
+        UUID occupied = account(true);
+        jdbc.update("update identity.account set canonical_email = ?, display_email = ? where user_id = ?",
+                candidate, candidate, occupied);
+        emailConfirm(browser, secondToken).andExpect(status().isConflict());
+        assertThat(accountEmail(owner)).isEqualTo(email(owner));
+        assertThat(jdbc.queryForObject("""
+                select consumed_at is null from identity.identity_capability where capability_id = ?
+                """, Boolean.class, second)).isTrue();
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.security_email_delivery
+                where subject_user_id = ? and notice_kind like 'email_change_%'
+                """, Integer.class, owner)).isZero();
+        UUID wrongPurpose = jdbc.queryForObject("select uuidv7()", UUID.class);
+        String wrongToken = PasswordResetToken.issue(wrongPurpose);
+        jdbc.update("""
+                insert into identity.identity_capability
+                    (capability_id, user_id, purpose, verifier_digest, issued_at, expires_at)
+                values (?, ?, 'password_reset', ?, ?, ?)
+                """, wrongPurpose, owner, PasswordResetToken.digest(wrongToken),
+                Timestamp.from(clock.instant()), Timestamp.from(clock.instant().plusSeconds(3600)));
+        emailConfirm(browser, wrongToken).andExpect(status().isConflict());
+    }
+
+    @Test void emailChangeFaultsRollBackAccountSessionsAndNoticeIntents() throws Exception {
+        for (int point = 1; point <= 4; point++) {
+            UUID owner = account(true);
+            String oldEmail = email(owner);
+            Browser current = csrf(cookie(session(owner, "ROLE_USER", "password")));
+            String other = session(owner, "ROLE_USER", null);
+            emailRequest(current, "rollback-" + UUID.randomUUID() + "@example.test")
+                    .andExpect(status().isAccepted());
+            UUID capability = currentEmailChange(owner);
+            String token = emailChangeToken(capability);
+            faults.failAt = point;
+            mvc.perform(post("/api/me/security/email-change/confirmations")
+                    .cookie(current.cookie()).header("X-CSRF-TOKEN", current.csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"token\":\"" + token + "\"}"))
+                    .andExpect(status().is5xxServerError());
+            faults.failAt = 0;
+            assertThat(accountEmail(owner)).isEqualTo(oldEmail);
+            assertThat(jdbc.queryForObject("""
+                    select consumed_at is null from identity.identity_capability
+                    where capability_id = ?
+                    """, Boolean.class, capability)).isTrue();
+            assertThat(sessions.findById(raw(current.cookie()))).isNotNull();
+            assertThat(sessions.findById(other)).isNotNull();
+            assertThat(jdbc.queryForObject("""
+                    select count(*) from identity.security_email_delivery
+                    where subject_user_id = ? and notice_kind like 'email_change_%'
+                    """, Integer.class, owner)).isZero();
+            assertThat(jdbc.queryForObject("""
+                    select count(*) from identity.security_audit_fact
+                    where target_user_id = ? and event_category = 'email_change'
+                      and outcome_code = 'completed'
+                    """, Integer.class, owner)).isZero();
+        }
+    }
+
+    @Test void concurrentEmailChangeRequestsLeaveOneCurrentCapability() throws Exception {
+        UUID owner = account(true);
+        Browser browser = csrf(cookie(session(owner, "ROLE_USER", "password")));
+        CountDownLatch go = new CountDownLatch(1);
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var a = pool.submit(() -> {
+                go.await();
+                return emailRequest(browser, "parallel-a-" + UUID.randomUUID()
+                        + "@example.test").andReturn().getResponse().getStatus();
+            });
+            var b = pool.submit(() -> {
+                go.await();
+                return emailRequest(browser, "parallel-b-" + UUID.randomUUID()
+                        + "@example.test").andReturn().getResponse().getStatus();
+            });
+            go.countDown();
+            assertThat(a.get(20, TimeUnit.SECONDS)).isEqualTo(202);
+            assertThat(b.get(20, TimeUnit.SECONDS)).isEqualTo(202);
+        }
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.identity_capability
+                where user_id = ? and purpose = 'email_change'
+                  and consumed_at is null and superseded_at is null and revoked_at is null
+                """, Integer.class, owner)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.security_email_delivery d
+                join identity.identity_capability c on c.capability_id = d.capability_id
+                where c.user_id = ? and c.purpose = 'email_change' and d.state = 'queued'
+                """, Integer.class, owner)).isEqualTo(1);
+    }
+
+    @Test void emailChangeNoticeLeaseFencingAndTerminalClearing() throws Exception {
+        UUID owner = account(true);
+        Browser current = csrf(cookie(session(owner, "ROLE_USER", "password")));
+        emailRequest(current, "notices-" + UUID.randomUUID() + "@example.test")
+                .andExpect(status().isAccepted());
+        emailConfirm(current, emailChangeToken(currentEmailChange(owner)))
+                .andExpect(status().isNoContent());
+        var ready = delivery.claimReady(clock.instant(), new LeaseOwner("notice_first"),
+                new LeasePolicy(Duration.ofSeconds(1), 100), 100).stream()
+                .filter(c -> c.securityEventId() != null && owner.equals(c.subjectUserId()))
+                .toList();
+        assertThat(ready).hasSize(2);
+        Instant expired = clock.instant().plusSeconds(2);
+        var reclaimed = delivery.reclaimExpired(expired, new LeaseOwner("notice_reclaim"),
+                new LeasePolicy(Duration.ofMinutes(2), 100), 100).stream()
+                .filter(c -> owner.equals(c.subjectUserId())).toList();
+        assertThat(reclaimed).hasSize(2);
+        for (int index = 0; index < ready.size(); index++) {
+            var stale = ready.get(index);
+            var currentClaim = reclaimed.stream().filter(c -> c.id().equals(stale.id()))
+                    .findFirst().orElseThrow();
+            assertThat(currentClaim.token().value()).isNotEqualTo(stale.token().value());
+            assertThat(delivery.submitted(stale, clock.instant())).isFalse();
+            if (index == 0) {
+                deliveryWorker.process(currentClaim);
+                assertThat(jdbc.queryForObject("""
+                        select state from identity.security_email_delivery
+                        where security_email_delivery_id = ?
+                        """, String.class, currentClaim.id())).isEqualTo("submitted");
+            } else {
+                assertThat(delivery.failed(currentClaim, clock.instant(), "synthetic_failure"))
+                        .isTrue();
+            }
+            assertThat(jdbc.queryForObject("""
+                    select sealed_recipient_ciphertext is null
+                        and sealed_recipient_nonce is null
+                        and sealed_recipient_tag is null
+                        and recipient_key_version is null
+                    from identity.security_email_delivery
+                    where security_email_delivery_id = ?
+                    """, Boolean.class, currentClaim.id())).isTrue();
+        }
+    }
+
+    @Test void concurrentEmailChangeConfirmationConsumesOnce() throws Exception {
+        UUID owner = account(true);
+        Browser current = csrf(cookie(session(owner, "ROLE_USER", "password")));
+        String candidate = "single-use-" + UUID.randomUUID() + "@example.test";
+        emailRequest(current, candidate).andExpect(status().isAccepted());
+        String token = emailChangeToken(currentEmailChange(owner));
+        CountDownLatch go = new CountDownLatch(1);
+        AtomicInteger success = new AtomicInteger();
+        AtomicInteger denied = new AtomicInteger();
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var first = pool.submit(() -> {
+                concurrentEmailConfirm(current, token, go, success, denied); return null;
+            });
+            var second = pool.submit(() -> {
+                concurrentEmailConfirm(current, token, go, success, denied); return null;
+            });
+            go.countDown();
+            first.get(20, TimeUnit.SECONDS);
+            second.get(20, TimeUnit.SECONDS);
+        }
+        assertThat(success).hasValue(1);
+        assertThat(denied).hasValue(1);
+        assertThat(accountEmail(owner)).isEqualTo(candidate);
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.security_email_delivery
+                where subject_user_id = ? and notice_kind like 'email_change_%'
+                """, Integer.class, owner)).isEqualTo(2);
+    }
+
+    private void concurrentEmailConfirm(Browser browser, String token, CountDownLatch go,
+            AtomicInteger success, AtomicInteger denied) throws Exception {
+        go.await();
+        int status = emailConfirm(browser, token).andReturn().getResponse().getStatus();
+        if (status == 204) success.incrementAndGet();
+        else if (status == 401 || status == 403 || status == 409) denied.incrementAndGet();
+        else throw new AssertionError("Unexpected confirmation status: " + status);
+    }
+
+    private org.springframework.test.web.servlet.ResultActions emailRequest(Browser browser,
+            String candidate) throws Exception {
+        return mvc.perform(post("/api/me/security/email-change/requests")
+                .cookie(browser.cookie()).header("X-CSRF-TOKEN", browser.csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"newEmail\":\"" + candidate + "\"}"));
+    }
+
+    private org.springframework.test.web.servlet.ResultActions emailConfirm(Browser browser,
+            String token) throws Exception {
+        var result = mvc.perform(post("/api/me/security/email-change/confirmations")
+                .cookie(browser.cookie()).header("X-CSRF-TOKEN", browser.csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"token\":\"" + token + "\"}"));
+        if (result.andReturn().getResponse().getStatus() == 500) {
+            throw new AssertionError("Email confirmation failed", result.andReturn().getResolvedException());
+        }
+        return result;
+    }
+
+    private UUID currentEmailChange(UUID userId) {
+        return jdbc.queryForObject("""
+                select capability_id from identity.identity_capability
+                where user_id = ? and purpose = 'email_change'
+                  and consumed_at is null and superseded_at is null and revoked_at is null
+                """, UUID.class, userId);
+    }
+
+    private String emailChangeToken(UUID id) {
+        return deliveryCipher.open("email_change", id,
+                new SecurityEmailMaterialCipher.Envelope(
+                        jdbc.queryForObject("""
+                                select sealed_token_ciphertext from identity.security_email_delivery
+                                where capability_id = ?
+                                """, byte[].class, id),
+                        jdbc.queryForObject("""
+                                select sealed_token_nonce from identity.security_email_delivery
+                                where capability_id = ?
+                                """, byte[].class, id),
+                        jdbc.queryForObject("""
+                                select sealed_token_tag from identity.security_email_delivery
+                                where capability_id = ?
+                                """, byte[].class, id),
+                        jdbc.queryForObject("""
+                                select token_key_version from identity.security_email_delivery
+                                where capability_id = ?
+                                """, String.class, id)));
+    }
+
+    private String accountEmail(UUID userId) {
+        return jdbc.queryForObject("select canonical_email from identity.account where user_id = ?",
+                String.class, userId);
+    }
+
+    private void addRecent(Cookie cookie, UUID userId) {
+        Session persisted = repository().findById(raw(cookie));
+        persisted.setAttribute(IdentitySessionState.RECENT_ATTRIBUTE,
+                new IdentitySessionState.RecentAuthentication(userId, clock.instant(), "password"));
+        repository().save(persisted);
+    }
+
+    private void assertEventRecipients(UUID owner, UUID event, String oldAddress,
+            String newAddress) {
+        for (String kind : List.of("email_change_old_address", "email_change_new_address")) {
+            var row = jdbc.queryForMap("""
+                    select sealed_recipient_ciphertext, sealed_recipient_nonce,
+                           sealed_recipient_tag, recipient_key_version,
+                           sealed_token_ciphertext
+                    from identity.security_email_delivery
+                    where subject_user_id = ? and security_event_id = ? and notice_kind = ?
+                    """, owner, event, kind);
+            assertThat(row.get("sealed_token_ciphertext")).isNull();
+            var envelope = new SecurityEmailMaterialCipher.Envelope(
+                    (byte[]) row.get("sealed_recipient_ciphertext"),
+                    (byte[]) row.get("sealed_recipient_nonce"),
+                    (byte[]) row.get("sealed_recipient_tag"),
+                    (String) row.get("recipient_key_version"));
+            assertThat(deliveryCipher.openRecipient(event, kind, envelope)).isEqualTo(
+                    "email_change_old_address".equals(kind) ? oldAddress : newAddress);
+            assertThat(new String(envelope.ciphertext(), StandardCharsets.ISO_8859_1))
+                    .doesNotContain(oldAddress, newAddress);
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                    deliveryCipher.openRecipient(event,
+                            "email_change_old_address".equals(kind)
+                                    ? "email_change_new_address" : "email_change_old_address",
+                            envelope)).isInstanceOf(IllegalStateException.class);
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                    deliveryCipher.openRecipient(UUID.randomUUID(), kind, envelope))
+                    .isInstanceOf(IllegalStateException.class);
+        }
+    }
 
     @Test void summaryIsOwnerScopedCurrentAndSecretFree(CapturedOutput output) throws Exception {
         UUID owner = account(true);
@@ -513,6 +969,12 @@ class AccountSecurityIntegrationTest {
         @Override void afterPasswordMutation(jakarta.servlet.http.HttpServletRequest request) {
             if (failAt == 1) throw new IllegalStateException("synthetic_password_fault");
         }
+        @Override void afterEmailMutation(jakarta.servlet.http.HttpServletRequest request) {
+            if (failAt == 1) throw new IllegalStateException("synthetic_email_fault");
+        }
+        @Override void afterEmailNoticeIntents(jakarta.servlet.http.HttpServletRequest request) {
+            if (failAt == 4) throw new IllegalStateException("synthetic_notice_fault");
+        }
         @Override void afterOtherSessionRevocation(jakarta.servlet.http.HttpServletRequest request) {
             if (failAt == 2) throw new IllegalStateException("synthetic_revocation_fault");
         }
@@ -525,5 +987,8 @@ class AccountSecurityIntegrationTest {
     static class Doubles {
         @Bean @Primary SyntheticRates syntheticRates() { return new SyntheticRates(); }
         @Bean @Primary FaultCheckpoint faultCheckpoint() { return new FaultCheckpoint(); }
+        @Bean IdentityCoreIntegrationTest.CapturingProvider emailChangeProvider() {
+            return new IdentityCoreIntegrationTest.CapturingProvider();
+        }
     }
 }

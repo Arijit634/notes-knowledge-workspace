@@ -18,9 +18,12 @@ import org.springframework.transaction.annotation.Transactional;
 class JdbcSecurityEmailDeliveryAdapter implements SecurityEmailDeliveryRepository {
     private static final String RETURNING = """
             returning work.security_email_delivery_id, work.capability_id,
-                      work.subject_user_id, work.delivery_kind, work.notice_kind, work.lease_token,
+                      work.subject_user_id, work.security_event_id, work.delivery_kind,
+                      work.notice_kind, work.lease_token,
                       work.attempt_count, work.sealed_token_ciphertext, work.sealed_token_nonce,
-                      work.sealed_token_tag, work.token_key_version
+                      work.sealed_token_tag, work.token_key_version,
+                      work.sealed_recipient_ciphertext, work.sealed_recipient_nonce,
+                      work.sealed_recipient_tag, work.recipient_key_version
             """;
 
     private final JdbcClient jdbc;
@@ -61,6 +64,31 @@ class JdbcSecurityEmailDeliveryAdapter implements SecurityEmailDeliveryRepositor
                         'password_reset_completed', 'queued', :now, :now, :now)
                 """).param("subject", subjectUserId).param("event", eventId)
                 .param("now", Timestamp.from(now)).update();
+    }
+
+    @Override
+    public void queueEmailChangeNotice(UUID subjectUserId, UUID eventId, String noticeKind,
+            SecurityEmailMaterialCipher.Envelope recipient, Instant now) {
+        if (!org.springframework.transaction.support.TransactionSynchronizationManager
+                .isActualTransactionActive()) {
+            throw new IllegalStateException("Security notice requires the Identity transaction");
+        }
+        if (!"email_change_old_address".equals(noticeKind)
+                && !"email_change_new_address".equals(noticeKind)) {
+            throw new IllegalArgumentException("Unsupported notice kind");
+        }
+        jdbc.sql("""
+                insert into identity.security_email_delivery
+                    (security_email_delivery_id, delivery_kind, subject_user_id,
+                     security_event_id, notice_kind, state, next_attempt_at,
+                     sealed_recipient_ciphertext, sealed_recipient_nonce,
+                     sealed_recipient_tag, recipient_key_version, created_at, updated_at)
+                values (uuidv7(), 'security_notice', :subject, :event, :kind,
+                        'queued', :now, :ciphertext, :nonce, :tag, :version, :now, :now)
+                """).param("subject", subjectUserId).param("event", eventId)
+                .param("kind", noticeKind).param("now", Timestamp.from(now))
+                .param("ciphertext", recipient.ciphertext()).param("nonce", recipient.nonce())
+                .param("tag", recipient.tag()).param("version", recipient.keyVersion()).update();
     }
 
     @Override
@@ -142,6 +170,7 @@ class JdbcSecurityEmailDeliveryAdapter implements SecurityEmailDeliveryRepositor
                         rs.getObject("security_email_delivery_id", UUID.class),
                         rs.getObject("capability_id", UUID.class),
                         rs.getObject("subject_user_id", UUID.class),
+                        rs.getObject("security_event_id", UUID.class),
                         rs.getString("delivery_kind"), rs.getString("notice_kind"),
                         LeaseToken.fromDatabase(rs.getObject("lease_token", UUID.class)),
                         rs.getInt("attempt_count"),
@@ -149,7 +178,12 @@ class JdbcSecurityEmailDeliveryAdapter implements SecurityEmailDeliveryRepositor
                                 rs.getBytes("sealed_token_ciphertext"),
                                 rs.getBytes("sealed_token_nonce"),
                                 rs.getBytes("sealed_token_tag"),
-                                rs.getString("token_key_version"))))
+                                rs.getString("token_key_version")),
+                        new SecurityEmailMaterialCipher.Envelope(
+                                rs.getBytes("sealed_recipient_ciphertext"),
+                                rs.getBytes("sealed_recipient_nonce"),
+                                rs.getBytes("sealed_recipient_tag"),
+                                rs.getString("recipient_key_version"))))
                 .list();
     }
 
