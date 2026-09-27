@@ -277,6 +277,31 @@ class OidcCoreIntegrationTest {
                 protocol.accept(second, email(owner), true), false, 401);
     }
 
+    @Test void currentGoogleAuthenticatedSessionCanUnlinkItsProviderWhenPasswordRemains()
+            throws Exception {
+        UUID owner = account();
+        String subject = "current-provider-" + UUID.randomUUID();
+        link(owner, subject);
+        jdbc.update("update identity.account set password_verifier = ? where user_id = ?",
+                passwordEncoder.encode("SyntheticPassword-2026!"), owner);
+        Browser anonymous = csrf(null);
+        MvcResult login = callback(anonymous, start(anonymous, false),
+                protocol.accept(subject, email(owner), true), false, 200);
+        Browser current = csrf(login.getResponse().getCookie("SESSION"));
+        String recentState = start(current, true);
+        callback(current, recentState, protocol.accept(subject, email(owner), true), true, 204);
+        UUID locator = linkId(owner, subject);
+        MvcResult removed = unlink(current, locator, 204);
+        Browser remaining = csrf(removed.getResponse().getCookie("SESSION"));
+        assertThat(sessionState(remaining)).isEqualTo("authenticated");
+        assertThat(jdbc.queryForObject("""
+                select password_verifier is not null from identity.account where user_id = ?
+                """, Boolean.class, owner)).isTrue();
+        Browser next = csrf(null);
+        callback(next, start(next, false),
+                protocol.accept(subject, email(owner), true), false, 401);
+    }
+
     @Test void linkStartAndCallbackRejectMissingAuthorityAndStaleProof() throws Exception {
         UUID owner = account();
         Browser anonymous = csrf(null);
@@ -340,6 +365,17 @@ class OidcCoreIntegrationTest {
                     .andExpect(status().isServiceUnavailable());
         } finally {
             rates.unavailable = false;
+        }
+        rates.throttled = true;
+        try {
+            mvc.perform(post("/api/me/security/oidc/google/link-authorizations")
+                    .cookie(current.cookie()).header("X-CSRF-TOKEN", current.csrf()))
+                    .andExpect(status().isTooManyRequests());
+            mvc.perform(delete("/api/me/security/oidc-links/" + UUID.randomUUID())
+                    .cookie(current.cookie()).header("X-CSRF-TOKEN", current.csrf()))
+                    .andExpect(status().isTooManyRequests());
+        } finally {
+            rates.throttled = false;
         }
     }
 
@@ -1076,8 +1112,10 @@ class OidcCoreIntegrationTest {
 
     static final class SyntheticRates implements RateLimitPort {
         volatile boolean unavailable;
+        volatile boolean throttled;
         @Override public Decision evaluate(Request request) {
-            return unavailable ? new ControlUnavailable() : new Allowed();
+            if (unavailable) return new ControlUnavailable();
+            return throttled ? new Throttled(60) : new Allowed();
         }
     }
 
