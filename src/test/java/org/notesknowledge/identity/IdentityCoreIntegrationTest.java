@@ -115,7 +115,7 @@ class IdentityCoreIntegrationTest {
     RequestMappingHandlerMapping mappings;
 
     @Test
-    void onlyTheTwentySevenAuthorizedProductPathsAreMapped() {
+    void onlyTheThirtyOneAuthorizedProductPathsAreMapped() {
         Set<String> paths = mappings.getHandlerMethods().keySet().stream()
                 .flatMap(mapping -> mapping.getPatternValues().stream())
                 .filter(path -> path.startsWith("/api/"))
@@ -143,7 +143,11 @@ class IdentityCoreIntegrationTest {
                 "/api/me/security/email-change/requests",
                 "/api/me/security/email-change/confirmations",
                 "/api/me/security/oidc/google/link-authorizations",
-                "/api/me/security/oidc-links/{linkId}");
+                "/api/me/security/oidc-links/{linkId}",
+                "/api/me/security/sessions",
+                "/api/me/security/sessions/{sessionHandle}",
+                "/api/me/security/sessions/revoke-others",
+                "/api/me/security/sessions/revoke-all");
     }
 
     @Test
@@ -220,6 +224,7 @@ class IdentityCoreIntegrationTest {
 
         MvcResult login = mvc.perform(post("/api/auth/login/password")
                 .cookie(browser.cookie()).header("X-CSRF-TOKEN", browser.csrf())
+                .header("User-Agent", "Firefox/145 Windows raw-synthetic-marker")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"email\":\"" + email +
                         "\",\"password\":\"SyntheticPassword-2026!\"}"))
@@ -228,6 +233,13 @@ class IdentityCoreIntegrationTest {
         Cookie loginCookie = login.getResponse().getCookie("SESSION");
         assertThat(loginCookie).isNotNull();
         assertThat(loginCookie.getValue()).isNotEqualTo(browser.cookie().getValue());
+        assertThat(jdbc.queryForObject("""
+                select d.client_label from identity.application_session_descriptor d
+                join identity.spring_session s on s.primary_id = d.session_primary_id
+                where s.session_id = ?
+                """, String.class, new String(java.util.Base64.getDecoder().decode(
+                        loginCookie.getValue()), java.nio.charset.StandardCharsets.UTF_8)))
+                .isEqualTo("Firefox on Windows");
         mvc.perform(get("/api/auth/session").cookie(loginCookie))
                 .andExpect(status().isOk());
         MvcResult refreshed = mvc.perform(get("/api/auth/csrf").cookie(loginCookie))

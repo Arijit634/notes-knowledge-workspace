@@ -90,6 +90,11 @@ final class MfaManagementService {
     }
 
     List<String> confirm(UUID userId, String handle, String proof) {
+        return confirm(userId, handle, proof, null, null);
+    }
+
+    List<String> confirm(UUID userId, String handle, String proof,
+            HttpServletRequest request, HttpServletResponse response) {
         Instant now = clock.instant();
         MfaRepository.Configuration pending = repository.configuration(userId).orElseThrow(() ->
                 ApiFailureException.of(ApiFailureException.Kind.RESOURCE_NOT_FOUND));
@@ -107,16 +112,37 @@ final class MfaManagementService {
             throw ApiFailureException.of(ApiFailureException.Kind.INVALID_INPUT);
         }
         List<String> codes = recovery.issue();
+        String originalSessionId = request == null ? null : request.getSession(false).getId();
+        boolean[] sessionMutationStarted = {false};
+        try {
         transactions.executeWithoutResult(status -> {
-            if (!identity.isActive(userId)
+            if (!identity.lockActiveAccount(userId)
                     || repository.activate(userId, pending.seed().nonce(), step, now) != 1) {
                 throw ApiFailureException.of(ApiFailureException.Kind.INVALID_LIFECYCLE_TRANSITION);
+            }
+            if (request != null) {
+                var current = sessions.lockCurrent(userId, originalSessionId);
+                if (current == null) throw ApiFailureException.of(ApiFailureException.Kind.INVALID_CREDENTIALS);
+                IdentitySessionState.requireRecent((Object) current.persisted().getAttribute(
+                        IdentitySessionState.RECENT_ATTRIBUTE), userId, now, policy);
             }
             for (String code : codes) {
                 repository.insertRecovery(userId, 1, recovery.digest(code), now);
             }
             identity.audit(userId, "mfa_enrollment", "activated", now);
+            if (request != null) {
+                sessionMutationStarted[0] = true;
+                transitions.establish(userId, true, request, response);
+                checkpoint.afterSessionMutation(request);
+            }
         });
+        } catch (RuntimeException failure) {
+            if (sessionMutationStarted[0]) {
+                staleRequests.discardStaleRequestSession(request);
+                SecurityContextHolder.clearContext();
+            }
+            throw failure;
+        }
         return codes;
     }
 

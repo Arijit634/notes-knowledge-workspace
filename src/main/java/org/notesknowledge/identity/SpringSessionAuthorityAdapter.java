@@ -3,10 +3,13 @@ package org.notesknowledge.identity;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import java.time.Clock;
+import java.time.Instant;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.session.Session;
+import org.springframework.session.SessionRepository;
 import org.springframework.session.jdbc.JdbcIndexedSessionRepository;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -19,12 +22,19 @@ class SpringSessionAuthorityAdapter {
     private record CandidateLocation(String sessionId, long expiryTime) { }
     private record IndexedSession(String primaryId, String sessionId) { }
     record CurrentSession(String primaryId, Session persisted) { }
+    record OwnerSession(String primaryId, String sessionId, Instant created,
+            Instant seen, Instant expiry) { }
     private final JdbcClient jdbc;
     private final JdbcIndexedSessionRepository sessions;
+    private final ApplicationSessionDescriptorRepository descriptors;
+    private final Clock clock;
 
-    SpringSessionAuthorityAdapter(JdbcClient jdbc, JdbcIndexedSessionRepository sessions) {
+    SpringSessionAuthorityAdapter(JdbcClient jdbc, JdbcIndexedSessionRepository sessions,
+            ApplicationSessionDescriptorRepository descriptors, Clock clock) {
         this.jdbc = jdbc;
         this.sessions = sessions;
+        this.descriptors = descriptors;
+        this.clock = clock;
     }
 
     int revokeAll(UUID userId) {
@@ -50,6 +60,71 @@ class SpringSessionAuthorityAdapter {
         return new CurrentSession(primaryId, persisted);
     }
 
+    OwnerSession bySessionId(String sessionId) {
+        return jdbc.sql("""
+                select primary_id, session_id, creation_time, last_access_time, expiry_time
+                from identity.spring_session where session_id = :session
+                """).param("session", sessionId).query((rs, row) -> ownerSession(rs)).optional().orElse(null);
+    }
+
+    OwnerSession lockBySessionId(String sessionId) {
+        requireTransaction();
+        return jdbc.sql("""
+                select primary_id, session_id, creation_time, last_access_time, expiry_time
+                from identity.spring_session where session_id = :session for update
+                """).param("session", sessionId).query((rs, row) -> ownerSession(rs)).optional().orElse(null);
+    }
+
+    OwnerSession lockFull(UUID userId, String primaryId) {
+        requireTransaction();
+        OwnerSession target = jdbc.sql("""
+                select primary_id, session_id, creation_time, last_access_time, expiry_time
+                from identity.spring_session where primary_id = :primary for update
+                """).param("primary", primaryId).query((rs, row) -> ownerSession(rs)).optional().orElse(null);
+        if (target == null || !target.expiry().isAfter(clock.instant())) return null;
+        Session persisted = sessions.findById(target.sessionId());
+        return fullOwner(persisted, userId) ? target : null;
+    }
+
+    List<OwnerSession> activeFull(UUID userId) {
+        // The legacy principal is shared: inspect without locking anyone else's row.
+        return jdbc.sql("""
+                select primary_id, session_id, creation_time, last_access_time, expiry_time
+                from identity.spring_session
+                where principal_name in (:owner, :legacy) and expiry_time > :now
+                order by last_access_time desc, primary_id
+                """).param("owner", userId.toString()).param("legacy", LEGACY_INDEX)
+                .param("now", clock.millis()).query((rs, row) -> ownerSession(rs)).list()
+                .stream().filter(row -> fullOwner(sessions.findById(row.sessionId()), userId))
+                .toList();
+    }
+
+    void deleteLocked(UUID userId, OwnerSession target) {
+        requireTransaction();
+        descriptors.revoke(userId, target.primaryId(), clock.instant());
+        sessions.deleteById(target.sessionId());
+    }
+
+    void consumeRecent(CurrentSession current) {
+        requireTransaction();
+        current.persisted().removeAttribute(IdentitySessionState.RECENT_ATTRIBUTE);
+        // Spring Session's JDBC concrete session is package-private; its public
+        // SessionRepository contract still persists the exact loaded instance.
+        saveLoaded(current.persisted());
+    }
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private void saveLoaded(Session persisted) {
+        ((SessionRepository) sessions).save(persisted);
+    }
+
+    private static OwnerSession ownerSession(java.sql.ResultSet rs) throws java.sql.SQLException {
+        return new OwnerSession(rs.getString("primary_id"), rs.getString("session_id"),
+                Instant.ofEpochMilli(rs.getLong("creation_time")),
+                Instant.ofEpochMilli(rs.getLong("last_access_time")),
+                Instant.ofEpochMilli(rs.getLong("expiry_time")));
+    }
+
     private int revokeMatching(UUID userId, String excludedPrimaryId) {
         requireTransaction();
         // The legacy index is shared by every old principal. Inspect it without
@@ -68,6 +143,7 @@ class SpringSessionAuthorityAdapter {
                     where primary_id = :id for update
                     """).param("id", primaryId).query(String.class).optional().orElse(null);
             if (lockedId != null && belongsTo(sessions.findById(lockedId), userId)) {
+                descriptors.revoke(userId, primaryId, clock.instant());
                 sessions.deleteById(lockedId);
                 revoked++;
             }
@@ -93,6 +169,7 @@ class SpringSessionAuthorityAdapter {
         for (IndexedSession indexedSession : indexed) {
             if (indexedSession.primaryId().equals(excludedPrimaryId)) continue;
             if (belongsTo(sessions.findById(indexedSession.sessionId()), userId)) {
+                descriptors.revoke(userId, indexedSession.primaryId(), clock.instant());
                 sessions.deleteById(indexedSession.sessionId());
                 revoked++;
             }
@@ -126,5 +203,12 @@ class SpringSessionAuthorityAdapter {
                 && context.getAuthentication().getPrincipal()
                         instanceof IdentitySessionPrincipal principal
                 && userId.equals(principal.userId());
+    }
+
+    private static boolean fullOwner(Session session, UUID userId) {
+        if (!belongsTo(session, userId)) return false;
+        SecurityContext context = session.getAttribute("SPRING_SECURITY_CONTEXT");
+        return context.getAuthentication().getAuthorities().stream()
+                .anyMatch(a -> "ROLE_USER".equals(a.getAuthority()));
     }
 }

@@ -40,7 +40,8 @@ class IdentitySchemaMigrationTest {
                 .containsExactly("V001__platform__spring_session.sql",
                         "V002__identity__account_verification_and_security_email.sql",
                         "V003__identity__mfa_core.sql",
-                        "V004__identity__google_oidc_core.sql");
+                        "V004__identity__google_oidc_core.sql",
+                        "V005__identity__application_session_descriptor.sql");
         byte[] v001 = Files.readAllBytes(Path.of("src/main/resources/db/migration/"
                 + "V001__platform__spring_session.sql"));
         assertThat(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(v001)))
@@ -57,7 +58,8 @@ class IdentitySchemaMigrationTest {
                     'publishing','discovery','moderation') and table_type = 'BASE TABLE'
                 order by table_schema, table_name
                 """, String.class)).containsExactly(
-                        "identity.account", "identity.external_identity_link",
+                        "identity.account", "identity.application_session_descriptor",
+                        "identity.external_identity_link",
                         "identity.identity_capability", "identity.mfa_configuration",
                         "identity.mfa_recovery_code",
                         "identity.security_audit_fact", "identity.security_email_delivery",

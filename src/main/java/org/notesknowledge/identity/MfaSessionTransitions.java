@@ -19,11 +19,13 @@ import org.springframework.stereotype.Component;
 final class MfaSessionTransitions {
     private final SessionAuthenticationStrategy strategy;
     private final SecurityContextRepository contexts;
+    private final SessionDescriptorService descriptors;
 
     MfaSessionTransitions(SessionAuthenticationStrategy strategy,
-            SecurityContextRepository contexts) {
+            SecurityContextRepository contexts, SessionDescriptorService descriptors) {
         this.strategy = strategy;
         this.contexts = contexts;
+        this.descriptors = descriptors;
     }
 
     void establish(UUID userId, boolean full, HttpServletRequest request,
@@ -41,5 +43,6 @@ final class MfaSessionTransitions {
         context.setAuthentication(authentication);
         SecurityContextHolder.setContext(context);
         contexts.saveContext(context, request, response);
+        if (full) descriptors.recordEstablished(userId, request);
     }
 }
