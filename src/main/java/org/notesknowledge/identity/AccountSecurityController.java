@@ -12,6 +12,8 @@ import org.notesknowledge.websupport.ApiFailureException;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -24,18 +26,49 @@ import org.springframework.web.bind.annotation.RestController;
 final class AccountSecurityController {
     private final SecuritySummaryQuery summary;
     private final CredentialManagementService credentials;
+    private final OidcFlowService oidc;
     private final MfaRateControl rates;
     private final MfaProperties policy;
     private final Clock clock;
 
     AccountSecurityController(SecuritySummaryQuery summary,
-            CredentialManagementService credentials, MfaRateControl rates,
+            CredentialManagementService credentials, OidcFlowService oidc, MfaRateControl rates,
             MfaProperties policy, Clock clock) {
         this.summary = summary;
         this.credentials = credentials;
+        this.oidc = oidc;
         this.rates = rates;
         this.policy = policy;
         this.clock = clock;
+    }
+
+    @PostMapping("/oidc/google/link-authorizations")
+    ResponseEntity<Map<String, String>> beginGoogleLink(HttpServletRequest request) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore())
+                .body(Map.of("authorizationUrl",
+                        oidc.begin(OidcProtocolPort.Action.LINK, request)));
+    }
+
+    @DeleteMapping("/oidc-links/{linkId}")
+    ResponseEntity<Void> unlinkGoogle(@PathVariable String linkId,
+            HttpServletRequest request, HttpServletResponse response) {
+        UUID userId = IdentitySessionState.principal("ROLE_USER");
+        oidc.checkUnlinkRate(userId, request);
+        IdentitySessionState.requireRecent(request, userId, clock.instant(), policy);
+        if (linkId == null || linkId.length() != 36) {
+            throw ApiFailureException.of(ApiFailureException.Kind.RESOURCE_NOT_FOUND);
+        }
+        UUID locator;
+        try {
+            locator = UUID.fromString(linkId);
+        } catch (IllegalArgumentException invalid) {
+            throw ApiFailureException.of(ApiFailureException.Kind.RESOURCE_NOT_FOUND);
+        }
+        if (!locator.toString().equals(linkId.toLowerCase(java.util.Locale.ROOT))) {
+            throw ApiFailureException.of(ApiFailureException.Kind.RESOURCE_NOT_FOUND);
+        }
+        credentials.unlinkOidc(userId, locator, request, response);
+        return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
     }
 
     @GetMapping

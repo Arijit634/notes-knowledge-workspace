@@ -48,7 +48,8 @@ record IdentityRateProperties(int windowSeconds, int providerWindowSeconds,
             case "PASSWORD_REAUTH", "PASSWORD_CHANGE", "EMAIL_CHANGE_REQUEST",
                     "EMAIL_CHANGE_CONFIRMATION" -> recentAuthCeiling;
             case "OIDC_LOGIN_START", "OIDC_LOGIN_CALLBACK", "OIDC_REAUTH_START",
-                    "OIDC_REAUTH_CALLBACK" -> recentAuthCeiling;
+                    "OIDC_REAUTH_CALLBACK", "OIDC_LINK_START", "OIDC_LINK_CALLBACK",
+                    "OIDC_UNLINK" -> recentAuthCeiling;
             case "IDENTITY_GLOBAL" -> aggregateCeiling;
             case "SECURITY_EMAIL_PROVIDER" -> providerCeiling;
             default -> throw new IllegalArgumentException("Unknown Identity rate class");

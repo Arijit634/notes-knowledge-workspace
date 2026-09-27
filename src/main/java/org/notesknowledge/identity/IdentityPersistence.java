@@ -76,6 +76,17 @@ class IdentityPersistence {
                 .param("now", Timestamp.from(now)).update();
     }
 
+    void auditOidcLinkChange(UUID userId, UUID eventId, boolean linked, Instant now) {
+        jdbc.sql("""
+                insert into identity.security_audit_fact
+                    (audit_fact_id, actor_user_id, target_user_id, event_category,
+                     outcome_code, correlation_id, occurred_at)
+                values (uuidv7(), :user, :user, :category, :outcome, :event, :now)
+                """).param("user", userId).param("category", linked ? "oidc_link" : "oidc_unlink")
+                .param("outcome", linked ? "linked" : "unlinked")
+                .param("event", eventId).param("now", Timestamp.from(now)).update();
+    }
+
     Optional<UUID> pendingAccountForUpdate(String email) {
         return jdbc.sql("""
                 select user_id from identity.account
@@ -380,6 +391,26 @@ class IdentityPersistence {
         if (!"mfa_disabled".equals(noticeKind) && !"mfa_reset".equals(noticeKind)) {
             return Optional.empty();
         }
+        return jdbc.sql("""
+                select a.display_email from identity.security_email_delivery d
+                join identity.account a on a.user_id = d.subject_user_id
+                where d.security_email_delivery_id = :delivery
+                  and d.subject_user_id = :subject and d.security_event_id = :event
+                  and d.delivery_kind = 'security_notice' and d.notice_kind = :kind
+                  and d.capability_id is null
+                  and d.sealed_token_ciphertext is null
+                  and d.sealed_recipient_ciphertext is null
+                  and a.account_state = 'active' and a.email_verified_at is not null
+                  and a.canonical_email = lower(a.display_email)
+                """).param("delivery", deliveryId).param("subject", subjectId)
+                .param("event", eventId).param("kind", noticeKind)
+                .query(String.class).optional();
+    }
+
+    Optional<String> currentOidcNoticeDestination(UUID deliveryId, UUID subjectId,
+            UUID eventId, String noticeKind) {
+        if (!"google_oidc_linked".equals(noticeKind)
+                && !"google_oidc_unlinked".equals(noticeKind)) return Optional.empty();
         return jdbc.sql("""
                 select a.display_email from identity.security_email_delivery d
                 join identity.account a on a.user_id = d.subject_user_id

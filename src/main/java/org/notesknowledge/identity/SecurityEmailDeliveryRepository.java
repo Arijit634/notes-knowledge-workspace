@@ -55,6 +55,7 @@ interface SecurityEmailDeliveryRepository {
     void queueCapability(UUID capabilityId, SecurityEmailMaterialCipher.Envelope envelope, Instant now);
     void queueResetNotice(UUID subjectUserId, UUID eventId, Instant now);
     void queueMfaNotice(UUID subjectUserId, UUID eventId, String noticeKind, Instant now);
+    void queueOidcNotice(UUID subjectUserId, UUID eventId, String noticeKind, Instant now);
     void queueEmailChangeNotice(UUID subjectUserId, UUID eventId, String noticeKind,
             SecurityEmailMaterialCipher.Envelope recipient, Instant now);
     List<Claim> claimReady(Instant now, LeaseOwner owner, LeasePolicy policy, int batchSize);

@@ -2,14 +2,17 @@ package org.notesknowledge.identity;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import jakarta.servlet.http.Cookie;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
@@ -27,6 +30,8 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.notesknowledge.security.RateLimitPort;
+import org.notesknowledge.LeaseOwner;
+import org.notesknowledge.LeasePolicy;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.system.CapturedOutput;
@@ -39,6 +44,13 @@ import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestCustomizers;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.session.Session;
+import org.springframework.session.SessionRepository;
+import java.util.List;
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -82,9 +94,475 @@ class OidcCoreIntegrationTest {
     @Autowired SyntheticRates rates;
     @Autowired OidcCheckpoint checkpoint;
     @Autowired MfaSecretCipher cipher;
+    @Autowired PasswordEncoder passwordEncoder;
     @Autowired TotpEngine totp;
     @Autowired org.springframework.session.jdbc.JdbcIndexedSessionRepository sessionRepository;
     @Autowired org.springframework.session.web.http.DefaultCookieSerializer cookieSerializer;
+    @Autowired SecurityEmailDeliveryRepository delivery;
+    @Autowired SecurityEmailWorker emailWorker;
+    @Autowired CapturingMail mail;
+
+    @Test void linkedAndUnlinkedNoticesResolveCurrentVerifiedDestinationAtDispatch()
+            throws Exception {
+        UUID owner = account();
+        String subject = "notice-" + UUID.randomUUID();
+        Browser current = fullBrowser(owner, "password");
+        linkCallback(current, startLink(current), protocol.accept(subject, email(owner), true), 204);
+        UUID linkId = linkId(owner, subject);
+        jdbc.update("update identity.account set password_verifier = ? where user_id = ?",
+                passwordEncoder.encode("SyntheticPassword-2026!"), owner);
+        unlink(fullBrowser(owner, "password"), linkId, 204);
+        String changed = "current-" + UUID.randomUUID() + "@example.test";
+        jdbc.update("update identity.account set canonical_email = ?, display_email = ? where user_id = ?",
+                changed, changed, owner);
+        var claims = delivery.claimReady(clock.instant(), new LeaseOwner("oidc_notice_test"),
+                new LeasePolicy(Duration.ofMinutes(2), 100), 100);
+        var relevant = claims.stream().filter(c -> owner.equals(c.subjectUserId())
+                && ("google_oidc_linked".equals(c.noticeKind())
+                    || "google_oidc_unlinked".equals(c.noticeKind()))).toList();
+        assertThat(relevant).hasSize(2);
+        for (var claim : relevant) {
+            assertThat(claim.capabilityId()).isNull();
+            assertThat(claim.envelope().ciphertext()).isNull();
+            assertThat(claim.recipientEnvelope().ciphertext()).isNull();
+            emailWorker.process(claim);
+            assertThat(jdbc.queryForObject("""
+                    select state from identity.security_email_delivery
+                    where security_email_delivery_id = ?
+                    """, String.class, claim.id())).isEqualTo("submitted");
+        }
+        assertThat(mail.recipients).containsExactly(changed, changed);
+        assertThat(mail.bodies).allMatch(body -> !body.contains(subject)
+                && !body.contains(linkId.toString()) && !body.contains(owner.toString()));
+    }
+
+    @Test void explicitLinkUsesCurrentAccountAndRotatesSessionWithOneNotice() throws Exception {
+        UUID owner = account();
+        UUID sameEmailAccount = account();
+        Browser current = fullBrowser(owner, "password");
+        Browser otherOwnerSession = fullBrowser(owner, null);
+        Browser unrelated = fullBrowser(sameEmailAccount, null);
+        String subject = "linked-" + UUID.randomUUID();
+        String state = startLink(current);
+        Session pending = sessionRepository.findById(cookieId(current));
+        OidcSessionTransaction transaction = pending.getAttribute(OidcSessionTransaction.ATTRIBUTE);
+        assertThat(transaction.action()).isEqualTo(OidcProtocolPort.Action.LINK);
+        assertThat(transaction.userId()).isEqualTo(owner);
+        assertThat(transaction.sessionId()).isEqualTo(cookieId(current));
+        assertThat(transaction.authorization().getAdditionalParameters().get("code_challenge_method"))
+                .isEqualTo("S256");
+        assertThat((Object) transaction.authorization().getAttribute("nonce")).isNotNull();
+        MvcResult result = linkCallback(current, state,
+                protocol.accept(subject, email(sameEmailAccount), true), 204);
+        Cookie rotated = result.getResponse().getCookie("SESSION");
+        assertThat(rotated).isNotNull();
+        assertThat(rotated.getValue()).isNotEqualTo(current.cookie().getValue());
+        assertThat(sessionState(current)).isEqualTo("anonymous");
+        assertThat(sessionState(otherOwnerSession)).isEqualTo("anonymous");
+        assertThat(sessionState(unrelated)).isEqualTo("authenticated");
+        Browser fresh = csrf(rotated);
+        assertThat(sessionState(fresh)).isEqualTo("authenticated");
+        mvc.perform(post("/api/auth/logout").cookie(fresh.cookie())
+                .header("X-CSRF-TOKEN", current.csrf())).andExpect(status().isForbidden());
+        Session linkedSession = sessionRepository.findById(cookieId(fresh));
+        assertThat((Object) linkedSession.getAttribute(IdentitySessionState.RECENT_ATTRIBUTE)).isNull();
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.external_identity_link
+                where user_id = ? and subject = ? and revoked_at is null
+                """, Integer.class, owner, subject)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.external_identity_link
+                where user_id = ? and subject = ?
+                """, Integer.class, sameEmailAccount, subject)).isZero();
+        var notice = jdbc.queryForMap("""
+                select d.security_event_id, d.sealed_recipient_ciphertext,
+                       d.sealed_token_ciphertext, a.correlation_id
+                from identity.security_email_delivery d
+                join identity.security_audit_fact a on a.correlation_id = d.security_event_id
+                where d.subject_user_id = ? and d.notice_kind = 'google_oidc_linked'
+                """, owner);
+        assertThat(notice.get("correlation_id")).isEqualTo(notice.get("security_event_id"));
+        assertThat(notice.get("sealed_recipient_ciphertext")).isNull();
+        assertThat(notice.get("sealed_token_ciphertext")).isNull();
+        linkCallback(current, state, protocol.accept(subject, email(owner), true), 401);
+    }
+
+    @Test void linkConflictsAndSameOwnerReactivationPreserveStableLocator(CapturedOutput output)
+            throws Exception {
+        UUID owner = account();
+        UUID other = account();
+        String active = "active-" + UUID.randomUUID();
+        String revoked = "revoked-" + UUID.randomUUID();
+        link(owner, active);
+        link(owner, revoked);
+        UUID original = jdbc.queryForObject("""
+                select external_identity_link_id from identity.external_identity_link
+                where user_id = ? and subject = ?
+                """, UUID.class, owner, revoked);
+        jdbc.update("update identity.external_identity_link set revoked_at = now() where external_identity_link_id = ?",
+                original);
+        Browser first = fullBrowser(owner, "password");
+        linkCallback(first, startLink(first), protocol.accept(active, email(owner), true), 409);
+        Browser second = fullBrowser(other, "password");
+        linkCallback(second, startLink(second), protocol.accept(active, email(other), true), 409);
+        String otherRevoked = "other-revoked-" + UUID.randomUUID();
+        link(other, otherRevoked);
+        jdbc.update("update identity.external_identity_link set revoked_at = now() where subject = ?",
+                otherRevoked);
+        Browser third = fullBrowser(owner, "password");
+        linkCallback(third, startLink(third), protocol.accept(otherRevoked, email(owner), true), 409);
+        Browser fourth = fullBrowser(owner, "password");
+        linkCallback(fourth, startLink(fourth), protocol.accept(revoked, email(owner), true), 204);
+        assertThat(jdbc.queryForObject("""
+                select external_identity_link_id from identity.external_identity_link
+                where user_id = ? and subject = ? and revoked_at is null
+                """, UUID.class, owner, revoked)).isEqualTo(original);
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.external_identity_link where subject = ?
+                """, Integer.class, revoked)).isEqualTo(1);
+        assertThat(output.getAll()).doesNotContain(active, revoked, otherRevoked,
+                first.cookie().getValue(), first.csrf());
+    }
+
+    @Test void unlinkIsOwnerScopedAndCannotRemoveLastPrimaryMethod() throws Exception {
+        UUID owner = account();
+        UUID other = account();
+        String first = "first-" + UUID.randomUUID();
+        String second = "second-" + UUID.randomUUID();
+        link(owner, first);
+        link(owner, second);
+        link(other, "other-" + UUID.randomUUID());
+        UUID firstId = linkId(owner, first);
+        UUID secondId = linkId(owner, second);
+        UUID otherId = jdbc.queryForObject("""
+                select external_identity_link_id from identity.external_identity_link
+                where user_id = ?
+                """, UUID.class, other);
+        Browser current = fullBrowser(owner, "password");
+        Browser otherOwnerSession = fullBrowser(owner, null);
+        Browser unrelated = fullBrowser(other, null);
+        unlink(current, otherId, 404);
+        unlink(current, UUID.randomUUID(), 404);
+        MvcResult removed = unlink(current, firstId, 204);
+        Cookie rotated = removed.getResponse().getCookie("SESSION");
+        assertThat(rotated).isNotNull();
+        assertThat(rotated.getValue()).isNotEqualTo(current.cookie().getValue());
+        assertThat(sessionState(current)).isEqualTo("anonymous");
+        assertThat(sessionState(otherOwnerSession)).isEqualTo("anonymous");
+        assertThat(sessionState(unrelated)).isEqualTo("authenticated");
+        Browser fresh = csrf(rotated);
+        assertThat(sessionState(fresh)).isEqualTo("authenticated");
+        mvc.perform(post("/api/auth/logout").cookie(fresh.cookie())
+                .header("X-CSRF-TOKEN", current.csrf())).andExpect(status().isForbidden());
+        Session unlinkedSession = sessionRepository.findById(cookieId(fresh));
+        assertThat((Object) unlinkedSession.getAttribute(IdentitySessionState.RECENT_ATTRIBUTE)).isNull();
+        assertThat(mvc.perform(get("/api/me/security").cookie(fresh.cookie()))
+                .andReturn().getResponse().getContentAsString())
+                .contains(secondId.toString()).doesNotContain(firstId.toString(), first, second);
+        unlink(fullBrowser(owner, "password"), firstId, 404);
+        unlink(fullBrowser(owner, "password"), secondId, 409);
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.external_identity_link
+                where user_id = ? and revoked_at is null
+                """, Integer.class, owner)).isEqualTo(1);
+        jdbc.update("update identity.account set password_verifier = ? where user_id = ?",
+                passwordEncoder.encode("SyntheticPassword-2026!"), owner);
+        unlink(fullBrowser(owner, "password"), secondId, 204);
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.external_identity_link
+                where user_id = ? and revoked_at is null
+                """, Integer.class, owner)).isZero();
+        Browser anonymous = csrf(null);
+        callback(anonymous, start(anonymous, false),
+                protocol.accept(second, email(owner), true), false, 401);
+    }
+
+    @Test void currentGoogleAuthenticatedSessionCanUnlinkItsProviderWhenPasswordRemains()
+            throws Exception {
+        UUID owner = account();
+        String subject = "current-provider-" + UUID.randomUUID();
+        link(owner, subject);
+        jdbc.update("update identity.account set password_verifier = ? where user_id = ?",
+                passwordEncoder.encode("SyntheticPassword-2026!"), owner);
+        Browser anonymous = csrf(null);
+        MvcResult login = callback(anonymous, start(anonymous, false),
+                protocol.accept(subject, email(owner), true), false, 200);
+        Browser current = csrf(login.getResponse().getCookie("SESSION"));
+        String recentState = start(current, true);
+        callback(current, recentState, protocol.accept(subject, email(owner), true), true, 204);
+        UUID locator = linkId(owner, subject);
+        MvcResult removed = unlink(current, locator, 204);
+        Browser remaining = csrf(removed.getResponse().getCookie("SESSION"));
+        assertThat(sessionState(remaining)).isEqualTo("authenticated");
+        assertThat(jdbc.queryForObject("""
+                select password_verifier is not null from identity.account where user_id = ?
+                """, Boolean.class, owner)).isTrue();
+        Browser next = csrf(null);
+        callback(next, start(next, false),
+                protocol.accept(subject, email(owner), true), false, 401);
+    }
+
+    @Test void linkStartAndCallbackRejectMissingAuthorityAndStaleProof() throws Exception {
+        UUID owner = account();
+        Browser anonymous = csrf(null);
+        mvc.perform(post("/api/me/security/oidc/google/link-authorizations")
+                .cookie(anonymous.cookie()).header("X-CSRF-TOKEN", anonymous.csrf()))
+                .andExpect(status().isUnauthorized());
+        Browser preMfa = browser(owner, "ROLE_MFA_PENDING", "password");
+        mvc.perform(post("/api/me/security/oidc/google/link-authorizations")
+                .cookie(preMfa.cookie()).header("X-CSRF-TOKEN", preMfa.csrf()))
+                .andExpect(status().isForbidden());
+        Browser noRecent = fullBrowser(owner, null);
+        mvc.perform(post("/api/me/security/oidc/google/link-authorizations")
+                .cookie(noRecent.cookie()).header("X-CSRF-TOKEN", noRecent.csrf()))
+                .andExpect(status().isForbidden());
+        Browser expired = fullBrowser(owner, "expired");
+        mvc.perform(post("/api/me/security/oidc/google/link-authorizations")
+                .cookie(expired.cookie()).header("X-CSRF-TOKEN", expired.csrf()))
+                .andExpect(status().isForbidden());
+        Browser current = fullBrowser(owner, "password");
+        mvc.perform(post("/api/me/security/oidc/google/link-authorizations")
+                .cookie(current.cookie())).andExpect(status().isForbidden());
+        String state = startLink(current);
+        String subject = "negative-" + UUID.randomUUID();
+        String code = protocol.accept(subject, email(owner), true);
+        int beforeIssuer = protocol.verificationCalls.get();
+        mvc.perform(get("/api/auth/oidc/google/link-callback")
+                .cookie(current.cookie()).param("state", state).param("code", code))
+                .andExpect(status().isUnauthorized());
+        assertThat(protocol.verificationCalls.get()).isEqualTo(beforeIssuer);
+        mvc.perform(get("/api/auth/oidc/google/link-callback")
+                .cookie(current.cookie()).param("state", state).param("code", code)
+                .param("iss", "https://untrusted.example.test"))
+                .andExpect(status().isUnauthorized());
+        assertThat(protocol.verificationCalls.get()).isEqualTo(beforeIssuer);
+        linkCallback(current, "wrong-state", code, 401);
+        var otherSession = fullBrowser(owner, "password");
+        linkCallback(otherSession, state, code, 401);
+        Session persisted = sessionRepository.findById(cookieId(current));
+        persisted.setAttribute(IdentitySessionState.RECENT_ATTRIBUTE,
+                new IdentitySessionState.RecentAuthentication(owner,
+                        clock.instant().minusSeconds(3600), "password"));
+        saveSession(persisted);
+        linkCallback(current, state, code, 403);
+        Browser wrongAction = fullBrowser(owner, "password");
+        String recentState = start(wrongAction, true);
+        linkCallback(wrongAction, recentState, code, 401);
+        Browser expiredTransaction = fullBrowser(owner, "password");
+        String expiringState = startLink(expiredTransaction);
+        clock.advanceSeconds(301);
+        linkCallback(expiredTransaction, expiringState, code, 401);
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.external_identity_link where subject = ?
+                """, Integer.class, subject)).isZero();
+        rates.unavailable = true;
+        try {
+            mvc.perform(post("/api/me/security/oidc/google/link-authorizations")
+                    .cookie(current.cookie()).header("X-CSRF-TOKEN", current.csrf()))
+                    .andExpect(status().isServiceUnavailable());
+            mvc.perform(delete("/api/me/security/oidc-links/" + UUID.randomUUID())
+                    .cookie(current.cookie()).header("X-CSRF-TOKEN", current.csrf()))
+                    .andExpect(status().isServiceUnavailable());
+        } finally {
+            rates.unavailable = false;
+        }
+        rates.throttled = true;
+        try {
+            mvc.perform(post("/api/me/security/oidc/google/link-authorizations")
+                    .cookie(current.cookie()).header("X-CSRF-TOKEN", current.csrf()))
+                    .andExpect(status().isTooManyRequests());
+            mvc.perform(delete("/api/me/security/oidc-links/" + UUID.randomUUID())
+                    .cookie(current.cookie()).header("X-CSRF-TOKEN", current.csrf()))
+                    .andExpect(status().isTooManyRequests());
+        } finally {
+            rates.throttled = false;
+        }
+    }
+
+    @Test void unlinkRequiresFullRecentAuthorityCsrfAndEligibleAccount() throws Exception {
+        UUID owner = account();
+        String subject = "unlink-guard-" + UUID.randomUUID();
+        link(owner, subject);
+        UUID locator = linkId(owner, subject);
+        Browser noRecent = fullBrowser(owner, null);
+        unlink(noRecent, locator, 403);
+        unlink(fullBrowser(owner, "expired"), locator, 403);
+        Browser preMfa = browser(owner, "ROLE_MFA_PENDING", "password");
+        unlink(preMfa, locator, 403);
+        Browser current = fullBrowser(owner, "password");
+        mvc.perform(delete("/api/me/security/oidc-links/" + locator)
+                .cookie(current.cookie())).andExpect(status().isForbidden());
+        mvc.perform(delete("/api/me/security/oidc-links/" + locator)
+                .cookie(current.cookie()).header("X-CSRF-TOKEN", "wrong"))
+                .andExpect(status().isForbidden());
+        jdbc.update("update identity.account set account_state = 'suspended' where user_id = ?",
+                owner);
+        int denied = unlink(current, locator, -1).getResponse().getStatus();
+        assertThat(denied).isIn(401, 403);
+        assertThat(jdbc.queryForObject("""
+                select revoked_at is null from identity.external_identity_link
+                where external_identity_link_id = ?
+                """, Boolean.class, locator)).isTrue();
+    }
+
+    @Test void concurrentLinksToSamePrincipalHaveOneWinner() throws Exception {
+        UUID firstOwner = account();
+        UUID secondOwner = account();
+        Browser first = fullBrowser(firstOwner, "password");
+        Browser second = fullBrowser(secondOwner, "password");
+        String firstState = startLink(first);
+        String secondState = startLink(second);
+        String subject = "shared-link-" + UUID.randomUUID();
+        String firstCode = protocol.accept(subject, email(firstOwner), true);
+        String secondCode = protocol.accept(subject, email(secondOwner), true);
+        checkpoint.barrier.set(new CountDownLatch(2));
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var a = executor.submit(() -> linkCallback(first, firstState, firstCode, -1));
+            var b = executor.submit(() -> linkCallback(second, secondState, secondCode, -1));
+            assertThat(List.of(a.get(30, TimeUnit.SECONDS).getResponse().getStatus(),
+                    b.get(30, TimeUnit.SECONDS).getResponse().getStatus()))
+                    .containsExactlyInAnyOrder(204, 409);
+        } finally {
+            checkpoint.barrier.set(null);
+        }
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.external_identity_link where subject = ?
+                """, Integer.class, subject)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.security_email_delivery d
+                join identity.security_audit_fact a on a.correlation_id = d.security_event_id
+                where d.notice_kind = 'google_oidc_linked' and a.outcome_code = 'linked'
+                  and d.subject_user_id in (?, ?)
+                """, Integer.class, firstOwner, secondOwner)).isEqualTo(1);
+    }
+
+    @Test void concurrentSameLinkCallbackConsumesOnce() throws Exception {
+        UUID owner = account();
+        Browser browser = fullBrowser(owner, "password");
+        String state = startLink(browser);
+        String subject = "replay-" + UUID.randomUUID();
+        String code = protocol.accept(subject, email(owner), true);
+        checkpoint.barrier.set(new CountDownLatch(2));
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var a = executor.submit(() -> linkCallback(browser, state, code, -1));
+            var b = executor.submit(() -> linkCallback(browser, state, code, -1));
+            assertThat(List.of(a.get(30, TimeUnit.SECONDS).getResponse().getStatus(),
+                    b.get(30, TimeUnit.SECONDS).getResponse().getStatus()))
+                    .containsExactlyInAnyOrder(204, 401);
+        } finally {
+            checkpoint.barrier.set(null);
+        }
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.external_identity_link where subject = ?
+                """, Integer.class, subject)).isEqualTo(1);
+    }
+
+    @Test void concurrentUnlinkKeepsOnePasswordlessPrimaryMethod() throws Exception {
+        UUID owner = account();
+        String first = "unlink-first-" + UUID.randomUUID();
+        String second = "unlink-second-" + UUID.randomUUID();
+        link(owner, first);
+        link(owner, second);
+        Browser firstSession = fullBrowser(owner, "password");
+        Browser secondSession = fullBrowser(owner, "password");
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch go = new CountDownLatch(1);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var a = executor.submit(() -> {
+                ready.countDown(); go.await();
+                return unlink(firstSession, linkId(owner, first), -1).getResponse().getStatus();
+            });
+            var b = executor.submit(() -> {
+                ready.countDown(); go.await();
+                return unlink(secondSession, linkId(owner, second), -1).getResponse().getStatus();
+            });
+            assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+            go.countDown();
+            List<Integer> statuses = List.of(a.get(30, TimeUnit.SECONDS), b.get(30, TimeUnit.SECONDS));
+            assertThat(statuses).contains(204);
+            assertThat(statuses.stream().filter(code -> code != 204).count()).isEqualTo(1);
+        }
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.external_identity_link
+                where user_id = ? and revoked_at is null
+                """, Integer.class, owner)).isEqualTo(1);
+    }
+
+    @Test void linkAndUnlinkFaultsRollbackAuthoritySessionsAuditAndNotice() throws Exception {
+        for (int stage = 1; stage <= 5; stage++) {
+            UUID owner = account();
+            String subject = "fault-" + UUID.randomUUID();
+            Browser linkBrowser = fullBrowser(owner, "password");
+            Browser otherSession = fullBrowser(owner, "password");
+            String state = startLink(linkBrowser);
+            checkpoint.failAt = stage;
+            try {
+                var failed = mvc.perform(get("/api/auth/oidc/google/link-callback")
+                        .cookie(linkBrowser.cookie()).param("state", state)
+                        .param("code", protocol.accept(subject, email(owner), true))
+                        .param("iss", "https://accounts.google.com")).andReturn();
+                assertThat(failed.getResponse().getStatus()).isEqualTo(500);
+            } finally {
+                checkpoint.failAt = 0;
+            }
+            assertThat(sessionState(linkBrowser)).isEqualTo("authenticated");
+            assertThat(sessionState(otherSession)).isEqualTo("authenticated");
+            assertThat(jdbc.queryForObject("""
+                    select count(*) from identity.external_identity_link where subject = ?
+                    """, Integer.class, subject)).isZero();
+            assertThat(jdbc.queryForObject("""
+                    select count(*) from identity.security_audit_fact
+                    where target_user_id = ? and event_category = 'oidc_link'
+                      and outcome_code = 'linked'
+                    """, Integer.class, owner)).isZero();
+            assertThat(jdbc.queryForObject("""
+                    select count(*) from identity.security_email_delivery
+                    where subject_user_id = ? and notice_kind = 'google_oidc_linked'
+                    """, Integer.class, owner)).isZero();
+
+            link(owner, subject);
+            UUID linkId = linkId(owner, subject);
+            Browser unlinkBrowser = fullBrowser(owner, "password");
+            jdbc.update("update identity.account set password_verifier = ? where user_id = ?",
+                    passwordEncoder.encode("SyntheticPassword-2026!"), owner);
+            checkpoint.failAt = stage;
+            try {
+                var failed = mvc.perform(delete("/api/me/security/oidc-links/" + linkId)
+                        .cookie(unlinkBrowser.cookie())
+                        .header("X-CSRF-TOKEN", unlinkBrowser.csrf())).andReturn();
+                assertThat(failed.getResponse().getStatus()).isEqualTo(500);
+            } finally {
+                checkpoint.failAt = 0;
+            }
+            assertThat(sessionState(unlinkBrowser)).isEqualTo("authenticated");
+            assertThat(sessionState(otherSession)).isEqualTo("authenticated");
+            assertThat(jdbc.queryForObject("""
+                    select revoked_at is null from identity.external_identity_link
+                    where external_identity_link_id = ?
+                    """, Boolean.class, linkId)).isTrue();
+            assertThat(jdbc.queryForObject("""
+                    select count(*) from identity.security_audit_fact
+                    where target_user_id = ? and event_category = 'oidc_unlink'
+                      and outcome_code = 'unlinked'
+                    """, Integer.class, owner)).isZero();
+            assertThat(jdbc.queryForObject("""
+                    select count(*) from identity.security_email_delivery
+                    where subject_user_id = ? and notice_kind = 'google_oidc_unlinked'
+                    """, Integer.class, owner)).isZero();
+        }
+    }
+
+    private UUID linkId(UUID user, String subject) {
+        return jdbc.queryForObject("""
+                select external_identity_link_id from identity.external_identity_link
+                where user_id = ? and subject = ?
+                """, UUID.class, user, subject);
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private void saveSession(Session session) {
+        ((SessionRepository) sessionRepository).save(session);
+    }
 
     @Test void verifiedNewPrincipalCreatesOnePasswordlessAccountAndRotatesSession() throws Exception {
         Browser anonymous = csrf(null);
@@ -507,12 +985,68 @@ class OidcCoreIntegrationTest {
 
     private String email(UUID id) { return "oidc-" + id + "@example.test"; }
 
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private Browser fullBrowser(UUID userId, String recentMethod) throws Exception {
+        return browser(userId, "ROLE_USER", recentMethod);
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private Browser browser(UUID userId, String role, String recentMethod) throws Exception {
+        SessionRepository<Session> repository = (SessionRepository) sessionRepository;
+        Session session = repository.createSession();
+        var context = SecurityContextHolder.createEmptyContext();
+        context.setAuthentication(UsernamePasswordAuthenticationToken.authenticated(
+                new IdentitySessionPrincipal(userId), null,
+                List.of(new SimpleGrantedAuthority(role))));
+        session.setAttribute("SPRING_SECURITY_CONTEXT", context);
+        if (recentMethod != null) {
+            session.setAttribute(IdentitySessionState.RECENT_ATTRIBUTE,
+                    new IdentitySessionState.RecentAuthentication(userId,
+                            "expired".equals(recentMethod) ? clock.instant().minusSeconds(3600)
+                                    : clock.instant(), "password"));
+        }
+        repository.save(session);
+        return csrf(new Cookie("SESSION", Base64.getEncoder().encodeToString(
+                session.getId().getBytes(StandardCharsets.UTF_8))));
+    }
+
+    private String startLink(Browser browser) throws Exception {
+        MvcResult result = mvc.perform(post("/api/me/security/oidc/google/link-authorizations")
+                .cookie(browser.cookie()).header("X-CSRF-TOKEN", browser.csrf()))
+                .andExpect(status().isOk()).andReturn();
+        assertThat(result.getResponse().getHeader("Cache-Control")).contains("no-store");
+        return UriComponentsBuilder.fromUri(URI.create(json(result, "authorizationUrl")))
+                .build().getQueryParams().getFirst("state");
+    }
+
+    private MvcResult linkCallback(Browser browser, String state, String code, int expected)
+            throws Exception {
+        MvcResult result = mvc.perform(get("/api/auth/oidc/google/link-callback")
+                .cookie(browser.cookie()).param("state", state).param("code", code)
+                .param("iss", "https://accounts.google.com")).andReturn();
+        if (result.getResponse().getStatus() == 500) {
+            throw new AssertionError("Link callback failed", result.getResolvedException());
+        }
+        if (expected >= 0) assertThat(result.getResponse().getStatus()).isEqualTo(expected);
+        return result;
+    }
+
+    private MvcResult unlink(Browser browser, UUID linkId, int expected) throws Exception {
+        MvcResult result = mvc.perform(delete("/api/me/security/oidc-links/" + linkId)
+                .cookie(browser.cookie()).header("X-CSRF-TOKEN", browser.csrf())).andReturn();
+        if (result.getResponse().getStatus() == 500) {
+            throw new AssertionError("Unlink failed", result.getResolvedException());
+        }
+        if (expected >= 0) assertThat(result.getResponse().getStatus()).isEqualTo(expected);
+        return result;
+    }
+
     private void link(UUID user, String subject) {
         jdbc.update("""
                 insert into identity.external_identity_link
                     (external_identity_link_id, user_id, issuer, subject, linked_at)
-                values (uuidv7(), ?, 'https://accounts.google.com', ?, now())
-                """, user, subject);
+                values (uuidv7(), ?, 'https://accounts.google.com', ?, ?)
+                """, user, subject, java.sql.Timestamp.from(clock.instant()));
     }
 
     private Browser csrf(Cookie cookie) throws Exception {
@@ -578,8 +1112,21 @@ class OidcCoreIntegrationTest {
 
     static final class SyntheticRates implements RateLimitPort {
         volatile boolean unavailable;
+        volatile boolean throttled;
         @Override public Decision evaluate(Request request) {
-            return unavailable ? new ControlUnavailable() : new Allowed();
+            if (unavailable) return new ControlUnavailable();
+            return throttled ? new Throttled(60) : new Allowed();
+        }
+    }
+
+    static final class CapturingMail implements SecurityEmailProviderPort {
+        final java.util.List<String> recipients = new java.util.concurrent.CopyOnWriteArrayList<>();
+        final java.util.List<String> bodies = new java.util.concurrent.CopyOnWriteArrayList<>();
+        @Override public Outcome submit(String recipient,
+                SecurityEmailMessageRenderer.Message message) {
+            recipients.add(recipient);
+            bodies.add(message.body());
+            return Outcome.SUBMITTED;
         }
     }
 
@@ -589,6 +1136,22 @@ class OidcCoreIntegrationTest {
         final AtomicReference<CountDownLatch> barrier = new AtomicReference<>();
         final AtomicReference<UUID> suspendBeforeCommit = new AtomicReference<>();
         final AtomicReference<Long> advanceBeforeCommitSeconds = new AtomicReference<>();
+        volatile int failAt;
+        @Override void afterOidcLinkMutation(jakarta.servlet.http.HttpServletRequest request) {
+            if (failAt == 1) throw new IllegalStateException("synthetic_link_mutation_fault");
+        }
+        @Override void afterOtherSessionRevocation(jakarta.servlet.http.HttpServletRequest request) {
+            if (failAt == 2) throw new IllegalStateException("synthetic_link_revocation_fault");
+        }
+        @Override void afterSessionMutation(jakarta.servlet.http.HttpServletRequest request) {
+            if (failAt == 3) throw new IllegalStateException("synthetic_link_session_fault");
+        }
+        @Override void afterOidcLinkAudit(jakarta.servlet.http.HttpServletRequest request) {
+            if (failAt == 4) throw new IllegalStateException("synthetic_link_audit_fault");
+        }
+        @Override void afterOidcLinkNotice(jakarta.servlet.http.HttpServletRequest request) {
+            if (failAt == 5) throw new IllegalStateException("synthetic_link_notice_fault");
+        }
         @Override void beforeOidcLock(jakarta.servlet.http.HttpServletRequest request) {
             Long advance = advanceBeforeCommitSeconds.getAndSet(null);
             if (advance != null) clock.advanceSeconds(advance);
@@ -636,9 +1199,11 @@ class OidcCoreIntegrationTest {
         @Override public OAuth2AuthorizationRequest begin(Action action) {
             String state = randomValue();
             String nonce = randomValue();
-            String redirect = action == Action.LOGIN
-                    ? "https://example.test/api/auth/oidc/google/callback"
-                    : "https://example.test/api/auth/reauth/oidc/google/callback";
+            String redirect = switch (action) {
+                case LOGIN -> "https://example.test/api/auth/oidc/google/callback";
+                case RECENT_AUTH -> "https://example.test/api/auth/reauth/oidc/google/callback";
+                case LINK -> "https://example.test/api/auth/oidc/google/link-callback";
+            };
             var builder = OAuth2AuthorizationRequest.authorizationCode()
                     .authorizationUri("https://accounts.google.com/o/oauth2/v2/auth")
                     .clientId("synthetic-client-id").redirectUri(redirect)
@@ -673,5 +1238,6 @@ class OidcCoreIntegrationTest {
         @Bean @Primary SyntheticRates oidcRates() { return new SyntheticRates(); }
         @Bean @Primary SyntheticProtocol oidcProtocol() { return new SyntheticProtocol(); }
         @Bean @Primary OidcCheckpoint oidcCheckpoint() { return new OidcCheckpoint(); }
+        @Bean @Primary CapturingMail oidcMail() { return new CapturingMail(); }
     }
 }

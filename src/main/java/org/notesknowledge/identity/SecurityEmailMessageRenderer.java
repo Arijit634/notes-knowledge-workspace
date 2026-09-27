@@ -65,6 +65,16 @@ final class SecurityEmailMessageRenderer {
                 "Your multi-factor recovery codes were regenerated. If this was not you, contact support.");
     }
 
+    Message googleOidcLinked() {
+        return new Message("Google sign-in added to your Notes & Knowledge Workspace account",
+                "A Google sign-in method was added to your account. If this was not you, contact support.");
+    }
+
+    Message googleOidcUnlinked() {
+        return new Message("Google sign-in removed from your Notes & Knowledge Workspace account",
+                "A Google sign-in method was removed from your account. If this was not you, contact support.");
+    }
+
     private String continuation(String path, String token) {
         if (origin.isBlank()) {
             throw new IllegalStateException("Public origin unavailable");
