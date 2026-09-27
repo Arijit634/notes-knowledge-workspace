@@ -60,4 +60,15 @@ final class OidcController {
                 error == null ? code : null, request, response);
         return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
     }
+
+    @GetMapping("/oidc/google/link-callback")
+    ResponseEntity<Void> completeLink(@RequestParam(required = false) String state,
+            @RequestParam(required = false) String code,
+            @RequestParam(required = false) String iss,
+            @RequestParam(required = false) String error,
+            HttpServletRequest request, HttpServletResponse response) {
+        flows.complete(OidcProtocolPort.Action.LINK, state, iss,
+                error == null ? code : null, request, response);
+        return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
+    }
 }

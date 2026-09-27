@@ -37,6 +37,7 @@ final class GoogleOidcProtocolAdapter implements OidcProtocolPort {
     private final OidcAuthorizationCodeAuthenticationProvider provider;
     private volatile ClientRegistration login;
     private volatile ClientRegistration recent;
+    private volatile ClientRegistration link;
 
     @Autowired
     GoogleOidcProtocolAdapter(GoogleOidcProperties properties) {
@@ -44,16 +45,17 @@ final class GoogleOidcProtocolAdapter implements OidcProtocolPort {
                 new RestClientAuthorizationCodeTokenResponseClient(),
                 user -> new DefaultOidcUser(
                         List.of(new SimpleGrantedAuthority("OIDC")), user.getIdToken())),
-                null, null);
+                null, null, null);
     }
 
     GoogleOidcProtocolAdapter(GoogleOidcProperties properties,
             OidcAuthorizationCodeAuthenticationProvider provider,
-            ClientRegistration login, ClientRegistration recent) {
+            ClientRegistration login, ClientRegistration recent, ClientRegistration link) {
         this.properties = properties;
         this.provider = provider;
         this.login = login;
         this.recent = recent;
+        this.link = link;
     }
 
     @Override
@@ -155,22 +157,29 @@ final class GoogleOidcProtocolAdapter implements OidcProtocolPort {
         if (!properties.enabled()) {
             throw ApiFailureException.of(ApiFailureException.Kind.SERVICE_UNAVAILABLE);
         }
-        ClientRegistration cached = action == Action.LOGIN ? login : recent;
+        ClientRegistration cached = cached(action);
         if (cached != null) return cached;
         synchronized (this) {
-            cached = action == Action.LOGIN ? login : recent;
+            cached = cached(action);
             if (cached != null) return cached;
             try {
                 var builder = ClientRegistrations.fromOidcIssuerLocation(properties.issuer());
-                cached = builder.registrationId(action == Action.LOGIN ? "google-login" : "google-recent")
+                cached = builder.registrationId(switch (action) {
+                            case LOGIN -> "google-login";
+                            case RECENT_AUTH -> "google-recent";
+                            case LINK -> "google-link";
+                        })
                         .clientId(properties.clientId())
                         .clientSecret(properties.clientSecret())
                         .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
                         .scope("openid", "email")
                         .clientSettings(ClientRegistration.ClientSettings.builder()
                                 .requireProofKey(true).build())
-                        .redirectUri(action == Action.LOGIN ? properties.loginRedirectUri()
-                                : properties.recentRedirectUri())
+                        .redirectUri(switch (action) {
+                            case LOGIN -> properties.loginRedirectUri();
+                            case RECENT_AUTH -> properties.recentRedirectUri();
+                            case LINK -> properties.linkRedirectUri();
+                        })
                         .build();
                 if (!properties.issuer().equals(cached.getProviderDetails().getIssuerUri())
                         || !https(cached.getProviderDetails().getAuthorizationUri())
@@ -181,9 +190,21 @@ final class GoogleOidcProtocolAdapter implements OidcProtocolPort {
             } catch (RuntimeException unavailable) {
                 throw ApiFailureException.of(ApiFailureException.Kind.SERVICE_UNAVAILABLE);
             }
-            if (action == Action.LOGIN) login = cached; else recent = cached;
+            switch (action) {
+                case LOGIN -> login = cached;
+                case RECENT_AUTH -> recent = cached;
+                case LINK -> link = cached;
+            }
             return cached;
         }
+    }
+
+    private ClientRegistration cached(Action action) {
+        return switch (action) {
+            case LOGIN -> login;
+            case RECENT_AUTH -> recent;
+            case LINK -> link;
+        };
     }
 
     private boolean https(String value) {

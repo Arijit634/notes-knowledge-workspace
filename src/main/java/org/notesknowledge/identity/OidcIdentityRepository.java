@@ -13,6 +13,7 @@ import org.springframework.stereotype.Repository;
 @IdentityCoreEnabled
 class OidcIdentityRepository {
     record Link(UUID userId, boolean active) { }
+    record OwnedLink(UUID id, String issuer, String subject) { }
 
     private final JdbcClient jdbc;
 
@@ -50,6 +51,48 @@ class OidcIdentityRepository {
                 on conflict (issuer, subject) do nothing
                 """).param("user", userId).param("issuer", issuer)
                 .param("subject", subject).param("now", Timestamp.from(now)).update() == 1;
+    }
+
+    boolean reactivateLink(UUID userId, String issuer, String subject, Instant now) {
+        return jdbc.sql("""
+                update identity.external_identity_link
+                set revoked_at = null, linked_at = :now
+                where user_id = :user and issuer = :issuer and subject = :subject
+                  and revoked_at is not null
+                """).param("user", userId).param("issuer", issuer)
+                .param("subject", subject).param("now", Timestamp.from(now)).update() == 1;
+    }
+
+    Optional<OwnedLink> ownedActiveLinkForUpdate(UUID userId, UUID linkId) {
+        return jdbc.sql("""
+                select external_identity_link_id, issuer, subject
+                from identity.external_identity_link
+                where user_id = :user and external_identity_link_id = :link
+                  and revoked_at is null for update
+                """).param("user", userId).param("link", linkId)
+                .query((rs, row) -> new OwnedLink(
+                        rs.getObject("external_identity_link_id", UUID.class),
+                        rs.getString("issuer"), rs.getString("subject"))).optional();
+    }
+
+    boolean hasOtherUsableMethod(UUID userId, UUID excludingLinkId) {
+        return jdbc.sql("""
+                select exists(select 1 from identity.account a
+                  where a.user_id = :user and a.password_verifier is not null)
+                or exists(select 1 from identity.external_identity_link l
+                  where l.user_id = :user and l.external_identity_link_id <> :link
+                    and l.revoked_at is null)
+                """).param("user", userId).param("link", excludingLinkId)
+                .query(Boolean.class).single();
+    }
+
+    boolean revokeLink(UUID userId, UUID linkId, Instant now) {
+        return jdbc.sql("""
+                update identity.external_identity_link set revoked_at = :now
+                where user_id = :user and external_identity_link_id = :link
+                  and revoked_at is null
+                """).param("user", userId).param("link", linkId)
+                .param("now", Timestamp.from(now)).update() == 1;
     }
 
     boolean markAuthenticatedIfEligible(UUID userId, Instant now) {

@@ -28,7 +28,7 @@ final class OidcFlowService {
         PROTOCOL_STATE_INVALID, PROTOCOL_TRANSACTION_EXPIRED,
         PROVIDER_VALIDATION_FAILED, PROVIDER_UNAVAILABLE,
         ACCOUNT_INELIGIBLE, ACCOUNT_ACTION_REQUIRED,
-        RECENT_AUTH_IDENTITY_MISMATCH, RECENT_AUTH_STALE, INTERNAL_FAILURE
+        RECENT_AUTH_IDENTITY_MISMATCH, RECENT_AUTH_STALE, LINK_CONFLICT, INTERNAL_FAILURE
     }
 
     private static final Pattern HOSTED_DOMAIN = Pattern.compile(
@@ -44,6 +44,8 @@ final class OidcFlowService {
     private final DatabaseUuidV7Generator ids;
     private final MfaChallengeService challenges;
     private final MfaSessionTransitions sessions;
+    private final SpringSessionAuthorityAdapter sessionAuthority;
+    private final SecurityEmailDeliveryRepository delivery;
     private final IdentitySessionTransitionCheckpoint checkpoint;
     private final OidcRateControl rates;
     private final MfaProperties mfaPolicy;
@@ -54,6 +56,8 @@ final class OidcFlowService {
             OidcSessionTransactionRepository transactionsRepository, OidcIdentityRepository links,
             IdentityPersistence identity, DatabaseUuidV7Generator ids,
             MfaChallengeService challenges, MfaSessionTransitions sessions,
+            SpringSessionAuthorityAdapter sessionAuthority,
+            SecurityEmailDeliveryRepository delivery,
             IdentitySessionTransitionCheckpoint checkpoint, OidcRateControl rates,
             MfaProperties mfaPolicy, PlatformTransactionManager manager, Clock clock) {
         this.protocol = protocol;
@@ -64,6 +68,8 @@ final class OidcFlowService {
         this.ids = ids;
         this.challenges = challenges;
         this.sessions = sessions;
+        this.sessionAuthority = sessionAuthority;
+        this.delivery = delivery;
         this.checkpoint = checkpoint;
         this.rates = rates;
         this.mfaPolicy = mfaPolicy;
@@ -72,13 +78,19 @@ final class OidcFlowService {
     }
 
     String begin(OidcProtocolPort.Action action, HttpServletRequest request) {
-        UUID userId = action == OidcProtocolPort.Action.RECENT_AUTH
+        UUID userId = action != OidcProtocolPort.Action.LOGIN
                 ? IdentitySessionState.principal("ROLE_USER") : null;
-        rates.check(action == OidcProtocolPort.Action.LOGIN ? "OIDC_LOGIN_START"
-                : "OIDC_REAUTH_START", userId, request);
+        rates.check(switch (action) {
+            case LOGIN -> "OIDC_LOGIN_START";
+            case RECENT_AUTH -> "OIDC_REAUTH_START";
+            case LINK -> "OIDC_LINK_START";
+        }, userId, request);
         FailureReason[] reason = {FailureReason.ACCOUNT_INELIGIBLE};
         try {
             if (userId != null && !identity.isActive(userId)) deny();
+            if (action == OidcProtocolPort.Action.LINK) {
+                IdentitySessionState.requireRecent(request, userId, clock.instant(), mfaPolicy);
+            }
             // Discovery/metadata may be remote; it completes before authoritative session writes.
             reason[0] = FailureReason.PROVIDER_UNAVAILABLE;
             var authorization = protocol.begin(action);
@@ -98,10 +110,13 @@ final class OidcFlowService {
     Completion complete(OidcProtocolPort.Action action, String returnedState,
             String returnedIssuer, String code,
             HttpServletRequest request, HttpServletResponse response) {
-        UUID userId = action == OidcProtocolPort.Action.RECENT_AUTH
+        UUID userId = action != OidcProtocolPort.Action.LOGIN
                 ? IdentitySessionState.principal("ROLE_USER") : null;
-        rates.check(action == OidcProtocolPort.Action.LOGIN ? "OIDC_LOGIN_CALLBACK"
-                : "OIDC_REAUTH_CALLBACK", userId, request);
+        rates.check(switch (action) {
+            case LOGIN -> "OIDC_LOGIN_CALLBACK";
+            case RECENT_AUTH -> "OIDC_REAUTH_CALLBACK";
+            case LINK -> "OIDC_LINK_CALLBACK";
+        }, userId, request);
         FailureReason[] reason = {FailureReason.PROTOCOL_STATE_INVALID};
         try {
             return completeAttempt(action, returnedState, returnedIssuer, code,
@@ -156,6 +171,20 @@ final class OidcFlowService {
         boolean[] mutated = {false};
         try {
             Completion completed = transactions.execute(status -> {
+                // Link transitions serialize on Account before the persisted Spring Session.
+                if (action == OidcProtocolPort.Action.LINK && !links.lockEligibleAccount(userId)) {
+                    reason[0] = FailureReason.ACCOUNT_INELIGIBLE;
+                    deny();
+                }
+                SpringSessionAuthorityAdapter.CurrentSession currentSession = null;
+                if (action == OidcProtocolPort.Action.LINK) {
+                    currentSession = sessionAuthority.lockCurrent(userId, requestSession.getId());
+                    if (currentSession == null) {
+                        reason[0] = FailureReason.PROTOCOL_STATE_INVALID;
+                        transactionsRepository.discardStale(request);
+                        deny();
+                    }
+                }
                 OidcSessionTransaction current = transactionsRepository.lockAndRead(
                         requestSession.getId(), action, userId);
                 if (current == null || !matches(current, action, returnedState,
@@ -171,6 +200,36 @@ final class OidcFlowService {
                     return null;
                 }
                 Instant now = clock.instant();
+                if (action == OidcProtocolPort.Action.LINK) {
+                    reason[0] = FailureReason.RECENT_AUTH_STALE;
+                    IdentitySessionState.requireRecent((Object) currentSession.persisted().getAttribute(
+                            IdentitySessionState.RECENT_ATTRIBUTE), userId, now, mfaPolicy);
+                    reason[0] = FailureReason.LINK_CONFLICT;
+                    var existing = links.linkForUpdate(principal.issuer(), principal.subject());
+                    if (existing.isPresent()) {
+                        if (!userId.equals(existing.get().userId()) || existing.get().active()) {
+                            throw conflict();
+                        }
+                        if (!links.reactivateLink(userId, principal.issuer(), principal.subject(), now)) {
+                            throw conflict();
+                        }
+                    } else if (!links.createLink(userId, principal.issuer(), principal.subject(), now)) {
+                        throw conflict();
+                    }
+                    checkpoint.afterOidcLinkMutation(request);
+                    sessionAuthority.revokeOthers(userId, currentSession.primaryId());
+                    checkpoint.afterOtherSessionRevocation(request);
+                    mutated[0] = true;
+                    requestSession.removeAttribute(OidcSessionTransaction.ATTRIBUTE);
+                    sessions.establish(userId, true, request, response);
+                    checkpoint.afterSessionMutation(request);
+                    UUID eventId = ids.generate();
+                    identity.auditOidcLinkChange(userId, eventId, true, now);
+                    checkpoint.afterOidcLinkAudit(request);
+                    delivery.queueOidcNotice(userId, eventId, "google_oidc_linked", now);
+                    checkpoint.afterOidcLinkNotice(request);
+                    return new Completion(false, null);
+                }
                 if (action == OidcProtocolPort.Action.RECENT_AUTH) {
                     reason[0] = FailureReason.RECENT_AUTH_STALE;
                     if (!freshAuthTime(principal.authTime(), now)) deny();
@@ -233,10 +292,15 @@ final class OidcFlowService {
             return completed;
         } catch (RuntimeException failure) {
             if (mutated[0]) {
-                try {
-                    requestSession.invalidate();
-                } finally {
+                if (action == OidcProtocolPort.Action.LINK) {
+                    transactionsRepository.discardStale(request);
                     SecurityContextHolder.clearContext();
+                } else {
+                    try {
+                        requestSession.invalidate();
+                    } finally {
+                        SecurityContextHolder.clearContext();
+                    }
                 }
             }
             throw failure;
@@ -263,8 +327,11 @@ final class OidcFlowService {
 
     private void auditFailure(OidcProtocolPort.Action action, UUID userId,
             FailureReason reason) {
-        String category = action == OidcProtocolPort.Action.LOGIN
-                ? "oidc_login" : "oidc_recent_auth";
+        String category = switch (action) {
+            case LOGIN -> "oidc_login";
+            case RECENT_AUTH -> "oidc_recent_auth";
+            case LINK -> "oidc_link";
+        };
         try {
             identity.auditFailure(userId, category, reason.name().toLowerCase(Locale.ROOT),
                     clock.instant());
@@ -289,5 +356,13 @@ final class OidcFlowService {
 
     private static void deny() {
         throw ApiFailureException.of(ApiFailureException.Kind.INVALID_CREDENTIALS);
+    }
+
+    void checkUnlinkRate(UUID userId, HttpServletRequest request) {
+        rates.check("OIDC_UNLINK", userId, request);
+    }
+
+    private static ApiFailureException conflict() {
+        return ApiFailureException.of(ApiFailureException.Kind.INVALID_LIFECYCLE_TRANSITION);
     }
 }

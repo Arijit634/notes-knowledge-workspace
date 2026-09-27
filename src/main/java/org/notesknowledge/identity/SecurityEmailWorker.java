@@ -103,6 +103,8 @@ final class SecurityEmailWorker {
                     case "email_change_new_address" -> renderer.emailChangeNewAddress();
                     case "mfa_disabled" -> renderer.mfaDisabled();
                     case "mfa_reset" -> renderer.mfaRecoveryReset();
+                    case "google_oidc_linked" -> renderer.googleOidcLinked();
+                    case "google_oidc_unlinked" -> renderer.googleOidcUnlinked();
                     default -> throw new IllegalStateException("Unsupported notice kind");
                 };
             } else {
@@ -187,6 +189,11 @@ final class SecurityEmailWorker {
                 return identity.currentMfaNoticeDestination(claim.id(), claim.subjectUserId(),
                         claim.securityEventId(), claim.noticeKind());
             }
+            if ("google_oidc_linked".equals(claim.noticeKind())
+                    || "google_oidc_unlinked".equals(claim.noticeKind())) {
+                return identity.currentOidcNoticeDestination(claim.id(), claim.subjectUserId(),
+                        claim.securityEventId(), claim.noticeKind());
+            }
             if (!identity.activeNoticeSubject(claim.id(), claim.subjectUserId(),
                     claim.securityEventId(), claim.noticeKind())) return java.util.Optional.empty();
             return java.util.Optional.of(cipher.openRecipient(claim.securityEventId(),
@@ -217,6 +224,8 @@ final class SecurityEmailWorker {
     private static boolean supportedNotice(String noticeKind) {
         return "password_reset_completed".equals(noticeKind)
                 || "mfa_disabled".equals(noticeKind) || "mfa_reset".equals(noticeKind)
+                || "google_oidc_linked".equals(noticeKind)
+                || "google_oidc_unlinked".equals(noticeKind)
                 || "email_change_old_address".equals(noticeKind)
                 || "email_change_new_address".equals(noticeKind);
     }

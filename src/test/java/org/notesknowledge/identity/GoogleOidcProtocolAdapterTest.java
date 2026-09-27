@@ -136,7 +136,7 @@ class GoogleOidcProtocolAdapterTest {
         var provider = new OidcAuthorizationCodeAuthenticationProvider(tokenClient,
                 user -> new DefaultOidcUser(List.of(new SimpleGrantedAuthority("OIDC")),
                         user.getIdToken()));
-        var adapter = new GoogleOidcProtocolAdapter(properties(), provider, registration, null);
+        var adapter = new GoogleOidcProtocolAdapter(properties(), provider, registration, null, null);
         var authorization = adapter.begin(OidcProtocolPort.Action.LOGIN);
         String nonceHash = authorization.getAdditionalParameters().get("nonce").toString();
         provider.setJwtDecoderFactory(ignored -> encoded -> jwt(nonceHash));
@@ -160,7 +160,7 @@ class GoogleOidcProtocolAdapterTest {
         var recentRegistration = registration("google-recent",
                 "/api/auth/reauth/oidc/google/callback");
         var recentAdapter = new GoogleOidcProtocolAdapter(properties(), provider,
-                null, recentRegistration);
+                null, recentRegistration, null);
         var recentRequest = recentAdapter.begin(OidcProtocolPort.Action.RECENT_AUTH);
         Instant authenticatedAt = Instant.now();
         provider.setJwtDecoderFactory(ignored -> encoded -> jwt(
@@ -168,6 +168,18 @@ class GoogleOidcProtocolAdapterTest {
         var recentPrincipal = recentAdapter.verify(OidcProtocolPort.Action.RECENT_AUTH,
                 recentRequest, "synthetic-code", recentRequest.getState());
         assertThat(recentPrincipal.authTime()).isEqualTo(authenticatedAt);
+        var linkRegistration = registration("google-link", "/api/auth/oidc/google/link-callback");
+        var linkAdapter = new GoogleOidcProtocolAdapter(properties(), provider,
+                null, null, linkRegistration);
+        var linkRequest = linkAdapter.begin(OidcProtocolPort.Action.LINK);
+        assertThat(linkRequest.getScopes()).containsExactlyInAnyOrder("openid", "email");
+        assertThat(linkRequest.getAdditionalParameters().get("code_challenge_method"))
+                .isEqualTo("S256");
+        assertThat(linkRequest.getAdditionalParameters()).doesNotContainKeys("max_age", "claims");
+        provider.setJwtDecoderFactory(ignored -> encoded -> jwt(
+                linkRequest.getAdditionalParameters().get("nonce").toString()));
+        assertThat(linkAdapter.verify(OidcProtocolPort.Action.LINK, linkRequest,
+                "synthetic-code", linkRequest.getState()).subject()).isEqualTo("synthetic-subject");
         provider.setJwtDecoderFactory(ignored -> encoded -> {
             throw new BadJwtException("synthetic invalid signature");
         });
@@ -178,7 +190,7 @@ class GoogleOidcProtocolAdapterTest {
 
     @Test void disabledModeFailsBoundedlyWithoutCredentialsOrNetwork() {
         var disabled = new GoogleOidcProtocolAdapter(new GoogleOidcProperties(false,
-                "", "", ISSUER, "", "", Duration.ofMinutes(5)));
+                "", "", ISSUER, "", "", "", Duration.ofMinutes(5)));
         assertThatThrownBy(() -> disabled.begin(OidcProtocolPort.Action.LOGIN))
                 .isInstanceOf(ApiFailureException.class)
                 .hasMessage("service_unavailable");
@@ -193,6 +205,7 @@ class GoogleOidcProtocolAdapterTest {
                 "synthetic-client-secret", ISSUER,
                 "https://example.test/api/auth/oidc/google/callback",
                 "https://example.test/api/auth/reauth/oidc/google/callback",
+                "https://example.test/api/auth/oidc/google/link-callback",
                 Duration.ofMinutes(5));
     }
 

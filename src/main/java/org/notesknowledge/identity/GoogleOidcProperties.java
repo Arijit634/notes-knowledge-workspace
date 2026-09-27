@@ -8,7 +8,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 /** Google client secrets and redirect origins are deployment-supplied, never source-controlled. */
 @ConfigurationProperties(prefix = "identity.oidc.google")
 record GoogleOidcProperties(boolean enabled, String clientId, String clientSecret,
-        String issuer, String loginRedirectUri, String recentRedirectUri,
+        String issuer, String loginRedirectUri, String recentRedirectUri, String linkRedirectUri,
         Duration transactionLifetime) {
     GoogleOidcProperties {
         if (transactionLifetime == null || transactionLifetime.isNegative()
@@ -22,6 +22,7 @@ record GoogleOidcProperties(boolean enabled, String clientId, String clientSecre
             }
             requireRedirect(loginRedirectUri, "/api/auth/oidc/google/callback");
             requireRedirect(recentRedirectUri, "/api/auth/reauth/oidc/google/callback");
+            requireRedirect(linkRedirectUri, "/api/auth/oidc/google/link-callback");
         }
     }
 

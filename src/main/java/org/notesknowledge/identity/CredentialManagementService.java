@@ -25,6 +25,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 final class CredentialManagementService {
     private static final Duration EMAIL_CHANGE_LIFETIME = Duration.ofHours(24);
     private final IdentityPersistence identity;
+    private final OidcIdentityRepository oidcLinks;
     private final SecurityEmailDeliveryRepository delivery;
     private final SecurityEmailMaterialCipher cipher;
     private final DatabaseUuidV7Generator ids;
@@ -37,7 +38,7 @@ final class CredentialManagementService {
     private final MfaProperties policy;
     private final TransactionTemplate transactions;
 
-    CredentialManagementService(IdentityPersistence identity,
+    CredentialManagementService(IdentityPersistence identity, OidcIdentityRepository oidcLinks,
             SecurityEmailDeliveryRepository delivery, SecurityEmailMaterialCipher cipher,
             DatabaseUuidV7Generator ids,
             SpringSessionAuthorityAdapter sessions, MfaSessionTransitions transitions,
@@ -45,6 +46,7 @@ final class CredentialManagementService {
             IdentitySessionTransitionCheckpoint checkpoint, PasswordEncoder passwords,
             Clock clock, MfaProperties policy, PlatformTransactionManager manager) {
         this.identity = identity;
+        this.oidcLinks = oidcLinks;
         this.delivery = delivery;
         this.cipher = cipher;
         this.ids = ids;
@@ -200,6 +202,59 @@ final class CredentialManagementService {
                 // Detach it; never invalidate the original committed session row.
                 staleRequests.discardStaleRequestSession(request);
                 SecurityContextHolder.clearContext();
+            }
+            throw failure;
+        }
+    }
+
+    void unlinkOidc(UUID userId, UUID linkId, HttpServletRequest request,
+            HttpServletResponse response) {
+        HttpSession requestSession = request.getSession(false);
+        if (requestSession == null) throw unauthenticated();
+        String originalSessionId = requestSession.getId();
+        boolean[] sessionMutationStarted = {false};
+        try {
+            transactions.executeWithoutResult(status -> {
+                if (!identity.lockActiveAccount(userId)) throw unauthenticated();
+                var current = sessions.lockCurrent(userId, originalSessionId);
+                if (current == null) {
+                    staleRequests.discardStaleRequestSession(request);
+                    throw unauthenticated();
+                }
+                Instant now = clock.instant();
+                IdentitySessionState.requireRecent((Object) current.persisted().getAttribute(
+                        IdentitySessionState.RECENT_ATTRIBUTE), userId, now, policy);
+                var link = oidcLinks.ownedActiveLinkForUpdate(userId, linkId)
+                        .orElseThrow(() -> ApiFailureException.of(
+                                ApiFailureException.Kind.RESOURCE_NOT_FOUND));
+                if (!"https://accounts.google.com".equals(link.issuer())) {
+                    throw ApiFailureException.of(ApiFailureException.Kind.RESOURCE_NOT_FOUND);
+                }
+                if (!oidcLinks.hasOtherUsableMethod(userId, linkId)) {
+                    throw invalidChange();
+                }
+                if (!oidcLinks.revokeLink(userId, linkId, now)) throw invalidChange();
+                checkpoint.afterOidcLinkMutation(request);
+                sessions.revokeOthers(userId, current.primaryId());
+                checkpoint.afterOtherSessionRevocation(request);
+                sessionMutationStarted[0] = true;
+                transitions.establish(userId, true, request, response);
+                checkpoint.afterSessionMutation(request);
+                UUID eventId = ids.generate();
+                identity.auditOidcLinkChange(userId, eventId, false, now);
+                checkpoint.afterOidcLinkAudit(request);
+                delivery.queueOidcNotice(userId, eventId, "google_oidc_unlinked", now);
+                checkpoint.afterOidcLinkNotice(request);
+            });
+        } catch (RuntimeException failure) {
+            if (sessionMutationStarted[0]) {
+                staleRequests.discardStaleRequestSession(request);
+                SecurityContextHolder.clearContext();
+            }
+            try {
+                identity.auditFailure(userId, "oidc_unlink", "denied", clock.instant());
+            } catch (RuntimeException unavailable) {
+                throw ApiFailureException.of(ApiFailureException.Kind.SERVICE_UNAVAILABLE);
             }
             throw failure;
         }
