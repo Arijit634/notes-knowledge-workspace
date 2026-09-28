@@ -107,7 +107,10 @@ class OidcCoreIntegrationTest {
         UUID owner = account();
         String subject = "notice-" + UUID.randomUUID();
         Browser current = fullBrowser(owner, "password");
-        linkCallback(current, startLink(current), protocol.accept(subject, email(owner), true), 204);
+        MvcResult callback = linkCallback(current, startLink(current),
+                protocol.accept(subject, email(owner), true), 303);
+        assertThat(callback.getResponse().getHeader("Location"))
+                .isEqualTo("/settings/security");
         UUID linkId = linkId(owner, subject);
         jdbc.update("update identity.account set password_verifier = ? where user_id = ?",
                 passwordEncoder.encode("SyntheticPassword-2026!"), owner);
@@ -153,7 +156,9 @@ class OidcCoreIntegrationTest {
                 .isEqualTo("S256");
         assertThat((Object) transaction.authorization().getAttribute("nonce")).isNotNull();
         MvcResult result = linkCallback(current, state,
-                protocol.accept(subject, email(sameEmailAccount), true), 204);
+                protocol.accept(subject, email(sameEmailAccount), true), 303);
+        assertThat(result.getResponse().getHeader("Location"))
+                .isEqualTo("/settings/security");
         Cookie rotated = result.getResponse().getCookie("SESSION");
         assertThat(rotated).isNotNull();
         assertThat(rotated.getValue()).isNotEqualTo(current.cookie().getValue());
@@ -212,7 +217,7 @@ class OidcCoreIntegrationTest {
         Browser third = fullBrowser(owner, "password");
         linkCallback(third, startLink(third), protocol.accept(otherRevoked, email(owner), true), 409);
         Browser fourth = fullBrowser(owner, "password");
-        linkCallback(fourth, startLink(fourth), protocol.accept(revoked, email(owner), true), 204);
+        linkCallback(fourth, startLink(fourth), protocol.accept(revoked, email(owner), true), 303);
         assertThat(jdbc.queryForObject("""
                 select external_identity_link_id from identity.external_identity_link
                 where user_id = ? and subject = ? and revoked_at is null
@@ -421,7 +426,7 @@ class OidcCoreIntegrationTest {
             var b = executor.submit(() -> linkCallback(second, secondState, secondCode, -1));
             assertThat(List.of(a.get(30, TimeUnit.SECONDS).getResponse().getStatus(),
                     b.get(30, TimeUnit.SECONDS).getResponse().getStatus()))
-                    .containsExactlyInAnyOrder(204, 409);
+                    .containsExactlyInAnyOrder(303, 409);
         } finally {
             checkpoint.barrier.set(null);
         }
@@ -448,7 +453,7 @@ class OidcCoreIntegrationTest {
             var b = executor.submit(() -> linkCallback(browser, state, code, -1));
             assertThat(List.of(a.get(30, TimeUnit.SECONDS).getResponse().getStatus(),
                     b.get(30, TimeUnit.SECONDS).getResponse().getStatus()))
-                    .containsExactlyInAnyOrder(204, 401);
+                    .containsExactlyInAnyOrder(303, 401);
         } finally {
             checkpoint.barrier.set(null);
         }

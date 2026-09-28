@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { createContext, lazy, Suspense, useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { useForm } from 'react-hook-form'
 import { ApiProblemError } from './api/ProblemDetailsDecoder'
@@ -9,6 +9,15 @@ import { navigateToGoogle } from '../features/auth/OidcNavigationCoordinator'
 
 export const AUTH_ROUTES = ['/', '/signup', '/verify-email', '/login', '/mfa',
   '/forgot-password', '/reset-password', '/auth/complete', '/reauth'] as const
+export const SECURITY_ROUTES = ['/settings/security', '/settings/security/mfa',
+  '/settings/security/sessions'] as const
+export const PRODUCT_ROUTES = [...AUTH_ROUTES, ...SECURITY_ROUTES] as const
+const SecuritySettingsPage = lazy(() => import('../features/security/SecuritySettingsPages')
+  .then(module => ({ default: module.SecuritySettingsPage })))
+const MfaSettingsPage = lazy(() => import('../features/security/SecuritySettingsPages')
+  .then(module => ({ default: module.MfaSettingsPage })))
+const SessionsSettingsPage = lazy(() => import('../features/security/SecuritySettingsPages')
+  .then(module => ({ default: module.SessionsSettingsPage })))
 const Context = createContext<AuthRuntime | null>(null)
 const useAuth = () => {
   const value = useContext(Context)
@@ -65,7 +74,9 @@ function Landing() {
   return <Shell title="A quieter place for what you need to remember" eyebrow="Your workspace starts here">
     <p className="lead">Keep your notes and knowledge together. Sign in to continue when your workspace is ready.</p>
     {error && <Alert>{error}</Alert>}
-    {auth.state === 'authenticated' ? <><p role="status">You are signed in.</p><button onClick={logout}>Log out</button></>
+    {auth.state === 'authenticated' ? <><p role="status">You are signed in.</p>
+      <Link className="button button-secondary" to="/settings/security">Security settings</Link>
+      <button onClick={logout}>Log out</button></>
       : auth.state === 'mfaRequired' ? <Link className="button" to={auth.continuation.challengeId ? '/mfa' : '/login'}>{auth.continuation.challengeId ? 'Continue verification' : 'Restart sign in'}</Link>
         : <nav className="actions" aria-label="Get started"><Link className="button" to="/signup">Create an account</Link><Link className="button button-secondary" to="/login">Log in</Link></nav>}
   </Shell>
@@ -196,9 +207,9 @@ function AuthComplete() {
   return <Shell title="Completing sign in" eyebrow="Authentication">{result === 'checking' && <p role="status">Checking your session…</p>}{result === 'signedIn' && <><p role="status">You are signed in.</p><Link to="/">Continue</Link></>}{result === 'unsuccessful' && <><p role="status">This sign-in could not be completed. Try again.</p><Link to="/login">Log in</Link></>}</Shell>
 }
 function RecentAuth() {
-  const auth = useAuth()
+  const auth = useAuth(), navigate = useNavigate()
   const [password, setPassword] = useState(''), [busy, setBusy] = useState(false), [complete, setComplete] = useState(false), [error, setError] = useState('')
-  async function submit(event: FormEvent) { event.preventDefault(); setBusy(true); setError(''); try { await auth.api.request('POST', '/api/auth/reauth/password', { json: { email: null, password } }); setPassword(''); await auth.csrf.refresh(); setComplete(true) } catch (e) { setError(message(e)) } finally { setBusy(false) } }
+  async function submit(event: FormEvent) { event.preventDefault(); setBusy(true); setError(''); try { await auth.api.request('POST', '/api/auth/reauth/password', { json: { email: null, password } }); setPassword(''); await auth.csrf.refresh(); setComplete(true); const destination = auth.continuation.returnIntent; auth.continuation.returnIntent = null; if (destination) navigate(destination, { replace: true }) } catch (e) { setError(message(e)) } finally { setBusy(false) } }
   async function google() { setBusy(true); setError(''); try { const r = await auth.api.request<{ authorizationUrl?: unknown }>('POST', '/api/auth/reauth/oidc/google/authorizations'); navigateToGoogle(r.body?.authorizationUrl) } catch (e) { setError(message(e)) } finally { setBusy(false) } }
   return <Shell title="Confirm your identity" eyebrow="Recent authentication">
     {complete ? <p role="status">Identity confirmed for this session.</p> : <><form onSubmit={submit}><label htmlFor="reauth-password">Password</label><input id="reauth-password" type="password" autoComplete="current-password" required maxLength={1024} value={password} onChange={e => setPassword(e.target.value)} />{error && <Alert>{error}</Alert>}<button disabled={busy}>Confirm with password</button></form><div className="divider" aria-hidden="true">or</div><button className="button-secondary" onClick={google} disabled={busy}>Confirm with Google</button></>}
@@ -209,6 +220,7 @@ function AuthRoutes() {
   useEffect(() => {
     if (priorPath.current === '/verify-email' && location.pathname !== '/verify-email') auth.continuation.verificationToken = null
     if (priorPath.current === '/reset-password' && location.pathname !== '/reset-password') auth.continuation.resetToken = null
+    if (priorPath.current === '/settings/security' && location.pathname !== '/settings/security') auth.continuation.emailChangeToken = null
     priorPath.current = location.pathname
   }, [auth, location.pathname])
   return <Routes>
@@ -221,6 +233,9 @@ function AuthRoutes() {
     <Route path={AUTH_ROUTES[6]} element={<Gate access="PUBLIC"><ResetPassword /></Gate>} />
     <Route path={AUTH_ROUTES[7]} element={<Gate access="PUBLIC"><AuthComplete /></Gate>} />
     <Route path={AUTH_ROUTES[8]} element={<Gate access="FULL_AUTHENTICATED"><RecentAuth /></Gate>} />
+    <Route path={SECURITY_ROUTES[0]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<Shell title="Loading security settings"><p role="status">Please wait…</p></Shell>}><SecuritySettingsPage auth={auth} /></Suspense></Gate>} />
+    <Route path={SECURITY_ROUTES[1]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<Shell title="Loading MFA settings"><p role="status">Please wait…</p></Shell>}><MfaSettingsPage auth={auth} /></Suspense></Gate>} />
+    <Route path={SECURITY_ROUTES[2]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<Shell title="Loading sessions"><p role="status">Please wait…</p></Shell>}><SessionsSettingsPage auth={auth} /></Suspense></Gate>} />
     <Route path="*" element={<Shell title="Page not found"><p>That page is unavailable.</p><Link to="/">Go home</Link></Shell>} />
   </Routes>
 }

@@ -67,6 +67,7 @@ final class OidcController {
             HttpServletRequest request, HttpServletResponse response) {
         flows.complete(OidcProtocolPort.Action.LINK, state, iss,
                 error == null ? code : null, request, response);
-        return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
+        return ResponseEntity.status(303).location(URI.create("/settings/security"))
+                .cacheControl(CacheControl.noStore()).build();
     }
 }

@@ -39,7 +39,7 @@ final class SecurityEmailMessageRenderer {
     }
 
     Message emailChange(String token) {
-        String link = continuation("/confirm-email-change#token=", token);
+        String link = continuation("/settings/security#token=", token);
         return new Message("Confirm your Notes & Knowledge Workspace new email",
                 "To confirm this address as your account email, open this link: " + link
                 + "\nThis link expires in 24 hours. If you did not request it, ignore this message.");
