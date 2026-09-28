@@ -77,7 +77,7 @@ export class ApiClient {
 
       let response: Response
       try {
-        response = await this.fetcher(target, {
+        response = await this.fetcher.call(globalThis, target, {
           method, headers, body, signal: options.signal,
           credentials: 'same-origin', mode: 'same-origin', redirect: 'error', cache: 'no-store',
         })

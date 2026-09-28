@@ -7,7 +7,7 @@ export class CsrfUnavailableError extends Error {
   }
 }
 
-/** Proof lives in this instance's memory only; Phase 3 supplies the real loader. */
+/** Proof lives only in this instance's memory; AuthRuntime supplies the loader. */
 export class CsrfManager {
   private proof: string | null = null
   private refreshing: Promise<string> | null = null

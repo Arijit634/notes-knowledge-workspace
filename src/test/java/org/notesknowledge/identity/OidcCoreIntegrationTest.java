@@ -638,7 +638,10 @@ class OidcCoreIntegrationTest {
         assertThat(preChallenge.primaryMethod()).isEqualTo("oidc");
         mvc.perform(get("/api/me/security").cookie(pre.cookie()))
                 .andExpect(status().isForbidden());
-        String challenge = json(primary, "challengeId");
+        MvcResult projected = mvc.perform(get("/api/auth/session").cookie(pre.cookie()))
+                .andExpect(status().isOk()).andReturn();
+        String challenge = json(projected, "challengeId");
+        assertThat(challenge).isEqualTo(preChallenge.id());
         String code = totp.codeAt(seed, clock.instant().getEpochSecond() / 30);
         MvcResult elevated = mvc.perform(post("/api/auth/mfa/challenges/" + challenge + "/totp")
                 .cookie(pre.cookie()).header("X-CSRF-TOKEN", pre.csrf())
@@ -648,6 +651,13 @@ class OidcCoreIntegrationTest {
         assertThat(sessionState(csrf(elevated.getResponse().getCookie("SESSION"))))
                 .isEqualTo("authenticated");
         assertThat(sessionState(pre)).isEqualTo("anonymous");
+        assertThat(mapper.readTree(mvc.perform(get("/api/auth/session")
+                .cookie(pre.cookie())).andExpect(status().isOk()).andReturn()
+                .getResponse().getContentAsString()).has("challengeId")).isFalse();
+        assertThat(mapper.readTree(mvc.perform(get("/api/auth/session")
+                .cookie(elevated.getResponse().getCookie("SESSION")))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString())
+                .has("challengeId")).isFalse();
     }
 
     @Test void recentAuthRequiresCurrentLinkedPrincipalAndNeverChangesAccount() throws Exception {
@@ -748,7 +758,7 @@ class OidcCoreIntegrationTest {
             var b = executor.submit(() -> callback(second, secondState, secondCode, false, -1));
             assertThat(java.util.List.of(a.get(30, TimeUnit.SECONDS).getResponse().getStatus(),
                     b.get(30, TimeUnit.SECONDS).getResponse().getStatus()))
-                    .containsExactlyInAnyOrder(200, 409);
+                    .containsExactlyInAnyOrder(303, 409);
         } finally {
             checkpoint.barrier.set(null);
         }
@@ -773,7 +783,7 @@ class OidcCoreIntegrationTest {
             var b = executor.submit(() -> callback(browser, state, code, false, -1));
             int first = a.get(30, TimeUnit.SECONDS).getResponse().getStatus();
             int second = b.get(30, TimeUnit.SECONDS).getResponse().getStatus();
-            assertThat(java.util.List.of(first, second)).containsExactlyInAnyOrder(200, 401);
+            assertThat(java.util.List.of(first, second)).containsExactlyInAnyOrder(303, 401);
         } finally {
             checkpoint.barrier.set(null);
         }
@@ -798,7 +808,7 @@ class OidcCoreIntegrationTest {
             var b = executor.submit(() -> callback(full, state, code, true, -1));
             assertThat(java.util.List.of(a.get(30, TimeUnit.SECONDS).getResponse().getStatus(),
                     b.get(30, TimeUnit.SECONDS).getResponse().getStatus()))
-                    .containsExactlyInAnyOrder(204, 401);
+                    .containsExactlyInAnyOrder(303, 401);
         } finally {
             checkpoint.barrier.set(null);
         }
@@ -1081,7 +1091,15 @@ class OidcCoreIntegrationTest {
         var request = get(path).cookie(browser.cookie()).param("state", state).param("code", code);
         if (issuer != null) request.param("iss", issuer);
         MvcResult result = mvc.perform(request).andReturn();
-        if (expected >= 0) assertThat(result.getResponse().getStatus()).isEqualTo(expected);
+        if (expected >= 0) {
+            int actualExpected = expected == 200 || expected == 202 || (recent && expected == 204)
+                    ? 303 : expected;
+            assertThat(result.getResponse().getStatus()).isEqualTo(actualExpected);
+            if (actualExpected == 303) {
+                assertThat(result.getResponse().getHeader("Location")).isEqualTo("/auth/complete");
+                assertThat(result.getResponse().getHeader("Cache-Control")).contains("no-store");
+            }
+        }
         return result;
     }
 

@@ -35,6 +35,7 @@ final class AuthController {
     private final RegistrationService registration;
     private final EmailVerificationService verification;
     private final PasswordAuthenticationService passwords;
+    private final MfaChallengeService challenges;
     private final PasswordRecoveryService recovery;
     private final IdentityPersistence identity;
     private final RateControlService rates;
@@ -46,7 +47,8 @@ final class AuthController {
     private final org.springframework.transaction.support.TransactionTemplate transactions;
 
     AuthController(RegistrationService registration, EmailVerificationService verification,
-            PasswordAuthenticationService passwords, PasswordRecoveryService recovery,
+            PasswordAuthenticationService passwords, MfaChallengeService challenges,
+            PasswordRecoveryService recovery,
             IdentityPersistence identity,
             RateControlService rates, RateKeyDeriver rateKeys,
             MfaRateControl mfaRates, java.time.Clock clock,
@@ -56,6 +58,7 @@ final class AuthController {
         this.registration = registration;
         this.verification = verification;
         this.passwords = passwords;
+        this.challenges = challenges;
         this.recovery = recovery;
         this.identity = identity;
         this.rates = rates;
@@ -78,18 +81,27 @@ final class AuthController {
     }
 
     @GetMapping("/session")
-    ResponseEntity<Map<String, String>> session() {
+    ResponseEntity<Map<String, String>> session(HttpServletRequest request) {
         var authentication = SecurityContextHolder.getContext().getAuthentication();
         String state = "anonymous";
+        String challengeId = null;
         if (authentication != null && authentication.isAuthenticated()
                 && authentication.getPrincipal() instanceof IdentitySessionPrincipal principal
                 && identity.isActive(principal.userId())) {
-            state = authentication.getAuthorities().stream()
-                    .anyMatch(a -> "ROLE_USER".equals(a.getAuthority()))
-                    ? "authenticated" : "mfaRequired";
+            if (authentication.getAuthorities().stream()
+                    .anyMatch(a -> "ROLE_USER".equals(a.getAuthority()))) {
+                state = "authenticated";
+            } else if (authentication.getAuthorities().stream()
+                    .anyMatch(a -> "ROLE_MFA_PENDING".equals(a.getAuthority()))) {
+                state = "mfaRequired";
+            }
+            if ("mfaRequired".equals(state)) {
+                challengeId = challenges.currentContinuation(principal.userId(), request);
+            }
         }
         return ResponseEntity.ok().cacheControl(CacheControl.noStore())
-                .body(Map.of("state", state));
+                .body(challengeId == null ? Map.of("state", state)
+                        : Map.of("state", state, "challengeId", challengeId));
     }
 
     @PostMapping("/registrations")

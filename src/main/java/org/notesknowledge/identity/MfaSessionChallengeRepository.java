@@ -34,6 +34,12 @@ class MfaSessionChallengeRepository {
 
         // A request wrapper may have loaded an older attribute snapshot. Re-read only
         // after the lock, through Spring Session's own repository and transaction.
+        return readCurrent(sessionId, userId);
+    }
+
+    IdentitySessionState.Challenge readCurrent(String sessionId, UUID userId) {
+        // This is only a bounded browser continuation projection. The proof command
+        // still locks and revalidates the session before accepting a factor.
         Session persisted = sessions.findById(sessionId);
         if (persisted == null) return null;
         SecurityContext context = persisted.getAttribute("SPRING_SECURITY_CONTEXT");

@@ -3,6 +3,7 @@ package org.notesknowledge.identity;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.util.Map;
+import java.net.URI;
 
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
@@ -29,19 +30,15 @@ final class OidcController {
     }
 
     @GetMapping("/oidc/google/callback")
-    ResponseEntity<Map<String, String>> login(@RequestParam(required = false) String state,
+    ResponseEntity<Void> login(@RequestParam(required = false) String state,
             @RequestParam(required = false) String code,
             @RequestParam(required = false) String iss,
             @RequestParam(required = false) String error,
             HttpServletRequest request, HttpServletResponse response) {
-        var result = flows.complete(OidcProtocolPort.Action.LOGIN, state, iss,
+        flows.complete(OidcProtocolPort.Action.LOGIN, state, iss,
                 error == null ? code : null, request, response);
-        if (result.mfaRequired()) {
-            return ResponseEntity.accepted().cacheControl(CacheControl.noStore())
-                    .body(Map.of("state", "mfaRequired", "challengeId", result.challengeId()));
-        }
-        return ResponseEntity.ok().cacheControl(CacheControl.noStore())
-                .body(Map.of("state", "authenticated"));
+        return ResponseEntity.status(303).location(URI.create("/auth/complete"))
+                .cacheControl(CacheControl.noStore()).build();
     }
 
     @PostMapping("/reauth/oidc/google/authorizations")
@@ -58,7 +55,8 @@ final class OidcController {
             HttpServletRequest request, HttpServletResponse response) {
         flows.complete(OidcProtocolPort.Action.RECENT_AUTH, state, iss,
                 error == null ? code : null, request, response);
-        return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
+        return ResponseEntity.status(303).location(URI.create("/auth/complete"))
+                .cacheControl(CacheControl.noStore()).build();
     }
 
     @GetMapping("/oidc/google/link-callback")
