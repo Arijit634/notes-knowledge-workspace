@@ -172,7 +172,7 @@ class AccountSecurityIntegrationTest {
         Browser current = csrf(cookie(session(owner, "ROLE_USER", "password")));
         String otherFull = session(owner, "ROLE_USER", null);
         String otherPreMfa = session(owner, "ROLE_MFA_PENDING", null);
-        String otherRecent = session(owner, "ROLE_USER", "oidc");
+        String otherRecent = session(owner, "ROLE_USER", "password");
         String unrelated = session(unrelatedOwner, "ROLE_USER", null);
         emailRequest(current, second).andExpect(status().isAccepted());
         String token = emailChangeToken(currentEmailChange(owner));
@@ -908,16 +908,16 @@ class AccountSecurityIntegrationTest {
                 .andExpect(status().isUnauthorized());
     }
 
-    @Test void oidcRecentRequiresCurrentLinkForMfaSecurityChanges() throws Exception {
-        UUID owner = account(false);
+    @Test void oldOidcRecentFactCannotAuthorizeMfaSecurityChanges() throws Exception {
+        UUID owner = account(true);
         activateMfa(owner);
         Browser unlinked = csrf(cookie(session(owner, "ROLE_USER", "oidc")));
         disable(unlinked).andExpect(status().isForbidden());
         regenerate(unlinked).andExpect(status().isForbidden());
         oidc.createLink(owner, "https://accounts.google.com", "subject-" + UUID.randomUUID(),
                 clock.instant());
-        regenerate(unlinked).andExpect(status().isOk());
-        Browser fresh = csrf(cookie(session(owner, "ROLE_USER", "oidc")));
+        regenerate(unlinked).andExpect(status().isForbidden());
+        Browser fresh = csrf(cookie(session(owner, "ROLE_USER", "password")));
         disable(fresh).andExpect(status().isNoContent());
     }
 
@@ -1075,7 +1075,7 @@ class AccountSecurityIntegrationTest {
         Browser current = csrf(cookie(session(owner, "ROLE_USER", "password")));
         String otherFull = session(owner, "ROLE_USER", null);
         String otherPreMfa = session(owner, "ROLE_MFA_PENDING", null);
-        String otherRecent = session(owner, "ROLE_USER", "oidc");
+        String otherRecent = session(owner, "ROLE_USER", "password");
         String unrelated = session(other, "ROLE_USER", null);
         var mutation = change(current, NEW).andReturn();
         if (mutation.getResponse().getStatus() == 500) {
@@ -1130,7 +1130,7 @@ class AccountSecurityIntegrationTest {
         var seed = mfaCipher.seal(owner, new byte[20]);
         mfa.begin(owner, seed, clock.instant());
         mfa.activate(owner, seed.nonce(), 0, clock.instant());
-        Browser current = csrf(cookie(session(owner, "ROLE_USER", "oidc")));
+        Browser current = csrf(cookie(session(owner, "ROLE_USER", "password")));
         change(current, NEW).andExpect(status().isNoContent());
         assertThat(passwords.matches(NEW, verifier(owner))).isTrue();
         assertThat(mfa.configuration(owner).orElseThrow().state()).isEqualTo("active");
@@ -1165,7 +1165,7 @@ class AccountSecurityIntegrationTest {
         change(wrongSubject, NEW).andExpect(status().isForbidden());
         Browser expired = csrf(cookie(session(owner, "ROLE_USER", "expired")));
         change(expired, NEW).andExpect(status().isForbidden());
-        Browser valid = csrf(cookie(session(owner, "ROLE_USER", "oidc")));
+        Browser valid = csrf(cookie(session(owner, "ROLE_USER", "password")));
         mvc.perform(put("/api/me/security/password").cookie(valid.cookie())
                 .header("X-CSRF-TOKEN", valid.csrf())
                 .contentType(MediaType.APPLICATION_JSON)
@@ -1233,7 +1233,7 @@ class AccountSecurityIntegrationTest {
     @Test void staleInFlightSessionCannotResurrectRevokedAuthority() throws Exception {
         UUID owner = account(true);
         Browser current = csrf(cookie(session(owner, "ROLE_USER", "password")));
-        String oldSession = session(owner, "ROLE_USER", "oidc");
+        String oldSession = session(owner, "ROLE_USER", "password");
         CountDownLatch staleLoaded = new CountDownLatch(1);
         CountDownLatch changed = new CountDownLatch(1);
         try (var pool = Executors.newSingleThreadExecutor()) {
@@ -1313,7 +1313,7 @@ class AccountSecurityIntegrationTest {
         assertThat(rotated).isNotNull();
         Session persisted = repository().findById(raw(rotated));
         persisted.setAttribute(IdentitySessionState.RECENT_ATTRIBUTE,
-                new IdentitySessionState.RecentAuthentication(owner, clock.instant(), "oidc"));
+                new IdentitySessionState.RecentAuthentication(owner, clock.instant(), "password"));
         repository().save(persisted);
         change(new Browser(rotated, current.csrf()), "AnotherSyntheticPassword-2026!")
                 .andExpect(status().isForbidden());

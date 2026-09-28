@@ -339,7 +339,7 @@ class PasswordRecoveryIntegrationTest {
         Cookie oldCookie = sessionCookie(id);
         assertThat(mvc.perform(get("/api/auth/session").cookie(oldCookie))
                 .andReturn().getResponse().getContentAsString()).contains("anonymous");
-        mvc.perform(get("/api/auth/reauth/oidc/google/callback").cookie(oldCookie))
+        mvc.perform(get("/api/me/security").cookie(oldCookie))
                 .andExpect(status().isUnauthorized());
     }
 
@@ -889,7 +889,7 @@ class PasswordRecoveryIntegrationTest {
         session.setAttribute("SPRING_SECURITY_CONTEXT", context);
         if (oidcRecent) {
             session.setAttribute(IdentitySessionState.RECENT_ATTRIBUTE,
-                    new IdentitySessionState.RecentAuthentication(userId, clock.instant(), "oidc"));
+                    new IdentitySessionState.RecentAuthentication(userId, clock.instant(), "password"));
         }
         repository.save(session);
         return session.getId();

@@ -36,7 +36,6 @@ final class GoogleOidcProtocolAdapter implements OidcProtocolPort {
     private final SecureRandom random = new SecureRandom();
     private final OidcAuthorizationCodeAuthenticationProvider provider;
     private volatile ClientRegistration login;
-    private volatile ClientRegistration recent;
     private volatile ClientRegistration link;
 
     @Autowired
@@ -45,16 +44,15 @@ final class GoogleOidcProtocolAdapter implements OidcProtocolPort {
                 new RestClientAuthorizationCodeTokenResponseClient(),
                 user -> new DefaultOidcUser(
                         List.of(new SimpleGrantedAuthority("OIDC")), user.getIdToken())),
-                null, null, null);
+                null, null);
     }
 
     GoogleOidcProtocolAdapter(GoogleOidcProperties properties,
             OidcAuthorizationCodeAuthenticationProvider provider,
-            ClientRegistration login, ClientRegistration recent, ClientRegistration link) {
+            ClientRegistration login, ClientRegistration link) {
         this.properties = properties;
         this.provider = provider;
         this.login = login;
-        this.recent = recent;
         this.link = link;
     }
 
@@ -69,15 +67,7 @@ final class GoogleOidcProtocolAdapter implements OidcProtocolPort {
                 .scopes(registration.getScopes())
                 .state(randomValue())
                 .attributes(attributes -> attributes.put("nonce", nonce))
-                .additionalParameters(parameters -> {
-                    parameters.put("nonce", sha256(nonce));
-                    if (action == Action.RECENT_AUTH) {
-                        // Google documents this narrow claims request for ID-token auth_time.
-                        parameters.put("max_age", "0");
-                        parameters.put("claims",
-                                "{\"id_token\":{\"auth_time\":{\"essential\":true}}}");
-                    }
-                });
+                .additionalParameters(parameters -> parameters.put("nonce", sha256(nonce)));
         OAuth2AuthorizationRequestCustomizers.withPkce().accept(builder);
         OAuth2AuthorizationRequest authorization = builder.build();
         if (!"S256".equals(authorization.getAdditionalParameters().get("code_challenge_method"))
@@ -166,7 +156,6 @@ final class GoogleOidcProtocolAdapter implements OidcProtocolPort {
                 var builder = ClientRegistrations.fromOidcIssuerLocation(properties.issuer());
                 cached = builder.registrationId(switch (action) {
                             case LOGIN -> "google-login";
-                            case RECENT_AUTH -> "google-recent";
                             case LINK -> "google-link";
                         })
                         .clientId(properties.clientId())
@@ -177,7 +166,6 @@ final class GoogleOidcProtocolAdapter implements OidcProtocolPort {
                                 .requireProofKey(true).build())
                         .redirectUri(switch (action) {
                             case LOGIN -> properties.loginRedirectUri();
-                            case RECENT_AUTH -> properties.recentRedirectUri();
                             case LINK -> properties.linkRedirectUri();
                         })
                         .build();
@@ -192,7 +180,6 @@ final class GoogleOidcProtocolAdapter implements OidcProtocolPort {
             }
             switch (action) {
                 case LOGIN -> login = cached;
-                case RECENT_AUTH -> recent = cached;
                 case LINK -> link = cached;
             }
             return cached;
@@ -202,7 +189,6 @@ final class GoogleOidcProtocolAdapter implements OidcProtocolPort {
     private ClientRegistration cached(Action action) {
         return switch (action) {
             case LOGIN -> login;
-            case RECENT_AUTH -> recent;
             case LINK -> link;
         };
     }

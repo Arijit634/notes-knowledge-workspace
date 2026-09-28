@@ -58,6 +58,7 @@ final class IdentitySessionState {
 
     static void requireRecent(Object value, UUID userId, Instant now, MfaProperties policy) {
         if (!(value instanceof RecentAuthentication recent) || !userId.equals(recent.userId())
+                || !"password".equals(recent.method())
                 || recent.at().isAfter(now)
                 || !recent.at().plus(policy.recentAuthLifetime()).isAfter(now)) {
             throw ApiFailureException.of(ApiFailureException.Kind.RECENT_AUTHENTICATION_REQUIRED);
@@ -68,10 +69,16 @@ final class IdentitySessionState {
             MfaProperties policy) {
         requireRecent(value, userId, now, policy);
         String method = ((RecentAuthentication) value).method();
-        if (!"password".equals(method) && !"oidc".equals(method)) {
+        if (!"password".equals(method)) {
             throw ApiFailureException.of(ApiFailureException.Kind.RECENT_AUTHENTICATION_REQUIRED);
         }
         return method;
+    }
+
+    static RecentAuthentication passwordProof(Object value, UUID userId) {
+        return value instanceof RecentAuthentication recent
+                && userId.equals(recent.userId()) && "password".equals(recent.method())
+                ? recent : null;
     }
 
     record RecentAuthentication(UUID userId, Instant at, String method) implements Serializable {

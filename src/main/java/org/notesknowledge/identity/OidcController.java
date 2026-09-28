@@ -41,24 +41,6 @@ final class OidcController {
                 .cacheControl(CacheControl.noStore()).build();
     }
 
-    @PostMapping("/reauth/oidc/google/authorizations")
-    ResponseEntity<Map<String, String>> beginRecent(HttpServletRequest request) {
-        return ResponseEntity.ok().cacheControl(CacheControl.noStore())
-                .body(Map.of("authorizationUrl", flows.begin(OidcProtocolPort.Action.RECENT_AUTH, request)));
-    }
-
-    @GetMapping("/reauth/oidc/google/callback")
-    ResponseEntity<Void> recent(@RequestParam(required = false) String state,
-            @RequestParam(required = false) String code,
-            @RequestParam(required = false) String iss,
-            @RequestParam(required = false) String error,
-            HttpServletRequest request, HttpServletResponse response) {
-        flows.complete(OidcProtocolPort.Action.RECENT_AUTH, state, iss,
-                error == null ? code : null, request, response);
-        return ResponseEntity.status(303).location(URI.create("/auth/complete"))
-                .cacheControl(CacheControl.noStore()).build();
-    }
-
     @GetMapping("/oidc/google/link-callback")
     ResponseEntity<Void> completeLink(@RequestParam(required = false) String state,
             @RequestParam(required = false) String code,

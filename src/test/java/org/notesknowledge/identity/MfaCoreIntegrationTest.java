@@ -67,6 +67,7 @@ class MfaCoreIntegrationTest {
                 "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=");
         registry.add("identity.rate.key-base64", () ->
                 "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=");
+        registry.add("identity.mfa.recent-auth-lifetime", () -> "2m");
     }
 
     @Autowired MockMvc mvc;
@@ -80,6 +81,7 @@ class MfaCoreIntegrationTest {
     @Autowired MfaChallengeService challenges;
     @Autowired SyntheticRates rates;
     @Autowired FaultyCompletionCheckpoint completionFault;
+    @Autowired MfaProperties mfaPolicy;
     @Autowired org.springframework.session.jdbc.JdbcIndexedSessionRepository sessionRepository;
     @Autowired org.springframework.session.web.http.DefaultCookieSerializer cookieSerializer;
 
@@ -90,9 +92,9 @@ class MfaCoreIntegrationTest {
         Browser anonymous = csrf(null);
         Browser full = login(anonymous, email, 200);
         assertThat(state(full)).isEqualTo("authenticated");
-        mvc.perform(post("/api/me/security/mfa/totp/enrollments")
-                .cookie(full.cookie()).header("X-CSRF-TOKEN", full.csrf()))
-                .andExpect(status().isForbidden());
+        IdentitySessionState.requireRecent((Object) ((org.springframework.session.Session) sessionRepository.findById(cookieId(full)))
+                .getAttribute(IdentitySessionState.RECENT_ATTRIBUTE), user,
+                clock.instant(), mfaPolicy);
         mvc.perform(post("/api/auth/reauth/password").cookie(full.cookie())
                 .header("X-CSRF-TOKEN", full.csrf()).contentType(MediaType.APPLICATION_JSON)
                 .content("{\"password\":\"wrong\"}"))
@@ -214,6 +216,65 @@ class MfaCoreIntegrationTest {
         assertThat(state(recoveredFull)).isEqualTo("anonymous");
         assertThat(output.getAll()).doesNotContain(manual, enrollmentCode,
                 secondCode, firstRecovery, challenge);
+    }
+
+    @Test void passwordProofIsRecentImmediatelyAndSurvivesMfaAtItsOriginalTime()
+            throws Exception {
+        UUID plainUser = account();
+        Instant plainProofAt = clock.instant();
+        Browser plain = login(csrf(null), email(plainUser), 200);
+        var plainFact = (IdentitySessionState.RecentAuthentication) ((org.springframework.session.Session)
+                sessionRepository.findById(cookieId(plain))).getAttribute(IdentitySessionState.RECENT_ATTRIBUTE);
+        assertThat(plainFact).isNotNull();
+        assertThat(plainFact.userId()).isEqualTo(plainUser);
+        assertThat(plainFact.method()).isEqualTo("password");
+        assertThat(plainFact.at()).isEqualTo(plainProofAt);
+        IdentitySessionState.requireRecent(plainFact, plainUser, clock.instant(), mfaPolicy);
+
+        UUID mfaUser = account();
+        var setup = management.begin(mfaUser);
+        byte[] seed = decodeBase32(setup.manualSecret());
+        management.confirm(mfaUser, setup.enrollmentId(),
+                totp.codeAt(seed, clock.instant().getEpochSecond() / 30));
+        Instant mfaProofAt = clock.instant();
+        Browser pre = login(csrf(null), email(mfaUser), 202);
+        var preFact = (IdentitySessionState.RecentAuthentication) ((org.springframework.session.Session)
+                sessionRepository.findById(cookieId(pre))).getAttribute(IdentitySessionState.RECENT_ATTRIBUTE);
+        assertThat(preFact.at()).isEqualTo(mfaProofAt);
+        assertThat(preFact.method()).isEqualTo("password");
+        mvc.perform(get("/api/me/security").cookie(pre.cookie()))
+                .andExpect(status().isForbidden());
+        clock.advanceSeconds(30);
+        MvcResult elevated = mvc.perform(post("/api/auth/mfa/challenges/"
+                + pre.challengeId() + "/totp")
+                .cookie(pre.cookie()).header("X-CSRF-TOKEN", pre.csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"code\":\"" + totp.codeAt(seed,
+                        clock.instant().getEpochSecond() / 30) + "\"}"))
+                .andExpect(status().isOk()).andReturn();
+        Browser full = csrf(elevated.getResponse().getCookie("SESSION"));
+        var fullFact = (IdentitySessionState.RecentAuthentication) ((org.springframework.session.Session)
+                sessionRepository.findById(cookieId(full))).getAttribute(IdentitySessionState.RECENT_ATTRIBUTE);
+        assertThat(fullFact).isEqualTo(preFact);
+        IdentitySessionState.requireRecent(fullFact, mfaUser, clock.instant(), mfaPolicy);
+
+        Instant delayedProofAt = clock.instant();
+        Browser delayedPre = login(csrf(null), email(mfaUser), 202);
+        clock.advanceSeconds(130);
+        MvcResult delayedElevation = mvc.perform(post("/api/auth/mfa/challenges/"
+                + delayedPre.challengeId() + "/totp")
+                .cookie(delayedPre.cookie()).header("X-CSRF-TOKEN", delayedPre.csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"code\":\"" + totp.codeAt(seed,
+                        clock.instant().getEpochSecond() / 30) + "\"}"))
+                .andExpect(status().isOk()).andReturn();
+        Browser delayedFull = csrf(delayedElevation.getResponse().getCookie("SESSION"));
+        var delayedFact = (IdentitySessionState.RecentAuthentication) ((org.springframework.session.Session)
+                sessionRepository.findById(cookieId(delayedFull))).getAttribute(IdentitySessionState.RECENT_ATTRIBUTE);
+        assertThat(delayedFact.at()).isEqualTo(delayedProofAt);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> IdentitySessionState
+                .requireRecent(delayedFact, mfaUser, clock.instant(), mfaPolicy))
+                .hasMessage("recent_authentication_required");
     }
 
     @Test void concurrentTotpAndRecoveryConsumptionEachHaveOneWinner() throws Exception {

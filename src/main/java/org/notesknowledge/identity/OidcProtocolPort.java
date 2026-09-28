@@ -5,7 +5,7 @@ import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequ
 
 /** The only provider-facing seam; validated identity claims never carry provider tokens onward. */
 interface OidcProtocolPort {
-    enum Action { LOGIN, RECENT_AUTH, LINK }
+    enum Action { LOGIN, LINK }
 
     record ValidatedPrincipal(String issuer, String subject, String email,
             boolean emailVerified, String hostedDomain, Instant authTime) { }

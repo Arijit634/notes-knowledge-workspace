@@ -115,7 +115,7 @@ class IdentityCoreIntegrationTest {
     RequestMappingHandlerMapping mappings;
 
     @Test
-    void onlyTheThirtyTwoAuthorizedProductPathsAreMapped() {
+    void onlyTheThirtyActiveAuthorizedProductPathsAreMapped() {
         Set<String> paths = mappings.getHandlerMethods().keySet().stream()
                 .flatMap(mapping -> mapping.getPatternValues().stream())
                 .filter(path -> path.startsWith("/api/"))
@@ -132,8 +132,6 @@ class IdentityCoreIntegrationTest {
                 "/api/auth/logout", "/api/auth/reauth/password",
                 "/api/auth/oidc/google/authorizations",
                 "/api/auth/oidc/google/callback",
-                "/api/auth/reauth/oidc/google/authorizations",
-                "/api/auth/reauth/oidc/google/callback",
                 "/api/auth/oidc/google/link-callback",
                 "/api/me/security/mfa/totp/enrollments",
                 "/api/me/security/mfa/totp/enrollments/{enrollmentId}/confirmation",

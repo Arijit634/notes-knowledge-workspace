@@ -177,11 +177,9 @@ final class MfaManagementService {
                 Instant now = clock.instant();
                 Object persistedRecent = current.persisted().getAttribute(
                         IdentitySessionState.RECENT_ATTRIBUTE);
-                String method = IdentitySessionState.requireIndependentRecent(
+                IdentitySessionState.requireIndependentRecent(
                         persistedRecent, userId, now, policy);
-                if (("password".equals(method)
-                        && identity.currentPasswordVerifier(userId).isEmpty())
-                        || ("oidc".equals(method) && !identity.hasActiveGoogleLink(userId))) {
+                if (identity.currentPasswordVerifier(userId).isEmpty()) {
                     throw ApiFailureException.of(
                             ApiFailureException.Kind.RECENT_AUTHENTICATION_REQUIRED);
                 }
