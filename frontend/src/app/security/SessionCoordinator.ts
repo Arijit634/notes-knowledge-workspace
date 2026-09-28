@@ -8,7 +8,7 @@ import {
 export type ServerSessionAuthority = 'anonymous' | 'mfaRequired' | 'authenticated'
 export type LocalSessionState = 'unknown' | ServerSessionAuthority
 
-/** Phase 3 will supply actual session bootstrap/refresh; this class never calls an auth API. */
+/** Authority state only; AuthRuntime performs the no-store server bootstrap. */
 export class SessionCoordinator {
   private current: LocalSessionState = 'unknown'
   private scope: ViewerCacheScope = ANONYMOUS_VIEWER_SCOPE

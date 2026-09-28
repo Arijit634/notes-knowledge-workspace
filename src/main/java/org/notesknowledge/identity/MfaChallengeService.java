@@ -59,6 +59,20 @@ final class MfaChallengeService {
                 .map(config -> "active".equals(config.state())).orElse(false);
     }
 
+    String currentContinuation(UUID userId, HttpServletRequest request) {
+        HttpSession session = request.getSession(false);
+        if (session == null || !identity.isActive(userId)) return null;
+        IdentitySessionState.Challenge current = challenges.readCurrent(session.getId(), userId);
+        if (current == null || current.id() == null
+                || !current.id().matches("[A-Za-z0-9_-]{43}")
+                || current.failedAttempts() >= policy.maxChallengeFailures()
+                || !current.expiresAt().isAfter(clock.instant())) return null;
+        return repository.configuration(userId)
+                .filter(config -> "active".equals(config.state())
+                        && current.activation().equals(config.activatedAt()))
+                .map(config -> current.id()).orElse(null);
+    }
+
     String begin(UUID userId, HttpServletRequest request) {
         return begin(userId, request, "password");
     }
