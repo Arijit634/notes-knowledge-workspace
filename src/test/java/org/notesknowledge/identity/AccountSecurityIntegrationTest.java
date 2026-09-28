@@ -16,6 +16,7 @@ import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.IntStream;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -854,7 +855,7 @@ class AccountSecurityIntegrationTest {
         activateMfa(owner);
         Browser current = csrf(cookie(session(owner, "ROLE_USER", "password")));
         int[] outcomes = race(current, true);
-        assertThat(outcomes).containsExactlyInAnyOrder(200, 401);
+        assertSingleMfaRaceWinner(outcomes, false);
         assertThat(mfa.configuration(owner).orElseThrow().recoveryGeneration()).isEqualTo(2);
         assertThat(mfaAudits(owner, "mfa_recovery", "regenerated")).isEqualTo(1);
         assertThat(notices(owner, "mfa_reset")).isEqualTo(1);
@@ -865,9 +866,7 @@ class AccountSecurityIntegrationTest {
         activateMfa(owner);
         Browser current = csrf(cookie(session(owner, "ROLE_USER", "password")));
         int[] outcomes = race(current, false);
-        assertThat(outcomes).contains(401);
-        assertThat(outcomes[0] == 204 || outcomes[1] == 204
-                || outcomes[0] == 200 || outcomes[1] == 200).isTrue();
+        assertSingleMfaRaceWinner(outcomes, true);
         if (mfa.configuration(owner).isEmpty()) {
             assertThat(jdbc.queryForObject("select count(*) from identity.mfa_recovery_code where user_id = ?",
                     Integer.class, owner)).isZero();
@@ -1011,6 +1010,17 @@ class AccountSecurityIntegrationTest {
             return new int[]{first.get(30, TimeUnit.SECONDS),
                     second.get(30, TimeUnit.SECONDS)};
         }
+    }
+
+    private void assertSingleMfaRaceWinner(int[] outcomes, boolean disableMayWin) {
+        assertThat(outcomes).hasSize(2);
+        assertThat(IntStream.of(outcomes)
+                .filter(status -> status == 200 || (disableMayWin && status == 204))
+                .count()).isEqualTo(1);
+        // A stale browser request can lose at authentication or at the protected operation boundary.
+        assertThat(IntStream.of(outcomes)
+                .filter(status -> status == 401 || status == 403)
+                .count()).isEqualTo(1);
     }
 
     private void activateMfa(UUID owner) {
