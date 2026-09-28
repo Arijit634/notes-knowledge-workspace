@@ -2,12 +2,14 @@
 export class AuthContinuationState {
   verificationToken: string | null = null
   resetToken: string | null = null
+  emailChangeToken: string | null = null
   challengeId: string | null = null
-  returnIntent: '/' | null = null
+  returnIntent: '/settings/security' | '/settings/security/mfa' | '/settings/security/sessions' | null = null
 
   clear(): void {
     this.verificationToken = null
     this.resetToken = null
+    this.emailChangeToken = null
     this.challengeId = null
     this.returnIntent = null
   }

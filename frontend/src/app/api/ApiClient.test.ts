@@ -75,6 +75,16 @@ describe('ApiClient transport', () => {
     expect(otherFetcher).toHaveBeenCalledTimes(1)
   })
 
+  it('does not replay sensitive mutations when CSRF rejection requests fresh user action', async () => {
+    const csrf = new CsrfManager(async () => 'renewed-proof')
+    csrf.set('old-proof')
+    const fetcher = vi.fn(async () => problem(403, 'csrf_invalid'))
+    await expect(new ApiClient(csrf, fetcher as typeof fetch)
+      .request('DELETE', '/api/me/account', { json: { confirmAccountDeletion: true },
+        retryOnCsrfInvalid: false })).rejects.toBeInstanceOf(ApiProblemError)
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+
   it('never automatically retries a failed mutation for 429, 503 or network failure', async () => {
     const csrf = new CsrfManager()
     csrf.set('synthetic-proof')

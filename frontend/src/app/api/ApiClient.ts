@@ -27,6 +27,7 @@ export interface ApiRequestOptions {
   readonly signal?: AbortSignal
   readonly responseType?: ApiResponseType
   readonly ifMatch?: string
+  readonly retryOnCsrfInvalid?: boolean
 }
 
 const successful = new Set([200, 201, 202, 204, 206])
@@ -93,7 +94,7 @@ export class ApiClient {
         } catch {
           throw new ApiProtocolError()
         }
-        if (unsafe && !csrfRetry && response.status === 403
+        if (unsafe && options.retryOnCsrfInvalid !== false && !csrfRetry && response.status === 403
             && failure.problem.code === 'csrf_invalid') {
           this.csrf.clear()
           try {

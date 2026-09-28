@@ -133,7 +133,7 @@ class AccountSecurityIntegrationTest {
                 .filter(c -> firstId.equals(c.capabilityId())).findFirst().orElseThrow();
         deliveryWorker.process(claim);
         assertThat(mail.lastRecipient).isEqualTo(first);
-        assertThat(mail.lastMessage.body()).contains("/confirm-email-change#token=");
+        assertThat(mail.lastMessage.body()).contains("/settings/security#token=");
         String second = "second-" + UUID.randomUUID() + "@example.test";
         emailRequest(browser, second).andExpect(status().isAccepted());
         assertThat(jdbc.queryForObject("""

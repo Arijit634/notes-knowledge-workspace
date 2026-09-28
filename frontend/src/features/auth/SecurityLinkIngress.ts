@@ -2,7 +2,8 @@ import type { AuthContinuationState } from './AuthContinuationState'
 
 /** Capture first, scrub synchronously, then let React or diagnostics render. */
 export function captureSecurityLink(location: Location, history: History, state: AuthContinuationState): void {
-  if (location.pathname !== '/verify-email' && location.pathname !== '/reset-password') return
+  if (location.pathname !== '/verify-email' && location.pathname !== '/reset-password'
+      && location.pathname !== '/settings/security') return
   const fragment = location.hash
   if (!fragment) return
   history.replaceState(null, '', location.pathname)
@@ -11,5 +12,6 @@ export function captureSecurityLink(location: Location, history: History, state:
   try { token = decodeURIComponent(encoded) } catch { return }
   if (!/^[A-Za-z0-9._~-]{1,128}$/.test(token)) return
   if (location.pathname === '/verify-email') state.verificationToken = token
-  else state.resetToken = token
+  else if (location.pathname === '/reset-password') state.resetToken = token
+  else state.emailChangeToken = token
 }
