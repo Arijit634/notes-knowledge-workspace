@@ -70,10 +70,11 @@ class PostgreSqlCompatibilityTest {
                         "V002__identity__account_verification_and_security_email.sql",
                         "V003__identity__mfa_core.sql",
                         "V004__identity__google_oidc_core.sql",
-                        "V005__identity__application_session_descriptor.sql");
+                        "V005__identity__application_session_descriptor.sql",
+                        "V006__identity__privilege_assignment.sql");
         assertThat(jdbc.queryForObject(
                 "select to_regclass('public.flyway_schema_history') is not null", Boolean.class)).isTrue();
-        assertThat(productRelationCount()).isEqualTo(10);
+        assertThat(productRelationCount()).isEqualTo(11);
         assertThat(publicNonFrameworkRelationCount()).isZero();
     }
 
