@@ -12,7 +12,8 @@ const noContent = () => new Response(null, { status: 204 })
 
 function mount(path: string, state: 'anonymous' | 'mfaRequired' | 'authenticated' = 'anonymous',
   handler?: (method: string, path: string, body: unknown) => Response,
-  sessionBody?: object) {
+  sessionBody?: object, securityBody: object = { email: 'person@example.test', passwordConfigured: true,
+    mfaState: 'disabled', oidcLinks: [] }) {
   window.history.replaceState(null, '', path)
   const calls: Array<{ method: string; path: string; body: unknown }> = []
   const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -21,6 +22,7 @@ function mount(path: string, state: 'anonymous' | 'mfaRequired' | 'authenticated
     calls.push({ method, path: target, body })
     if (target === '/api/auth/session') return json(sessionBody ?? (state === 'mfaRequired' ? { state, challengeId: challenge } : { state }))
     if (target === '/api/auth/csrf') return json({ csrfToken: 'synthetic-proof' })
+    if (target === '/api/me/security') return json(securityBody)
     return handler?.(method, target, body) ?? noContent()
   })
   vi.stubGlobal('fetch', fetcher)
@@ -156,20 +158,22 @@ describe('authentication browser journey', () => {
   it('sends no email in password recent authentication', async () => {
     const { calls } = mount('/reauth', 'authenticated')
     await screen.findByRole('heading', { name: 'Confirm your identity' })
-    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'Synthetic-password-123!' } })
+    fireEvent.change(await screen.findByLabelText('Password'), { target: { value: 'Synthetic-password-123!' } })
     fireEvent.click(screen.getByRole('button', { name: 'Confirm with password' }))
     await screen.findByText(/Identity confirmed/i)
     expect(calls.find(call => call.path === '/api/auth/reauth/password')?.body).toEqual({ email: null, password: 'Synthetic-password-123!' })
   })
 
-  it('uses the same approved navigation boundary for Google recent authentication', async () => {
-    const { calls } = mount('/reauth', 'authenticated', (_method, path) =>
-      path === '/api/auth/reauth/oidc/google/authorizations'
-        ? json({ authorizationUrl: 'http://accounts.google.com/o/oauth2/v2/auth' }) : noContent())
+  it('guides a passwordless account to the existing reset flow without Google reauth', async () => {
+    const { calls } = mount('/reauth', 'authenticated', undefined, undefined,
+      { email: 'person@example.test', passwordConfigured: false, mfaState: 'disabled', oidcLinks: [] })
     await screen.findByRole('heading', { name: 'Confirm your identity' })
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm with Google' }))
-    await screen.findByText(/Something went wrong/i)
-    expect(calls.some(call => call.path === '/api/auth/reauth/oidc/google/authorizations')).toBe(true)
+    await screen.findByText(/set an application password first/i)
+    expect(screen.getByRole('link', { name: 'Set an application password' }).getAttribute('href'))
+      .toBe('/forgot-password')
+    expect(screen.queryByRole('button', { name: 'Confirm with Google' })).toBeNull()
+    expect(screen.queryByLabelText('Password')).toBeNull()
+    expect(calls.some(call => call.path.includes('/reauth/oidc/'))).toBe(false)
   })
 
   it('clears the authenticated viewer on logout', async () => {

@@ -239,7 +239,7 @@ describe('security settings browser journey', () => {
     await screen.findByText(setup.manualSecret)
     await auth.establish('anonymous')
     await waitFor(() => expect(screen.queryByText(setup.manualSecret)).toBeNull())
-    expect(auth.queries.getQueryCache().getAll()).toHaveLength(0)
+    await waitFor(() => expect(auth.queries.getQueryCache().getAll()).toHaveLength(0))
     expect(window.localStorage.length).toBe(0)
     expect(window.sessionStorage.length).toBe(0)
   })

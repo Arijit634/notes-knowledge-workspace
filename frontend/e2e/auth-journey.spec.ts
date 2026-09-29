@@ -1,8 +1,12 @@
 import { expect, test, type Page } from '@playwright/test'
 
 const challenge = 'B'.repeat(43)
-async function fakeBackend(page: Page, initial: 'anonymous' | 'mfaRequired' | 'authenticated' = 'anonymous') {
+async function fakeBackend(page: Page, initial: 'anonymous' | 'mfaRequired' | 'authenticated' = 'anonymous',
+  passwordConfigured = true) {
   let state = initial
+  await page.route('**/api/me/security', route => route.fulfill({ status: 200,
+    contentType: 'application/json', body: JSON.stringify({ email: 'person@example.test',
+      passwordConfigured, mfaState: 'disabled', oidcLinks: [] }) }))
   await page.route('**/api/auth/**', async route => {
     const request = route.request(), path = new URL(request.url()).pathname
     const method = request.method()
@@ -95,6 +99,22 @@ test('anonymous and pre-MFA authority cannot enter recent authentication', async
   await fakeBackend(page, 'mfaRequired')
   await page.goto('/reauth')
   await expect(page).toHaveURL(/\/mfa$/)
+})
+
+test('recent authentication offers password proof only when configured', async ({ page }) => {
+  await fakeBackend(page, 'authenticated')
+  await page.goto('/reauth')
+  await expect(page.getByRole('button', { name: 'Confirm with password' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Confirm with Google' })).toHaveCount(0)
+})
+
+test('passwordless recent authentication guides to existing recovery', async ({ page }) => {
+  await fakeBackend(page, 'authenticated', false)
+  await page.goto('/reauth')
+  await expect(page.getByText(/set an application password first/i)).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Set an application password' }))
+    .toHaveAttribute('href', '/forgot-password')
+  await expect(page.getByRole('button', { name: 'Confirm with Google' })).toHaveCount(0)
 })
 
 test('authenticated authority cannot remain on login', async ({ page }) => {

@@ -36,7 +36,8 @@ class LoginCommitService {
         }
         identity.audit(userId, "password_login", "success", now);
         boolean mfaRequired = challenges.active(userId);
-        sessions.establish(userId, !mfaRequired, request, response);
+        sessions.establish(userId, !mfaRequired, request, response,
+                new IdentitySessionState.RecentAuthentication(userId, now, "password"));
         String challengeId = mfaRequired ? challenges.begin(userId, request) : null;
         checkpoint.afterSessionMutation(request);
         return new LoginResult(mfaRequired, challengeId);

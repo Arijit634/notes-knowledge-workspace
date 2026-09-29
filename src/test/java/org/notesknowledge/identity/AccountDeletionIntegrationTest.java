@@ -104,7 +104,7 @@ class AccountDeletionIntegrationTest {
                 passwords.encode("SyntheticPassword-2026!"), owner);
         UUID unrelated = account("active");
         Browser current = csrf(cookie(session(owner, "ROLE_USER", "password", clock.instant())));
-        String other = session(owner, "ROLE_USER", "oidc", clock.instant());
+        String other = session(owner, "ROLE_USER", "password", clock.instant());
         String pending = session(owner, "ROLE_MFA_PENDING", null, clock.instant());
         String foreign = session(unrelated, "ROLE_USER", null, clock.instant());
         Session stale = repository().findById(raw(current.cookie()));

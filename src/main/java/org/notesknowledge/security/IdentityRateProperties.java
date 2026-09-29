@@ -49,8 +49,7 @@ record IdentityRateProperties(int windowSeconds, int providerWindowSeconds,
                     "EMAIL_CHANGE_CONFIRMATION", "SESSION_REVOKE_ONE",
                     "SESSION_REVOKE_OTHERS", "SESSION_REVOKE_ALL",
                     "ACCOUNT_DELETE" -> recentAuthCeiling;
-            case "OIDC_LOGIN_START", "OIDC_LOGIN_CALLBACK", "OIDC_REAUTH_START",
-                    "OIDC_REAUTH_CALLBACK", "OIDC_LINK_START", "OIDC_LINK_CALLBACK",
+            case "OIDC_LOGIN_START", "OIDC_LOGIN_CALLBACK", "OIDC_LINK_START", "OIDC_LINK_CALLBACK",
                     "OIDC_UNLINK" -> recentAuthCeiling;
             case "IDENTITY_GLOBAL" -> aggregateCeiling;
             case "SECURITY_EMAIL_PROVIDER" -> providerCeiling;

@@ -28,13 +28,12 @@ final class OidcFlowService {
         PROTOCOL_STATE_INVALID, PROTOCOL_TRANSACTION_EXPIRED,
         PROVIDER_VALIDATION_FAILED, PROVIDER_UNAVAILABLE,
         ACCOUNT_INELIGIBLE, ACCOUNT_ACTION_REQUIRED,
-        RECENT_AUTH_IDENTITY_MISMATCH, RECENT_AUTH_STALE, LINK_CONFLICT, INTERNAL_FAILURE
+        RECENT_AUTH_STALE, LINK_CONFLICT, INTERNAL_FAILURE
     }
 
     private static final Pattern HOSTED_DOMAIN = Pattern.compile(
             "(?i)^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+"
                     + "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$");
-    private static final long OIDC_FUTURE_SKEW_SECONDS = 60;
 
     private final OidcProtocolPort protocol;
     private final GoogleOidcProperties policy;
@@ -82,7 +81,6 @@ final class OidcFlowService {
                 ? IdentitySessionState.principal("ROLE_USER") : null;
         rates.check(switch (action) {
             case LOGIN -> "OIDC_LOGIN_START";
-            case RECENT_AUTH -> "OIDC_REAUTH_START";
             case LINK -> "OIDC_LINK_START";
         }, userId, request);
         FailureReason[] reason = {FailureReason.ACCOUNT_INELIGIBLE};
@@ -114,7 +112,6 @@ final class OidcFlowService {
                 ? IdentitySessionState.principal("ROLE_USER") : null;
         rates.check(switch (action) {
             case LOGIN -> "OIDC_LOGIN_CALLBACK";
-            case RECENT_AUTH -> "OIDC_REAUTH_CALLBACK";
             case LINK -> "OIDC_LINK_CALLBACK";
         }, userId, request);
         FailureReason[] reason = {FailureReason.PROTOCOL_STATE_INVALID};
@@ -161,11 +158,6 @@ final class OidcFlowService {
         if (principal == null || !policy.issuer().equals(principal.issuer())
                 || principal.subject() == null
                 || principal.subject().isBlank() || principal.subject().length() > 255) deny();
-        if (action == OidcProtocolPort.Action.RECENT_AUTH) {
-            reason[0] = FailureReason.RECENT_AUTH_STALE;
-            Instant authTime = principal.authTime();
-            if (!freshAuthTime(authTime, clock.instant())) deny();
-        }
         reason[0] = FailureReason.INTERNAL_FAILURE;
         checkpoint.beforeOidcLock(request);
         boolean[] mutated = {false};
@@ -228,22 +220,6 @@ final class OidcFlowService {
                     checkpoint.afterOidcLinkAudit(request);
                     delivery.queueOidcNotice(userId, eventId, "google_oidc_linked", now);
                     checkpoint.afterOidcLinkNotice(request);
-                    return new Completion(false, null);
-                }
-                if (action == OidcProtocolPort.Action.RECENT_AUTH) {
-                    reason[0] = FailureReason.RECENT_AUTH_STALE;
-                    if (!freshAuthTime(principal.authTime(), now)) deny();
-                    reason[0] = FailureReason.RECENT_AUTH_IDENTITY_MISMATCH;
-                    var link = links.linkForUpdate(principal.issuer(), principal.subject());
-                    if (link.isEmpty() || !link.get().active()
-                            || !userId.equals(link.get().userId())) deny();
-                    // Only write request-local state after all principal checks succeed.
-                    mutated[0] = true;
-                    requestSession.removeAttribute(OidcSessionTransaction.ATTRIBUTE);
-                    requestSession.setAttribute(IdentitySessionState.RECENT_ATTRIBUTE,
-                            new IdentitySessionState.RecentAuthentication(userId, now, "oidc"));
-                    identity.audit(userId, "oidc_recent_auth", "success", now);
-                    checkpoint.afterSessionMutation(request);
                     return new Completion(false, null);
                 }
                 var link = links.linkForUpdate(principal.issuer(), principal.subject());
@@ -320,16 +296,10 @@ final class OidcFlowService {
         return hd != null && hd.length() <= 253 && HOSTED_DOMAIN.matcher(hd).matches();
     }
 
-    private boolean freshAuthTime(Instant authTime, Instant now) {
-        return authTime != null && authTime.isAfter(now.minus(mfaPolicy.recentAuthLifetime()))
-                && !authTime.isAfter(now.plusSeconds(OIDC_FUTURE_SKEW_SECONDS));
-    }
-
     private void auditFailure(OidcProtocolPort.Action action, UUID userId,
             FailureReason reason) {
         String category = switch (action) {
             case LOGIN -> "oidc_login";
-            case RECENT_AUTH -> "oidc_recent_auth";
             case LINK -> "oidc_link";
         };
         try {

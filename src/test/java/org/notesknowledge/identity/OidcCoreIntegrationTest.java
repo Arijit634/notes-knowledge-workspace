@@ -293,8 +293,10 @@ class OidcCoreIntegrationTest {
         MvcResult login = callback(anonymous, start(anonymous, false),
                 protocol.accept(subject, email(owner), true), false, 200);
         Browser current = csrf(login.getResponse().getCookie("SESSION"));
-        String recentState = start(current, true);
-        callback(current, recentState, protocol.accept(subject, email(owner), true), true, 204);
+        mvc.perform(post("/api/auth/reauth/password").cookie(current.cookie())
+                .header("X-CSRF-TOKEN", current.csrf()).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":null,\"password\":\"SyntheticPassword-2026!\"}"))
+                .andExpect(status().isNoContent());
         UUID locator = linkId(owner, subject);
         MvcResult removed = unlink(current, locator, 204);
         Browser remaining = csrf(removed.getResponse().getCookie("SESSION"));
@@ -350,9 +352,6 @@ class OidcCoreIntegrationTest {
                         clock.instant().minusSeconds(3600), "password"));
         saveSession(persisted);
         linkCallback(current, state, code, 403);
-        Browser wrongAction = fullBrowser(owner, "password");
-        String recentState = start(wrongAction, true);
-        linkCallback(wrongAction, recentState, code, 401);
         Browser expiredTransaction = fullBrowser(owner, "password");
         String expiringState = startLink(expiredTransaction);
         clock.advanceSeconds(301);
@@ -665,47 +664,10 @@ class OidcCoreIntegrationTest {
                 .has("challengeId")).isFalse();
     }
 
-    @Test void recentAuthRequiresCurrentLinkedPrincipalAndNeverChangesAccount() throws Exception {
-        UUID user = account();
-        String subject = "sub-" + UUID.randomUUID();
-        link(user, subject);
-        Browser anonymous = csrf(null);
-        MvcResult primary = callback(anonymous, start(anonymous, false),
-                protocol.accept(subject, email(user), true), false, 200);
-        Browser full = csrf(primary.getResponse().getCookie("SESSION"));
-        String state = start(full, true);
-        callback(full, state, protocol.accept(subject, email(user), true), true, 204);
-        assertThat(sessionState(full)).isEqualTo("authenticated");
-        org.springframework.session.Session persisted =
-                sessionRepository.findById(cookieId(full));
-        assertThat(persisted).isNotNull();
-        Object recent = persisted.getAttribute(IdentitySessionState.RECENT_ATTRIBUTE);
-        assertThat(recent).isInstanceOf(IdentitySessionState.RecentAuthentication.class);
-        assertThat(((IdentitySessionState.RecentAuthentication) recent).userId()).isEqualTo(user);
-        assertThat(((IdentitySessionState.RecentAuthentication) recent).method()).isEqualTo("oidc");
-        callback(full, state, protocol.accept(subject, email(user), true), true, 401);
-
-        String wrongState = start(full, true);
-        callback(full, wrongState,
-                protocol.accept("unlinked-" + UUID.randomUUID(), email(user), true), true, 401);
-        assertThat(sessionState(full)).isEqualTo("authenticated");
-        assertThat(jdbc.queryForObject("""
-                select count(*) from identity.security_audit_fact
-                where target_user_id = ? and event_category = 'oidc_recent_auth'
-                  and outcome_code = 'denied'
-                  and reason_code = 'recent_auth_identity_mismatch'
-                """, Integer.class, user)).isGreaterThanOrEqualTo(1);
-        assertThat(jdbc.queryForObject("select count(*) from identity.external_identity_link",
-                Integer.class)).isGreaterThanOrEqualTo(1);
-    }
-
     @Test void stateSessionActionExpiryProviderFailureAndRateFailuresDenySafely() throws Exception {
         Browser browser = csrf(null);
         mvc.perform(post("/api/auth/oidc/google/authorizations")
                 .cookie(browser.cookie())).andExpect(status().isForbidden());
-        mvc.perform(post("/api/auth/reauth/oidc/google/authorizations")
-                .cookie(browser.cookie()).header("X-CSRF-TOKEN", browser.csrf()))
-                .andExpect(status().isUnauthorized());
         String state = start(browser, false);
         String superseding = start(browser, false);
         String code = protocol.accept("sub-" + UUID.randomUUID(),
@@ -797,34 +759,6 @@ class OidcCoreIntegrationTest {
                 """, Integer.class, subject)).isEqualTo(1);
     }
 
-    @Test void concurrentRecentCallbacksEstablishExactlyOneRecentFact() throws Exception {
-        UUID user = account();
-        String subject = "sub-" + UUID.randomUUID();
-        link(user, subject);
-        Browser anonymous = csrf(null);
-        MvcResult primary = callback(anonymous, start(anonymous, false),
-                protocol.accept(subject, email(user), true), false, 200);
-        Browser full = csrf(primary.getResponse().getCookie("SESSION"));
-        String state = start(full, true);
-        String code = protocol.accept(subject, email(user), true);
-        checkpoint.barrier.set(new CountDownLatch(2));
-        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            var a = executor.submit(() -> callback(full, state, code, true, -1));
-            var b = executor.submit(() -> callback(full, state, code, true, -1));
-            assertThat(java.util.List.of(a.get(30, TimeUnit.SECONDS).getResponse().getStatus(),
-                    b.get(30, TimeUnit.SECONDS).getResponse().getStatus()))
-                    .containsExactlyInAnyOrder(303, 401);
-        } finally {
-            checkpoint.barrier.set(null);
-        }
-        assertThat(sessionState(full)).isEqualTo("authenticated");
-        assertThat(jdbc.queryForObject("""
-                select count(*) from identity.security_audit_fact
-                where target_user_id = ? and event_category = 'oidc_recent_auth'
-                  and outcome_code = 'success'
-                """, Integer.class, user)).isEqualTo(1);
-    }
-
     @Test void verifiedWorkspaceHostedDomainBootstrapsButThirdPartyMailDoesNot()
             throws Exception {
         String workspaceSubject = "workspace-" + UUID.randomUUID();
@@ -863,43 +797,7 @@ class OidcCoreIntegrationTest {
                 """, Integer.class, subject, user)).isEqualTo(1);
     }
 
-    @Test void recentAuthenticationRejectsMissingStaleAndFutureProviderAuthTime()
-            throws Exception {
-        UUID user = account();
-        String subject = "recent-" + UUID.randomUUID();
-        link(user, subject);
-        Browser anonymous = csrf(null);
-        MvcResult primary = callback(anonymous, start(anonymous, false),
-                protocol.accept(subject, email(user), true), false, 200);
-        Browser full = csrf(primary.getResponse().getCookie("SESSION"));
-        int linksBefore = jdbc.queryForObject(
-                "select count(*) from identity.external_identity_link", Integer.class);
-        for (Instant rejected : new Instant[] {null, clock.instant().minusSeconds(301),
-                clock.instant().plusSeconds(61)}) {
-            callback(full, start(full, true), protocol.accept(subject, email(user), true,
-                    null, rejected), true, 401);
-        }
-        org.springframework.session.Session persisted = sessionRepository.findById(cookieId(full));
-        Object recentFact = persisted.getAttribute(IdentitySessionState.RECENT_ATTRIBUTE);
-        assertThat(recentFact).isNull();
-        assertThat(jdbc.queryForObject(
-                "select count(*) from identity.external_identity_link", Integer.class))
-                .isEqualTo(linksBefore);
-        assertThat(jdbc.queryForObject("""
-                select count(*) from identity.security_audit_fact
-                where target_user_id = ? and event_category = 'oidc_recent_auth'
-                  and outcome_code = 'denied' and reason_code = 'recent_auth_stale'
-                """, Integer.class, user)).isGreaterThanOrEqualTo(3);
-        // The protocol double represents an ID token that may have an iat but no auth_time.
-        callback(full, start(full, true), protocol.accept(subject, email(user), true,
-                null, clock.instant().minusSeconds(20)), true, 204);
-        org.springframework.session.Session refreshed = sessionRepository.findById(cookieId(full));
-        assertThat(((IdentitySessionState.RecentAuthentication) refreshed
-                .getAttribute(IdentitySessionState.RECENT_ATTRIBUTE))
-                .userId()).isEqualTo(user);
-    }
-
-    @Test void authorizationResponseIssuerIsRequiredBeforeExchangeOnBothCallbacks()
+    @Test void authorizationResponseIssuerIsRequiredBeforeLoginExchange()
             throws Exception {
         Browser anonymous = csrf(null);
         String loginState = start(anonymous, false);
@@ -916,36 +814,9 @@ class OidcCoreIntegrationTest {
         assertThat(protocol.verificationCalls.get()).isEqualTo(calls + 1);
 
         Browser full = csrf(primary.getResponse().getCookie("SESSION"));
-        String recentState = start(full, true);
-        String recentCode = protocol.accept("unlinked-" + UUID.randomUUID(),
-                "changed@external.test", true);
-        calls = protocol.verificationCalls.get();
-        callbackWithIssuer(full, recentState, recentCode, true, 401, null);
-        callbackWithIssuer(full, recentState, recentCode, true, 401,
-                "https://wrong.example.test");
-        assertThat(protocol.verificationCalls.get()).isEqualTo(calls);
-        callback(full, recentState, recentCode, true, 401);
-        assertThat(protocol.verificationCalls.get()).isEqualTo(calls + 1);
-        org.springframework.session.Session persisted = sessionRepository.findById(cookieId(full));
-        Object recentFact = persisted.getAttribute(IdentitySessionState.RECENT_ATTRIBUTE);
-        assertThat(recentFact).isNull();
-    }
-
-    @Test void recentAuthIsRecheckedAfterProtocolWorkBeforeSessionCommit() throws Exception {
-        UUID user = account();
-        String subject = "delayed-" + UUID.randomUUID();
-        link(user, subject);
-        Browser anonymous = csrf(null);
-        MvcResult primary = callback(anonymous, start(anonymous, false),
-                protocol.accept(subject, email(user), true), false, 200);
-        Browser full = csrf(primary.getResponse().getCookie("SESSION"));
-        String state = start(full, true);
-        String code = protocol.accept(subject, email(user), true);
-        checkpoint.advanceBeforeCommitSeconds.set(301L);
-        callback(full, state, code, true, 401);
-        org.springframework.session.Session persisted = sessionRepository.findById(cookieId(full));
-        Object recentFact = persisted.getAttribute(IdentitySessionState.RECENT_ATTRIBUTE);
-        assertThat(recentFact).isNull();
+        assertThat(sessionState(full)).isEqualTo("authenticated");
+        assertThat((Object) ((org.springframework.session.Session) sessionRepository.findById(cookieId(full)))
+                .getAttribute(IdentitySessionState.RECENT_ATTRIBUTE)).isNull();
     }
 
     @Test void oidcFailureAuditUsesOnlyBoundedReasonsAndNoCanaries(CapturedOutput output)
@@ -1073,9 +944,9 @@ class OidcCoreIntegrationTest {
     }
 
     private String start(Browser browser, boolean recent) throws Exception {
-        String path = recent ? "/api/auth/reauth/oidc/google/authorizations"
-                : "/api/auth/oidc/google/authorizations";
-        MvcResult result = mvc.perform(post(path).cookie(browser.cookie())
+        assertThat(recent).isFalse();
+        MvcResult result = mvc.perform(post("/api/auth/oidc/google/authorizations")
+                .cookie(browser.cookie())
                 .header("X-CSRF-TOKEN", browser.csrf())).andExpect(status().isOk()).andReturn();
         assertThat(result.getResponse().getHeader("Cache-Control")).contains("no-store");
         URI authorization = URI.create(json(result, "authorizationUrl"));
@@ -1091,13 +962,13 @@ class OidcCoreIntegrationTest {
 
     private MvcResult callbackWithIssuer(Browser browser, String state, String code,
             boolean recent, int expected, String issuer) throws Exception {
-        String path = recent ? "/api/auth/reauth/oidc/google/callback"
-                : "/api/auth/oidc/google/callback";
-        var request = get(path).cookie(browser.cookie()).param("state", state).param("code", code);
+        assertThat(recent).isFalse();
+        var request = get("/api/auth/oidc/google/callback")
+                .cookie(browser.cookie()).param("state", state).param("code", code);
         if (issuer != null) request.param("iss", issuer);
         MvcResult result = mvc.perform(request).andReturn();
         if (expected >= 0) {
-            int actualExpected = expected == 200 || expected == 202 || (recent && expected == 204)
+            int actualExpected = expected == 200 || expected == 202
                     ? 303 : expected;
             assertThat(result.getResponse().getStatus()).isEqualTo(actualExpected);
             if (actualExpected == 303) {
@@ -1224,7 +1095,6 @@ class OidcCoreIntegrationTest {
             String nonce = randomValue();
             String redirect = switch (action) {
                 case LOGIN -> "https://example.test/api/auth/oidc/google/callback";
-                case RECENT_AUTH -> "https://example.test/api/auth/reauth/oidc/google/callback";
                 case LINK -> "https://example.test/api/auth/oidc/google/link-callback";
             };
             var builder = OAuth2AuthorizationRequest.authorizationCode()

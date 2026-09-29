@@ -69,20 +69,6 @@ class GoogleOidcProtocolAdapterTest {
                 .doesNotContain("client-secret", "code_verifier", "max_age=", "claims=");
     }
 
-    @Test void recentAuthorizationRequiresActiveReauthenticationAndIdTokenAuthTime() {
-        var adapter = adapter();
-        ReflectionTestUtils.setField(adapter, "recent", registration("google-recent",
-                "/api/auth/reauth/oidc/google/callback"));
-        var request = adapter.begin(OidcProtocolPort.Action.RECENT_AUTH);
-        assertThat(request.getAdditionalParameters()).containsEntry("max_age", "0")
-                .containsEntry("claims",
-                        "{\"id_token\":{\"auth_time\":{\"essential\":true}}}");
-        assertThat(request.getAuthorizationRequestUri()).contains("max_age=0", "claims=")
-                .doesNotContain("prompt=consent", "prompt=select_account");
-        assertThat(request.getAdditionalParameters().get("code_challenge_method"))
-                .isEqualTo("S256");
-    }
-
     @Test void validatedClaimsEnforceIssuerAudienceAuthorizedPartyAndTime() {
         var adapter = adapter();
         var registration = registration("google-login", "/api/auth/oidc/google/callback");
@@ -136,7 +122,7 @@ class GoogleOidcProtocolAdapterTest {
         var provider = new OidcAuthorizationCodeAuthenticationProvider(tokenClient,
                 user -> new DefaultOidcUser(List.of(new SimpleGrantedAuthority("OIDC")),
                         user.getIdToken()));
-        var adapter = new GoogleOidcProtocolAdapter(properties(), provider, registration, null, null);
+        var adapter = new GoogleOidcProtocolAdapter(properties(), provider, registration, null);
         var authorization = adapter.begin(OidcProtocolPort.Action.LOGIN);
         String nonceHash = authorization.getAdditionalParameters().get("nonce").toString();
         provider.setJwtDecoderFactory(ignored -> encoded -> jwt(nonceHash));
@@ -157,20 +143,9 @@ class GoogleOidcProtocolAdapterTest {
                 "synthetic-code", authorization.getState()))
                 .isInstanceOf(ApiFailureException.class).hasMessage("invalid_credentials");
 
-        var recentRegistration = registration("google-recent",
-                "/api/auth/reauth/oidc/google/callback");
-        var recentAdapter = new GoogleOidcProtocolAdapter(properties(), provider,
-                null, recentRegistration, null);
-        var recentRequest = recentAdapter.begin(OidcProtocolPort.Action.RECENT_AUTH);
-        Instant authenticatedAt = Instant.now();
-        provider.setJwtDecoderFactory(ignored -> encoded -> jwt(
-                recentRequest.getAdditionalParameters().get("nonce").toString(), authenticatedAt));
-        var recentPrincipal = recentAdapter.verify(OidcProtocolPort.Action.RECENT_AUTH,
-                recentRequest, "synthetic-code", recentRequest.getState());
-        assertThat(recentPrincipal.authTime()).isEqualTo(authenticatedAt);
         var linkRegistration = registration("google-link", "/api/auth/oidc/google/link-callback");
         var linkAdapter = new GoogleOidcProtocolAdapter(properties(), provider,
-                null, null, linkRegistration);
+                null, linkRegistration);
         var linkRequest = linkAdapter.begin(OidcProtocolPort.Action.LINK);
         assertThat(linkRequest.getScopes()).containsExactlyInAnyOrder("openid", "email");
         assertThat(linkRequest.getAdditionalParameters().get("code_challenge_method"))
@@ -190,7 +165,7 @@ class GoogleOidcProtocolAdapterTest {
 
     @Test void disabledModeFailsBoundedlyWithoutCredentialsOrNetwork() {
         var disabled = new GoogleOidcProtocolAdapter(new GoogleOidcProperties(false,
-                "", "", ISSUER, "", "", "", Duration.ofMinutes(5)));
+                "", "", ISSUER, "", "", Duration.ofMinutes(5)));
         assertThatThrownBy(() -> disabled.begin(OidcProtocolPort.Action.LOGIN))
                 .isInstanceOf(ApiFailureException.class)
                 .hasMessage("service_unavailable");
@@ -204,7 +179,6 @@ class GoogleOidcProtocolAdapterTest {
         return new GoogleOidcProperties(true, CLIENT,
                 "synthetic-client-secret", ISSUER,
                 "https://example.test/api/auth/oidc/google/callback",
-                "https://example.test/api/auth/reauth/oidc/google/callback",
                 "https://example.test/api/auth/oidc/google/link-callback",
                 Duration.ofMinutes(5));
     }

@@ -112,8 +112,6 @@ public class SecurityConfiguration {
                         .requestMatchers(HttpMethod.GET, "/api/auth/oidc/google/callback")
                         .access((authentication, context) -> new org.springframework.security.authorization.AuthorizationDecision(
                                 identityCore != null))
-                        .requestMatchers(HttpMethod.GET, "/api/auth/reauth/oidc/google/callback")
-                        .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.GET, "/api/auth/oidc/google/link-callback")
                         .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.POST,
@@ -121,7 +119,6 @@ public class SecurityConfiguration {
                                 "/api/auth/mfa/challenges/{challengeId}/recovery-code")
                         .hasAuthority("ROLE_MFA_PENDING")
                         .requestMatchers(HttpMethod.POST, "/api/auth/reauth/password",
-                                "/api/auth/reauth/oidc/google/authorizations",
                                 "/api/me/security/oidc/google/link-authorizations",
                                 "/api/me/security/mfa/totp/enrollments",
                                 "/api/me/security/mfa/totp/enrollments/{enrollmentId}/confirmation")

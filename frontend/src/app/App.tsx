@@ -1,11 +1,13 @@
 import { createContext, lazy, Suspense, useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { useForm } from 'react-hook-form'
+import { useQuery } from '@tanstack/react-query'
 import { ApiProblemError } from './api/ProblemDetailsDecoder'
 import { CsrfUnavailableError } from './security/CsrfManager'
 import { canEnterRoute, type RouteAccess } from './security/RouteGate'
 import { AuthRuntime } from '../features/auth/AuthRuntime'
 import { navigateToGoogle } from '../features/auth/OidcNavigationCoordinator'
+import { securityKeys, securitySummary } from '../features/security/SecurityApi'
 
 export const AUTH_ROUTES = ['/', '/signup', '/verify-email', '/login', '/mfa',
   '/forgot-password', '/reset-password', '/auth/complete', '/reauth'] as const
@@ -209,10 +211,16 @@ function AuthComplete() {
 function RecentAuth() {
   const auth = useAuth(), navigate = useNavigate()
   const [password, setPassword] = useState(''), [busy, setBusy] = useState(false), [complete, setComplete] = useState(false), [error, setError] = useState('')
+  const scope = auth.session.viewerScope
+  const summary = useQuery({ queryKey: securityKeys.summary(scope.kind === 'authenticated' ? scope.viewerEpoch : 'anonymous'),
+    queryFn: () => securitySummary(auth), retry: false, staleTime: 0 }, auth.queries)
   async function submit(event: FormEvent) { event.preventDefault(); setBusy(true); setError(''); try { await auth.api.request('POST', '/api/auth/reauth/password', { json: { email: null, password } }); setPassword(''); await auth.csrf.refresh(); setComplete(true); const destination = auth.continuation.returnIntent; auth.continuation.returnIntent = null; if (destination) navigate(destination, { replace: true }) } catch (e) { setError(message(e)) } finally { setBusy(false) } }
-  async function google() { setBusy(true); setError(''); try { const r = await auth.api.request<{ authorizationUrl?: unknown }>('POST', '/api/auth/reauth/oidc/google/authorizations'); navigateToGoogle(r.body?.authorizationUrl) } catch (e) { setError(message(e)) } finally { setBusy(false) } }
   return <Shell title="Confirm your identity" eyebrow="Recent authentication">
-    {complete ? <p role="status">Identity confirmed for this session.</p> : <><form onSubmit={submit}><label htmlFor="reauth-password">Password</label><input id="reauth-password" type="password" autoComplete="current-password" required maxLength={1024} value={password} onChange={e => setPassword(e.target.value)} />{error && <Alert>{error}</Alert>}<button disabled={busy}>Confirm with password</button></form><div className="divider" aria-hidden="true">or</div><button className="button-secondary" onClick={google} disabled={busy}>Confirm with Google</button></>}
+    {complete ? <p role="status">Identity confirmed for this session.</p>
+      : summary.isPending ? <p role="status">Checking available confirmation method…</p>
+        : summary.isError ? <Alert>{message(summary.error)}</Alert>
+          : summary.data.passwordConfigured ? <form onSubmit={submit}><label htmlFor="reauth-password">Password</label><input id="reauth-password" type="password" autoComplete="current-password" required maxLength={1024} value={password} onChange={e => setPassword(e.target.value)} />{error && <Alert>{error}</Alert>}<button disabled={busy}>Confirm with password</button></form>
+            : <><p>To confirm sensitive changes, set an application password first.</p><Link to="/forgot-password">Set an application password</Link></>}
     <p className="footnote"><Link to="/">Back to home</Link></p></Shell>
 }
 function AuthRoutes() {

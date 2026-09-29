@@ -30,6 +30,11 @@ final class MfaSessionTransitions {
 
     void establish(UUID userId, boolean full, HttpServletRequest request,
             HttpServletResponse response) {
+        establish(userId, full, request, response, null);
+    }
+
+    void establish(UUID userId, boolean full, HttpServletRequest request,
+            HttpServletResponse response, IdentitySessionState.RecentAuthentication passwordProof) {
         var session = request.getSession(false);
         if (session != null) {
             session.removeAttribute(IdentitySessionState.CHALLENGE_ATTRIBUTE);
@@ -43,6 +48,10 @@ final class MfaSessionTransitions {
         context.setAuthentication(authentication);
         SecurityContextHolder.setContext(context);
         contexts.saveContext(context, request, response);
+        if (passwordProof != null && userId.equals(passwordProof.userId())
+                && "password".equals(passwordProof.method())) {
+            request.getSession().setAttribute(IdentitySessionState.RECENT_ATTRIBUTE, passwordProof);
+        }
         if (full) descriptors.recordEstablished(userId, request);
     }
 }

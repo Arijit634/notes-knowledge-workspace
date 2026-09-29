@@ -160,7 +160,9 @@ final class MfaChallengeService {
                     return Outcome.DENIED;
                 }
                 identity.audit(userId, "mfa_challenge", acceptedOutcome, now);
-                sessions.establish(userId, true, request, response);
+                var passwordProof = IdentitySessionState.passwordProof(
+                        requestSession.getAttribute(IdentitySessionState.RECENT_ATTRIBUTE), userId);
+                sessions.establish(userId, true, request, response, passwordProof);
                 checkpoint.afterSessionMutation(request);
                 return Outcome.ACCEPTED;
             });
