@@ -52,7 +52,8 @@ class NotesEditorIntegrationTest {
         registry.add("spring.datasource.url", postgres::getJdbcUrl);
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);
-        registry.add("notes.cursor.key-base64", () ->
+        registry.add("notes.cursor.active.version", () -> "test1");
+        registry.add("notes.cursor.active.key-base64", () ->
                 "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=");
         registry.add("identity.rate.key-base64", () ->
                 "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=");

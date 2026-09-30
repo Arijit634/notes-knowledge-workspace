@@ -1,35 +1,43 @@
 package org.notesknowledge.notes;
 
-import java.security.SecureRandom;
 import java.time.Clock;
 import java.util.Base64;
-import java.util.List;
 
 import org.notesknowledge.websupport.CursorKeyRing;
 import org.notesknowledge.websupport.OpaqueCursorCodec;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration(proxyBeanMethods = false)
+@EnableConfigurationProperties(NotesCursorProperties.class)
 class NotesCursorConfiguration {
     @Bean
-    OpaqueCursorCodec notesCursorCodec(Clock clock,
-            @Value("${notes.cursor.key-base64:}") String configuredKey) {
-        byte[] material;
-        if (configuredKey.isBlank()) {
-            // Local single-process cursors expire on restart. A deployment can supply a stable key.
-            material = new byte[32];
-            new SecureRandom().nextBytes(material);
-        } else {
-            try {
-                material = Base64.getDecoder().decode(configuredKey);
-            } catch (IllegalArgumentException exception) {
-                throw new IllegalArgumentException("Notes cursor key is malformed");
-            }
+    CursorKeyRing notesCursorKeyRing(NotesCursorProperties properties) {
+        if (properties.active() == null) {
+            throw new IllegalStateException("Notes cursor active key is required");
         }
-        CursorKeyRing.CursorKey active = new CursorKeyRing.CursorKey("n1", material);
-        CursorKeyRing ring = () -> new CursorKeyRing.KeySnapshot(active, List.of());
-        return new OpaqueCursorCodec(clock, ring);
+        var active = decode(properties.active());
+        var previous = properties.previous().stream().map(NotesCursorConfiguration::decode).toList();
+        var snapshot = new CursorKeyRing.KeySnapshot(active, previous);
+        return () -> snapshot;
+    }
+
+    @Bean
+    OpaqueCursorCodec notesCursorCodec(Clock clock, CursorKeyRing keyRing) {
+        return new OpaqueCursorCodec(clock, keyRing);
+    }
+
+    private static CursorKeyRing.CursorKey decode(NotesCursorProperties.ConfiguredKey definition) {
+        if (definition == null || definition.keyBase64() == null
+                || definition.keyBase64().isBlank()) {
+            throw new IllegalArgumentException("Invalid Notes cursor key configuration");
+        }
+        try {
+            return new CursorKeyRing.CursorKey(definition.version(),
+                    Base64.getDecoder().decode(definition.keyBase64()));
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException("Invalid Notes cursor key configuration");
+        }
     }
 }

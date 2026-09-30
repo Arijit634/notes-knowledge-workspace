@@ -60,7 +60,8 @@ export function noteEditorSession(state: EditorSession, action: EditorAction): E
           ? 'Clean' : 'Dirty', serverChangedWhileDirty: false, serverVersion: action.server }
     }
     case 'failed': return { ...state, pending: null, phase: 'SaveFailed' }
-    case 'conflict': return { ...state, pending: null, phase: 'Conflict', serverChangedWhileDirty: true }
+    case 'conflict': return { ...state, pending: null, phase: 'Conflict',
+      serverChangedWhileDirty: true, serverVersion: null }
     case 'observed':
       if (state.etag === action.server.etag) return state
       if (isDirty(state) || state.phase === 'Saving' || state.phase === 'Conflict') {

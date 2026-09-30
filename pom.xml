@@ -179,6 +179,7 @@
                 <configuration>
                     <systemPropertyVariables>
                         <user.timezone>Asia/Kolkata</user.timezone>
+                        <spring.profiles.active>test</spring.profiles.active>
                     </systemPropertyVariables>
                 </configuration>
             </plugin>

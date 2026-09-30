@@ -1,11 +1,14 @@
 import { useEffect, useReducer, useRef, useState, type FormEvent } from 'react'
 import { Link, useBlocker, useNavigate, useParams } from 'react-router'
-import { useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import type { AuthRuntime } from '../auth/AuthRuntime'
 import { ApiProblemError } from '../../app/api/ProblemDetailsDecoder'
 import { MarkdownView } from './MarkdownView'
 import { emptyEditorSession, isDirty, noteEditorSession } from './NoteEditorSession'
 import { notesApi } from './NotesApi'
+import { noteKeys, notePreferenceKeys } from './NotesKeys'
+
+const activeNotes = Object.freeze({ lifecycle: 'active', sort: 'updatedAtDesc' })
 
 function issue(error: unknown): string {
   if (error instanceof ApiProblemError) {
@@ -18,13 +21,11 @@ function issue(error: unknown): string {
 
 export function NotesListPage({ auth }: { auth: AuthRuntime }) {
   const scope = auth.session.viewerScope
-  const [cursor, setCursor] = useState<string | null>(null)
-  const [entries, setEntries] = useState<Awaited<ReturnType<typeof notesApi.list>>['items']>([])
-  const page = useQuery({ queryKey: ['notes', scope, 'list', cursor],
-    queryFn: () => notesApi.list(auth, cursor), retry: false }, auth.queries)
-  useEffect(() => { if (page.data) setEntries(previous => cursor
-    ? [...new Map([...previous, ...page.data.items].map(item => [item.id, item])).values()]
-    : page.data.items) }, [page.data, cursor])
+  const page = useInfiniteQuery({ queryKey: noteKeys.list(scope, activeNotes),
+    queryFn: ({ pageParam }) => notesApi.list(auth, pageParam), initialPageParam: null as string | null,
+    getNextPageParam: last => last.nextCursor ?? undefined, retry: false }, auth.queries)
+  const entries = [...new Map(page.data?.pages.flatMap(part => part.items)
+    .map(item => [item.id, item] as const) ?? []).values()]
   return <main className="notes-layout"><div className="notes-shell">
     <nav className="notes-top"><Link to="/">Notes &amp; Knowledge</Link><Link to="/settings/security">Security settings</Link></nav>
     <header className="notes-heading"><div><p className="eyebrow">Your workspace</p><h1>Notes</h1></div>
@@ -35,8 +36,8 @@ export function NotesListPage({ auth }: { auth: AuthRuntime }) {
     {entries.length > 0 && <ul className="notes-list">{entries.map(note => <li key={note.id}>
       <Link to={`/notes/${note.id}`}><strong>{note.title}</strong><span>Updated {new Date(note.updatedAt).toLocaleString()}</span></Link>
     </li>)}</ul>}
-    {page.data?.nextCursor && <button className="button-secondary" disabled={page.isFetching}
-      onClick={() => setCursor(page.data!.nextCursor)}>Load more</button>}
+    {page.hasNextPage && <button className="button-secondary" disabled={page.isFetchingNextPage}
+      onClick={() => void page.fetchNextPage()}>Load more</button>}
   </div></main>
 }
 
@@ -48,11 +49,13 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
   const [error, setError] = useState('')
   const [preview, setPreview] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [conflictLoading, setConflictLoading] = useState(false)
+  const [conflictLoadError, setConflictLoadError] = useState(false)
   const initialPreference = useRef(false)
   const allowNavigation = useRef(false)
-  const preference = useQuery({ queryKey: ['notes', scope, 'preference'],
+  const preference = useQuery({ queryKey: notePreferenceKeys.current(scope),
     queryFn: () => notesApi.preference(auth), enabled: creating, retry: false }, auth.queries)
-  const loaded = useQuery({ queryKey: ['notes', scope, 'core', id],
+  const loaded = useQuery({ queryKey: noteKeys.core(scope, id ?? ''),
     queryFn: () => notesApi.get(auth, id!), enabled: !creating && !!id, retry: false }, auth.queries)
 
   useEffect(() => {
@@ -73,6 +76,14 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
     return () => window.removeEventListener('beforeunload', prevent)
   }, [dirty])
 
+  async function loadConflictVersion() {
+    if (!session.id || conflictLoading) return
+    setConflictLoading(true); setConflictLoadError(false)
+    try { dispatch({ type: 'observed', server: await notesApi.get(auth, session.id) }) }
+    catch { setConflictLoadError(true) }
+    finally { setConflictLoading(false) }
+  }
+
   async function save() {
     if (busy || !dirty || session.phase === 'Conflict' || !session.draft.title.trim()) return
     if (!creating && (!session.id || !session.etag)) return
@@ -84,13 +95,12 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
         : await notesApi.save(auth, session.id!, session.etag!, title, markdown)
       dispatch({ type: 'saved', server: result })
       if (creating) { allowNavigation.current = true; navigate(`/notes/${result.value.id}`, { replace: true }) }
-      else auth.queries.setQueryData(['notes', scope, 'core', session.id], result)
-      await auth.queries.invalidateQueries({ queryKey: ['notes', scope, 'list'] })
+      else auth.queries.setQueryData(noteKeys.core(scope, session.id!), result)
+      await auth.queries.invalidateQueries({ queryKey: noteKeys.lists(scope) })
     } catch (failure) {
       if (failure instanceof ApiProblemError && failure.problem.status === 412 && !creating) {
         dispatch({ type: 'conflict' })
-        try { dispatch({ type: 'observed', server: await notesApi.get(auth, session.id!) }) }
-        catch { /* Keep the draft and stale base if the current Note cannot be loaded. */ }
+        await loadConflictVersion()
       } else { dispatch({ type: 'failed' }); setError(issue(failure)) }
     } finally { setBusy(false) }
   }
@@ -136,6 +146,10 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
             && <p role="alert">This note changed on the server while you were editing. Your draft was kept.</p>}
           {session.phase === 'Conflict' && <section className="notes-conflict" aria-label="Save conflict">
             <h2>Another version was saved</h2><p>Your draft is still here. Review the current version before deciding what to keep.</p>
+            {!session.serverVersion && <>{conflictLoading && <p role="status">Loading current saved version…</p>}
+              {conflictLoadError && <p role="alert">The current saved version could not be loaded. Your draft is unchanged.</p>}
+              <button type="button" className="button-secondary" disabled={conflictLoading}
+                onClick={() => void loadConflictVersion()}>Retry loading saved version</button></>}
             {session.serverVersion && <><h3>Current saved version</h3>
               <p>{session.serverVersion.value.title}</p><MarkdownView markdown={session.serverVersion.value.markdown} />
               <button type="button" className="button-secondary" onClick={() => dispatch({ type: 'reloadServer' })}>Discard my draft and load saved version</button>

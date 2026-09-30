@@ -26,8 +26,10 @@ describe('NoteEditorSession', () => {
     const failed = noteEditorSession(noteEditorSession(edited, { type: 'saving' }), { type: 'failed' })
     expect(failed.draft.title).toBe('My title')
     expect(failed.phase).toBe('SaveFailed')
-    const conflict = noteEditorSession(noteEditorSession(failed, { type: 'conflict' }),
-      { type: 'observed', server: second })
+    const unresolved = noteEditorSession(failed, { type: 'conflict' })
+    expect(unresolved.serverVersion).toBeNull()
+    expect(noteEditorSession(unresolved, { type: 'rebase' }).etag).toBe('"first"')
+    const conflict = noteEditorSession(unresolved, { type: 'observed', server: second })
     expect(conflict.draft.title).toBe('My title')
     expect(conflict.etag).toBe('"first"')
     const refined = noteEditorSession(conflict, { type: 'edit', field: 'markdown', value: 'Refined draft' })
