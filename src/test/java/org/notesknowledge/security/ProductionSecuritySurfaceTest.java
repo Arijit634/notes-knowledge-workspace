@@ -39,15 +39,16 @@ class ProductionSecuritySurfaceTest {
     RequestMappingHandlerMapping requestMappings;
 
     @Test
-    void productionContextContainsNoProductOrSecurityProbeController() {
+    void productionContextContainsOnlyAuthorizedNotesAndNoSecurityProbeController() {
         Set<String> paths = requestMappings.getHandlerMethods().keySet().stream()
                 .flatMap(mapping -> mapping.getPatternValues().stream())
                 .collect(Collectors.toSet());
 
         assertThat(paths)
                 .noneMatch(path -> path.startsWith("/__security-probe"))
-                .noneMatch(path -> path.startsWith("/__api-probe"))
-                .noneMatch(path -> path.startsWith("/api/"));
+                .noneMatch(path -> path.startsWith("/__api-probe"));
+        assertThat(paths.stream().filter(path -> path.startsWith("/api/"))).containsExactlyInAnyOrder(
+                "/api/me/note-preferences", "/api/notes", "/api/notes/{noteId}");
     }
 
     @Test

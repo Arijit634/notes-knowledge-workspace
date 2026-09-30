@@ -142,6 +142,14 @@ public class SecurityConfiguration {
                         .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.POST, "/api/me/security/mfa/recovery-codes")
                         .hasAuthority("ROLE_USER")
+                        .requestMatchers(HttpMethod.GET, "/api/me/note-preferences", "/api/notes",
+                                "/api/notes/{noteId}")
+                        .hasAuthority("ROLE_USER")
+                        .requestMatchers(HttpMethod.PUT, "/api/me/note-preferences",
+                                "/api/notes/{noteId}")
+                        .hasAuthority("ROLE_USER")
+                        .requestMatchers(HttpMethod.POST, "/api/notes")
+                        .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.PUT, "/api/me/security/password")
                         .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.POST,

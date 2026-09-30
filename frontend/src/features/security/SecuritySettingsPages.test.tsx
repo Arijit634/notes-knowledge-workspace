@@ -61,10 +61,11 @@ afterEach(() => {
 })
 
 describe('security settings browser journey', () => {
-  it('registers only the existing nine routes and the three protected security routes', () => {
+  it('registers the existing authentication, security, and Notes routes', () => {
     expect(PRODUCT_ROUTES).toEqual(['/', '/signup', '/verify-email', '/login', '/mfa',
       '/forgot-password', '/reset-password', '/auth/complete', '/reauth',
-      '/settings/security', '/settings/security/mfa', '/settings/security/sessions'])
+      '/settings/security', '/settings/security/mfa', '/settings/security/sessions',
+      '/notes', '/notes/new', '/notes/:id'])
   })
 
   it.each(['/settings/security', '/settings/security/mfa', '/settings/security/sessions'])(

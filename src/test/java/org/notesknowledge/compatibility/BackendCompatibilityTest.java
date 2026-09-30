@@ -51,14 +51,16 @@ class BackendCompatibilityTest {
     }
 
     @Test
-    void generatesAndLoadsEmptyOpenApiWithJacksonThree() throws Exception {
+    void generatesAndLoadsNotesOpenApiWithJacksonThree() throws Exception {
         HttpResponse<String> response = get("/v3/api-docs");
 
         assertThat(response.statusCode()).isEqualTo(200);
         var document = jsonMapper.readTree(response.body());
         assertThat(document.path("openapi").asText()).startsWith("3.");
         assertThat(document.path("paths").isObject()).isTrue();
-        assertThat(document.path("paths").isEmpty()).isTrue();
+        assertThat(document.path("paths").path("/api/notes").isObject()).isTrue();
+        assertThat(document.path("paths").path("/api/notes/{noteId}").isObject()).isTrue();
+        assertThat(document.path("paths").path("/api/me/note-preferences").isObject()).isTrue();
     }
 
     @Test
