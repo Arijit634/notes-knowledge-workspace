@@ -32,7 +32,8 @@ class OidcSchemaMigrationTest {
                         "V003__identity__mfa_core.sql",
                         "V004__identity__google_oidc_core.sql",
                         "V005__identity__application_session_descriptor.sql",
-                        "V006__identity__privilege_assignment.sql");
+                        "V006__identity__privilege_assignment.sql",
+                        "V007__notes__editor_core.sql");
         JdbcTemplate jdbc = migrator();
         assertThat(jdbc.queryForObject("""
                 select count(*) from information_schema.tables

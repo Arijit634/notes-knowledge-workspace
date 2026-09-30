@@ -1,5 +1,5 @@
 import { createContext, lazy, Suspense, useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router'
+import { createBrowserRouter, Link, Navigate, Route, RouterProvider, Routes, useLocation, useNavigate } from 'react-router'
 import { useForm } from 'react-hook-form'
 import { useQuery } from '@tanstack/react-query'
 import { ApiProblemError } from './api/ProblemDetailsDecoder'
@@ -13,18 +13,23 @@ export const AUTH_ROUTES = ['/', '/signup', '/verify-email', '/login', '/mfa',
   '/forgot-password', '/reset-password', '/auth/complete', '/reauth'] as const
 export const SECURITY_ROUTES = ['/settings/security', '/settings/security/mfa',
   '/settings/security/sessions'] as const
-export const PRODUCT_ROUTES = [...AUTH_ROUTES, ...SECURITY_ROUTES] as const
+export const NOTES_ROUTES = ['/notes', '/notes/new', '/notes/:id'] as const
+export const PRODUCT_ROUTES = [...AUTH_ROUTES, ...SECURITY_ROUTES, ...NOTES_ROUTES] as const
 const SecuritySettingsPage = lazy(() => import('../features/security/SecuritySettingsPages')
   .then(module => ({ default: module.SecuritySettingsPage })))
 const MfaSettingsPage = lazy(() => import('../features/security/SecuritySettingsPages')
   .then(module => ({ default: module.MfaSettingsPage })))
 const SessionsSettingsPage = lazy(() => import('../features/security/SecuritySettingsPages')
   .then(module => ({ default: module.SessionsSettingsPage })))
-const Context = createContext<AuthRuntime | null>(null)
+const NotesListPage = lazy(() => import('../features/notes/NotesPages')
+  .then(module => ({ default: module.NotesListPage })))
+const NoteEditorPage = lazy(() => import('../features/notes/NotesPages')
+  .then(module => ({ default: module.NoteEditorPage })))
+const Context = createContext<{ auth: AuthRuntime; version: number } | null>(null)
 const useAuth = () => {
   const value = useContext(Context)
   if (!value) throw new Error('Auth runtime unavailable')
-  return value
+  return value.auth
 }
 
 function message(error: unknown): string {
@@ -77,6 +82,7 @@ function Landing() {
     <p className="lead">Keep your notes and knowledge together. Sign in to continue when your workspace is ready.</p>
     {error && <Alert>{error}</Alert>}
     {auth.state === 'authenticated' ? <><p role="status">You are signed in.</p>
+      <Link className="button" to="/notes">Your notes</Link>
       <Link className="button button-secondary" to="/settings/security">Security settings</Link>
       <button onClick={logout}>Log out</button></>
       : auth.state === 'mfaRequired' ? <Link className="button" to={auth.continuation.challengeId ? '/mfa' : '/login'}>{auth.continuation.challengeId ? 'Continue verification' : 'Restart sign in'}</Link>
@@ -244,13 +250,17 @@ function AuthRoutes() {
     <Route path={SECURITY_ROUTES[0]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<Shell title="Loading security settings"><p role="status">Please wait…</p></Shell>}><SecuritySettingsPage auth={auth} /></Suspense></Gate>} />
     <Route path={SECURITY_ROUTES[1]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<Shell title="Loading MFA settings"><p role="status">Please wait…</p></Shell>}><MfaSettingsPage auth={auth} /></Suspense></Gate>} />
     <Route path={SECURITY_ROUTES[2]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<Shell title="Loading sessions"><p role="status">Please wait…</p></Shell>}><SessionsSettingsPage auth={auth} /></Suspense></Gate>} />
+    <Route path={NOTES_ROUTES[0]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<Shell title="Loading notes"><p role="status">Please wait…</p></Shell>}><NotesListPage auth={auth} /></Suspense></Gate>} />
+    <Route path={NOTES_ROUTES[1]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<Shell title="Loading editor"><p role="status">Please wait…</p></Shell>}><NoteEditorPage auth={auth} creating /></Suspense></Gate>} />
+    <Route path={NOTES_ROUTES[2]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<Shell title="Loading editor"><p role="status">Please wait…</p></Shell>}><NoteEditorPage key={location.pathname} auth={auth} /></Suspense></Gate>} />
     <Route path="*" element={<Shell title="Page not found"><p>That page is unavailable.</p><Link to="/">Go home</Link></Shell>} />
   </Routes>
 }
 const defaultRuntime = new AuthRuntime()
 export function App({ auth = defaultRuntime }: { auth?: AuthRuntime }) {
-  const [, rerender] = useState(0), [startupError, setStartupError] = useState(false)
+  const [version, rerender] = useState(0), [startupError, setStartupError] = useState(false)
+  const [router] = useState(() => createBrowserRouter([{ path: '*', element: <AuthRoutes /> }]))
   useEffect(() => auth.subscribe(() => rerender(value => value + 1)), [auth])
   useEffect(() => { auth.bootstrap().catch(() => setStartupError(true)) }, [auth])
-  return <Context.Provider value={auth}><BrowserRouter>{startupError ? <Shell title="Session unavailable"><Alert>We could not check your session safely. Refresh to try again.</Alert></Shell> : <AuthRoutes />}</BrowserRouter></Context.Provider>
+  return <Context.Provider value={{ auth, version }}>{startupError ? <Shell title="Session unavailable"><Alert>We could not check your session safely. Refresh to try again.</Alert></Shell> : <RouterProvider router={router} />}</Context.Provider>
 }
