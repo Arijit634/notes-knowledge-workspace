@@ -422,6 +422,194 @@ class NotesEditorIntegrationTest {
                 Long.class, id)).isEqualTo(2L);
     }
 
+    @Test
+    void pinDesiredStateNoOpsStillRequireCurrentAuthorityAndRealChangesAdvanceRevision() throws Exception {
+        Browser owner = browser(account(), "ROLE_USER");
+        MvcResult created = createNote(owner);
+        String id = json.readTree(body(created)).get("id").asText();
+        String first = created.getResponse().getHeader("ETag");
+        MvcResult unpinned = command(owner, id, first, "DELETE", "pin").andExpect(status().isOk()).andReturn();
+        assertThat(unpinned.getResponse().getHeader("ETag")).isEqualTo(first);
+        MvcResult pinned = command(owner, id, first, "PUT", "pin").andExpect(status().isOk()).andReturn();
+        String second = pinned.getResponse().getHeader("ETag");
+        assertThat(second).isNotEqualTo(first);
+        assertThat(json.readTree(body(pinned)).get("pinned").asBoolean()).isTrue();
+        assertThat(json.readTree(body(pinned)).get("title").asText()).isEqualTo("Original");
+        assertThat(json.readTree(body(pinned)).get("markdown").asText()).isEqualTo("Body");
+        command(owner, id, first, "PUT", "pin").andExpect(status().isPreconditionFailed());
+        MvcResult same = command(owner, id, second, "PUT", "pin").andExpect(status().isOk()).andReturn();
+        assertThat(same.getResponse().getHeader("ETag")).isEqualTo(second);
+        assertThat(jdbc.queryForObject("select revision from notes.note where note_id = ?::uuid", Long.class, id)).isEqualTo(2L);
+        MvcResult cleared = command(owner, id, second, "DELETE", "pin").andExpect(status().isOk()).andReturn();
+        String third = cleared.getResponse().getHeader("ETag");
+        assertThat(third).isNotEqualTo(second);
+        assertThat(json.readTree(body(cleared)).get("pinned").asBoolean()).isFalse();
+        command(owner, id, second, "DELETE", "pin").andExpect(status().isPreconditionFailed());
+        assertThat(command(owner, id, third, "DELETE", "pin").andExpect(status().isOk()).andReturn()
+                .getResponse().getHeader("ETag")).isEqualTo(third);
+        assertThat(jdbc.queryForObject("select revision from notes.note where note_id = ?::uuid", Long.class, id)).isEqualTo(3L);
+    }
+
+    @Test
+    void archiveAndReturnAreExplicitTransitionsPreservingPinTagsAndSavedContent() throws Exception {
+        Browser owner = browser(account(), "ROLE_USER");
+        MvcResult created = createNote(owner);
+        String id = json.readTree(body(created)).get("id").asText();
+        String initial = created.getResponse().getHeader("ETag");
+        command(owner, id, initial, "POST", "return-from-archive").andExpect(status().isConflict());
+        MvcResult pinned = command(owner, id, initial, "PUT", "pin").andExpect(status().isOk()).andReturn();
+        MvcResult tagged = replaceTags(owner, id, pinned.getResponse().getHeader("ETag"), List.of("Films"))
+                .andExpect(status().isOk()).andReturn();
+        MvcResult archived = command(owner, id, tagged.getResponse().getHeader("ETag"), "POST", "archive")
+                .andExpect(status().isOk()).andReturn();
+        String archivedEtag = archived.getResponse().getHeader("ETag");
+        assertThat(json.readTree(body(archived)).get("lifecycle").asText()).isEqualTo("archived");
+        assertThat(json.readTree(body(archived)).get("pinned").asBoolean()).isTrue();
+        assertThat(json.readTree(body(archived)).get("tags").toString()).isEqualTo("[\"Films\"]");
+        assertThat(archivedEtag).isNotEqualTo(tagged.getResponse().getHeader("ETag"));
+        command(owner, id, archivedEtag, "POST", "archive").andExpect(status().isConflict());
+        mvc.perform(put("/api/notes/{noteId}", id).cookie(owner.cookie()).header("X-CSRF-TOKEN", owner.csrf())
+                .header("If-Match", archivedEtag).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"title\":\"Forbidden\",\"markdown\":\"Draft\"}"))
+                .andExpect(status().isConflict());
+        assertThat(json.readTree(body(mvc.perform(get("/api/notes").cookie(owner.cookie())).andReturn())).get("items").isEmpty()).isTrue();
+        assertThat(json.readTree(body(mvc.perform(get("/api/notes?lifecycle=archived&pinned=true")
+                .cookie(owner.cookie())).andReturn())).get("items").get(0).get("id").asText()).isEqualTo(id);
+        MvcResult unpinned = command(owner, id, archivedEtag, "DELETE", "pin").andExpect(status().isOk()).andReturn();
+        assertThat(json.readTree(body(unpinned)).get("lifecycle").asText()).isEqualTo("archived");
+        MvcResult returned = command(owner, id, unpinned.getResponse().getHeader("ETag"), "POST", "return-from-archive")
+                .andExpect(status().isOk()).andReturn();
+        assertThat(returned.getResponse().getHeader("ETag")).isNotEqualTo(unpinned.getResponse().getHeader("ETag"));
+        assertThat(json.readTree(body(returned)).get("lifecycle").asText()).isEqualTo("active");
+        assertThat(json.readTree(body(returned)).get("title").asText()).isEqualTo("Original");
+        assertThat(json.readTree(body(returned)).get("markdown").asText()).isEqualTo("Body");
+        command(owner, id, returned.getResponse().getHeader("ETag"), "POST", "return-from-archive").andExpect(status().isConflict());
+        assertThat(jdbc.queryForObject("select revision from notes.note where note_id = ?::uuid", Long.class, id)).isEqualTo(6L);
+    }
+
+    @Test
+    void organizationCommandsRequireOwnerFullSessionCsrfCurrentEtagAndEligibleLifecycle() throws Exception {
+        UUID ownerId = account();
+        Browser owner = browser(ownerId, "ROLE_USER");
+        Browser other = browser(account(), "ROLE_USER");
+        Browser pending = browser(account(), "ROLE_MFA_PENDING");
+        MvcResult created = createNote(owner);
+        String id = json.readTree(body(created)).get("id").asText();
+        String etag = created.getResponse().getHeader("ETag");
+        String[][] commands = { {"PUT", "pin"}, {"DELETE", "pin"}, {"POST", "archive"}, {"POST", "return-from-archive"} };
+        for (String[] action : commands) {
+            command(other, id, etag, action[0], action[1]).andExpect(status().isNotFound());
+            command(owner, UUID.randomUUID().toString(), etag, action[0], action[1]).andExpect(status().isNotFound());
+            command(pending, id, etag, action[0], action[1]).andExpect(status().isForbidden());
+            mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.request(
+                    org.springframework.http.HttpMethod.valueOf(action[0]), "/api/notes/{noteId}/" + action[1], id)
+                    .cookie(owner.cookie()).header("If-Match", etag)).andExpect(status().isForbidden());
+            mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.request(
+                    org.springframework.http.HttpMethod.valueOf(action[0]), "/api/notes/{noteId}/" + action[1], id))
+                    .andExpect(status().isForbidden());
+            command(owner, id, null, action[0], action[1]).andExpect(status().isPreconditionRequired());
+            mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.request(
+                    org.springframework.http.HttpMethod.valueOf(action[0]), "/api/notes/{noteId}/" + action[1], id)
+                    .cookie(owner.cookie()).header("X-CSRF-TOKEN", owner.csrf()).header("If-Match", etag)
+                    .contentType(MediaType.APPLICATION_JSON).content("{\"title\":\"Not saved\"}"))
+                    .andExpect(status().isBadRequest());
+        }
+        jdbc.update("""
+                update notes.note set lifecycle_state = 'trashed', pre_trash_state = 'active',
+                    trashed_at = now(), revision = revision + 1 where note_id = ?::uuid
+                """, id);
+        String current = mvc.perform(get("/api/notes/{noteId}", id).cookie(owner.cookie())).andReturn().getResponse().getHeader("ETag");
+        for (String[] action : commands) {
+            command(owner, id, etag, action[0], action[1]).andExpect(status().isPreconditionFailed());
+            command(owner, id, current, action[0], action[1]).andExpect(status().isConflict());
+        }
+        jdbc.update("""
+                update notes.note set lifecycle_state = 'logically_deleted', pre_trash_state = null,
+                    trashed_at = null, deleted_at = now(), revision = revision + 1 where note_id = ?::uuid
+                """, id);
+        for (String[] action : commands) command(owner, id, current, action[0], action[1]).andExpect(status().isNotFound());
+        MvcResult fresh = createNote(owner);
+        String freshId = json.readTree(body(fresh)).get("id").asText();
+        jdbc.update("update identity.account set account_state = 'suspended' where user_id = ?", ownerId);
+        for (String[] action : commands) {
+            // Eligibility invalidates the old session and its CSRF authority;
+            // either security boundary may reject the unsafe browser request.
+            command(owner, freshId, fresh.getResponse().getHeader("ETag"), action[0], action[1])
+                    .andExpect(result -> assertThat(result.getResponse().getStatus()).isIn(401, 403));
+        }
+        assertThat(jdbc.queryForObject("select revision from notes.note where note_id = ?::uuid", Long.class, freshId)).isEqualTo(1L);
+    }
+
+    @Test
+    void concurrentSavePinArchiveAndTagsCannotBothMutateOneRevision() throws Exception {
+        for (String[] pair : new String[][] { {"save", "pin"}, {"save", "archive"}, {"tags", "archive"}, {"pin", "archive"}, {"archive", "archive"}, {"pin", "pin"} }) {
+            Browser owner = browser(account(), "ROLE_USER");
+            MvcResult created = createNote(owner);
+            String id = json.readTree(body(created)).get("id").asText();
+            String etag = created.getResponse().getHeader("ETag");
+            CountDownLatch start = new CountDownLatch(1);
+            try (var workers = Executors.newFixedThreadPool(2)) {
+                var a = workers.submit(() -> racedCommand(start, owner, id, etag, pair[0]));
+                var b = workers.submit(() -> racedCommand(start, owner, id, etag, pair[1]));
+                start.countDown();
+                int first = a.get(30, TimeUnit.SECONDS), second = b.get(30, TimeUnit.SECONDS);
+                assertThat(List.of(first, second)).containsExactlyInAnyOrder(200, 412);
+                String winner = first == 200 ? pair[0] : pair[1];
+                assertThat(jdbc.queryForObject("select revision from notes.note where note_id = ?::uuid", Long.class, id)).isEqualTo(2L);
+                assertThat(jdbc.queryForObject("select title from notes.note where note_id = ?::uuid", String.class, id)).isEqualTo(winner.equals("save") ? "Winner" : "Original");
+                assertThat(jdbc.queryForObject("select pinned from notes.note where note_id = ?::uuid", Boolean.class, id)).isEqualTo(winner.equals("pin"));
+                assertThat(jdbc.queryForObject("select lifecycle_state from notes.note where note_id = ?::uuid", String.class, id)).isEqualTo(winner.equals("archive") ? "archived" : "active");
+                assertThat(jdbc.queryForObject("select count(*) from notes.note_tag where note_id = ?::uuid", Integer.class, id)).isEqualTo(winner.equals("tags") ? 1 : 0);
+            }
+        }
+    }
+
+    @Test
+    void archivedUnpinAndReturnShareTheSameRevisionWithTagReplacement() throws Exception {
+        for (String[] pair : new String[][] { {"unpin", "return-from-archive"}, {"unpin", "tags"}, {"return-from-archive", "tags"} }) {
+            Browser owner = browser(account(), "ROLE_USER");
+            MvcResult created = createNote(owner);
+            String id = json.readTree(body(created)).get("id").asText();
+            MvcResult archived = command(owner, id, created.getResponse().getHeader("ETag"), "POST", "archive")
+                    .andExpect(status().isOk()).andReturn();
+            MvcResult pinned = command(owner, id, archived.getResponse().getHeader("ETag"), "PUT", "pin")
+                    .andExpect(status().isOk()).andReturn();
+            String etag = pinned.getResponse().getHeader("ETag");
+            CountDownLatch start = new CountDownLatch(1);
+            try (var workers = Executors.newFixedThreadPool(2)) {
+                var a = workers.submit(() -> racedCommand(start, owner, id, etag, pair[0]));
+                var b = workers.submit(() -> racedCommand(start, owner, id, etag, pair[1]));
+                start.countDown();
+                int first = a.get(30, TimeUnit.SECONDS), second = b.get(30, TimeUnit.SECONDS);
+                assertThat(List.of(first, second)).containsExactlyInAnyOrder(200, 412);
+                String winner = first == 200 ? pair[0] : pair[1];
+                assertThat(jdbc.queryForObject("select revision from notes.note where note_id = ?::uuid", Long.class, id)).isEqualTo(4L);
+                assertThat(jdbc.queryForObject("select pinned from notes.note where note_id = ?::uuid", Boolean.class, id)).isEqualTo(!winner.equals("unpin"));
+                assertThat(jdbc.queryForObject("select lifecycle_state from notes.note where note_id = ?::uuid", String.class, id)).isEqualTo(winner.equals("return-from-archive") ? "active" : "archived");
+                assertThat(jdbc.queryForObject("select count(*) from notes.note_tag where note_id = ?::uuid", Integer.class, id)).isEqualTo(winner.equals("tags") ? 1 : 0);
+                assertThat(jdbc.queryForObject("select title from notes.note where note_id = ?::uuid", String.class, id)).isEqualTo("Original");
+                assertThat(jdbc.queryForObject("select markdown from notes.note where note_id = ?::uuid", String.class, id)).isEqualTo("Body");
+            }
+        }
+    }
+
+    private int racedCommand(CountDownLatch start, Browser owner, String id, String etag, String action) throws Exception {
+        if (!start.await(30, TimeUnit.SECONDS)) throw new IllegalStateException("start timed out");
+        if (action.equals("save")) return concurrentSave(start, owner, id, etag, "Winner");
+        if (action.equals("tags")) return replaceTags(owner, id, etag, List.of("Films")).andReturn().getResponse().getStatus();
+        return command(owner, id, etag, action.equals("pin") ? "PUT" : action.equals("unpin") ? "DELETE" : "POST",
+                action.equals("unpin") ? "pin" : action).andReturn().getResponse().getStatus();
+    }
+
+    private org.springframework.test.web.servlet.ResultActions command(Browser browser, String id,
+            String etag, String method, String action) throws Exception {
+        var request = org.springframework.test.web.servlet.request.MockMvcRequestBuilders.request(
+                org.springframework.http.HttpMethod.valueOf(method), "/api/notes/{noteId}/" + action, id)
+                .cookie(browser.cookie()).header("X-CSRF-TOKEN", browser.csrf());
+        if (etag != null) request.header("If-Match", etag);
+        return mvc.perform(request);
+    }
+
     private MvcResult createNote(Browser browser) throws Exception {
         return mvc.perform(post("/api/notes").cookie(browser.cookie())
                 .header("X-CSRF-TOKEN", browser.csrf()).contentType(MediaType.APPLICATION_JSON)

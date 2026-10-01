@@ -61,6 +61,10 @@ class BackendCompatibilityTest {
         assertThat(document.path("paths").path("/api/notes").isObject()).isTrue();
         assertThat(document.path("paths").path("/api/notes/{noteId}").isObject()).isTrue();
         assertThat(document.path("paths").path("/api/notes/{noteId}/tags").path("put").isObject()).isTrue();
+        assertThat(document.path("paths").path("/api/notes/{noteId}/pin").path("put").isObject()).isTrue();
+        assertThat(document.path("paths").path("/api/notes/{noteId}/pin").path("delete").isObject()).isTrue();
+        assertThat(document.path("paths").path("/api/notes/{noteId}/archive").path("post").isObject()).isTrue();
+        assertThat(document.path("paths").path("/api/notes/{noteId}/return-from-archive").path("post").isObject()).isTrue();
         assertThat(document.path("paths").path("/api/me/note-preferences").isObject()).isTrue();
     }
 

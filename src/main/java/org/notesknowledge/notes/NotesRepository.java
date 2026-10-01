@@ -111,6 +111,27 @@ class NotesRepository {
                 .param("now", Timestamp.from(now)).update();
     }
 
+    int setPin(UUID owner, UUID id, long revision, boolean pinned, Instant now) {
+        return jdbc().sql("""
+                update notes.note set pinned = :pinned, revision = revision + 1,
+                    updated_at = greatest(updated_at, :now)
+                where owner_user_id = :owner and note_id = :id and revision = :revision
+                  and lifecycle_state in ('active', 'archived') and pinned <> :pinned
+                """).param("owner", owner).param("id", id).param("revision", revision)
+                .param("pinned", pinned).param("now", Timestamp.from(now)).update();
+    }
+
+    int transitionLifecycle(UUID owner, UUID id, long revision, String from,
+            String to, Instant now) {
+        return jdbc().sql("""
+                update notes.note set lifecycle_state = :to, revision = revision + 1,
+                    updated_at = greatest(updated_at, :now)
+                where owner_user_id = :owner and note_id = :id and revision = :revision
+                  and lifecycle_state = :from
+                """).param("owner", owner).param("id", id).param("revision", revision)
+                .param("from", from).param("to", to).param("now", Timestamp.from(now)).update();
+    }
+
     List<NoteRecord> page(UUID owner, String lifecycle, Boolean pinned, Instant beforeTime,
             UUID beforeId, int count) {
         String pinFilter = pinned == null ? "" : " and pinned = :pinned\n";
