@@ -1,4 +1,5 @@
 import { QueryClient } from '@tanstack/react-query'
+import { flushSync } from 'react-dom'
 import { ApiClient } from '../../app/api/ApiClient'
 import { ApiProtocolError } from '../../app/api/ProblemDetailsDecoder'
 import { CsrfManager } from '../../app/security/CsrfManager'
@@ -30,7 +31,14 @@ export class AuthRuntime {
     })
     client = new ApiClient(this.csrf)
     this.api = client
-    this.session = new SessionCoordinator(this.csrf, this.sensitive, () => this.queries.clear())
+    this.session = new SessionCoordinator(this.csrf, this.sensitive, endingScope => {
+      if (endingScope.kind === 'authenticated') {
+        // Commit the unknown-authority route gate before eviction: mounted observers
+        // could otherwise recreate old-viewer queries while CSRF bootstrap is pending.
+        flushSync(() => this.notify())
+      }
+      this.queries.clear()
+    })
   }
 
   get state(): LocalSessionState { return this.session.state }

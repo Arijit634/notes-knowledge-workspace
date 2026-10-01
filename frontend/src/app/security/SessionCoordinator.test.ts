@@ -44,6 +44,28 @@ describe('session authority and viewer scope', () => {
     await expect(csrf.forUnsafeRequest()).rejects.toThrow()
   })
 
+  it.each(['anonymous', 'mfaRequired', 'authenticated'] as const)(
+    'drops authority before cache eviction and accepts %s only after cleanup', next => {
+      const sensitive = new SensitiveStateRegistry()
+      const cleared = vi.fn()
+      sensitive.register(cleared)
+      const eviction = vi.fn()
+      const coordinator = new SessionCoordinator(new CsrfManager(), sensitive, eviction,
+        () => 'synthetic_epoch_1')
+      coordinator.transition('authenticated')
+      const endingScope = coordinator.viewerScope
+      eviction.mockImplementation(scope => {
+        expect(scope).toEqual(endingScope)
+        expect(coordinator.state).toBe('unknown')
+        expect(coordinator.viewerScope).toEqual(ANONYMOUS_VIEWER_SCOPE)
+        expect(cleared).toHaveBeenCalledTimes(2)
+      })
+      coordinator.transition(next, next === 'authenticated')
+      expect(coordinator.state).toBe(next)
+      expect(eviction).toHaveBeenCalledTimes(2)
+    },
+  )
+
   it('drops authority even when one state cleaner fails', () => {
     const sensitive = new SensitiveStateRegistry()
     const secondCleaner = vi.fn()
