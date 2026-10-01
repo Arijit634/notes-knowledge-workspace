@@ -48,7 +48,8 @@ class ProductionSecuritySurfaceTest {
                 .noneMatch(path -> path.startsWith("/__security-probe"))
                 .noneMatch(path -> path.startsWith("/__api-probe"));
         assertThat(paths.stream().filter(path -> path.startsWith("/api/"))).containsExactlyInAnyOrder(
-                "/api/me/note-preferences", "/api/notes", "/api/notes/{noteId}");
+                "/api/me/note-preferences", "/api/notes", "/api/notes/{noteId}",
+                "/api/notes/{noteId}/tags");
     }
 
     @Test

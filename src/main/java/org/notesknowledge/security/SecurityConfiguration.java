@@ -146,7 +146,7 @@ public class SecurityConfiguration {
                                 "/api/notes/{noteId}")
                         .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.PUT, "/api/me/note-preferences",
-                                "/api/notes/{noteId}")
+                                "/api/notes/{noteId}", "/api/notes/{noteId}/tags")
                         .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.POST, "/api/notes")
                         .hasAuthority("ROLE_USER")

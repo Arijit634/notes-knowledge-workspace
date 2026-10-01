@@ -65,17 +65,17 @@ class NotesEditorIntegrationTest {
     @Autowired ObjectMapper json;
 
     @Test
-    void migrationCreatesOnlyTwoNotesRelationsAndEnforcesOwnerAndRowShape() {
+    void migrationCreatesOnlyThreeNotesRelationsAndEnforcesOwnerAndRowShape() {
         assertThat(jdbc.queryForObject("""
                 select count(*) from information_schema.tables
                 where table_schema in ('identity','profile','notes','knowledge',
                     'publishing','discovery','moderation') and table_type = 'BASE TABLE'
-                """, Integer.class)).isEqualTo(13);
+                """, Integer.class)).isEqualTo(14);
         assertThat(jdbc.queryForList("""
                 select table_name from information_schema.tables
                 where table_schema = 'notes' and table_type = 'BASE TABLE'
                 order by table_name
-                """, String.class)).containsExactly("note", "note_preferences");
+                """, String.class)).containsExactly("note", "note_preferences", "note_tag");
         UUID owner = account();
         UUID other = account();
         UUID noteId = jdbc.queryForObject("select uuidv7()", UUID.class);
@@ -248,6 +248,192 @@ class NotesEditorIntegrationTest {
                 Long.class, id)).isEqualTo(2L);
         assertThat(jdbc.queryForObject("select title from notes.note where note_id = ?::uuid",
                 String.class, id)).isIn("Editor A", "Editor B");
+    }
+
+    @Test
+    void tagsHaveCompositeNoteLocalIdentityAndRestrictiveOwnerSafeForeignKey() throws Exception {
+        UUID owner = account();
+        UUID other = account();
+        Browser browser = browser(owner, "ROLE_USER");
+        MvcResult note = createNote(browser);
+        UUID id = UUID.fromString(json.readTree(body(note)).get("id").asText());
+        jdbc.update("""
+                insert into notes.note_tag values (?, ?, 'films', 'Films', now())
+                """, id, owner);
+        assertThatThrownBy(() -> jdbc.update("""
+                insert into notes.note_tag values (?, ?, 'films', 'FILMS', now())
+                """, id, owner)).isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbc.update("""
+                insert into notes.note_tag values (?, ?, 'other', 'Other', now())
+                """, id, other)).isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbc.update("delete from notes.note where note_id = ?", id))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+        assertThat(jdbc.queryForObject("""
+                select pg_get_constraintdef(oid) from pg_constraint
+                where conrelid = 'notes.note_tag'::regclass and contype = 'p'
+                """, String.class)).isEqualTo("PRIMARY KEY (note_id, normalized_label)");
+        assertThat(jdbc.queryForObject("""
+                select pg_get_constraintdef(oid) from pg_constraint
+                where conrelid = 'notes.note_tag'::regclass and contype = 'f'
+                """, String.class)).contains("(note_id, owner_user_id)", "ON DELETE RESTRICT");
+        assertThat(jdbc.queryForList("select indexname from pg_indexes where schemaname = 'notes'",
+                String.class)).contains("ix_note_tag_owner_label");
+        UUID secondId = UUID.fromString(json.readTree(body(createNote(browser))).get("id").asText());
+        jdbc.update("insert into notes.note_tag values (?, ?, 'films', 'Films', now())", secondId, owner);
+        UUID otherId = UUID.fromString(json.readTree(body(createNote(browser(other, "ROLE_USER")))).get("id").asText());
+        jdbc.update("insert into notes.note_tag values (?, ?, 'films', 'Films', now())", otherId, other);
+        assertThat(jdbc.queryForObject("select count(*) from notes.note_tag where note_id = ?",
+                Integer.class, id)).isEqualTo(1);
+    }
+
+    @Test
+    void explicitTagReplacementReturnsAuthoritativeCoreAndRejectsStaleCommands() throws Exception {
+        Browser owner = browser(account(), "ROLE_USER");
+        MvcResult created = createNote(owner);
+        String id = json.readTree(body(created)).get("id").asText();
+        String first = created.getResponse().getHeader("ETag");
+        MvcResult tagged = replaceTags(owner, id, first, List.of(" Films ", "Watch-later"))
+                .andExpect(status().isOk()).andReturn();
+        String second = tagged.getResponse().getHeader("ETag");
+        assertThat(second).isNotEqualTo(first);
+        assertThat(json.readTree(body(tagged)).get("tags").toString()).isEqualTo("[\"Films\",\"Watch-later\"]");
+        assertThat(json.readTree(body(tagged)).get("title").asText()).isEqualTo("Original");
+        assertThat(json.readTree(body(mvc.perform(get("/api/notes").cookie(owner.cookie()))
+                .andExpect(status().isOk()).andReturn())).get("items").get(0).get("tags").toString())
+                .isEqualTo("[\"Films\",\"Watch-later\"]");
+        replaceTags(owner, id, first, List.of("Stale")).andExpect(status().isPreconditionFailed());
+        mvc.perform(put("/api/notes/{noteId}", id).cookie(owner.cookie())
+                .header("X-CSRF-TOKEN", owner.csrf()).header("If-Match", first)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"title\":\"Stale\",\"markdown\":\"x\"}"))
+                .andExpect(status().isPreconditionFailed());
+        MvcResult same = replaceTags(owner, id, second, List.of("Watch-later", "Films"))
+                .andExpect(status().isOk()).andReturn();
+        assertThat(same.getResponse().getHeader("ETag")).isEqualTo(second);
+        MvcResult reduced = replaceTags(owner, id, second, List.of("Films"))
+                .andExpect(status().isOk()).andReturn();
+        String third = reduced.getResponse().getHeader("ETag");
+        assertThat(jdbc.queryForObject("select revision from notes.note where note_id = ?::uuid",
+                Long.class, id)).isEqualTo(3L);
+        MvcResult saved = mvc.perform(put("/api/notes/{noteId}", id).cookie(owner.cookie())
+                .header("X-CSRF-TOKEN", owner.csrf()).header("If-Match", third)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"title\":\"Saved\",\"markdown\":\"text\"}"))
+                .andExpect(status().isOk()).andReturn();
+        assertThat(json.readTree(body(saved)).get("tags").toString()).isEqualTo("[\"Films\"]");
+        replaceTags(owner, id, third, List.of()).andExpect(status().isPreconditionFailed());
+        replaceTags(owner, id, saved.getResponse().getHeader("ETag"), List.of())
+                .andExpect(status().isOk());
+        assertThat(jdbc.queryForObject("select count(*) from notes.note_tag where note_id = ?::uuid",
+                Integer.class, id)).isZero();
+    }
+
+    @Test
+    void tagCommandEnforcesOwnerSessionCsrfPreconditionValidationAndLifecycle() throws Exception {
+        Browser owner = browser(account(), "ROLE_USER");
+        Browser other = browser(account(), "ROLE_USER");
+        Browser pending = browser(account(), "ROLE_MFA_PENDING");
+        MvcResult created = createNote(owner);
+        String id = json.readTree(body(created)).get("id").asText();
+        String etag = created.getResponse().getHeader("ETag");
+        replaceTags(other, id, etag, List.of()).andExpect(status().isNotFound());
+        replaceTags(owner, UUID.randomUUID().toString(), etag, List.of()).andExpect(status().isNotFound());
+        replaceTags(pending, id, etag, List.of()).andExpect(status().isForbidden());
+        mvc.perform(put("/api/notes/{noteId}/tags", id)
+                .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf())
+                .header("If-Match", etag).contentType(MediaType.APPLICATION_JSON).content("{\"tags\":[]}"))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(put("/api/notes/{noteId}/tags", id).cookie(owner.cookie())
+                .header("If-Match", etag).contentType(MediaType.APPLICATION_JSON).content("{\"tags\":[]}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(put("/api/notes/{noteId}/tags", id).cookie(owner.cookie())
+                .header("X-CSRF-TOKEN", owner.csrf()).contentType(MediaType.APPLICATION_JSON).content("{\"tags\":[]}"))
+                .andExpect(status().isPreconditionRequired());
+        replaceTags(owner, id, etag, List.of("Films", " films ")).andExpect(status().isUnprocessableContent());
+        replaceTags(owner, id, etag, List.of("bad\nlabel")).andExpect(status().isUnprocessableContent());
+        for (String input : List.of("{}", "{\"tags\":null}", "{\"tags\":[1]}", "{\"tags\":[null]}")) {
+            mvc.perform(put("/api/notes/{noteId}/tags", id).cookie(owner.cookie())
+                    .header("X-CSRF-TOKEN", owner.csrf()).header("If-Match", etag)
+                    .contentType(MediaType.APPLICATION_JSON).content(input))
+                    .andExpect(status().isUnprocessableContent());
+        }
+        mvc.perform(put("/api/notes/{noteId}/tags", id).cookie(owner.cookie())
+                .header("X-CSRF-TOKEN", owner.csrf()).header("If-Match", etag)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"tags\":[],\"acceptedSuggestionId\":\"fake\"}"))
+                .andExpect(status().isUnprocessableContent());
+        assertThat(jdbc.queryForObject("select revision from notes.note where note_id = ?::uuid",
+                Long.class, id)).isEqualTo(1L);
+        jdbc.update("""
+                update notes.note set lifecycle_state = 'trashed', pre_trash_state = 'active',
+                    trashed_at = now(), revision = revision + 1 where note_id = ?::uuid
+                """, id);
+        String current = mvc.perform(get("/api/notes/{noteId}", id).cookie(owner.cookie()))
+                .andReturn().getResponse().getHeader("ETag");
+        replaceTags(owner, id, current, List.of()).andExpect(status().isConflict());
+    }
+
+    @Test
+    void simultaneousSaveAndTagReplacementHaveOnlyOneRevisionWinner() throws Exception {
+        Browser owner = browser(account(), "ROLE_USER");
+        MvcResult created = createNote(owner);
+        String id = json.readTree(body(created)).get("id").asText();
+        String etag = created.getResponse().getHeader("ETag");
+        CountDownLatch start = new CountDownLatch(1);
+        try (var workers = Executors.newFixedThreadPool(2)) {
+            var save = workers.submit(() -> concurrentSave(start, owner, id, etag, "Saved winner"));
+            var tags = workers.submit(() -> {
+                if (!start.await(30, TimeUnit.SECONDS)) throw new IllegalStateException("start timed out");
+                return replaceTags(owner, id, etag, List.of("Films")).andReturn().getResponse().getStatus();
+            });
+            start.countDown();
+            int saveStatus = save.get(30, TimeUnit.SECONDS);
+            int tagStatus = tags.get(30, TimeUnit.SECONDS);
+            assertThat(List.of(saveStatus, tagStatus)).containsExactlyInAnyOrder(200, 412);
+            assertThat(jdbc.queryForObject("select title from notes.note where note_id = ?::uuid",
+                    String.class, id)).isEqualTo(saveStatus == 200 ? "Saved winner" : "Original");
+            assertThat(jdbc.queryForObject("select count(*) from notes.note_tag where note_id = ?::uuid",
+                    Integer.class, id)).isEqualTo(tagStatus == 200 ? 1 : 0);
+        }
+        assertThat(jdbc.queryForObject("select revision from notes.note where note_id = ?::uuid",
+                Long.class, id)).isEqualTo(2L);
+    }
+
+    @Test
+    void concurrentTagSetsCannotMergeOrOverwriteTheWinningSet() throws Exception {
+        Browser owner = browser(account(), "ROLE_USER");
+        MvcResult created = createNote(owner);
+        String id = json.readTree(body(created)).get("id").asText();
+        String etag = created.getResponse().getHeader("ETag");
+        CountDownLatch start = new CountDownLatch(1);
+        try (var workers = Executors.newFixedThreadPool(2)) {
+            var a = workers.submit(() -> {
+                if (!start.await(30, TimeUnit.SECONDS)) throw new IllegalStateException("start timed out");
+                return replaceTags(owner, id, etag, List.of("Alpha")).andReturn().getResponse().getStatus();
+            });
+            var b = workers.submit(() -> {
+                if (!start.await(30, TimeUnit.SECONDS)) throw new IllegalStateException("start timed out");
+                return replaceTags(owner, id, etag, List.of("Beta")).andReturn().getResponse().getStatus();
+            });
+            start.countDown();
+            int first = a.get(30, TimeUnit.SECONDS);
+            assertThat(List.of(first, b.get(30, TimeUnit.SECONDS))).containsExactlyInAnyOrder(200, 412);
+            assertThat(jdbc.queryForList("select display_label from notes.note_tag where note_id = ?::uuid",
+                    String.class, id)).containsExactly(first == 200 ? "Alpha" : "Beta");
+        }
+        assertThat(jdbc.queryForObject("select revision from notes.note where note_id = ?::uuid",
+                Long.class, id)).isEqualTo(2L);
+    }
+
+    private MvcResult createNote(Browser browser) throws Exception {
+        return mvc.perform(post("/api/notes").cookie(browser.cookie())
+                .header("X-CSRF-TOKEN", browser.csrf()).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"title\":\"Original\",\"markdown\":\"Body\"}"))
+                .andExpect(status().isCreated()).andReturn();
+    }
+
+    private org.springframework.test.web.servlet.ResultActions replaceTags(Browser browser,
+            String id, String etag, List<String> tags) throws Exception {
+        return mvc.perform(put("/api/notes/{noteId}/tags", id).cookie(browser.cookie())
+                .header("X-CSRF-TOKEN", browser.csrf()).header("If-Match", etag)
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(java.util.Map.of("tags", tags))));
     }
 
     private int concurrentSave(CountDownLatch start, Browser browser, String id,

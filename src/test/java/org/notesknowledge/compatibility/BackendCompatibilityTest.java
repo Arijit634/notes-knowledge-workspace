@@ -60,6 +60,7 @@ class BackendCompatibilityTest {
         assertThat(document.path("paths").isObject()).isTrue();
         assertThat(document.path("paths").path("/api/notes").isObject()).isTrue();
         assertThat(document.path("paths").path("/api/notes/{noteId}").isObject()).isTrue();
+        assertThat(document.path("paths").path("/api/notes/{noteId}/tags").path("put").isObject()).isTrue();
         assertThat(document.path("paths").path("/api/me/note-preferences").isObject()).isTrue();
     }
 

@@ -147,7 +147,7 @@ class IdentityCoreIntegrationTest {
                 "/api/me/security/sessions/revoke-others",
                 "/api/me/security/sessions/revoke-all",
                 "/api/me/account", "/api/me/note-preferences", "/api/notes",
-                "/api/notes/{noteId}");
+                "/api/notes/{noteId}", "/api/notes/{noteId}/tags");
     }
 
     @Test

@@ -7,9 +7,9 @@ import java.util.UUID;
 /** The current Notes-owned core, never an AI-processing projection. */
 record NoteRecord(UUID id, String title, String markdown, String lifecycle,
         boolean pinned, boolean aiEnabled, Instant createdAt, Instant updatedAt,
-        long revision) {
+        long revision, List<String> tags) {
     NoteView view() {
-        return new NoteView(id, title, markdown, lifecycle, pinned, List.of(),
+        return new NoteView(id, title, markdown, lifecycle, pinned, tags,
                 aiEnabled, createdAt, updatedAt);
     }
 
