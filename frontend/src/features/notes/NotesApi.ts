@@ -14,6 +14,8 @@ export type NoteCore = {
   updatedAt: string
 }
 
+export type NoteOrganizationCommand = 'pin' | 'unpin' | 'archive' | 'returnFromArchive'
+
 function object(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -61,8 +63,11 @@ export const notesApi = {
       { json: { title, markdown }, ifMatch: etag, retryOnCsrfInvalid: false })
     return etagged(result.body, result.metadata.etag)
   },
-  list: async (auth: AuthRuntime, cursor: string | null): Promise<CursorPage<NoteCore>> => {
-    const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''
+  list: async (auth: AuthRuntime, cursor: string | null, lifecycle: 'active' | 'archived' = 'active'): Promise<CursorPage<NoteCore>> => {
+    const params = new URLSearchParams()
+    if (lifecycle === 'archived') params.set('lifecycle', lifecycle)
+    if (cursor) params.set('cursor', cursor)
+    const query = params.size ? `?${params}` : ''
     const body: unknown = (await auth.api.request<unknown>('GET', `/api/notes${query}`)).body
     if (!object(body) || !Array.isArray(body.items)
         || !(body.nextCursor === null || typeof body.nextCursor === 'string')) throw new ApiProtocolError()
@@ -71,6 +76,14 @@ export const notesApi = {
   replaceTags: async (auth: AuthRuntime, id: string, etag: string, tags: string[]) => {
     const result = await auth.api.request<unknown>('PUT', `/api/notes/${encodeURIComponent(id)}/tags`,
       { json: { tags }, ifMatch: etag, retryOnCsrfInvalid: false })
+    return etagged(result.body, result.metadata.etag)
+  },
+  organize: async (auth: AuthRuntime, id: string, etag: string, command: NoteOrganizationCommand) => {
+    const method = command === 'pin' ? 'PUT' : command === 'unpin' ? 'DELETE' : 'POST'
+    const path = command === 'pin' || command === 'unpin' ? 'pin'
+      : command === 'archive' ? 'archive' : 'return-from-archive'
+    const result = await auth.api.request<unknown>(method, `/api/notes/${encodeURIComponent(id)}/${path}`,
+      { ifMatch: etag, retryOnCsrfInvalid: false })
     return etagged(result.body, result.metadata.etag)
   },
 }

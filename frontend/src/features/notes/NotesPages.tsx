@@ -5,10 +5,8 @@ import type { AuthRuntime } from '../auth/AuthRuntime'
 import { ApiProblemError } from '../../app/api/ProblemDetailsDecoder'
 import { MarkdownView } from './MarkdownView'
 import { emptyEditorSession, isDirty, noteEditorSession } from './NoteEditorSession'
-import { notesApi } from './NotesApi'
+import { notesApi, type NoteOrganizationCommand } from './NotesApi'
 import { noteKeys, notePreferenceKeys } from './NotesKeys'
-
-const activeNotes = Object.freeze({ lifecycle: 'active', sort: 'updatedAtDesc' })
 
 function issue(error: unknown): string {
   if (error instanceof ApiProblemError) {
@@ -21,8 +19,9 @@ function issue(error: unknown): string {
 
 export function NotesListPage({ auth }: { auth: AuthRuntime }) {
   const scope = auth.session.viewerScope
-  const page = useInfiniteQuery({ queryKey: noteKeys.list(scope, activeNotes),
-    queryFn: ({ pageParam }) => notesApi.list(auth, pageParam), initialPageParam: null as string | null,
+  const [lifecycle, setLifecycle] = useState<'active' | 'archived'>('active')
+  const page = useInfiniteQuery({ queryKey: noteKeys.list(scope, { lifecycle, sort: 'updatedAtDesc' }),
+    queryFn: ({ pageParam }) => notesApi.list(auth, pageParam, lifecycle), initialPageParam: null as string | null,
     getNextPageParam: last => last.nextCursor ?? undefined, retry: false }, auth.queries)
   const entries = [...new Map(page.data?.pages.flatMap(part => part.items)
     .map(item => [item.id, item] as const) ?? []).values()]
@@ -30,11 +29,15 @@ export function NotesListPage({ auth }: { auth: AuthRuntime }) {
     <nav className="notes-top"><Link to="/">Notes &amp; Knowledge</Link><Link to="/settings/security">Security settings</Link></nav>
     <header className="notes-heading"><div><p className="eyebrow">Your workspace</p><h1>Notes</h1></div>
       <Link className="button" to="/notes/new">New note</Link></header>
+    <nav aria-label="Note views" className="notes-actions">
+      <button type="button" className="button-secondary" aria-pressed={lifecycle === 'active'} onClick={() => setLifecycle('active')}>Active notes</button>
+      <button type="button" className="button-secondary" aria-pressed={lifecycle === 'archived'} onClick={() => setLifecycle('archived')}>Archived notes</button>
+    </nav>
     {page.isPending && <p role="status">Loading notes…</p>}
     {page.isError && <p role="alert">{issue(page.error)} <button onClick={() => void page.refetch()}>Retry</button></p>}
-    {!page.isPending && !page.isError && entries.length === 0 && <div className="notes-empty"><h2>No notes yet</h2><p>Start with a thought worth keeping.</p><Link to="/notes/new">Create a note</Link></div>}
+    {!page.isPending && !page.isError && entries.length === 0 && <div className="notes-empty"><h2>{lifecycle === 'active' ? 'No notes yet' : 'No archived notes'}</h2><p>{lifecycle === 'active' ? 'Start with a thought worth keeping.' : 'Archived notes will appear here.'}</p><Link to="/notes/new">Create a note</Link></div>}
     {entries.length > 0 && <ul className="notes-list">{entries.map(note => <li key={note.id}>
-      <Link to={`/notes/${note.id}`}><strong>{note.title}</strong><span>Updated {new Date(note.updatedAt).toLocaleString()}</span></Link>
+      <Link to={`/notes/${note.id}`}><strong>{note.title}</strong>{note.pinned && <span>Pinned</span>}<span>Updated {new Date(note.updatedAt).toLocaleString()}</span></Link>
     </li>)}</ul>}
     {page.hasNextPage && <button className="button-secondary" disabled={page.isFetchingNextPage}
       onClick={() => void page.fetchNextPage()}>Load more</button>}
@@ -53,6 +56,10 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
   const [tagEtag, setTagEtag] = useState<string | null>(null)
   const [tagsEditing, setTagsEditing] = useState(false)
   const [tagError, setTagError] = useState('')
+  const [archiveConfirmation, setArchiveConfirmation] = useState(false)
+  const archiveConfirmButton = useRef<HTMLButtonElement>(null)
+  const archiveButton = useRef<HTMLButtonElement>(null)
+  const previousArchiveConfirmation = useRef(false)
   const [conflictLoading, setConflictLoading] = useState(false)
   const [conflictLoadError, setConflictLoadError] = useState(false)
   const initialPreference = useRef(false)
@@ -71,6 +78,9 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
   useEffect(() => { if (loaded.data) dispatch({ type: 'observed', server: loaded.data }) }, [loaded.data])
 
   const dirty = isDirty(session)
+  const archived = session.serverVersion?.value.lifecycle === 'archived'
+  const organizationEligible = session.serverVersion?.value.lifecycle === 'active' || archived
+  const commandBlocked = busy || !organizationEligible || session.phase === 'Conflict' || session.serverChangedWhileDirty
   const blocker = useBlocker(({ currentLocation, nextLocation }) =>
     !allowNavigation.current && dirty && currentLocation.pathname !== nextLocation.pathname)
   useEffect(() => {
@@ -89,7 +99,7 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
   }
 
   async function save() {
-    if (busy || !dirty || session.phase === 'Conflict' || !session.draft.title.trim()) return
+    if (busy || archived || archiveConfirmation || !dirty || session.phase === 'Conflict' || !session.draft.title.trim()) return
     if (!creating && (!session.id || !session.etag)) return
     const { title, markdown } = session.draft
     setBusy(true); setError(''); dispatch({ type: 'saving' })
@@ -117,7 +127,7 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
     setBusy(true); setTagError('')
     try {
       const result = await notesApi.replaceTags(auth, session.id, tagEtag, tags)
-      dispatch({ type: 'tagsReplaced', server: result })
+      dispatch({ type: 'coreCommandSucceeded', server: result })
       auth.queries.setQueryData(noteKeys.core(scope, session.id), result)
       setTagsEditing(false)
       await auth.queries.invalidateQueries({ queryKey: noteKeys.lists(scope) })
@@ -128,6 +138,28 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
       } else setTagError(issue(failure))
     } finally { setBusy(false) }
   }
+
+  async function organize(command: NoteOrganizationCommand) {
+    if (commandBlocked || !session.id || !session.etag) return
+    setBusy(true); setError('')
+    try {
+      const result = await notesApi.organize(auth, session.id, session.etag, command)
+      dispatch({ type: 'coreCommandSucceeded', server: result })
+      auth.queries.setQueryData(noteKeys.core(scope, session.id), result)
+      await auth.queries.invalidateQueries({ queryKey: noteKeys.lists(scope) })
+    } catch (failure) {
+      if (failure instanceof ApiProblemError && failure.problem.status === 412) {
+        dispatch({ type: 'conflict' })
+        await loadConflictVersion()
+      } else setError(issue(failure))
+    } finally { setBusy(false); setArchiveConfirmation(false) }
+  }
+
+  useEffect(() => {
+    if (archiveConfirmation) archiveConfirmButton.current?.focus()
+    else if (previousArchiveConfirmation.current) archiveButton.current?.focus()
+    previousArchiveConfirmation.current = archiveConfirmation
+  }, [archiveConfirmation])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -143,7 +175,7 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
   const loading = creating ? preference.isPending
     : loaded.isPending || (!!loaded.data && session.id !== loaded.data.value.id)
   const loadError = creating ? preference.error : loaded.error
-  return <main className="notes-layout"><div className="notes-shell">
+  return <main className="notes-layout"><div className="notes-shell"><div inert={archiveConfirmation}>
     <nav className="notes-top"><Link to="/notes">All notes</Link><Link to="/settings/security">Security settings</Link></nav>
     {loading ? <p role="status">Loading editor…</p> : loadError
       ? <p role="alert">{issue(loadError)} <button onClick={() => void (creating ? preference.refetch() : loaded.refetch())}>Retry</button></p>
@@ -160,11 +192,23 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
             <label htmlFor="note-markdown">Markdown</label>
             <textarea id="note-markdown" rows={14} maxLength={1_000_000} value={session.draft.markdown}
               onChange={event => dispatch({ type: 'edit', field: 'markdown', value: event.target.value })} />
-            <div className="notes-actions"><button type="submit" disabled={busy || !dirty || session.phase === 'Conflict' || !session.draft.title.trim()}>
+            <div className="notes-actions"><button type="submit" disabled={busy || archiveConfirmation || archived || !dirty || session.phase === 'Conflict' || !session.draft.title.trim()}>
               {creating ? 'Create note' : session.phase === 'SaveFailed' ? 'Retry save' : 'Save note'}</button>
               <button type="button" className="button-secondary" aria-pressed={preview} onClick={() => setPreview(value => !value)}>
                 {preview ? 'Hide preview' : 'Show preview'}</button></div>
           </form>
+          {!creating && <section className="notes-preview" aria-label="Note organization">
+            <h2>Organization</h2><p>{session.serverVersion
+              ? `${archived ? 'Archived' : organizationEligible ? 'Active' : 'Organization changes unavailable'} · ${session.serverVersion.value.pinned ? 'Pinned' : 'Not pinned'}`
+              : 'Current organization state unavailable'}</p>
+            <div className="notes-actions"><button type="button" className="button-secondary" disabled={commandBlocked}
+              onClick={() => void organize(session.serverVersion?.value.pinned ? 'unpin' : 'pin')}>
+              {session.serverVersion?.value.pinned ? 'Unpin' : 'Pin'}</button>
+              <button type="button" className="button-secondary" ref={archiveButton} disabled={commandBlocked}
+                onClick={() => archived ? void organize('returnFromArchive') : dirty ? setArchiveConfirmation(true) : void organize('archive')}>
+                {archived ? 'Return from archive' : 'Archive'}</button></div>
+            {archived && <p role="status">This note is archived. Return it to Active before saving title or Markdown. Any unsaved draft is kept in this tab.</p>}
+          </section>}
           {!creating && <section className="notes-preview" aria-label="Note tags">
             <h2>Tags</h2>
             {session.serverVersion?.value.tags.length
@@ -200,10 +244,26 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
           </section>}
           {preview && <section className="notes-preview" aria-label="Markdown preview"><h2>Preview</h2><MarkdownView markdown={session.draft.markdown} /></section>}
         </>}
+    </div>
     {blocker.state === 'blocked' && <div className="dialog-backdrop"><div className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="leave-title">
       <h2 id="leave-title">Leave with unsaved changes?</h2><p>Your draft will be lost if you leave.</p>
       <button type="button" onClick={() => blocker.reset()}>Keep editing</button>
       <button type="button" className="button-secondary" onClick={() => blocker.proceed()}>Discard changes and leave</button>
+    </div></div>}
+    {archiveConfirmation && <div className="dialog-backdrop"><div className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="archive-title"
+      onKeyDown={event => {
+        if (event.key === 'Escape' && !busy) { setArchiveConfirmation(false); archiveButton.current?.focus() }
+        if (event.key === 'Tab') {
+          event.preventDefault()
+          const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'))
+          const position = buttons.indexOf(document.activeElement as HTMLButtonElement)
+          buttons[(position + (event.shiftKey ? buttons.length - 1 : 1)) % buttons.length]?.focus()
+        }
+      }}>
+      <h2 id="archive-title">Archive with unsaved changes?</h2>
+      <p>Your title and Markdown draft will stay in this tab, but will not be saved. Return the note from archive before saving it. Leaving the editor can lose the draft.</p>
+      <button type="button" ref={archiveConfirmButton} disabled={commandBlocked} onClick={() => void organize('archive')}>Archive and keep draft</button>
+      <button type="button" className="button-secondary" disabled={busy} onClick={() => { setArchiveConfirmation(false); archiveButton.current?.focus() }}>Keep editing</button>
     </div></div>}
   </div></main>
 }

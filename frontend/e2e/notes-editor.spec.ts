@@ -16,7 +16,9 @@ async function fakeNotesBackend(page: Page) {
     if (path === '/api/auth/session') response = { state: 'authenticated' }
     else if (path === '/api/auth/csrf') response = { csrfToken: 'synthetic-csrf' }
     else if (path === '/api/me/note-preferences') response = { defaultAiEnabledForNewNotes: false }
-    else if (path === '/api/notes' && method === 'GET') response = { items: note ? [note] : [], nextCursor: null }
+    else if (path === '/api/notes' && method === 'GET') response = {
+      items: note && note.lifecycle === (new URL(request.url()).searchParams.get('lifecycle') ?? 'active') ? [note] : [], nextCursor: null,
+    }
     else if (path === '/api/notes' && method === 'POST') {
       const input = body as { title: string; markdown: string; aiEnabled: boolean }
       note = { id, ...input, lifecycle: 'active', pinned: false, tags: [],
@@ -34,6 +36,21 @@ async function fakeNotesBackend(page: Page) {
       expect(request.headers()['if-match']).toBe(`"n${revision}"`)
       note = { ...note, tags: (body as { tags: string[] }).tags }
       revision++; response = note; headers = { ETag: `"n${revision}"` }
+    } else if (note && [ `/api/notes/${id}/pin`, `/api/notes/${id}/archive`, `/api/notes/${id}/return-from-archive` ].includes(path)) {
+      expect(request.headers()['if-match']).toBe(`"n${revision}"`)
+      expect(body).toBeNull()
+      if (path.endsWith('/pin')) {
+        expect(['PUT', 'DELETE']).toContain(method)
+        const pinned = method === 'PUT'
+        if (note.pinned !== pinned) revision++
+        note = { ...note, pinned }
+      } else {
+        expect(method).toBe('POST')
+        expect(note.lifecycle).toBe(path.endsWith('/archive') ? 'active' : 'archived')
+        note = { ...note, lifecycle: path.endsWith('/archive') ? 'archived' : 'active' }
+        revision++
+      }
+      response = note; headers = { ETag: `"n${revision}"` }
     } else throw new Error(`Unexpected test request: ${method} ${path}`)
     await route.fulfill({ status, contentType: 'application/json', headers, body: JSON.stringify(response) })
   })
@@ -65,6 +82,50 @@ test('new Note stays local until Create; explicit Save and dirty navigation work
   await expect(page.getByText('Saved', { exact: true })).toBeVisible()
   expect(calls.filter(call => call.method === 'PUT' && call.path === `/api/notes/${id}`)).toHaveLength(1)
   expect(externalImageRequests).toBe(0)
+})
+
+test('independent pin and archive commands keep dirty drafts and update list membership', async ({ page }) => {
+  const calls = await fakeNotesBackend(page)
+  await page.goto('/notes/new')
+  await page.getByLabel('Title').fill('Original')
+  await page.getByRole('button', { name: 'Create note' }).click()
+  await expect(page).toHaveURL(new RegExp(`/notes/${id}$`))
+  await page.getByLabel('Title').fill(' Unsaved title ')
+  await page.getByRole('textbox', { name: 'Markdown' }).fill('Unsaved\n**Markdown** ')
+  await page.getByRole('button', { name: 'Pin', exact: true }).click()
+  await page.getByRole('button', { name: 'Unpin', exact: true }).click()
+  await page.getByRole('button', { name: 'Archive', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: 'Archive with unsaved changes?' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Archive and keep draft' })).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Archive', exact: true })).toBeFocused()
+  await page.getByRole('button', { name: 'Archive', exact: true }).click()
+  await page.getByRole('button', { name: 'Archive and keep draft' }).click()
+  await expect(page.getByRole('button', { name: 'Return from archive' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Save note' })).toBeDisabled()
+  await page.getByRole('textbox', { name: 'Markdown' }).press('ControlOrMeta+s')
+  expect(calls.filter(call => call.method === 'PUT' && call.path === `/api/notes/${id}`)).toHaveLength(0)
+  await expect(page.getByLabel('Title')).toHaveValue(' Unsaved title ')
+  await expect(page.getByRole('textbox', { name: 'Markdown' })).toHaveValue('Unsaved\n**Markdown** ')
+  await page.getByRole('button', { name: 'Return from archive' }).click()
+  await expect(page.getByLabel('Title')).toHaveValue(' Unsaved title ')
+  await expect(page.getByRole('textbox', { name: 'Markdown' })).toHaveValue('Unsaved\n**Markdown** ')
+  await page.getByRole('button', { name: 'Save note' }).click()
+  await expect(page.getByText('Saved', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Archive', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Return from archive' })).toBeVisible()
+  await page.getByRole('link', { name: 'All notes' }).click()
+  await expect(page.getByText('No notes yet', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Archived notes' }).click()
+  await page.getByRole('link', { name: /Unsaved title/ }).click()
+  await page.getByRole('button', { name: 'Return from archive' }).click()
+  await expect(page.getByRole('button', { name: 'Archive', exact: true })).toBeVisible()
+  await page.getByRole('link', { name: 'All notes' }).click()
+  await expect(page.getByRole('link', { name: /Unsaved title/ })).toBeVisible()
+  await page.getByRole('button', { name: 'Archived notes' }).click()
+  await expect(page.getByText('No archived notes', { exact: true })).toBeVisible()
+  expect(calls.filter(call => call.method === 'PUT' && call.path === `/api/notes/${id}`)).toHaveLength(1)
 })
 
 test('explicit tags preserve an unsaved draft and advance its next Save validator', async ({ page }) => {

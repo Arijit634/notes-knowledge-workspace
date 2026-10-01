@@ -11,13 +11,33 @@ const first = { value: note, etag: '"first"' }
 const second = { value: { ...note, title: 'Server change' }, etag: '"second"' }
 
 describe('NoteEditorSession', () => {
+  it.each([
+    { pinned: true, lifecycle: 'active' as const },
+    { pinned: false, lifecycle: 'active' as const },
+    { pinned: true, lifecycle: 'archived' as const },
+  ])('adopts a same-tab organization command without advancing the Save baseline: %j', organization => {
+    const loaded = noteEditorSession(emptyEditorSession, { type: 'load', server: first })
+    const edited = noteEditorSession(noteEditorSession(loaded,
+      { type: 'edit', field: 'title', value: ' Exact title ' }),
+    { type: 'edit', field: 'markdown', value: 'Exact\nMarkdown ' })
+    const server = { value: { ...note, ...organization }, etag: '"organization"' }
+    const updated = noteEditorSession(edited, { type: 'coreCommandSucceeded', server })
+    expect(updated.draft).toEqual(edited.draft)
+    expect(updated.baseline).toEqual(loaded.baseline)
+    expect(updated.serverVersion).toEqual(server)
+    expect(updated.etag).toBe(server.etag)
+    expect(isDirty(updated)).toBe(true)
+    expect(updated.serverChangedWhileDirty).toBe(false)
+    expect(noteEditorSession(updated, { type: 'observed', server })).toEqual(updated)
+  })
+
   it('adopts same-tab tags and validator without changing the exact dirty draft or Save baseline', () => {
     const loaded = noteEditorSession(emptyEditorSession, { type: 'load', server: first })
     const edited = noteEditorSession(noteEditorSession(loaded,
       { type: 'edit', field: 'title', value: ' Unsaved title ' }),
     { type: 'edit', field: 'markdown', value: 'Exact\n**draft** ' })
     const server = { value: { ...note, tags: ['Films'] }, etag: '"tagged"' }
-    const tagged = noteEditorSession(edited, { type: 'tagsReplaced', server })
+    const tagged = noteEditorSession(edited, { type: 'coreCommandSucceeded', server })
     expect(tagged.draft).toEqual(edited.draft)
     expect(tagged.baseline).toEqual(loaded.baseline)
     expect(tagged.etag).toBe('"tagged"')

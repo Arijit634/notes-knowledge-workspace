@@ -15,6 +15,14 @@ const problem = (status: number, code: string) => json({ type: 'about:blank', ti
   code, instance: `/api/notes/${id}`, traceId: `tr_${'a'.repeat(32)}` }, status,
 { 'Content-Type': 'application/problem+json' })
 
+async function readyButton(name: string): Promise<HTMLButtonElement> {
+  return waitFor(() => {
+    const button = screen.getByRole('button', { name }) as HTMLButtonElement
+    expect(button.disabled).toBe(false)
+    return button
+  })
+}
+
 function mount(path: string, state: 'authenticated' | 'anonymous' | 'mfaRequired' = 'authenticated',
   onRequest?: (method: string, path: string, body: unknown) => Response | undefined) {
   window.history.replaceState(null, '', path)
@@ -40,6 +48,136 @@ function mount(path: string, state: 'authenticated' | 'anonymous' | 'mfaRequired
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); window.history.replaceState(null, '', '/') })
 
 describe('private Notes browser journey', () => {
+  it('pins and unpins with current validators without saving a dirty draft', async () => {
+    const { calls, auth } = mount(`/notes/${id}`, 'authenticated', (method, path, body) => {
+      if (path === `/api/notes/${id}/pin`) return json({ ...initial, pinned: method === 'PUT' },
+        200, { ETag: method === 'PUT' ? '"e2"' : '"e3"' })
+      if (method === 'PUT' && path === `/api/notes/${id}`) return json({ ...initial, ...body as object }, 200, { ETag: '"e4"' })
+      return undefined
+    })
+    await screen.findByDisplayValue('Saved title', {}, { timeout: 5000 })
+    for (const lifecycle of ['active', 'archived']) auth.queries.setQueryData(
+      noteKeys.list(auth.session.viewerScope, { lifecycle, sort: 'updatedAtDesc' }),
+      { pages: [{ items: [initial], nextCursor: null }], pageParams: [null] })
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: ' Exact title ' } })
+    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: 'Exact\n**draft** ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Pin' }))
+    fireEvent.click(await readyButton('Unpin'))
+    await readyButton('Pin')
+    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(' Exact title ')
+    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe('Exact\n**draft** ')
+    expect(screen.getByText('Unsaved changes')).toBeTruthy()
+    expect(calls.filter(call => call.path.endsWith('/pin'))).toEqual([
+      { method: 'PUT', path: `/api/notes/${id}/pin`, body: null, ifMatch: '"e1"' },
+      { method: 'DELETE', path: `/api/notes/${id}/pin`, body: null, ifMatch: '"e2"' },
+    ])
+    for (const lifecycle of ['active', 'archived']) expect(auth.queries.getQueryState(
+      noteKeys.list(auth.session.viewerScope, { lifecycle, sort: 'updatedAtDesc' }))?.isInvalidated).toBe(true)
+    expect(calls.some(call => call.method === 'PUT' && call.path === `/api/notes/${id}`)).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: 'Save note' }))
+    await screen.findByText('Saved')
+    expect(calls.find(call => call.method === 'PUT' && call.path === `/api/notes/${id}`)?.ifMatch).toBe('"e3"')
+  })
+
+  it('confirms dirty Archive, preserves the draft, and requires Return before Save', async () => {
+    const { calls } = mount(`/notes/${id}`, 'authenticated', (method, path, body) => {
+      if (method === 'POST' && path === `/api/notes/${id}/archive`) return json({ ...initial, lifecycle: 'archived' }, 200, { ETag: '"e2"' })
+      if (method === 'POST' && path === `/api/notes/${id}/return-from-archive`) return json(initial, 200, { ETag: '"e3"' })
+      if (method === 'PUT' && path === `/api/notes/${id}`) return json({ ...initial, ...body as object }, 200, { ETag: '"e4"' })
+      return undefined
+    })
+    await screen.findByDisplayValue('Saved title', {}, { timeout: 5000 })
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: ' Unsaved title ' } })
+    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: 'Unsaved\nbody ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Archive' }))
+    const confirm = await screen.findByRole('button', { name: 'Archive and keep draft' })
+    expect(document.activeElement).toBe(confirm)
+    fireEvent.keyDown(confirm, { key: 'Tab' })
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Keep editing' }))
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Archive' }))
+    expect(calls.some(call => call.method === 'POST')).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: 'Archive' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Archive and keep draft' }))
+    await readyButton('Return from archive')
+    expect(screen.getByRole('button', { name: 'Save note' }).hasAttribute('disabled')).toBe(true)
+    fireEvent.keyDown(document, { key: 's', ctrlKey: true })
+    expect(calls.some(call => call.method === 'PUT' && call.path === `/api/notes/${id}`)).toBe(false)
+    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(' Unsaved title ')
+    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe('Unsaved\nbody ')
+    fireEvent.click(screen.getByRole('button', { name: 'Return from archive' }))
+    await readyButton('Archive')
+    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(' Unsaved title ')
+    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe('Unsaved\nbody ')
+    fireEvent.click(screen.getByRole('button', { name: 'Save note' }))
+    await screen.findByText('Saved')
+    expect(calls.filter(call => call.method === 'POST').map(call => [call.path, call.ifMatch]))
+      .toEqual([[`/api/notes/${id}/archive`, '"e1"'], [`/api/notes/${id}/return-from-archive`, '"e2"']])
+    expect(calls.find(call => call.method === 'PUT' && call.path === `/api/notes/${id}`)?.ifMatch).toBe('"e3"')
+  })
+
+  it.each(['pin', 'archive', 'return-from-archive'])('keeps the exact draft and requires reconciliation after stale %s', async action => {
+    const original = { ...initial, lifecycle: action === 'return-from-archive' ? 'archived' as const : 'active' as const }
+    const { calls } = mount(`/notes/${id}`, 'authenticated', (method, path) => {
+      if (method === 'GET' && path === `/api/notes/${id}`) return json(original, 200, { ETag: '"e1"' })
+      if (path === `/api/notes/${id}/${action}`) return problem(412, 'stale_write')
+      return undefined
+    })
+    await screen.findByDisplayValue('Saved title', {}, { timeout: 5000 })
+    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: ' Exact\nlocal draft ' } })
+    fireEvent.click(screen.getByRole('button', { name: action === 'pin' ? 'Pin' : action === 'archive' ? 'Archive' : 'Return from archive' }))
+    if (action === 'archive') fireEvent.click(screen.getByRole('button', { name: 'Archive and keep draft' }))
+    await screen.findByRole('heading', { name: 'Another version was saved' })
+    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe(' Exact\nlocal draft ')
+    expect(screen.getByRole('button', { name: 'Save note' }).hasAttribute('disabled')).toBe(true)
+    expect(calls.filter(call => call.method !== 'GET' && call.path.startsWith(`/api/notes/${id}`))).toHaveLength(1)
+  })
+
+  it.each([409, 503])('keeps organization and draft unchanged after rejected command %s', async status => {
+    const { calls } = mount(`/notes/${id}`, 'authenticated', (method, path) =>
+      method === 'PUT' && path === `/api/notes/${id}/pin` ? problem(status, 'invalid_lifecycle_transition') : undefined)
+    await screen.findByDisplayValue('Saved title', {}, { timeout: 5000 })
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: ' Exact draft ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Pin' }))
+    await screen.findByRole('alert')
+    expect(screen.getByText('Active · Not pinned')).toBeTruthy()
+    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(' Exact draft ')
+    expect(calls.filter(call => call.method === 'PUT')).toHaveLength(1)
+  })
+
+  it('moves clean notes between existing Active and Archived views after commands', async () => {
+    let core = initial
+    const { calls } = mount('/notes', 'authenticated', (method, path) => {
+      if (method === 'GET' && path.startsWith('/api/notes?')) return json({ items: core.lifecycle === 'archived' ? [core] : [], nextCursor: null })
+      if (method === 'GET' && path === '/api/notes') return json({ items: core.lifecycle === 'active' ? [core] : [], nextCursor: null })
+      if (method === 'GET' && path === `/api/notes/${id}`) return json(core, 200, { ETag: '"current"' })
+      if (method === 'POST') {
+        core = { ...core, lifecycle: path.endsWith('/archive') ? 'archived' : 'active' }
+        return json(core, 200, { ETag: path.endsWith('/archive') ? '"archived"' : '"active"' })
+      }
+      return undefined
+    })
+    await screen.findByText('Saved title')
+    fireEvent.click(screen.getByRole('link', { name: /Saved title/ }))
+    await screen.findByDisplayValue('Saved title', {}, { timeout: 5000 })
+    fireEvent.click(screen.getByRole('button', { name: 'Archive' }))
+    await readyButton('Return from archive')
+    expect(screen.queryByRole('dialog')).toBeNull()
+    fireEvent.click(screen.getByRole('link', { name: 'All notes' }))
+    await screen.findByText('No notes yet')
+    fireEvent.click(screen.getByRole('button', { name: 'Archived notes' }))
+    await screen.findByText('Saved title')
+    fireEvent.click(screen.getByRole('link', { name: /Saved title/ }))
+    fireEvent.click(await readyButton('Return from archive'))
+    await readyButton('Archive')
+    fireEvent.click(screen.getByRole('link', { name: 'All notes' }))
+    await screen.findByText('Saved title')
+    fireEvent.click(screen.getByRole('button', { name: 'Archived notes' }))
+    await screen.findByText('No archived notes')
+    expect(calls.filter(call => call.method === 'POST')).toHaveLength(2)
+  })
+
   it('applies tags independently, preserves the dirty editor and uses the returned ETag for Save', async () => {
     const tagged = { ...initial, tags: ['Films', 'Watch-later'] }
     const { calls, auth } = mount(`/notes/${id}`, 'authenticated', (method, path, body) => {

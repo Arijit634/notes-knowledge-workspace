@@ -36,6 +36,7 @@ class ProductionApiSurfaceTest {
                 .noneMatch(path -> path.startsWith("/__api-probe"));
         assertThat(paths.stream().filter(path -> path.startsWith("/api/"))).containsExactlyInAnyOrder(
                 "/api/me/note-preferences", "/api/notes", "/api/notes/{noteId}",
-                "/api/notes/{noteId}/tags");
+                "/api/notes/{noteId}/tags", "/api/notes/{noteId}/pin",
+                "/api/notes/{noteId}/archive", "/api/notes/{noteId}/return-from-archive");
     }
 }
