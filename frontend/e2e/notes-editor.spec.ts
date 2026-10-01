@@ -26,8 +26,13 @@ async function fakeNotesBackend(page: Page) {
     } else if (path === `/api/notes/${id}` && method === 'GET' && note) {
       response = note; headers = { ETag: `"n${revision}"` }
     } else if (path === `/api/notes/${id}` && method === 'PUT' && note) {
+      expect(request.headers()['if-match']).toBe(`"n${revision}"`)
       const input = body as { title: string; markdown: string }
       note = { ...note, ...input, updatedAt: '2026-09-30T00:00:01Z' }
+      revision++; response = note; headers = { ETag: `"n${revision}"` }
+    } else if (path === `/api/notes/${id}/tags` && method === 'PUT' && note) {
+      expect(request.headers()['if-match']).toBe(`"n${revision}"`)
+      note = { ...note, tags: (body as { tags: string[] }).tags }
       revision++; response = note; headers = { ETag: `"n${revision}"` }
     } else throw new Error(`Unexpected test request: ${method} ${path}`)
     await route.fulfill({ status, contentType: 'application/json', headers, body: JSON.stringify(response) })
@@ -60,4 +65,24 @@ test('new Note stays local until Create; explicit Save and dirty navigation work
   await expect(page.getByText('Saved', { exact: true })).toBeVisible()
   expect(calls.filter(call => call.method === 'PUT' && call.path === `/api/notes/${id}`)).toHaveLength(1)
   expect(externalImageRequests).toBe(0)
+})
+
+test('explicit tags preserve an unsaved draft and advance its next Save validator', async ({ page }) => {
+  const calls = await fakeNotesBackend(page)
+  await page.goto('/notes/new')
+  await page.getByLabel('Title').fill('Original')
+  await page.getByRole('button', { name: 'Create note' }).click()
+  await expect(page).toHaveURL(new RegExp(`/notes/${id}$`))
+  await page.getByLabel('Title').fill(' Unsaved title ')
+  await page.getByRole('textbox', { name: 'Markdown' }).fill('Unsaved\n**Markdown** ')
+  await page.getByRole('button', { name: 'Edit tags' }).click()
+  await page.getByLabel('Tags, one per line').fill('Films\nWatch-later')
+  await page.getByRole('button', { name: 'Apply tags' }).click()
+  await expect(page.getByRole('listitem').filter({ hasText: 'Films' })).toBeVisible()
+  await expect(page.getByLabel('Title')).toHaveValue(' Unsaved title ')
+  await expect(page.getByRole('textbox', { name: 'Markdown' })).toHaveValue('Unsaved\n**Markdown** ')
+  expect(calls.filter(call => call.method === 'PUT' && call.path === `/api/notes/${id}`)).toHaveLength(0)
+  await page.getByRole('button', { name: 'Save note' }).click()
+  await expect(page.getByText('Saved', { exact: true })).toBeVisible()
+  expect(calls.filter(call => call.method === 'PUT' && call.path === `/api/notes/${id}/tags`)).toHaveLength(1)
 })

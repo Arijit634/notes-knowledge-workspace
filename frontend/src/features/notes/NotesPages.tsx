@@ -49,6 +49,10 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
   const [error, setError] = useState('')
   const [preview, setPreview] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [tagInput, setTagInput] = useState('')
+  const [tagEtag, setTagEtag] = useState<string | null>(null)
+  const [tagsEditing, setTagsEditing] = useState(false)
+  const [tagError, setTagError] = useState('')
   const [conflictLoading, setConflictLoading] = useState(false)
   const [conflictLoadError, setConflictLoadError] = useState(false)
   const initialPreference = useRef(false)
@@ -105,6 +109,26 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
     } finally { setBusy(false) }
   }
 
+  async function replaceTags(event: FormEvent) {
+    event.preventDefault()
+    if (busy || !session.id || !tagEtag || session.phase === 'Conflict'
+        || session.serverChangedWhileDirty) return
+    const tags = tagInput.split('\n').map(value => value.trim()).filter(Boolean)
+    setBusy(true); setTagError('')
+    try {
+      const result = await notesApi.replaceTags(auth, session.id, tagEtag, tags)
+      dispatch({ type: 'tagsReplaced', server: result })
+      auth.queries.setQueryData(noteKeys.core(scope, session.id), result)
+      setTagsEditing(false)
+      await auth.queries.invalidateQueries({ queryKey: noteKeys.lists(scope) })
+    } catch (failure) {
+      if (failure instanceof ApiProblemError && failure.problem.status === 412) {
+        dispatch({ type: 'conflict' })
+        await loadConflictVersion()
+      } else setTagError(issue(failure))
+    } finally { setBusy(false) }
+  }
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
@@ -141,6 +165,25 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
               <button type="button" className="button-secondary" aria-pressed={preview} onClick={() => setPreview(value => !value)}>
                 {preview ? 'Hide preview' : 'Show preview'}</button></div>
           </form>
+          {!creating && <section className="notes-preview" aria-label="Note tags">
+            <h2>Tags</h2>
+            {session.serverVersion?.value.tags.length
+              ? <ul>{session.serverVersion.value.tags.map(tag => <li key={tag}>{tag}</li>)}</ul>
+              : <p>No tags</p>}
+            {!tagsEditing ? <button type="button" className="button-secondary"
+              disabled={busy || session.phase === 'Conflict' || session.serverChangedWhileDirty}
+              onClick={() => { setTagInput((session.serverVersion?.value.tags ?? []).join('\n')); setTagEtag(session.etag); setTagError(''); setTagsEditing(true) }}>Edit tags</button>
+              : <form onSubmit={event => void replaceTags(event)}>
+                <label htmlFor="note-tags">Tags, one per line</label>
+                <textarea id="note-tags" rows={4} maxLength={5100} value={tagInput} disabled={busy}
+                  onChange={event => setTagInput(event.target.value)} aria-describedby="tags-help" />
+                <p id="tags-help">Up to 50 tags, 100 characters each. Apply tags separately; your title and Markdown draft are not saved.</p>
+                <button type="submit" disabled={busy || session.phase === 'Conflict' || session.serverChangedWhileDirty}>Apply tags</button>
+                <button type="button" className="button-secondary" disabled={busy}
+                  onClick={() => { setTagsEditing(false); setTagError('') }}>Cancel tag editing</button>
+              </form>}
+            {tagError && <p role="alert">{tagError}</p>}
+          </section>}
           {error && <p role="alert">{error}</p>}
           {session.serverChangedWhileDirty && session.phase !== 'Conflict'
             && <p role="alert">This note changed on the server while you were editing. Your draft was kept.</p>}

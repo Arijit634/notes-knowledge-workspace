@@ -18,11 +18,11 @@ const problem = (status: number, code: string) => json({ type: 'about:blank', ti
 function mount(path: string, state: 'authenticated' | 'anonymous' | 'mfaRequired' = 'authenticated',
   onRequest?: (method: string, path: string, body: unknown) => Response | undefined) {
   window.history.replaceState(null, '', path)
-  const calls: Array<{ method: string; path: string; body: unknown }> = []
+  const calls: Array<{ method: string; path: string; body: unknown; ifMatch: string | null }> = []
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const target = String(input), method = init?.method || 'GET'
     const body: unknown = init?.body ? JSON.parse(String(init.body)) : null
-    calls.push({ method, path: target, body })
+    calls.push({ method, path: target, body, ifMatch: new Headers(init?.headers).get('If-Match') })
     if (target === '/api/auth/session') return json({ state })
     if (target === '/api/auth/csrf') return json({ csrfToken: 'synthetic-proof' })
     if (target === '/api/me/note-preferences') return json({ defaultAiEnabledForNewNotes: false })
@@ -40,6 +40,55 @@ function mount(path: string, state: 'authenticated' | 'anonymous' | 'mfaRequired
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); window.history.replaceState(null, '', '/') })
 
 describe('private Notes browser journey', () => {
+  it('applies tags independently, preserves the dirty editor and uses the returned ETag for Save', async () => {
+    const tagged = { ...initial, tags: ['Films', 'Watch-later'] }
+    const { calls, auth } = mount(`/notes/${id}`, 'authenticated', (method, path, body) => {
+      if (method === 'PUT' && path === `/api/notes/${id}/tags`) return json(tagged, 200, { ETag: '"e2"' })
+      if (method === 'PUT' && path === `/api/notes/${id}`) return json({ ...tagged, ...body as object }, 200, { ETag: '"e3"' })
+      return undefined
+    })
+    await screen.findByDisplayValue('Saved title', {}, { timeout: 5000 })
+    auth.queries.setQueryData(noteKeys.list(auth.session.viewerScope,
+      { lifecycle: 'active', sort: 'updatedAtDesc' }), { pages: [{ items: [initial], nextCursor: null }], pageParams: [null] })
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: ' Exact title ' } })
+    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: 'Exact\n**draft** ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tags' }))
+    fireEvent.change(screen.getByLabelText('Tags, one per line'), { target: { value: 'Films\nWatch-later' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Apply tags' }))
+    await screen.findByText('Films')
+    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(' Exact title ')
+    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe('Exact\n**draft** ')
+    expect(screen.getByText('Unsaved changes')).toBeTruthy()
+    expect(screen.queryByText(/changed on the server/)).toBeNull()
+    expect(calls.filter(call => call.method === 'PUT')).toEqual([
+      { method: 'PUT', path: `/api/notes/${id}/tags`, body: { tags: ['Films', 'Watch-later'] }, ifMatch: '"e1"' },
+    ])
+    expect(auth.queries.getQueryData(noteKeys.core(auth.session.viewerScope, id)))
+      .toEqual({ value: tagged, etag: '"e2"' })
+    expect(auth.queries.getQueryState(noteKeys.list(auth.session.viewerScope,
+      { lifecycle: 'active', sort: 'updatedAtDesc' }))?.isInvalidated).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Save note' }))
+    await screen.findByText('Saved')
+    expect(calls.find(call => call.method === 'PUT' && call.path === `/api/notes/${id}`)?.ifMatch).toBe('"e2"')
+  })
+
+  it.each([422, 503, 412])('preserves exact dirty draft after rejected tag command %s', async status => {
+    const { calls } = mount(`/notes/${id}`, 'authenticated', (method, path) =>
+      method === 'PUT' && path === `/api/notes/${id}/tags` ? problem(status, status === 412 ? 'stale_write' : 'invalid_input') : undefined)
+    await screen.findByDisplayValue('Saved title', {}, { timeout: 5000 })
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: ' My title ' } })
+    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: 'My\ndraft ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Edit tags' }))
+    fireEvent.change(screen.getByLabelText('Tags, one per line'), { target: { value: 'Films' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Apply tags' }))
+    if (status === 412) await screen.findByRole('heading', { name: 'Another version was saved' })
+    else await screen.findByRole('alert')
+    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(' My title ')
+    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe('My\ndraft ')
+    expect(screen.getByText('No tags')).toBeTruthy()
+    expect(calls.filter(call => call.method === 'PUT')).toHaveLength(1)
+  })
+
   it('never fetches private Notes for anonymous or pre-MFA visitors', async () => {
     for (const state of ['anonymous', 'mfaRequired'] as const) {
       const { calls } = mount('/notes', state)
@@ -55,6 +104,7 @@ describe('private Notes browser journey', () => {
         ? json({ ...initial, ...body as object }, 201,
           { ETag: '"e1"', Location: `/api/notes/${id}` }) : undefined)
     await screen.findByRole('heading', { name: 'Create a note' }, { timeout: 5000 })
+    expect(screen.queryByRole('button', { name: 'Edit tags' })).toBeNull()
     expect(calls.filter(call => call.path === '/api/notes' && call.method === 'POST')).toHaveLength(0)
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Created' } })
     fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: '**Content**' } })

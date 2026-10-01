@@ -68,4 +68,9 @@ export const notesApi = {
         || !(body.nextCursor === null || typeof body.nextCursor === 'string')) throw new ApiProtocolError()
     return { items: body.items.map(note), nextCursor: body.nextCursor }
   },
+  replaceTags: async (auth: AuthRuntime, id: string, etag: string, tags: string[]) => {
+    const result = await auth.api.request<unknown>('PUT', `/api/notes/${encodeURIComponent(id)}/tags`,
+      { json: { tags }, ifMatch: etag, retryOnCsrfInvalid: false })
+    return etagged(result.body, result.metadata.etag)
+  },
 }

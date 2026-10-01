@@ -18,6 +18,7 @@ export type EditorAction =
   | { type: 'edit'; field: keyof EditorDraft; value: string }
   | { type: 'saving' }
   | { type: 'saved'; server: Etagged<NoteCore> }
+  | { type: 'tagsReplaced'; server: Etagged<NoteCore> }
   | { type: 'failed' }
   | { type: 'conflict' }
   | { type: 'observed'; server: Etagged<NoteCore> }
@@ -60,6 +61,8 @@ export function noteEditorSession(state: EditorSession, action: EditorAction): E
           ? 'Clean' : 'Dirty', serverChangedWhileDirty: false, serverVersion: action.server }
     }
     case 'failed': return { ...state, pending: null, phase: 'SaveFailed' }
+    case 'tagsReplaced': return { ...state, etag: action.server.etag,
+      serverVersion: action.server, serverChangedWhileDirty: false }
     case 'conflict': return { ...state, pending: null, phase: 'Conflict',
       serverChangedWhileDirty: true, serverVersion: null }
     case 'observed':

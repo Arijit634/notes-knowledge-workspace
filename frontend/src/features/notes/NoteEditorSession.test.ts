@@ -11,6 +11,22 @@ const first = { value: note, etag: '"first"' }
 const second = { value: { ...note, title: 'Server change' }, etag: '"second"' }
 
 describe('NoteEditorSession', () => {
+  it('adopts same-tab tags and validator without changing the exact dirty draft or Save baseline', () => {
+    const loaded = noteEditorSession(emptyEditorSession, { type: 'load', server: first })
+    const edited = noteEditorSession(noteEditorSession(loaded,
+      { type: 'edit', field: 'title', value: ' Unsaved title ' }),
+    { type: 'edit', field: 'markdown', value: 'Exact\n**draft** ' })
+    const server = { value: { ...note, tags: ['Films'] }, etag: '"tagged"' }
+    const tagged = noteEditorSession(edited, { type: 'tagsReplaced', server })
+    expect(tagged.draft).toEqual(edited.draft)
+    expect(tagged.baseline).toEqual(loaded.baseline)
+    expect(tagged.etag).toBe('"tagged"')
+    expect(tagged.serverVersion?.value.tags).toEqual(['Films'])
+    expect(tagged.phase).toBe('Dirty')
+    expect(tagged.serverChangedWhileDirty).toBe(false)
+    expect(noteEditorSession(tagged, { type: 'observed', server })).toEqual(tagged)
+  })
+
   it('keeps dirty draft and concurrency base when server refetches', () => {
     const loaded = noteEditorSession(emptyEditorSession, { type: 'load', server: first })
     const edited = noteEditorSession(loaded, { type: 'edit', field: 'markdown', value: 'My local draft' })
