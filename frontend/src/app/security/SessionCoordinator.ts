@@ -16,7 +16,7 @@ export class SessionCoordinator {
   constructor(
     private readonly csrf: CsrfManager,
     private readonly sensitive: SensitiveStateRegistry,
-    private readonly clearViewerCaches: () => void,
+    private readonly clearViewerCaches: (endingScope: ViewerCacheScope) => void,
     private readonly epochFactory: ViewerEpochFactory = randomViewerEpoch,
   ) {}
 
@@ -37,12 +37,13 @@ export class SessionCoordinator {
     const mustClear = this.current === 'unknown' || wasAuthenticated
       || this.current === 'mfaRequired' || isAuthenticated
     if (mustClear) {
+      const endingScope = this.scope
       // Drop authority first; a failed cleaner must not leave an authenticated cache scope.
       this.current = 'unknown'
       this.scope = ANONYMOUS_VIEWER_SCOPE
       let failure = false
       try { this.sensitive.clearAll() } catch { failure = true }
-      try { this.clearViewerCaches() } catch { failure = true }
+      try { this.clearViewerCaches(endingScope) } catch { failure = true }
       if (failure) throw new Error('Session transition could not be completed safely.')
     }
 
