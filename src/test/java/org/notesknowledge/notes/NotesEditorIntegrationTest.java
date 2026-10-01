@@ -19,6 +19,9 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.notesknowledge.identity.IdentitySessionPrincipal;
+import org.notesknowledge.notes.spi.SourceRetirementPublicationConsequence;
+import org.notesknowledge.websupport.ApiFailureException;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -63,6 +66,170 @@ class NotesEditorIntegrationTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired SessionRepository<? extends Session> sessions;
     @Autowired ObjectMapper json;
+    @MockitoBean SourceRetirementPublicationConsequence publications;
+
+    @Test
+    void trashAndRestorePreserveOriginalLifecycleMetadataContentAndAdvanceEtags() throws Exception {
+        for (String previous : List.of("active", "archived")) {
+            Browser owner = browser(account(), "ROLE_USER");
+            MvcResult original = createNote(owner);
+            String id = json.readTree(body(original)).get("id").asText();
+            if (previous.equals("archived")) original = command(owner, id,
+                    original.getResponse().getHeader("ETag"), "POST", "archive").andReturn();
+            String before = original.getResponse().getHeader("ETag");
+            long revision = jdbc.queryForObject("select revision from notes.note where note_id = ?::uuid", Long.class, id);
+            MvcResult trashed = command(owner, id, before, "POST", "trash").andExpect(status().isOk()).andReturn();
+            String trashEtag = trashed.getResponse().getHeader("ETag");
+            assertThat(trashEtag).isNotEqualTo(before);
+            assertThat(json.readTree(body(trashed)).get("lifecycle").asText()).isEqualTo("trashed");
+            assertThat(jdbc.queryForObject("select pre_trash_state from notes.note where note_id = ?::uuid", String.class, id)).isEqualTo(previous);
+            assertThat(jdbc.queryForObject("select trashed_at is not null from notes.note where note_id = ?::uuid", Boolean.class, id)).isTrue();
+            assertThat(jdbc.queryForObject("select revision from notes.note where note_id = ?::uuid", Long.class, id)).isEqualTo(revision + 1);
+            assertThat(trashed.getResponse().getHeader("Cache-Control")).isEqualTo("no-store");
+            command(owner, id, before, "POST", "restore").andExpect(status().isPreconditionFailed());
+            command(owner, id, trashEtag, "POST", "trash").andExpect(status().isConflict());
+            mvc.perform(put("/api/notes/{noteId}", id).cookie(owner.cookie()).header("X-CSRF-TOKEN", owner.csrf())
+                    .header("If-Match", trashEtag).contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"title\":\"Unsaved\",\"markdown\":\"Never saved\"}"))
+                    .andExpect(status().isConflict());
+            replaceTags(owner, id, trashEtag, List.of("Forbidden")).andExpect(status().isConflict());
+            command(owner, id, trashEtag, "PUT", "pin").andExpect(status().isConflict());
+            command(owner, id, trashEtag, "POST", "archive").andExpect(status().isConflict());
+            MvcResult restored = command(owner, id, trashEtag, "POST", "restore").andExpect(status().isOk()).andReturn();
+            assertThat(restored.getResponse().getHeader("ETag")).isNotEqualTo(trashEtag);
+            assertThat(json.readTree(body(restored)).get("lifecycle").asText()).isEqualTo(previous);
+            assertThat(json.readTree(body(restored)).get("title").asText()).isEqualTo("Original");
+            assertThat(json.readTree(body(restored)).get("markdown").asText()).isEqualTo("Body");
+            assertThat(jdbc.queryForObject("select pre_trash_state is null and trashed_at is null from notes.note where note_id = ?::uuid", Boolean.class, id)).isTrue();
+            assertThat(jdbc.queryForObject("select revision from notes.note where note_id = ?::uuid", Long.class, id)).isEqualTo(revision + 2);
+            command(owner, id, restored.getResponse().getHeader("ETag"), "POST", "restore").andExpect(status().isConflict());
+            for (String view : List.of("active", "archived", "trashed")) {
+                var rows = json.readTree(body(mvc.perform(get("/api/notes?lifecycle=" + view).cookie(owner.cookie())).andReturn())).get("items");
+                assertThat(java.util.stream.StreamSupport.stream(rows.spliterator(), false)
+                        .anyMatch(row -> row.get("id").asText().equals(id))).isEqualTo(view.equals(previous));
+            }
+        }
+        org.mockito.Mockito.verify(publications, org.mockito.Mockito.times(2))
+                .hasActiveSourcePublication(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+        org.mockito.Mockito.verify(publications, org.mockito.Mockito.never())
+                .makeIneligible(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void trashAndRestoreRequireFullOwnerCsrfCurrentValidatorAndNarrowBodies() throws Exception {
+        Browser owner = browser(account(), "ROLE_USER");
+        Browser other = browser(account(), "ROLE_USER");
+        Browser pending = browser(account(), "ROLE_MFA_PENDING");
+        MvcResult created = createNote(owner);
+        String id = json.readTree(body(created)).get("id").asText();
+        String etag = created.getResponse().getHeader("ETag");
+        for (String action : List.of("trash", "restore")) {
+            command(other, id, null, "POST", action).andExpect(status().isNotFound());
+            command(owner, UUID.randomUUID().toString(), null, "POST", action).andExpect(status().isNotFound());
+            command(owner, id, null, "POST", action).andExpect(status().isPreconditionRequired());
+            command(pending, id, etag, "POST", action).andExpect(status().isForbidden());
+            mvc.perform(post("/api/notes/{noteId}/" + action, id).cookie(owner.cookie()).header("If-Match", etag))
+                    .andExpect(status().isForbidden());
+            for (String bad : List.of("{\"title\":\"Not saved\"}", "{\"confirmPublicationUnpublish\":\"true\"}",
+                    "{\"keepPublished\":true}", "{\"confirmPublicationUnpublish\":null}")) {
+                mvc.perform(post("/api/notes/{noteId}/" + action, id).cookie(owner.cookie())
+                        .header("X-CSRF-TOKEN", owner.csrf()).header("If-Match", etag)
+                        .contentType(MediaType.APPLICATION_JSON).content(bad)).andExpect(status().isBadRequest());
+            }
+        }
+        command(owner, id, etag, "POST", "restore").andExpect(status().isConflict());
+        MvcResult trashed = command(owner, id, etag, "POST", "trash").andExpect(status().isOk()).andReturn();
+        String current = trashed.getResponse().getHeader("ETag");
+        command(owner, id, etag, "POST", "trash").andExpect(status().isPreconditionFailed());
+        command(owner, id, null, "POST", "restore").andExpect(status().isPreconditionRequired());
+        // A malformed legacy trash row is not a recoverable Note; no destination is guessed.
+        jdbc.update("update notes.note set pre_trash_state = null where note_id = ?::uuid", id);
+        command(owner, id, current, "POST", "restore").andExpect(status().isConflict());
+        jdbc.update("update notes.note set lifecycle_state = 'logically_deleted', pre_trash_state = null, trashed_at = null, deleted_at = now() where note_id = ?::uuid", id);
+        for (String action : List.of("trash", "restore")) command(owner, id, current, "POST", action).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void publicationConsequenceRequiresExplicitConfirmationAndRunsBeforeSourceTransition() throws Exception {
+        UUID ownerId = account();
+        Browser owner = browser(ownerId, "ROLE_USER");
+        MvcResult created = createNote(owner);
+        String id = json.readTree(body(created)).get("id").asText();
+        String etag = created.getResponse().getHeader("ETag");
+        org.mockito.Mockito.when(publications.hasActiveSourcePublication(ownerId, UUID.fromString(id))).thenReturn(true);
+        MvcResult rejected = command(owner, id, etag, "POST", "trash").andExpect(status().isConflict()).andReturn();
+        assertThat(json.readTree(body(rejected)).get("code").asText()).isEqualTo("publication_consequence_required");
+        assertThat(jdbc.queryForObject("select revision from notes.note where note_id = ?::uuid", Long.class, id)).isEqualTo(1L);
+        org.mockito.Mockito.verify(publications, org.mockito.Mockito.never()).makeIneligible(ownerId, UUID.fromString(id));
+        org.mockito.Mockito.doAnswer(call -> {
+            assertThat(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+            assertThat(jdbc.queryForObject("select lifecycle_state from notes.note where note_id = ?::uuid", String.class, id)).isEqualTo("active");
+            assertThat(jdbc.queryForObject("select revision from notes.note where note_id = ?::uuid", Long.class, id)).isEqualTo(1L);
+            return null;
+        }).when(publications).makeIneligible(ownerId, UUID.fromString(id));
+        mvc.perform(post("/api/notes/{noteId}/trash", id).cookie(owner.cookie())
+                .header("X-CSRF-TOKEN", owner.csrf()).header("If-Match", etag)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"confirmPublicationUnpublish\":false}"))
+                .andExpect(status().isConflict());
+        mvc.perform(post("/api/notes/{noteId}/trash", id).cookie(owner.cookie())
+                .header("X-CSRF-TOKEN", owner.csrf()).header("If-Match", etag)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"confirmPublicationUnpublish\":true}"))
+                .andExpect(status().isOk());
+        org.mockito.Mockito.verify(publications).makeIneligible(ownerId, UUID.fromString(id));
+        assertThat(jdbc.queryForObject("select lifecycle_state from notes.note where note_id = ?::uuid", String.class, id)).isEqualTo("trashed");
+    }
+
+    @Test
+    void failedPublicationConsequenceRollsBackTheEntireRetirementTransaction() throws Exception {
+        UUID ownerId = account();
+        Browser owner = browser(ownerId, "ROLE_USER");
+        MvcResult created = createNote(owner);
+        String id = json.readTree(body(created)).get("id").asText();
+        String etag = created.getResponse().getHeader("ETag");
+        org.mockito.Mockito.when(publications.hasActiveSourcePublication(ownerId, UUID.fromString(id))).thenReturn(true);
+        org.mockito.Mockito.doAnswer(call -> {
+            // Controlled synthetic DB effect proves participation/rollback, not real Publication state.
+            jdbc.update("update notes.note set title = 'Synthetic consequence effect' where note_id = ?::uuid", id);
+            throw ApiFailureException.of(ApiFailureException.Kind.SERVICE_UNAVAILABLE);
+        }).when(publications).makeIneligible(ownerId, UUID.fromString(id));
+        mvc.perform(post("/api/notes/{noteId}/trash", id).cookie(owner.cookie())
+                .header("X-CSRF-TOKEN", owner.csrf()).header("If-Match", etag)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"confirmPublicationUnpublish\":true}"))
+                .andExpect(status().isServiceUnavailable());
+        assertThat(jdbc.queryForObject("select title from notes.note where note_id = ?::uuid", String.class, id)).isEqualTo("Original");
+        assertThat(jdbc.queryForObject("select revision from notes.note where note_id = ?::uuid", Long.class, id)).isEqualTo(1L);
+        assertThat(jdbc.queryForObject("select lifecycle_state from notes.note where note_id = ?::uuid", String.class, id)).isEqualTo("active");
+        assertThat(jdbc.queryForObject("select pre_trash_state is null and trashed_at is null from notes.note where note_id = ?::uuid", Boolean.class, id)).isTrue();
+    }
+
+    @Test
+    void trashCompetesWithSaveTagsPinAndArchiveThroughOneCurrentRevision() throws Exception {
+        for (String competitor : List.of("save", "tags", "pin", "archive")) {
+            Browser owner = browser(account(), "ROLE_USER");
+            MvcResult created = createNote(owner);
+            String id = json.readTree(body(created)).get("id").asText();
+            String etag = created.getResponse().getHeader("ETag");
+            CountDownLatch start = new CountDownLatch(1);
+            try (var workers = Executors.newFixedThreadPool(2)) {
+                var trash = workers.submit(() -> racedCommand(start, owner, id, etag, "trash"));
+                var competing = workers.submit(() -> racedCommand(start, owner, id, etag, competitor));
+                start.countDown();
+                int trashStatus = trash.get(30, TimeUnit.SECONDS), otherStatus = competing.get(30, TimeUnit.SECONDS);
+                assertThat(List.of(trashStatus, otherStatus)).containsExactlyInAnyOrder(200, 412);
+                assertThat(jdbc.queryForObject("select revision from notes.note where note_id = ?::uuid", Long.class, id)).isEqualTo(2L);
+                assertThat(jdbc.queryForObject("select lifecycle_state from notes.note where note_id = ?::uuid", String.class, id))
+                        .isEqualTo(trashStatus == 200 ? "trashed" : competitor.equals("archive") ? "archived" : "active");
+                assertThat(jdbc.queryForObject("select title from notes.note where note_id = ?::uuid", String.class, id))
+                        .isEqualTo(otherStatus == 200 && competitor.equals("save") ? "Winner" : "Original");
+                assertThat(jdbc.queryForObject("select markdown from notes.note where note_id = ?::uuid", String.class, id))
+                        .isEqualTo(otherStatus == 200 && competitor.equals("save") ? "saved" : "Body");
+                assertThat(jdbc.queryForObject("select pinned from notes.note where note_id = ?::uuid", Boolean.class, id)).isEqualTo(otherStatus == 200 && competitor.equals("pin"));
+                assertThat(jdbc.queryForObject("select count(*) from notes.note_tag where note_id = ?::uuid", Integer.class, id)).isEqualTo(otherStatus == 200 && competitor.equals("tags") ? 1 : 0);
+                assertThat(jdbc.queryForObject("select pre_trash_state from notes.note where note_id = ?::uuid", String.class, id)).isEqualTo(trashStatus == 200 ? "active" : null);
+                assertThat(jdbc.queryForObject("select trashed_at is not null from notes.note where note_id = ?::uuid", Boolean.class, id)).isEqualTo(trashStatus == 200);
+            }
+        }
+    }
 
     @Test
     void migrationCreatesOnlyThreeNotesRelationsAndEnforcesOwnerAndRowShape() {

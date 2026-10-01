@@ -6,6 +6,7 @@ async function fakeNotesBackend(page: Page) {
   let note: { id: string; title: string; markdown: string; lifecycle: string; pinned: boolean;
     tags: string[]; aiEnabled: boolean; createdAt: string; updatedAt: string } | null = null
   let revision = 0
+  let preTrashState: string | null = null
   const calls: Array<{ method: string; path: string; body: unknown }> = []
   await page.route('**/api/**', async route => {
     const request = route.request(), path = new URL(request.url()).pathname, method = request.method()
@@ -36,6 +37,21 @@ async function fakeNotesBackend(page: Page) {
       expect(request.headers()['if-match']).toBe(`"n${revision}"`)
       note = { ...note, tags: (body as { tags: string[] }).tags }
       revision++; response = note; headers = { ETag: `"n${revision}"` }
+    } else if (note && [ `/api/notes/${id}/trash`, `/api/notes/${id}/restore` ].includes(path)) {
+      expect(method).toBe('POST')
+      expect(request.headers()['if-match']).toBe(`"n${revision}"`)
+      expect(body).toBeNull()
+      if (path.endsWith('/trash')) {
+        expect(['active', 'archived']).toContain(note.lifecycle)
+        preTrashState = note.lifecycle
+        note = { ...note, lifecycle: 'trashed' }
+      } else {
+        expect(note.lifecycle).toBe('trashed')
+        expect(preTrashState).not.toBeNull()
+        note = { ...note, lifecycle: preTrashState! }
+        preTrashState = null
+      }
+      revision++; response = note; headers = { ETag: `"n${revision}"` }
     } else if (note && [ `/api/notes/${id}/pin`, `/api/notes/${id}/archive`, `/api/notes/${id}/return-from-archive` ].includes(path)) {
       expect(request.headers()['if-match']).toBe(`"n${revision}"`)
       expect(body).toBeNull()
@@ -55,6 +71,62 @@ async function fakeNotesBackend(page: Page) {
     await route.fulfill({ status, contentType: 'application/json', headers, body: JSON.stringify(response) })
   })
   return calls
+}
+
+for (const originalLifecycle of ['active', 'archived']) {
+  test(`Trash and Restore preserve dirty drafts and ${originalLifecycle} list membership`, async ({ page }) => {
+    const calls = await fakeNotesBackend(page)
+    await page.goto('/notes/new')
+    await page.getByLabel('Title').fill('Saved original')
+    await page.getByRole('button', { name: 'Create note' }).click()
+    await expect(page).toHaveURL(new RegExp(`/notes/${id}$`))
+    if (originalLifecycle === 'archived') {
+      await page.getByRole('button', { name: 'Archive', exact: true }).click()
+      await expect(page.getByRole('button', { name: 'Return from archive' })).toBeVisible()
+    }
+    await page.getByLabel('Title').fill(' Exact draft title ')
+    await page.getByRole('textbox', { name: 'Markdown' }).fill('Exact\n**draft** ')
+    await page.getByRole('button', { name: 'Trash', exact: true }).click()
+    await expect(page.getByRole('dialog', { name: 'Trash with unsaved changes?' })).toBeVisible()
+    await page.getByRole('button', { name: 'Trash and keep draft' }).click()
+    await expect(page.getByRole('button', { name: 'Restore', exact: true })).toBeEnabled()
+    await expect(page.getByRole('button', { name: 'Save note' })).toBeDisabled()
+    await page.getByLabel('Title').press('ControlOrMeta+s')
+    expect(calls.filter(call => call.method === 'PUT' && call.path === `/api/notes/${id}`)).toHaveLength(0)
+    await expect(page.getByLabel('Title')).toHaveValue(' Exact draft title ')
+    await expect(page.getByRole('textbox', { name: 'Markdown' })).toHaveValue('Exact\n**draft** ')
+    await page.getByRole('button', { name: 'Restore', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Trash', exact: true })).toBeEnabled()
+    await expect(page.getByLabel('Title')).toHaveValue(' Exact draft title ')
+    await expect(page.getByRole('textbox', { name: 'Markdown' })).toHaveValue('Exact\n**draft** ')
+    if (originalLifecycle === 'archived') {
+      await expect(page.getByRole('button', { name: 'Save note' })).toBeDisabled()
+      await page.getByRole('button', { name: 'Return from archive' }).click()
+    }
+    await expect(page.getByRole('button', { name: 'Save note' })).toBeEnabled()
+    await page.getByRole('button', { name: 'Save note' }).click()
+    await expect(page.getByText('Saved', { exact: true })).toBeVisible()
+    if (originalLifecycle === 'archived') await page.getByRole('button', { name: 'Archive', exact: true }).click()
+    await page.getByRole('button', { name: 'Trash', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Restore', exact: true })).toBeEnabled()
+    await page.getByRole('link', { name: 'All notes' }).click()
+    await expect(page.getByText('No notes yet', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Archived notes' }).click()
+    await expect(page.getByText('No archived notes', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Trashed notes' }).click()
+    await page.getByRole('link', { name: /Exact draft title/ }).click()
+    await page.getByRole('button', { name: 'Restore', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Trash', exact: true })).toBeEnabled()
+    await page.getByRole('link', { name: 'All notes' }).click()
+    if (originalLifecycle === 'archived') {
+      await expect(page.getByText('No notes yet', { exact: true })).toBeVisible()
+      await page.getByRole('button', { name: 'Archived notes' }).click()
+    }
+    await expect(page.getByRole('link', { name: /Exact draft title/ })).toBeVisible()
+    await page.getByRole('button', { name: 'Trashed notes' }).click()
+    await expect(page.getByText('No trashed notes', { exact: true })).toBeVisible()
+    expect(calls.filter(call => call.method === 'PUT' && call.path === `/api/notes/${id}`)).toHaveLength(1)
+  })
 }
 
 test('new Note stays local until Create; explicit Save and dirty navigation work', async ({ page }) => {

@@ -17,6 +17,8 @@ public final class ApiFailureException extends RuntimeException {
                 "resource_not_found", "Resource not found"),
         INVALID_LIFECYCLE_TRANSITION(HttpStatus.CONFLICT,
                 "invalid_lifecycle_transition", "Request conflicts with current state"),
+        PUBLICATION_CONSEQUENCE_REQUIRED(HttpStatus.CONFLICT,
+                "publication_consequence_required", "Confirmation required to unpublish the current public copy"),
         OIDC_ACCOUNT_ACTION_REQUIRED(HttpStatus.CONFLICT,
                 "oidc_account_action_required", "Additional account action required"),
         STALE_WRITE(HttpStatus.PRECONDITION_FAILED,

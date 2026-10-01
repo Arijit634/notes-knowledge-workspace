@@ -151,7 +151,8 @@ public class SecurityConfiguration {
                         .requestMatchers(HttpMethod.DELETE, "/api/notes/{noteId}/pin")
                         .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.POST, "/api/notes/{noteId}/archive",
-                                "/api/notes/{noteId}/return-from-archive")
+                                "/api/notes/{noteId}/return-from-archive",
+                                "/api/notes/{noteId}/trash", "/api/notes/{noteId}/restore")
                         .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.POST, "/api/notes")
                         .hasAuthority("ROLE_USER")

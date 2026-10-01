@@ -132,6 +132,28 @@ class NotesRepository {
                 .param("from", from).param("to", to).param("now", Timestamp.from(now)).update();
     }
 
+    int trash(UUID owner, UUID id, long revision, Instant now) {
+        return jdbc().sql("""
+                update notes.note set pre_trash_state = lifecycle_state,
+                    lifecycle_state = 'trashed', trashed_at = :now, revision = revision + 1,
+                    updated_at = greatest(updated_at, :now)
+                where owner_user_id = :owner and note_id = :id and revision = :revision
+                  and lifecycle_state in ('active', 'archived')
+                """).param("owner", owner).param("id", id).param("revision", revision)
+                .param("now", Timestamp.from(now)).update();
+    }
+
+    int restore(UUID owner, UUID id, long revision, Instant now) {
+        return jdbc().sql("""
+                update notes.note set lifecycle_state = pre_trash_state,
+                    pre_trash_state = null, trashed_at = null, revision = revision + 1,
+                    updated_at = greatest(updated_at, :now)
+                where owner_user_id = :owner and note_id = :id and revision = :revision
+                  and lifecycle_state = 'trashed' and pre_trash_state in ('active', 'archived')
+                """).param("owner", owner).param("id", id).param("revision", revision)
+                .param("now", Timestamp.from(now)).update();
+    }
+
     List<NoteRecord> page(UUID owner, String lifecycle, Boolean pinned, Instant beforeTime,
             UUID beforeId, int count) {
         String pinFilter = pinned == null ? "" : " and pinned = :pinned\n";

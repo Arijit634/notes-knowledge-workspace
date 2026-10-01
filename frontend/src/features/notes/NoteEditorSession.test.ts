@@ -15,6 +15,7 @@ describe('NoteEditorSession', () => {
     { pinned: true, lifecycle: 'active' as const },
     { pinned: false, lifecycle: 'active' as const },
     { pinned: true, lifecycle: 'archived' as const },
+    { pinned: true, lifecycle: 'trashed' as const },
   ])('adopts a same-tab organization command without advancing the Save baseline: %j', organization => {
     const loaded = noteEditorSession(emptyEditorSession, { type: 'load', server: first })
     const edited = noteEditorSession(noteEditorSession(loaded,
