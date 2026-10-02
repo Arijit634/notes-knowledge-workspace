@@ -3,6 +3,7 @@ package org.notesknowledge.notes;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -12,12 +13,15 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
+import java.time.Clock;
+import java.time.Instant;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
 import org.notesknowledge.identity.IdentitySessionPrincipal;
 import org.notesknowledge.notes.spi.SourceRetirementPublicationConsequence;
 import org.notesknowledge.websupport.ApiFailureException;
@@ -45,6 +49,7 @@ import tools.jackson.databind.ObjectMapper;
 @Testcontainers
 @SpringBootTest
 @AutoConfigureMockMvc
+@org.springframework.context.annotation.Import(NotesEditorIntegrationTest.TimeConfiguration.class)
 class NotesEditorIntegrationTest {
     @Container static final PostgreSQLContainer postgres = new PostgreSQLContainer(
             "pgvector/pgvector:0.8.6-pg18-trixie")
@@ -67,6 +72,210 @@ class NotesEditorIntegrationTest {
     @Autowired SessionRepository<? extends Session> sessions;
     @Autowired ObjectMapper json;
     @MockitoBean SourceRetirementPublicationConsequence publications;
+    @MockitoBean org.notesknowledge.security.RateLimitPort rates;
+    @Autowired AdjustableClock clock;
+    @Autowired org.springframework.security.crypto.password.PasswordEncoder passwords;
+
+    @BeforeEach
+    void currentClock() {
+        clock.offset = java.time.Duration.ZERO;
+        org.mockito.Mockito.when(rates.evaluate(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new org.notesknowledge.security.RateLimitPort.Allowed());
+    }
+
+    @Test
+    void permanentDeletionDeniesImmediatelyButRetainsSavedRowAndTags() throws Exception {
+        UUID user = account();
+        Browser owner = recentBrowser(user);
+        MvcResult original = createNote(owner);
+        String id = json.readTree(body(original)).get("id").asText();
+        MvcResult tagged = replaceTags(owner, id, original.getResponse().getHeader("ETag"),
+                List.of("Retained synthetic tag")).andReturn();
+        MvcResult trashed = command(owner, id, tagged.getResponse().getHeader("ETag"), "POST", "trash").andReturn();
+        String etag = trashed.getResponse().getHeader("ETag");
+        long revision = jdbc.queryForObject("select revision from notes.note where note_id = ?::uuid", Long.class, id);
+        long generation = jdbc.queryForObject("select ai_generation from notes.note where note_id = ?::uuid", Long.class, id);
+        var result = deleteNote(owner, id, etag, "{\"confirmPermanentDelete\":true}")
+                .andExpect(status().isNoContent()).andReturn();
+        assertThat(body(result)).isEmpty();
+        assertThat(result.getResponse().getHeader("Cache-Control")).isEqualTo("no-store");
+        assertThat(jdbc.queryForObject("select count(*) from notes.note where note_id = ?::uuid", Integer.class, id)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from notes.note_tag where note_id = ?::uuid", Integer.class, id)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select title from notes.note where note_id = ?::uuid", String.class, id)).isEqualTo("Original");
+        assertThat(jdbc.queryForObject("select markdown from notes.note where note_id = ?::uuid", String.class, id)).isEqualTo("Body");
+        assertThat(jdbc.queryForObject("select lifecycle_state from notes.note where note_id = ?::uuid", String.class, id)).isEqualTo("logically_deleted");
+        assertThat(jdbc.queryForObject("select revision from notes.note where note_id = ?::uuid", Long.class, id)).isEqualTo(revision + 1);
+        assertThat(jdbc.queryForObject("select ai_generation from notes.note where note_id = ?::uuid", Long.class, id)).isEqualTo(generation + 1);
+        assertThat(jdbc.queryForObject("select deleted_at is not null and pre_trash_state is null and trashed_at is null from notes.note where note_id = ?::uuid", Boolean.class, id)).isTrue();
+        mvc.perform(get("/api/notes/{noteId}", id).cookie(owner.cookie())).andExpect(status().isNotFound());
+        for (String state : List.of("active", "archived", "trashed")) {
+            assertThat(json.readTree(body(mvc.perform(get("/api/notes").queryParam("lifecycle", state)
+                    .cookie(owner.cookie())).andReturn())).get("items").isEmpty()).isTrue();
+        }
+        mvc.perform(put("/api/notes/{noteId}", id).cookie(owner.cookie()).header("X-CSRF-TOKEN", owner.csrf())
+                .header("If-Match", etag).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"title\":\"No\",\"markdown\":\"No\"}")).andExpect(status().isNotFound());
+        replaceTags(owner, id, etag, List.of()).andExpect(status().isNotFound());
+        for (String name : List.of("archive", "return-from-archive", "trash", "restore")) {
+            command(owner, id, etag, "POST", name).andExpect(status().isNotFound());
+        }
+        command(owner, id, etag, "PUT", "pin").andExpect(status().isNotFound());
+        command(owner, id, etag, "DELETE", "pin").andExpect(status().isNotFound());
+        deleteNote(owner, id, etag, "{\"confirmPermanentDelete\":true}").andExpect(status().isNotFound());
+    }
+
+    @Test
+    void permanentDeleteAndRestoreCannotBothCommitFromOneRevision() throws Exception {
+        Browser owner = recentBrowser(account());
+        var created = createNote(owner);
+        String id = json.readTree(body(created)).get("id").asText();
+        var trashed = command(owner, id, created.getResponse().getHeader("ETag"), "POST", "trash").andReturn();
+        String etag = trashed.getResponse().getHeader("ETag");
+        CountDownLatch start = new CountDownLatch(1);
+        try (var workers = Executors.newFixedThreadPool(2)) {
+            var deletion = workers.submit(() -> {
+                if (!start.await(30, TimeUnit.SECONDS)) throw new IllegalStateException("start timed out");
+                return deleteNote(owner, id, etag, "{\"confirmPermanentDelete\":true}").andReturn().getResponse().getStatus();
+            });
+            var restoration = workers.submit(() -> {
+                if (!start.await(30, TimeUnit.SECONDS)) throw new IllegalStateException("start timed out");
+                return command(owner, id, etag, "POST", "restore").andReturn().getResponse().getStatus();
+            });
+            start.countDown();
+            int deleted = deletion.get(30, TimeUnit.SECONDS), restored = restoration.get(30, TimeUnit.SECONDS);
+            if (deleted == 204) assertThat(restored).isEqualTo(404);
+            else { assertThat(deleted).isEqualTo(412); assertThat(restored).isEqualTo(200); }
+            assertThat(jdbc.queryForObject("select revision from notes.note where note_id = ?::uuid", Long.class, id)).isEqualTo(3L);
+            assertThat(jdbc.queryForObject("select ai_generation from notes.note where note_id = ?::uuid", Long.class, id)).isEqualTo(deleted == 204 ? 2L : 1L);
+            assertThat(jdbc.queryForObject("select lifecycle_state from notes.note where note_id = ?::uuid", String.class, id)).isEqualTo(deleted == 204 ? "logically_deleted" : "active");
+        }
+    }
+
+    @Test
+    void permanentDeletionRequiresTrashConfirmationOwnerCsrfAndCurrentIfMatch() throws Exception {
+        Browser owner = recentBrowser(account()), other = recentBrowser(account());
+        MvcResult created = createNote(owner);
+        String id = json.readTree(body(created)).get("id").asText();
+        String original = created.getResponse().getHeader("ETag");
+        deleteNote(owner, id, original, "{\"confirmPermanentDelete\":true}").andExpect(status().isConflict());
+        var archived = command(owner, id, original, "POST", "archive").andReturn();
+        deleteNote(owner, id, archived.getResponse().getHeader("ETag"), "{\"confirmPermanentDelete\":true}").andExpect(status().isConflict());
+        var trashed = command(owner, id, archived.getResponse().getHeader("ETag"), "POST", "trash").andReturn();
+        String etag = trashed.getResponse().getHeader("ETag");
+        mvc.perform(delete("/api/notes/{noteId}", id).cookie(owner.cookie()).header("If-Match", etag)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"confirmPermanentDelete\":true}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(delete("/api/notes/{noteId}", id)
+                .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf())
+                .contentType(MediaType.APPLICATION_JSON).content("{\"confirmPermanentDelete\":true}"))
+                .andExpect(status().isUnauthorized());
+        Browser pending = browser(account(), "ROLE_MFA_PENDING");
+        deleteNote(pending, id, etag, "{\"confirmPermanentDelete\":true}").andExpect(status().isForbidden());
+        deleteNote(other, id, etag, "{\"confirmPermanentDelete\":true}").andExpect(status().isNotFound());
+        deleteNote(owner, UUID.randomUUID().toString(), etag, "{\"confirmPermanentDelete\":true}").andExpect(status().isNotFound());
+        deleteNote(owner, id, null, "{\"confirmPermanentDelete\":true}").andExpect(status().isPreconditionRequired());
+        deleteNote(owner, id, original, "{\"confirmPermanentDelete\":true}").andExpect(status().isPreconditionFailed());
+        for (String input : List.of("{}", "{\"confirmPermanentDelete\":false}")) {
+            deleteNote(owner, id, etag, input).andExpect(status().isUnprocessableEntity());
+        }
+        for (String input : List.of("{\"confirmPermanentDelete\":null}", "{\"confirmPermanentDelete\":\"true\"}",
+                "{\"confirmPermanentDelete\":true,\"ownerUserId\":\"ignored\"}",
+                "{\"confirmPermanentDelete\":true,\"confirmPublicationUnpublish\":null}")) {
+            deleteNote(owner, id, etag, input).andExpect(status().isBadRequest());
+        }
+        deleteNote(owner, id, etag, null).andExpect(status().isUnprocessableEntity());
+        assertThat(jdbc.queryForObject("select lifecycle_state from notes.note where note_id = ?::uuid", String.class, id)).isEqualTo("trashed");
+    }
+
+    @Test
+    void permanentDeletionUsesCurrentPersistedRecentProofAndRejectsMissingOrExpiredProof() throws Exception {
+        UUID user = account();
+        Browser missing = browser(user, "ROLE_USER");
+        MvcResult created = createNote(missing);
+        String id = json.readTree(body(created)).get("id").asText();
+        var trashed = command(missing, id, created.getResponse().getHeader("ETag"), "POST", "trash").andReturn();
+        String etag = trashed.getResponse().getHeader("ETag");
+        var noProof = deleteNote(missing, id, etag, "{\"confirmPermanentDelete\":true}").andExpect(status().isForbidden()).andReturn();
+        assertThat(json.readTree(body(noProof)).get("code").asText()).isEqualTo("recent_authentication_required");
+        Browser fresh = recentBrowser(user);
+        clock.offset = java.time.Duration.ofMinutes(16);
+        var expired = deleteNote(fresh, id, etag, "{\"confirmPermanentDelete\":true}").andExpect(status().isForbidden()).andReturn();
+        assertThat(json.readTree(body(expired)).get("code").asText()).isEqualTo("recent_authentication_required");
+        assertThat(jdbc.queryForObject("select revision from notes.note where note_id = ?::uuid", Long.class, id)).isEqualTo(2L);
+        currentClock();
+        deleteNote(fresh, id, etag, "{\"confirmPermanentDelete\":true}").andExpect(status().isNoContent());
+    }
+
+    @Test
+    void permanentDeletionRequiresExplicitPublicationDenialBeforeSourceTransition() throws Exception {
+        UUID user = account();
+        Browser owner = recentBrowser(user);
+        var created = createNote(owner);
+        String id = json.readTree(body(created)).get("id").asText();
+        var trashed = command(owner, id, created.getResponse().getHeader("ETag"), "POST", "trash").andReturn();
+        String etag = trashed.getResponse().getHeader("ETag");
+        org.mockito.Mockito.when(publications.hasActiveSourcePublication(user, UUID.fromString(id))).thenReturn(true);
+        var required = deleteNote(owner, id, etag, "{\"confirmPermanentDelete\":true}").andExpect(status().isConflict()).andReturn();
+        assertThat(json.readTree(body(required)).get("code").asText()).isEqualTo("publication_consequence_required");
+        org.mockito.Mockito.verify(publications, org.mockito.Mockito.never()).makeIneligible(user, UUID.fromString(id));
+        org.mockito.Mockito.doAnswer(call -> {
+            assertThat(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+            assertThat(jdbc.queryForObject("select lifecycle_state from notes.note where note_id = ?::uuid", String.class, id)).isEqualTo("trashed");
+            assertThat(jdbc.queryForObject("select deleted_at is null from notes.note where note_id = ?::uuid", Boolean.class, id)).isTrue();
+            return null;
+        }).when(publications).makeIneligible(user, UUID.fromString(id));
+        deleteNote(owner, id, etag, "{\"confirmPermanentDelete\":true,\"confirmPublicationUnpublish\":true}").andExpect(status().isNoContent());
+        org.mockito.Mockito.verify(publications).makeIneligible(user, UUID.fromString(id));
+    }
+
+    @Test
+    void failedPermanentDeletionConsequenceRollsBackSavedContentMetadataRevisionAndGeneration() throws Exception {
+        UUID user = account();
+        Browser owner = recentBrowser(user);
+        var created = createNote(owner);
+        String id = json.readTree(body(created)).get("id").asText();
+        var trashed = command(owner, id, created.getResponse().getHeader("ETag"), "POST", "trash").andReturn();
+        var before = jdbc.queryForMap("select * from notes.note where note_id = ?::uuid", id);
+        org.mockito.Mockito.when(publications.hasActiveSourcePublication(user, UUID.fromString(id))).thenReturn(true);
+        org.mockito.Mockito.doAnswer(call -> {
+            jdbc.update("update notes.note set title = 'Synthetic consequence effect' where note_id = ?::uuid", id);
+            throw ApiFailureException.of(ApiFailureException.Kind.SERVICE_UNAVAILABLE);
+        }).when(publications).makeIneligible(user, UUID.fromString(id));
+        deleteNote(owner, id, trashed.getResponse().getHeader("ETag"),
+                "{\"confirmPermanentDelete\":true,\"confirmPublicationUnpublish\":true}").andExpect(status().isServiceUnavailable());
+        assertThat(jdbc.queryForMap("select * from notes.note where note_id = ?::uuid", id)).isEqualTo(before);
+    }
+
+    @org.springframework.boot.test.context.TestConfiguration
+    static class TimeConfiguration {
+        @org.springframework.context.annotation.Bean
+        @org.springframework.context.annotation.Primary
+        AdjustableClock adjustableClock() { return new AdjustableClock(); }
+    }
+
+    static final class AdjustableClock extends Clock {
+        volatile java.time.Duration offset = java.time.Duration.ZERO;
+        @Override public java.time.ZoneId getZone() { return java.time.ZoneOffset.UTC; }
+        @Override public Clock withZone(java.time.ZoneId zone) { return Clock.offset(Clock.system(zone), offset); }
+        @Override public Instant instant() { return Instant.now().plus(offset); }
+    }
+
+    private Browser recentBrowser(UUID user) throws Exception {
+        String syntheticPassword = "Synthetic-note-delete-password-123!";
+        jdbc.update("update identity.account set password_verifier = ? where user_id = ?", passwords.encode(syntheticPassword), user);
+        Browser browser = browser(user, "ROLE_USER");
+        mvc.perform(post("/api/auth/reauth/password").cookie(browser.cookie()).header("X-CSRF-TOKEN", browser.csrf())
+                .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(java.util.Map.of("password", syntheticPassword))))
+                .andExpect(status().isNoContent());
+        return browser;
+    }
+
+    private org.springframework.test.web.servlet.ResultActions deleteNote(Browser browser, String id, String etag, String input) throws Exception {
+        var request = delete("/api/notes/{noteId}", id).cookie(browser.cookie()).header("X-CSRF-TOKEN", browser.csrf());
+        if (etag != null) request.header("If-Match", etag);
+        if (input != null) request.contentType(MediaType.APPLICATION_JSON).content(input);
+        return mvc.perform(request);
+    }
 
     @Test
     void trashAndRestorePreserveOriginalLifecycleMetadataContentAndAdvanceEtags() throws Exception {

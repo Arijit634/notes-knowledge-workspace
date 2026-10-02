@@ -51,6 +51,121 @@ beforeAll(async () => { await import('./NotesPages') })
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); window.history.replaceState(null, '', '/') })
 
 describe('private Notes browser journey', () => {
+  it.each(['active', 'archived'] as const)('does not offer permanent deletion for %s notes', async lifecycle => {
+    mount(`/notes/${id}`, 'authenticated', (method, path) => method === 'GET' && path === `/api/notes/${id}`
+      ? json({ ...initial, lifecycle }, 200, { ETag: '"e1"' }) : undefined)
+    await screen.findByDisplayValue('Saved title')
+    expect(screen.queryByRole('button', { name: 'Permanent delete' })).toBeNull()
+  })
+
+  it('explicitly confirms abandoning a dirty draft and evicts all deleted private content on 204', async () => {
+    const { calls, auth } = mount(`/notes/${id}`, 'authenticated', (method, path) => {
+      if (method === 'GET' && path === `/api/notes/${id}`) return json({ ...initial, lifecycle: 'trashed' }, 200, { ETag: '"e1"' })
+      if (method === 'DELETE') return new Response(null, { status: 204 })
+      return undefined
+    })
+    await screen.findByDisplayValue('Saved title')
+    const scope = auth.session.viewerScope
+    for (const lifecycle of ['active', 'archived', 'trashed']) auth.queries.setQueryData(
+      noteKeys.list(scope, { lifecycle, sort: 'updatedAtDesc' }),
+      { pages: [{ items: [initial], nextCursor: null }], pageParams: [null] })
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: ' Exact unsaved title ' } })
+    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: 'Exact\n**draft** ' } })
+    fireEvent.click(await readyButton('Permanent delete'))
+    expect(screen.getByText(/Unlike Trash, permanent deletion cannot be undone/)).toBeTruthy()
+    expect(screen.getByText(/Your unsaved title and Markdown will be discarded, not saved/)).toBeTruthy()
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Keep note' }))
+    fireEvent.keyDown(document.activeElement!, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Permanently delete and discard draft' }))
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Permanent delete' }))
+    expect(calls.some(call => call.method === 'DELETE' || call.method === 'PUT')).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: 'Permanent delete' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Permanently delete and discard draft' }))
+    await screen.findByRole('heading', { name: 'Notes' })
+    expect(screen.getByRole('button', { name: 'Trashed notes' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.queryByDisplayValue(' Exact unsaved title ')).toBeNull()
+    expect(auth.queries.getQueryData(noteKeys.core(scope, id))).toBeUndefined()
+    const lists = auth.queries.getQueriesData({ queryKey: noteKeys.lists(scope) })
+    expect(JSON.stringify(lists)).not.toContain('Saved body')
+    expect(calls.filter(call => call.method === 'DELETE')).toEqual([
+      { method: 'DELETE', path: `/api/notes/${id}`, body: { confirmPermanentDelete: true }, ifMatch: '"e1"' },
+    ])
+    expect(calls.some(call => call.method === 'PUT')).toBe(false)
+  })
+
+  it('requires separate explicit unpublish confirmation for permanent deletion', async () => {
+    const { calls } = mount(`/notes/${id}`, 'authenticated', (method, path, body) => {
+      if (method === 'GET' && path === `/api/notes/${id}`) return json({ ...initial, lifecycle: 'trashed' }, 200, { ETag: '"e1"' })
+      if (method === 'DELETE') return (body as { confirmPublicationUnpublish?: boolean })?.confirmPublicationUnpublish
+        ? new Response(null, { status: 204 }) : problem(409, 'publication_consequence_required')
+      return undefined
+    })
+    await screen.findByDisplayValue('Saved title')
+    fireEvent.click(await readyButton('Permanent delete'))
+    fireEvent.click(screen.getByRole('button', { name: 'Permanently delete' }))
+    await screen.findByRole('dialog', { name: 'Unpublish and permanently delete?' })
+    expect(calls.filter(call => call.method === 'DELETE')).toHaveLength(1)
+    fireEvent.click(await readyButton('Unpublish and permanently delete'))
+    await screen.findByRole('heading', { name: 'Notes' })
+    expect(calls.filter(call => call.method === 'DELETE').map(call => call.body)).toEqual([
+      { confirmPermanentDelete: true }, { confirmPermanentDelete: true, confirmPublicationUnpublish: true },
+    ])
+  })
+
+  it('keeps a dirty draft until explicit reauth departure and never replays delete after reauthentication', async () => {
+    let recent = false
+    const { calls, auth } = mount(`/notes/${id}`, 'authenticated', (method, path) => {
+      if (method === 'GET' && path === `/api/notes/${id}`) return json({ ...initial, lifecycle: 'trashed' }, 200, { ETag: '"e1"' })
+      if (method === 'DELETE') return recent ? new Response(null, { status: 204 }) : problem(403, 'recent_authentication_required')
+      if (path === '/api/me/security') return json({ email: 'synthetic@example.test', passwordConfigured: true, mfaState: 'disabled', oidcLinks: [] })
+      if (path === '/api/auth/reauth/password') { recent = true; return new Response(null, { status: 204 }) }
+      return undefined
+    })
+    await screen.findByDisplayValue('Saved title')
+    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: 'Exact dirty draft' } })
+    fireEvent.click(await readyButton('Permanent delete'))
+    fireEvent.click(screen.getByRole('button', { name: 'Permanently delete and discard draft' }))
+    await screen.findByRole('dialog', { name: 'Confirm your identity before deleting' })
+    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe('Exact dirty draft')
+    expect(auth.continuation.returnIntent).toBeNull()
+    expect(window.location.pathname).toBe(`/notes/${id}`)
+    fireEvent.click(await readyButton('Discard draft and confirm identity'))
+    await screen.findByRole('heading', { name: 'Confirm your identity' })
+    expect(auth.continuation.returnIntent).toBe(`/notes/${id}`)
+    fireEvent.change(await screen.findByLabelText('Password'), { target: { value: 'Synthetic-password-123!' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm with password' }))
+    await screen.findByDisplayValue('Saved title')
+    expect(auth.continuation.returnIntent).toBeNull()
+    expect(calls.filter(call => call.method === 'DELETE')).toHaveLength(1)
+    expect(calls.some(call => call.method === 'PUT')).toBe(false)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    fireEvent.click(await readyButton('Permanent delete'))
+    expect(calls.filter(call => call.method === 'DELETE')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Permanently delete' }))
+    await screen.findByRole('heading', { name: 'Notes' })
+    expect(calls.filter(call => call.method === 'DELETE')).toHaveLength(2)
+  })
+
+  it.each([412, 503])('preserves the exact draft and private cache on failed permanent delete (%s)', async status => {
+    const { calls, auth } = mount(`/notes/${id}`, 'authenticated', (method, path) => {
+      if (method === 'GET' && path === `/api/notes/${id}`) return json({ ...initial, lifecycle: 'trashed' }, 200, { ETag: '"e1"' })
+      if (method === 'DELETE') return problem(status, status === 412 ? 'stale_write' : 'service_unavailable')
+      return undefined
+    })
+    await screen.findByDisplayValue('Saved title')
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: ' Exact unsaved title ' } })
+    fireEvent.click(await readyButton('Permanent delete'))
+    fireEvent.click(screen.getByRole('button', { name: 'Permanently delete and discard draft' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(' Exact unsaved title ')
+    expect(window.location.pathname).toBe(`/notes/${id}`)
+    expect(auth.queries.getQueryData(noteKeys.core(auth.session.viewerScope, id))).toBeTruthy()
+    expect(calls.filter(call => call.method === 'DELETE')).toHaveLength(1)
+    expect(calls.some(call => call.method === 'PUT')).toBe(false)
+  })
+
   it.each(['active', 'archived'] as const)('preserves exact dirty drafts through Trash and Restore to %s', async previous => {
     const { calls, auth } = mount(`/notes/${id}`, 'authenticated', (method, path) => {
       if (method === 'GET' && path === `/api/notes/${id}`) return json({ ...initial, lifecycle: previous }, 200, { ETag: '"e1"' })

@@ -1,5 +1,6 @@
 package org.notesknowledge.notes;
 
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.Map;
 import java.util.UUID;
 
@@ -18,10 +19,29 @@ import org.springframework.web.bind.annotation.RestController;
 final class NoteLifecycleController {
     private final NoteOrganizationService commands;
     private final NoteTrashService trash;
+    private final DeleteNoteService deletion;
 
-    NoteLifecycleController(NoteOrganizationService commands, NoteTrashService trash) {
+    NoteLifecycleController(NoteOrganizationService commands, NoteTrashService trash, DeleteNoteService deletion) {
         this.commands = commands;
         this.trash = trash;
+        this.deletion = deletion;
+    }
+
+    @DeleteMapping("/api/notes/{noteId}")
+    ResponseEntity<Void> delete(@PathVariable UUID noteId,
+            @RequestHeader(value = "If-Match", required = false) String ifMatch,
+            @RequestBody(required = false) Map<String, Object> body, HttpServletRequest request) {
+        if (body != null && (body.keySet().stream().anyMatch(key ->
+                !key.equals("confirmPermanentDelete") && !key.equals("confirmPublicationUnpublish"))
+                || body.values().stream().anyMatch(value -> !(value instanceof Boolean)))) {
+            throw ApiFailureException.of(ApiFailureException.Kind.MALFORMED_REQUEST);
+        }
+        if (body == null || !Boolean.TRUE.equals(body.get("confirmPermanentDelete"))) {
+            throw ApiFailureException.of(ApiFailureException.Kind.INVALID_INPUT);
+        }
+        deletion.delete(NotesActor.owner(), noteId, ifMatch,
+                Boolean.TRUE.equals(body.get("confirmPublicationUnpublish")), request);
+        return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
     }
 
     @PostMapping("/api/notes/{noteId}/trash")

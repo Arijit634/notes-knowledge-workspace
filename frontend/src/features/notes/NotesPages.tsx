@@ -1,5 +1,6 @@
 import { useEffect, useReducer, useRef, useState, type FormEvent } from 'react'
-import { Link, useBlocker, useNavigate, useParams } from 'react-router'
+import { Link, useBlocker, useLocation, useNavigate, useParams } from 'react-router'
+import { flushSync } from 'react-dom'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import type { AuthRuntime } from '../auth/AuthRuntime'
 import { ApiProblemError } from '../../app/api/ProblemDetailsDecoder'
@@ -19,7 +20,8 @@ function issue(error: unknown): string {
 
 export function NotesListPage({ auth }: { auth: AuthRuntime }) {
   const scope = auth.session.viewerScope
-  const [lifecycle, setLifecycle] = useState<NoteCore['lifecycle']>('active')
+  const location = useLocation()
+  const [lifecycle, setLifecycle] = useState<NoteCore['lifecycle']>(location.state?.notesView === 'trashed' ? 'trashed' : 'active')
   const page = useInfiniteQuery({ queryKey: noteKeys.list(scope, { lifecycle, sort: 'updatedAtDesc' }),
     queryFn: ({ pageParam }) => notesApi.list(auth, pageParam, lifecycle), initialPageParam: null as string | null,
     getNextPageParam: last => last.nextCursor ?? undefined, retry: false }, auth.queries)
@@ -66,6 +68,12 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
   const trashConfirmButton = useRef<HTMLButtonElement>(null)
   const trashButton = useRef<HTMLButtonElement>(null)
   const previousTrashConfirmation = useRef(false)
+  const [deleteConfirmation, setDeleteConfirmation] = useState<'delete' | 'publication' | 'reauth' | null>(null)
+  const [deleteEtag, setDeleteEtag] = useState<string | null>(null)
+  const [deleted, setDeleted] = useState(false)
+  const deleteButton = useRef<HTMLButtonElement>(null)
+  const deleteCancelButton = useRef<HTMLButtonElement>(null)
+  const previousDeleteConfirmation = useRef(false)
   const [conflictLoading, setConflictLoading] = useState(false)
   const [conflictLoadError, setConflictLoadError] = useState(false)
   const initialPreference = useRef(false)
@@ -73,7 +81,7 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
   const preference = useQuery({ queryKey: notePreferenceKeys.current(scope),
     queryFn: () => notesApi.preference(auth), enabled: creating, retry: false }, auth.queries)
   const loaded = useQuery({ queryKey: noteKeys.core(scope, id ?? ''),
-    queryFn: () => notesApi.get(auth, id!), enabled: !creating && !!id, retry: false }, auth.queries)
+    queryFn: () => notesApi.get(auth, id!), enabled: !creating && !!id && !deleted, retry: false }, auth.queries)
 
   useEffect(() => {
     if (creating && preference.data !== undefined && !initialPreference.current) {
@@ -81,7 +89,7 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
       setAiEnabled(preference.data)
     }
   }, [creating, preference.data])
-  useEffect(() => { if (loaded.data) dispatch({ type: 'observed', server: loaded.data }) }, [loaded.data])
+  useEffect(() => { if (loaded.data && !deleted) dispatch({ type: 'observed', server: loaded.data }) }, [loaded.data, deleted])
 
   const dirty = isDirty(session)
   const archived = session.serverVersion?.value.lifecycle === 'archived'
@@ -108,7 +116,7 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
   }
 
   async function save() {
-    if (busy || archived || trashed || archiveConfirmation || trashConfirmation || !dirty || session.phase === 'Conflict' || !session.draft.title.trim()) return
+    if (busy || archived || trashed || archiveConfirmation || trashConfirmation || deleteConfirmation || !dirty || session.phase === 'Conflict' || !session.draft.title.trim()) return
     if (!creating && (!session.id || !session.etag)) return
     const { title, markdown } = session.draft
     setBusy(true); setError(''); dispatch({ type: 'saving' })
@@ -201,6 +209,40 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
     previousTrashConfirmation.current = trashConfirmation !== null
   }, [trashConfirmation])
 
+  async function permanentlyDelete(confirmPublicationUnpublish = false) {
+    if (lifecycleBlocked || !trashed || !session.id || !deleteEtag) return
+    const noteId = session.id
+    setBusy(true); setError('')
+    try {
+      await notesApi.permanentlyDelete(auth, noteId, deleteEtag, confirmPublicationUnpublish)
+      await auth.queries.cancelQueries({ queryKey: noteKeys.core(scope, noteId) })
+      await auth.queries.cancelQueries({ queryKey: noteKeys.lists(scope) })
+      // Stop the observer and erase editor content before evicting its private cache.
+      allowNavigation.current = true
+      flushSync(() => { setDeleted(true); dispatch({ type: 'deleted' }); setDeleteConfirmation(null) })
+      auth.queries.removeQueries({ queryKey: noteKeys.core(scope, noteId), exact: true })
+      auth.queries.removeQueries({ queryKey: noteKeys.lists(scope) })
+      navigate('/notes', { replace: true, state: { notesView: 'trashed' } })
+    } catch (failure) {
+      if (failure instanceof ApiProblemError && failure.problem.code === 'recent_authentication_required'
+          && failure.problem.status === 403) setDeleteConfirmation('reauth')
+      else if (failure instanceof ApiProblemError && failure.problem.code === 'publication_consequence_required'
+          && failure.problem.status === 409) setDeleteConfirmation('publication')
+      else {
+        setDeleteConfirmation(null)
+        if (failure instanceof ApiProblemError && failure.problem.status === 412) {
+          dispatch({ type: 'conflict' }); await loadConflictVersion()
+        } else setError(issue(failure))
+      }
+    } finally { setBusy(false) }
+  }
+
+  useEffect(() => {
+    if (deleteConfirmation && !busy) deleteCancelButton.current?.focus()
+    else if (previousDeleteConfirmation.current) deleteButton.current?.focus()
+    previousDeleteConfirmation.current = deleteConfirmation !== null
+  }, [deleteConfirmation, busy])
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
@@ -215,7 +257,8 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
   const loading = creating ? preference.isPending
     : loaded.isPending || (!!loaded.data && session.id !== loaded.data.value.id)
   const loadError = creating ? preference.error : loaded.error
-  return <main className="notes-layout"><div className="notes-shell"><div inert={archiveConfirmation || trashConfirmation !== null}>
+  if (deleted) return <main><p role="status">Note permanently deleted.</p></main>
+  return <main className="notes-layout"><div className="notes-shell"><div inert={archiveConfirmation || trashConfirmation !== null || deleteConfirmation !== null}>
     <nav className="notes-top"><Link to="/notes">All notes</Link><Link to="/settings/security">Security settings</Link></nav>
     {loading ? <p role="status">Loading editor…</p> : loadError
       ? <p role="alert">{issue(loadError)} <button onClick={() => void (creating ? preference.refetch() : loaded.refetch())}>Retry</button></p>
@@ -253,7 +296,9 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
                   else if (dirty) { setTrashConfirmationEtag(session.etag); setTrashConfirmation('draft') }
                   else void changeLifecycle('trash')
                 }}>
-                {trashed ? 'Restore' : 'Trash'}</button></div>
+                {trashed ? 'Restore' : 'Trash'}</button>
+              {trashed && <button type="button" className="button-secondary" ref={deleteButton} disabled={lifecycleBlocked}
+                onClick={() => { setDeleteEtag(session.etag); setDeleteConfirmation('delete') }}>Permanent delete</button>}</div>
             {archived && <p role="status">This note is archived. Return it to Active before saving title or Markdown. Any unsaved draft is kept in this tab.</p>}
             {trashed && <p role="status">This note is in Trash. Restore it before saving. Your title and Markdown draft are kept in this tab; leaving can lose the draft.</p>}
           </section>}
@@ -312,6 +357,31 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
       <p>Your title and Markdown draft will stay in this tab, but will not be saved. Return the note from archive before saving it. Leaving the editor can lose the draft.</p>
       <button type="button" ref={archiveConfirmButton} disabled={commandBlocked} onClick={() => void organize('archive')}>Archive and keep draft</button>
       <button type="button" className="button-secondary" disabled={busy} onClick={() => { setArchiveConfirmation(false); archiveButton.current?.focus() }}>Keep editing</button>
+    </div></div>}
+    {deleteConfirmation && <div className="dialog-backdrop"><div className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-title" aria-describedby="delete-help"
+      onKeyDown={event => {
+        if (event.key === 'Escape' && !busy) { setDeleteConfirmation(null); deleteButton.current?.focus() }
+        if (event.key === 'Tab') {
+          event.preventDefault()
+          const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'))
+          const position = buttons.indexOf(document.activeElement as HTMLButtonElement)
+          buttons[(position + (event.shiftKey ? buttons.length - 1 : 1)) % buttons.length]?.focus()
+        }
+      }}>
+      <h2 id="delete-title">{deleteConfirmation === 'reauth' ? 'Confirm your identity before deleting' : deleteConfirmation === 'publication' ? 'Unpublish and permanently delete?' : 'Permanently delete this note?'}</h2>
+      <p id="delete-help">Unlike Trash, permanent deletion cannot be undone. This note will no longer be recoverable.</p>
+      {dirty && <p>Your unsaved title and Markdown will be discarded, not saved, if you proceed{deleteConfirmation === 'reauth' ? ' to identity confirmation' : ' with permanent deletion'}.</p>}
+      {deleteConfirmation === 'publication' && <p>Continuing will also unpublish the current public copy.</p>}
+      {deleteConfirmation === 'reauth' && <p>After confirming your identity, return to this note and choose Permanent delete again. It will not be deleted automatically.</p>}
+      <button type="button" className="button-secondary" ref={deleteCancelButton} disabled={busy}
+        onClick={() => setDeleteConfirmation(null)}>Keep note</button>
+      <button type="button" disabled={lifecycleBlocked} onClick={() => {
+        if (deleteConfirmation === 'reauth' && session.id) {
+          auth.continuation.returnIntent = `/notes/${session.id}`
+          allowNavigation.current = true
+          navigate('/reauth')
+        } else void permanentlyDelete(deleteConfirmation === 'publication')
+      }}>{deleteConfirmation === 'reauth' ? dirty ? 'Discard draft and confirm identity' : 'Confirm identity' : deleteConfirmation === 'publication' ? 'Unpublish and permanently delete' : dirty ? 'Permanently delete and discard draft' : 'Permanently delete'}</button>
     </div></div>}
     {trashConfirmation && <div className="dialog-backdrop"><div className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="trash-title"
       onKeyDown={event => {

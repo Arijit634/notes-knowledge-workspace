@@ -14,6 +14,7 @@ export type EditorSession = {
   serverVersion: Etagged<NoteCore> | null
 }
 export type EditorAction =
+  | { type: 'deleted' }
   | { type: 'load'; server: Etagged<NoteCore> }
   | { type: 'edit'; field: keyof EditorDraft; value: string }
   | { type: 'saving' }
@@ -44,6 +45,7 @@ function fromServer(server: Etagged<NoteCore>): EditorSession {
 
 export function noteEditorSession(state: EditorSession, action: EditorAction): EditorSession {
   switch (action.type) {
+    case 'deleted': return emptyEditorSession
     case 'load': return fromServer(action.server)
     case 'edit': {
       const draft = { ...state.draft, [action.field]: action.value }
