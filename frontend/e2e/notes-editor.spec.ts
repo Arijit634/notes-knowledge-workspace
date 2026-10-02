@@ -230,6 +230,8 @@ test('new Note stays local until Create; explicit Save and dirty navigation work
   await page.getByRole('link', { name: 'All notes' }).click()
   await expect(page.getByRole('dialog', { name: 'Leave with unsaved changes?' })).toBeVisible()
   await page.getByRole('button', { name: 'Keep editing' }).click()
+  await expect(page.getByRole('dialog', { name: 'Leave with unsaved changes?' })).toHaveCount(0)
+  await expect(page.getByRole('link', { name: 'All notes', exact: true })).toBeFocused()
   await expect(page.getByLabel('Title')).toHaveValue('Updated watch list')
   await page.getByLabel('Title').press('ControlOrMeta+s')
   await expect(page.getByText('Saved', { exact: true })).toBeVisible()
