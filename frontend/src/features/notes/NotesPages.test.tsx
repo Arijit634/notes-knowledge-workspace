@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { App } from '../../app/App'
 import { AuthRuntime } from '../auth/AuthRuntime'
@@ -51,6 +51,46 @@ beforeAll(async () => { await import('./NotesPages') })
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); window.history.replaceState(null, '', '/') })
 
 describe('private Notes browser journey', () => {
+  it('presents a Notes library with landmarks, real navigation, tag chips and pinned metadata', async () => {
+    mount('/notes', 'authenticated', (method, path) => method === 'GET' && path === '/api/notes'
+      ? json({ items: [{ ...initial, pinned: true, tags: ['Ideas', 'Watch later'] }], nextCursor: null }) : undefined)
+    await screen.findByRole('link', { name: /Saved title/ })
+    expect(screen.getAllByRole('main')).toHaveLength(1)
+    const nav = screen.getByRole('navigation', { name: 'Workspace navigation' })
+    expect(within(nav).getAllByRole('link').map(link => link.getAttribute('href'))).toEqual(['/notes', '/settings/security'])
+    expect(within(nav).getByRole('link', { name: 'All notes' }).getAttribute('aria-current')).toBe('page')
+    expect(screen.getByRole('link', { name: 'Skip to Notes content' }).getAttribute('href')).toBe('#notes-content')
+    expect(screen.getByRole('list', { name: 'Tags' }).textContent).toBe('IdeasWatch later')
+    expect(screen.getByText('Pinned')).toBeTruthy()
+    expect(screen.queryByRole('searchbox')).toBeNull()
+  })
+
+  it('keeps library failure distinct from empty state and exposes a working retry', async () => {
+    let failed = true
+    mount('/notes', 'authenticated', (method, path) => method === 'GET' && path === '/api/notes'
+      ? failed ? problem(503, 'service_unavailable') : json({ items: [], nextCursor: null }) : undefined)
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('Notes are temporarily unavailable')
+    expect(screen.queryByText('No notes yet')).toBeNull()
+    failed = false
+    fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
+    await screen.findByRole('heading', { name: 'No notes yet' })
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('groups tools separately from authoring and labels the explicit-save shortcut', async () => {
+    mount(`/notes/${id}`)
+    await screen.findByDisplayValue('Saved title')
+    expect(screen.getByRole('complementary', { name: 'Note tools' })).toBeTruthy()
+    expect(screen.getByRole('region', { name: 'Markdown preview' })).toBeTruthy()
+    expect(screen.getByLabelText('Markdown').getAttribute('aria-describedby')).toBe('markdown-help')
+    expect(screen.getByText(/Ctrl\/Cmd \+ S/)).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Unsaved title' } })
+    expect(screen.getByRole('status').textContent).toBe('Unsaved changes')
+    fireEvent.click(screen.getByRole('button', { name: 'Hide preview' }))
+    expect(screen.queryByRole('region', { name: 'Markdown preview' })).toBeNull()
+  })
+
   const versionId = '01990a55-9e12-7ac4-8f5b-31aa4a91d402'
   const checkpoint = { id: versionId, title: 'Historical title', markdown: 'Historical body',
     sourceRevision: 1, checkpointKind: 'policy', createdAt: '2026-09-30T00:00:00Z' }

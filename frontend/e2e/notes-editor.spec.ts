@@ -2,6 +2,10 @@ import { expect, test, type Page } from '@playwright/test'
 
 const id = '01990a55-9e12-7ac4-8f5b-31aa4a91d401'
 
+async function noPageOverflow(page: Page) {
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
+}
+
 async function fakeNotesBackend(page: Page, requireRecent = false) {
   let note: { id: string; title: string; markdown: string; lifecycle: string; pinned: boolean;
     tags: string[]; aiEnabled: boolean; createdAt: string; updatedAt: string } | null = null
@@ -296,3 +300,101 @@ test('explicit tags preserve an unsaved draft and advance its next Save validato
   await expect(page.getByText('Saved', { exact: true })).toBeVisible()
   expect(calls.filter(call => call.method === 'PUT' && call.path === `/api/notes/${id}/tags`)).toHaveLength(1)
 })
+
+test('library loading and failure are distinct from empty results and retry recovers', async ({ page }) => {
+  await fakeNotesBackend(page)
+  let release!: () => void
+  const pending = new Promise<void>(resolve => { release = resolve })
+  let first = true
+  await page.route('**/api/notes', async route => {
+    if (first) {
+      first = false
+      await pending
+      await route.fulfill({ status: 503, contentType: 'application/problem+json', body: JSON.stringify({
+        type: 'about:blank', title: 'Unavailable', status: 503, code: 'service_unavailable',
+        instance: '/api/notes', traceId: `tr_${'a'.repeat(32)}`,
+      }) })
+    } else await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ items: [], nextCursor: null }) })
+  })
+  await page.goto('/notes')
+  await expect(page.getByRole('status')).toHaveText('Loading notes…')
+  await expect(page.getByRole('heading', { name: 'No notes yet' })).toHaveCount(0)
+  release()
+  await expect(page.getByRole('alert')).toContainText('Notes are temporarily unavailable')
+  await page.getByRole('button', { name: 'Retry', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'No notes yet' })).toBeVisible()
+  await expect(page.getByRole('alert')).toHaveCount(0)
+})
+
+for (const width of [360, 390, 768, 1280, 1440]) {
+  test(`Notes library and writing workspace stay usable at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 })
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    const calls = await fakeNotesBackend(page)
+    await page.goto('/notes')
+    await expect(page.getByRole('heading', { name: 'No notes yet' })).toBeVisible()
+    await page.keyboard.press('Tab')
+    await expect(page.getByRole('link', { name: 'Skip to Notes content' })).toBeFocused()
+    await page.keyboard.press('Enter')
+    await expect(page.getByRole('main')).toBeFocused()
+    await noPageOverflow(page)
+    expect(await page.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('link').allTextContents())
+      .toEqual(['All notes', 'Security settings'])
+    await expect(page.getByRole('searchbox')).toHaveCount(0)
+    await page.getByRole('link', { name: 'New note', exact: true }).click()
+    await page.getByLabel('Title', { exact: true }).fill('Small things worth keeping')
+    await page.getByLabel('Markdown', { exact: true }).fill('# A quiet afternoon\n\nA few **ideas** for later.\n\n- Read a chapter\n- Take a walk\n\n```text\n' + 'synthetic-long-line-'.repeat(30) + '\n```')
+    await expect(page.getByRole('region', { name: 'Markdown preview' })).toBeVisible()
+    await noPageOverflow(page)
+    await page.getByRole('button', { name: 'Create note' }).click()
+    await expect(page).toHaveURL(new RegExp(`/notes/${id}$`))
+    const tools = page.getByRole('complementary', { name: 'Note tools' })
+    for (const name of ['Pin', 'Archive', 'Trash', 'Edit tags', 'Enable AI', 'Show version history']) {
+      const button = tools.getByRole('button', { name, exact: true })
+      await expect(button).toBeVisible()
+      expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+    }
+    const editorBox = (await page.locator('.notes-authoring').boundingBox())!
+    const toolBox = (await tools.boundingBox())!
+    if (width >= 1280) expect(toolBox.x).toBeGreaterThan(editorBox.x + editorBox.width)
+    else expect(toolBox.y).toBeGreaterThan(editorBox.y + editorBox.height)
+    await page.getByRole('button', { name: 'Pin', exact: true }).click()
+    await page.getByRole('button', { name: 'Edit tags' }).click()
+    await page.getByLabel('Tags, one per line').fill('Ideas\n' + 't'.repeat(100))
+    await page.getByRole('button', { name: 'Apply tags' }).click()
+    await expect(page.getByRole('listitem').filter({ hasText: 'Ideas' })).toBeVisible()
+    await noPageOverflow(page)
+    await page.screenshot({ path: testInfo.outputPath(`editor-${width}.png`), fullPage: true })
+    await page.getByLabel('Title', { exact: true }).fill('A deliberately unsaved thought')
+    await expect(page.getByText('Unsaved changes', { exact: true })).toBeVisible()
+    const allNotes = page.getByRole('link', { name: 'All notes', exact: true })
+    await allNotes.click()
+    const leaveDialog = page.getByRole('dialog', { name: 'Leave with unsaved changes?' })
+    await expect(leaveDialog).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Keep editing', exact: true })).toBeFocused()
+    await page.keyboard.press('Shift+Tab')
+    await expect(page.getByRole('button', { name: 'Discard changes and leave' })).toBeFocused()
+    await page.keyboard.press('Tab')
+    await expect(page.getByRole('button', { name: 'Keep editing', exact: true })).toBeFocused()
+    await page.keyboard.press('ControlOrMeta+s')
+    expect(calls.filter(call => call.method === 'PUT' && call.path === `/api/notes/${id}`)).toHaveLength(0)
+    await noPageOverflow(page)
+    await page.screenshot({ path: testInfo.outputPath(`dialog-${width}.png`) })
+    await page.keyboard.press('Escape')
+    await expect(leaveDialog).toHaveCount(0)
+    await expect(allNotes).toBeFocused()
+    await expect(page.getByLabel('Title', { exact: true })).toHaveValue('A deliberately unsaved thought')
+    await page.getByLabel('Markdown', { exact: true }).press('ControlOrMeta+s')
+    await expect(page.getByText('Saved', { exact: true })).toBeVisible()
+    await allNotes.click()
+    await expect(page.getByRole('link', { name: /A deliberately unsaved thought/ })).toBeVisible()
+    await expect(page.getByText('Pinned', { exact: true })).toBeVisible()
+    await noPageOverflow(page)
+    await page.screenshot({ path: testInfo.outputPath(`library-${width}.png`), fullPage: true })
+    await page.getByRole('button', { name: 'Archived notes' }).click()
+    await expect(page.getByRole('heading', { name: 'No archived notes' })).toBeVisible()
+    await page.getByRole('button', { name: 'Trashed notes' }).click()
+    await expect(page.getByRole('heading', { name: 'No trashed notes' })).toBeVisible()
+    await noPageOverflow(page)
+  })
+}

@@ -40,7 +40,8 @@ async function backend(page: Page, stale: boolean) {
   return mutations
 }
 
-test('history inspect and accessible confirmation deliberately replace a dirty draft', async ({ page }) => {
+test('history inspect and accessible confirmation deliberately replace a dirty draft', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 })
   const mutations = await backend(page, false)
   await page.goto(`/notes/${id}`)
   await expect(page.getByLabel('Title', { exact: true })).toHaveValue('Current title')
@@ -48,6 +49,8 @@ test('history inspect and accessible confirmation deliberately replace a dirty d
   await page.getByRole('button', { name: 'Show version history' }).click()
   await page.getByRole('button', { name: 'Inspect Historical title' }).click()
   await expect(page.getByLabel('Markdown', { exact: true })).toHaveValue(' Exact unsaved draft\n ')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
+  await page.screenshot({ path: testInfo.outputPath('phone-history.png'), fullPage: true })
   await page.getByRole('button', { name: 'Restore this checkpoint' }).click()
   const dialog = page.getByRole('dialog', { name: 'Restore saved checkpoint?' })
   await expect(dialog).toBeVisible()
@@ -68,7 +71,7 @@ test('history inspect and accessible confirmation deliberately replace a dirty d
   expect(mutations).toEqual([`POST /api/notes/${id}/versions/${versionId}/restore`])
 })
 
-test('stale history restore keeps the exact dirty draft and requires reconciliation', async ({ page }) => {
+test('stale history restore keeps the exact dirty draft and requires reconciliation', async ({ page }, testInfo) => {
   const mutations = await backend(page, true)
   await page.goto(`/notes/${id}`)
   await expect(page.getByLabel('Title', { exact: true })).toHaveValue('Current title')
@@ -80,5 +83,6 @@ test('stale history restore keeps the exact dirty draft and requires reconciliat
   await expect(page.getByRole('region', { name: 'Save conflict' })).toBeVisible()
   await expect(page.getByLabel('Markdown', { exact: true })).toHaveValue(' Exact dirty draft\n ')
   await expect(page.getByRole('button', { name: 'Restore this checkpoint' })).toBeDisabled()
+  await page.screenshot({ path: testInfo.outputPath('desktop-conflict.png'), fullPage: true })
   expect(mutations).toEqual([`POST /api/notes/${id}/versions/${versionId}/restore`])
 })
