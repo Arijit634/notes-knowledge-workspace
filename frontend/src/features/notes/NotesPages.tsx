@@ -5,8 +5,9 @@ import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import type { AuthRuntime } from '../auth/AuthRuntime'
 import { ApiProblemError } from '../../app/api/ProblemDetailsDecoder'
 import { MarkdownView } from './MarkdownView'
+import { NoteVersionPanel } from './NoteVersionPanel'
 import { emptyEditorSession, isDirty, noteEditorSession } from './NoteEditorSession'
-import { notesApi, type NoteCore, type NoteOrganizationCommand } from './NotesApi'
+import { notesApi, type NoteCore, type NoteOrganizationCommand, type NoteVersion } from './NotesApi'
 import { noteKeys, notePreferenceKeys } from './NotesKeys'
 
 function issue(error: unknown): string {
@@ -55,6 +56,10 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
   const [error, setError] = useState('')
   const [preview, setPreview] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [restoreConfirmation, setRestoreConfirmation] = useState<{ version: NoteVersion; etag: string } | null>(null)
+  const restoreCancel = useRef<HTMLButtonElement>(null)
+  const restoreInvoker = useRef<HTMLElement | null>(null)
   const [tagInput, setTagInput] = useState('')
   const [tagEtag, setTagEtag] = useState<string | null>(null)
   const [tagsEditing, setTagsEditing] = useState(false)
@@ -116,7 +121,7 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
   }
 
   async function save() {
-    if (busy || archived || trashed || archiveConfirmation || trashConfirmation || deleteConfirmation || !dirty || session.phase === 'Conflict' || !session.draft.title.trim()) return
+    if (busy || archived || trashed || archiveConfirmation || trashConfirmation || deleteConfirmation || restoreConfirmation || !dirty || session.phase === 'Conflict' || !session.draft.title.trim()) return
     if (!creating && (!session.id || !session.etag)) return
     const { title, markdown } = session.draft
     setBusy(true); setError(''); dispatch({ type: 'saving' })
@@ -128,6 +133,7 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
       if (creating) { allowNavigation.current = true; navigate(`/notes/${result.value.id}`, { replace: true }) }
       else auth.queries.setQueryData(noteKeys.core(scope, session.id!), result)
       await auth.queries.invalidateQueries({ queryKey: noteKeys.lists(scope) })
+      if (session.id) await auth.queries.invalidateQueries({ queryKey: noteKeys.versions(scope, session.id) })
     } catch (failure) {
       if (failure instanceof ApiProblemError && failure.problem.status === 412 && !creating) {
         dispatch({ type: 'conflict' })
@@ -154,6 +160,36 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
         await loadConflictVersion()
       } else setTagError(issue(failure))
     } finally { setBusy(false) }
+  }
+
+  useEffect(() => {
+    if (restoreConfirmation && !busy) restoreCancel.current?.focus()
+    else if (!restoreConfirmation) restoreInvoker.current?.focus()
+  }, [restoreConfirmation, busy])
+
+  function closeRestore() {
+    setRestoreConfirmation(null)
+  }
+
+  async function restoreCheckpoint() {
+    if (!restoreConfirmation || !session.id || busy || archived || trashed
+        || session.phase === 'Conflict' || session.serverChangedWhileDirty) return
+    setBusy(true); setError('')
+    try {
+      const result = await notesApi.restoreVersion(auth, session.id, restoreConfirmation.version.id, restoreConfirmation.etag)
+      // This replacement is deliberate: the confirmation explicitly includes discarding a dirty draft.
+      dispatch({ type: 'load', server: result })
+      auth.queries.setQueryData(noteKeys.core(scope, session.id), result)
+      setTagsEditing(false)
+      await Promise.all([
+        auth.queries.invalidateQueries({ queryKey: noteKeys.history(scope, session.id) }),
+        auth.queries.invalidateQueries({ queryKey: noteKeys.lists(scope) }),
+      ])
+    } catch (failure) {
+      if (failure instanceof ApiProblemError && failure.problem.status === 412) {
+        dispatch({ type: 'conflict' }); await loadConflictVersion()
+      } else setError(issue(failure))
+    } finally { setBusy(false); closeRestore() }
   }
 
   async function changeAiAccess() {
@@ -231,11 +267,13 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
     try {
       await notesApi.permanentlyDelete(auth, noteId, deleteEtag, confirmPublicationUnpublish)
       await auth.queries.cancelQueries({ queryKey: noteKeys.core(scope, noteId) })
+      await auth.queries.cancelQueries({ queryKey: noteKeys.history(scope, noteId) })
       await auth.queries.cancelQueries({ queryKey: noteKeys.lists(scope) })
       // Stop the observer and erase editor content before evicting its private cache.
       allowNavigation.current = true
       flushSync(() => { setDeleted(true); dispatch({ type: 'deleted' }); setDeleteConfirmation(null) })
       auth.queries.removeQueries({ queryKey: noteKeys.core(scope, noteId), exact: true })
+      auth.queries.removeQueries({ queryKey: noteKeys.history(scope, noteId) })
       auth.queries.removeQueries({ queryKey: noteKeys.lists(scope) })
       navigate('/notes', { replace: true, state: { notesView: 'trashed' } })
     } catch (failure) {
@@ -273,7 +311,7 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
     : loaded.isPending || (!!loaded.data && session.id !== loaded.data.value.id)
   const loadError = creating ? preference.error : loaded.error
   if (deleted) return <main><p role="status">Note permanently deleted.</p></main>
-  return <main className="notes-layout"><div className="notes-shell"><div inert={archiveConfirmation || trashConfirmation !== null || deleteConfirmation !== null}>
+  return <main className="notes-layout"><div className="notes-shell"><div inert={archiveConfirmation || trashConfirmation !== null || deleteConfirmation !== null || restoreConfirmation !== null}>
     <nav className="notes-top"><Link to="/notes">All notes</Link><Link to="/settings/security">Security settings</Link></nav>
     {loading ? <p role="status">Loading editor…</p> : loadError
       ? <p role="alert">{issue(loadError)} <button onClick={() => void (creating ? preference.refetch() : loaded.refetch())}>Retry</button></p>
@@ -347,6 +385,17 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
               disabled={lifecycleBlocked} onClick={() => void changeAiAccess()}>
               {session.serverVersion?.value.aiEnabled ? 'Disable AI' : 'Enable AI'}</button>
           </section>}
+          {!creating && session.id && <>
+            <button type="button" className="button-secondary" aria-expanded={historyOpen}
+              aria-controls="note-history" onClick={() => setHistoryOpen(value => !value)}>
+              {historyOpen ? 'Hide version history' : 'Show version history'}</button>
+            {historyOpen && <div id="note-history"><NoteVersionPanel auth={auth} noteId={session.id}
+              restoreBlocked={lifecycleBlocked || archived || trashed} onRestore={(version, invoker) => {
+                if (!session.etag || lifecycleBlocked || archived || trashed) return
+                restoreInvoker.current = invoker
+                setRestoreConfirmation({ version, etag: session.etag })
+              }} /></div>}
+          </>}
           {error && <p role="alert">{error}</p>}
           {session.serverChangedWhileDirty && session.phase !== 'Conflict'
             && <p role="alert">This note changed on the server while you were editing. Your draft was kept.</p>}
@@ -364,6 +413,24 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
           {preview && <section className="notes-preview" aria-label="Markdown preview"><h2>Preview</h2><MarkdownView markdown={session.draft.markdown} /></section>}
         </>}
     </div>
+    {restoreConfirmation && <div className="dialog-backdrop"><div className="confirm-dialog" role="dialog" aria-modal="true"
+      aria-labelledby="checkpoint-restore-title" aria-describedby="checkpoint-restore-help" onKeyDown={event => {
+        if (event.key === 'Escape' && !busy) closeRestore()
+        if (event.key === 'Tab') {
+          event.preventDefault()
+          const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'))
+          const position = buttons.indexOf(document.activeElement as HTMLButtonElement)
+          buttons[(position + (event.shiftKey ? buttons.length - 1 : 1)) % buttons.length]?.focus()
+        }
+      }}>
+      <h2 id="checkpoint-restore-title">Restore saved checkpoint?</h2>
+      <p id="checkpoint-restore-help">This replaces the saved title and Markdown with “{restoreConfirmation.version.title}”.
+        The immediately previous saved content remains recoverable in history. Tags, pin state and AI access stay unchanged.</p>
+      {dirty && <p>Your unsaved title and Markdown draft will be discarded, not saved.</p>}
+      <button type="button" className="button-secondary" ref={restoreCancel} disabled={busy} onClick={closeRestore}>Keep current note</button>
+      <button type="button" disabled={lifecycleBlocked || archived || trashed} onClick={() => void restoreCheckpoint()}>
+        {dirty ? 'Restore and discard draft' : 'Confirm restore'}</button>
+    </div></div>}
     {blocker.state === 'blocked' && <div className="dialog-backdrop"><div className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="leave-title">
       <h2 id="leave-title">Leave with unsaved changes?</h2><p>Your draft will be lost if you leave.</p>
       <button type="button" onClick={() => blocker.reset()}>Keep editing</button>

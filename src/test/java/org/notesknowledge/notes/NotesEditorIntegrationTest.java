@@ -732,17 +732,17 @@ class NotesEditorIntegrationTest {
     }
 
     @Test
-    void migrationCreatesOnlyThreeNotesRelationsAndEnforcesOwnerAndRowShape() {
+    void migrationCreatesFiveNotesRelationsAndEnforcesOwnerAndRowShape() {
         assertThat(jdbc.queryForObject("""
                 select count(*) from information_schema.tables
                 where table_schema in ('identity','profile','notes','knowledge',
                     'publishing','discovery','moderation') and table_type = 'BASE TABLE'
-                """, Integer.class)).isEqualTo(14);
+                """, Integer.class)).isEqualTo(16);
         assertThat(jdbc.queryForList("""
                 select table_name from information_schema.tables
                 where table_schema = 'notes' and table_type = 'BASE TABLE'
                 order by table_name
-                """, String.class)).containsExactly("note", "note_preferences", "note_tag");
+                """, String.class)).containsExactly("note", "note_preferences", "note_tag", "note_version", "note_version_hold");
         UUID owner = account();
         UUID other = account();
         UUID noteId = jdbc.queryForObject("select uuidv7()", UUID.class);

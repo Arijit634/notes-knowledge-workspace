@@ -51,6 +51,107 @@ beforeAll(async () => { await import('./NotesPages') })
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); window.history.replaceState(null, '', '/') })
 
 describe('private Notes browser journey', () => {
+  const versionId = '01990a55-9e12-7ac4-8f5b-31aa4a91d402'
+  const checkpoint = { id: versionId, title: 'Historical title', markdown: 'Historical body',
+    sourceRevision: 1, checkpointKind: 'policy', createdAt: '2026-09-30T00:00:00Z' }
+  function historyResponse(method: string, path: string): Response | undefined {
+    if (method === 'GET' && path === `/api/notes/${id}/versions`) return json({ items: [checkpoint], nextCursor: null })
+    if (method === 'GET' && path === `/api/notes/${id}/versions/${versionId}`) return json(checkpoint)
+    return undefined
+  }
+
+  it('inspects history without changing a dirty draft, then explicitly restores and adopts the new save base', async () => {
+    const { calls } = mount(`/notes/${id}`, 'authenticated', (method, path, body) => {
+      if (method === 'POST' && path.endsWith('/restore')) return json({ ...initial, title: checkpoint.title,
+        markdown: checkpoint.markdown }, 200, { ETag: '"restored"' })
+      if (method === 'PUT' && path === `/api/notes/${id}`) return json({ ...initial, ...body as object }, 200, { ETag: '"next"' })
+      return historyResponse(method, path)
+    })
+    await screen.findByDisplayValue('Saved title')
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Unsaved title' } })
+    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: ' Exact draft\n ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Show version history' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Inspect Historical title' }))
+    await screen.findByRole('region', { name: 'Selected checkpoint' })
+    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe(' Exact draft\n ')
+    fireEvent.click(await readyButton('Restore this checkpoint'))
+    await screen.findByRole('dialog', { name: 'Restore saved checkpoint?' })
+    expect(screen.getByText(/draft will be discarded, not saved/)).toBeTruthy()
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Keep current note' }))
+    fireEvent.keyDown(document, { ctrlKey: true, key: 's' })
+    expect(calls.some(call => call.method === 'PUT')).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: 'Keep current note' }))
+    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Unsaved title')
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Restore this checkpoint' }))
+    expect(calls.some(call => call.method === 'POST')).toBe(false)
+    fireEvent.click(await readyButton('Restore this checkpoint'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Restore and discard draft' }))
+    await screen.findByDisplayValue('Historical title')
+    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe('Historical body')
+    expect(screen.getByText('Saved')).toBeTruthy()
+    expect(calls.filter(call => call.method === 'POST')).toEqual([{ method: 'POST',
+      path: `/api/notes/${id}/versions/${versionId}/restore`, body: { confirmRestore: true }, ifMatch: '"e1"' }])
+    expect(calls.filter(call => call.path.endsWith('/versions'))).toHaveLength(2)
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'After restore' } })
+    fireEvent.click(await readyButton('Save note'))
+    await screen.findByText('Saved')
+    expect(calls.find(call => call.method === 'PUT')?.ifMatch).toBe('"restored"')
+  })
+
+  it('a stale restore preserves the exact dirty draft and does not retry or Save it', async () => {
+    let failed = false
+    const { calls } = mount(`/notes/${id}`, 'authenticated', (method, path) => {
+      if (method === 'POST' && path.endsWith('/restore')) { failed = true; return problem(412, 'stale_write') }
+      if (failed && method === 'GET' && path === `/api/notes/${id}`) return json({ ...initial, title: 'Other tab' }, 200, { ETag: '"e2"' })
+      return historyResponse(method, path)
+    })
+    await screen.findByDisplayValue('Saved title')
+    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: ' Exact unsaved\n**body** ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Show version history' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Inspect Historical title' }))
+    fireEvent.click(await readyButton('Restore this checkpoint'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Restore and discard draft' }))
+    await screen.findByRole('region', { name: 'Save conflict' })
+    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe(' Exact unsaved\n**body** ')
+    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Saved title')
+    expect(calls.filter(call => call.method === 'POST')).toHaveLength(1)
+    expect(calls.some(call => call.method === 'PUT')).toBe(false)
+    expect((screen.getByRole('button', { name: 'Restore this checkpoint' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: 'Save note' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it.each(['archived', 'trashed'] as const)('allows %s history inspection but not restore', async lifecycle => {
+    mount(`/notes/${id}`, 'authenticated', (method, path) => {
+      if (method === 'GET' && path === `/api/notes/${id}`) return json({ ...initial, lifecycle }, 200, { ETag: '"e1"' })
+      return historyResponse(method, path)
+    })
+    await screen.findByDisplayValue('Saved title')
+    fireEvent.click(screen.getByRole('button', { name: 'Show version history' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Inspect Historical title' }))
+    await screen.findByText('Historical body')
+    expect((screen.getByRole('button', { name: 'Restore this checkpoint' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('history pagination is bounded and unavailable checkpoints do not change the editor', async () => {
+    const { calls } = mount(`/notes/${id}`, 'authenticated', (method, path) => {
+      if (method === 'GET' && path === `/api/notes/${id}/versions`) return json({ items: [checkpoint], nextCursor: 'opaque-cursor' })
+      if (method === 'GET' && path.endsWith('/versions?cursor=opaque-cursor')) return json({ items: [
+        { ...checkpoint, id: 'older', title: 'Older checkpoint', sourceRevision: 1 }], nextCursor: null })
+      if (method === 'GET' && path.endsWith(`/versions/${versionId}`)) return problem(404, 'resource_not_found')
+      return undefined
+    })
+    await screen.findByDisplayValue('Saved title')
+    fireEvent.click(screen.getByRole('button', { name: 'Show version history' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Load older checkpoints' }))
+    await screen.findByRole('button', { name: 'Inspect Older checkpoint' })
+    expect(screen.queryByRole('button', { name: 'Load older checkpoints' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect Historical title' }))
+    await screen.findByText('This checkpoint is unavailable.')
+    expect(screen.queryByRole('button', { name: 'Restore this checkpoint' })).toBeNull()
+    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Saved title')
+    expect(calls.some(call => call.method !== 'GET')).toBe(false)
+  })
+
   it('adopts AI permission and ETag without saving or changing the exact dirty draft', async () => {
     const { calls } = mount(`/notes/${id}`, 'authenticated', (method, path, body) => {
       if (method === 'PUT' && path.endsWith('/ai-access')) return json({ ...initial, aiEnabled: true }, 200, { ETag: '"e2"' })
