@@ -11,6 +11,11 @@ const first = { value: note, etag: '"first"' }
 const second = { value: { ...note, title: 'Server change' }, etag: '"second"' }
 
 describe('NoteEditorSession', () => {
+  it('erases all editor content and validators after confirmed successful deletion', () => {
+    const state = noteEditorSession(noteEditorSession(emptyEditorSession, { type: 'load', server: first }),
+      { type: 'edit', field: 'markdown', value: 'Unsaved private draft' })
+    expect(noteEditorSession(state, { type: 'deleted' })).toEqual(emptyEditorSession)
+  })
   it.each([
     { pinned: true, lifecycle: 'active' as const },
     { pinned: false, lifecycle: 'active' as const },

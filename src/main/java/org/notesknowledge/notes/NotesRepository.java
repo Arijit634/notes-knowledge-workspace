@@ -154,6 +154,17 @@ class NotesRepository {
                 .param("now", Timestamp.from(now)).update();
     }
 
+    int logicallyDelete(UUID owner, UUID id, long revision, Instant now) {
+        return jdbc().sql("""
+                update notes.note set lifecycle_state = 'logically_deleted', deleted_at = :now,
+                    pre_trash_state = null, trashed_at = null, revision = revision + 1,
+                    ai_generation = ai_generation + 1, updated_at = greatest(updated_at, :now)
+                where owner_user_id = :owner and note_id = :id and revision = :revision
+                  and lifecycle_state = 'trashed'
+                """).param("owner", owner).param("id", id).param("revision", revision)
+                .param("now", Timestamp.from(now)).update();
+    }
+
     List<NoteRecord> page(UUID owner, String lifecycle, Boolean pinned, Instant beforeTime,
             UUID beforeId, int count) {
         String pinFilter = pinned == null ? "" : " and pinned = :pinned\n";

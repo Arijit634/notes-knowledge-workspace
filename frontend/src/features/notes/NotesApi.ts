@@ -85,6 +85,12 @@ export const notesApi = {
         ...(command === 'trash' && confirmPublicationUnpublish ? { json: { confirmPublicationUnpublish: true } } : {}) })
     return etagged(result.body, result.metadata.etag)
   },
+  permanentlyDelete: async (auth: AuthRuntime, id: string, etag: string, confirmPublicationUnpublish = false) => {
+    const result = await auth.api.request('DELETE', `/api/notes/${encodeURIComponent(id)}`,
+      { ifMatch: etag, retryOnCsrfInvalid: false, json: { confirmPermanentDelete: true,
+        ...(confirmPublicationUnpublish ? { confirmPublicationUnpublish: true } : {}) } })
+    if (result.metadata.status !== 204 || result.body !== null) throw new ApiProtocolError()
+  },
   organize: async (auth: AuthRuntime, id: string, etag: string, command: NoteOrganizationCommand) => {
     const method = command === 'pin' ? 'PUT' : command === 'unpin' ? 'DELETE' : 'POST'
     const path = command === 'pin' || command === 'unpin' ? 'pin'

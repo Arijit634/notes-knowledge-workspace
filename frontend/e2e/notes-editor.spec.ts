@@ -2,11 +2,12 @@ import { expect, test, type Page } from '@playwright/test'
 
 const id = '01990a55-9e12-7ac4-8f5b-31aa4a91d401'
 
-async function fakeNotesBackend(page: Page) {
+async function fakeNotesBackend(page: Page, requireRecent = false) {
   let note: { id: string; title: string; markdown: string; lifecycle: string; pinned: boolean;
     tags: string[]; aiEnabled: boolean; createdAt: string; updatedAt: string } | null = null
   let revision = 0
   let preTrashState: string | null = null
+  let recent = !requireRecent
   const calls: Array<{ method: string; path: string; body: unknown }> = []
   await page.route('**/api/**', async route => {
     const request = route.request(), path = new URL(request.url()).pathname, method = request.method()
@@ -17,6 +18,8 @@ async function fakeNotesBackend(page: Page) {
     if (path === '/api/auth/session') response = { state: 'authenticated' }
     else if (path === '/api/auth/csrf') response = { csrfToken: 'synthetic-csrf' }
     else if (path === '/api/me/note-preferences') response = { defaultAiEnabledForNewNotes: false }
+    else if (path === '/api/me/security') response = { email: 'synthetic@example.test', passwordConfigured: true, mfaState: 'disabled', oidcLinks: [] }
+    else if (path === '/api/auth/reauth/password') { recent = true; status = 204 }
     else if (path === '/api/notes' && method === 'GET') response = {
       items: note && note.lifecycle === (new URL(request.url()).searchParams.get('lifecycle') ?? 'active') ? [note] : [], nextCursor: null,
     }
@@ -28,6 +31,15 @@ async function fakeNotesBackend(page: Page) {
       headers = { ETag: '"n1"', Location: `/api/notes/${id}` }
     } else if (path === `/api/notes/${id}` && method === 'GET' && note) {
       response = note; headers = { ETag: `"n${revision}"` }
+    } else if (path === `/api/notes/${id}` && method === 'DELETE' && note) {
+      expect(note.lifecycle).toBe('trashed')
+      expect(request.headers()['if-match']).toBe(`"n${revision}"`)
+      expect(body).toEqual({ confirmPermanentDelete: true })
+      if (!recent) {
+        status = 403; headers['Content-Type'] = 'application/problem+json'
+        response = { type: 'about:blank', title: 'Recent authentication required', status,
+          code: 'recent_authentication_required', instance: path, traceId: `tr_${'a'.repeat(32)}` }
+      } else { note = null; status = 204 }
     } else if (path === `/api/notes/${id}` && method === 'PUT' && note) {
       expect(request.headers()['if-match']).toBe(`"n${revision}"`)
       const input = body as { title: string; markdown: string }
@@ -68,10 +80,42 @@ async function fakeNotesBackend(page: Page) {
       }
       response = note; headers = { ETag: `"n${revision}"` }
     } else throw new Error(`Unexpected test request: ${method} ${path}`)
-    await route.fulfill({ status, contentType: 'application/json', headers, body: JSON.stringify(response) })
+    await route.fulfill({ status, contentType: status >= 400 ? 'application/problem+json' : 'application/json', headers,
+      ...(status === 204 ? {} : { body: JSON.stringify(response) }) })
   })
   return calls
 }
+
+test('permanent deletion requires renewed deliberate action after recent auth and clears Trash', async ({ page }) => {
+  const calls = await fakeNotesBackend(page, true)
+  await page.goto('/notes/new')
+  await page.getByLabel('Title').fill('Saved synthetic note')
+  await page.getByRole('button', { name: 'Create note' }).click()
+  await expect(page).toHaveURL(new RegExp(`/notes/${id}$`))
+  await expect(page.getByRole('button', { name: 'Permanent delete', exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Trash', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Restore', exact: true })).toBeEnabled()
+  await page.getByRole('textbox', { name: 'Markdown' }).fill('Exact synthetic unsaved draft')
+  await page.getByRole('button', { name: 'Permanent delete', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Keep note', exact: true })).toBeFocused()
+  await page.getByRole('button', { name: 'Permanently delete and discard draft' }).click()
+  await expect(page.getByRole('dialog', { name: 'Confirm your identity before deleting' })).toBeVisible()
+  await expect(page.getByRole('textbox', { name: 'Markdown' })).toHaveValue('Exact synthetic unsaved draft')
+  await page.getByRole('button', { name: 'Discard draft and confirm identity' }).click()
+  await page.getByLabel('Password', { exact: true }).fill('Synthetic-password-123!')
+  await page.getByRole('button', { name: 'Confirm with password' }).click()
+  await expect(page).toHaveURL(new RegExp(`/notes/${id}$`))
+  await expect(page.getByRole('button', { name: 'Permanent delete', exact: true })).toBeEnabled()
+  expect(calls.filter(call => call.method === 'DELETE')).toHaveLength(1)
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Permanent delete', exact: true }).click()
+  await page.getByRole('button', { name: 'Permanently delete', exact: true }).click()
+  await expect(page).toHaveURL(/\/notes$/)
+  await expect(page.getByRole('button', { name: 'Trashed notes', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByText('No trashed notes', { exact: true })).toBeVisible()
+  expect(calls.filter(call => call.method === 'DELETE')).toHaveLength(2)
+  expect(calls.some(call => call.method === 'PUT')).toBe(false)
+})
 
 for (const originalLifecycle of ['active', 'archived']) {
   test(`Trash and Restore preserve dirty drafts and ${originalLifecycle} list membership`, async ({ page }) => {
