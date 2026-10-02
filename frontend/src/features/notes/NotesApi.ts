@@ -63,9 +63,9 @@ export const notesApi = {
       { json: { title, markdown }, ifMatch: etag, retryOnCsrfInvalid: false })
     return etagged(result.body, result.metadata.etag)
   },
-  list: async (auth: AuthRuntime, cursor: string | null, lifecycle: 'active' | 'archived' = 'active'): Promise<CursorPage<NoteCore>> => {
+  list: async (auth: AuthRuntime, cursor: string | null, lifecycle: NoteCore['lifecycle'] = 'active'): Promise<CursorPage<NoteCore>> => {
     const params = new URLSearchParams()
-    if (lifecycle === 'archived') params.set('lifecycle', lifecycle)
+    if (lifecycle !== 'active') params.set('lifecycle', lifecycle)
     if (cursor) params.set('cursor', cursor)
     const query = params.size ? `?${params}` : ''
     const body: unknown = (await auth.api.request<unknown>('GET', `/api/notes${query}`)).body
@@ -76,6 +76,13 @@ export const notesApi = {
   replaceTags: async (auth: AuthRuntime, id: string, etag: string, tags: string[]) => {
     const result = await auth.api.request<unknown>('PUT', `/api/notes/${encodeURIComponent(id)}/tags`,
       { json: { tags }, ifMatch: etag, retryOnCsrfInvalid: false })
+    return etagged(result.body, result.metadata.etag)
+  },
+  lifecycle: async (auth: AuthRuntime, id: string, etag: string, command: 'trash' | 'restore',
+    confirmPublicationUnpublish = false) => {
+    const result = await auth.api.request<unknown>('POST', `/api/notes/${encodeURIComponent(id)}/${command}`,
+      { ifMatch: etag, retryOnCsrfInvalid: false,
+        ...(command === 'trash' && confirmPublicationUnpublish ? { json: { confirmPublicationUnpublish: true } } : {}) })
     return etagged(result.body, result.metadata.etag)
   },
   organize: async (auth: AuthRuntime, id: string, etag: string, command: NoteOrganizationCommand) => {

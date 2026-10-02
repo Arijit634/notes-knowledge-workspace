@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { App } from '../../app/App'
 import { AuthRuntime } from '../auth/AuthRuntime'
 import type { NoteCore } from './NotesApi'
@@ -45,9 +45,116 @@ function mount(path: string, state: 'authenticated' | 'anonymous' | 'mfaRequired
   return { calls, auth }
 }
 
+// Compile the lazy route module before measuring DOM-state transitions. Cold
+// Vite transformation is not part of the simulated request/authority lifecycle.
+beforeAll(async () => { await import('./NotesPages') })
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); window.history.replaceState(null, '', '/') })
 
 describe('private Notes browser journey', () => {
+  it.each(['active', 'archived'] as const)('preserves exact dirty drafts through Trash and Restore to %s', async previous => {
+    const { calls, auth } = mount(`/notes/${id}`, 'authenticated', (method, path) => {
+      if (method === 'GET' && path === `/api/notes/${id}`) return json({ ...initial, lifecycle: previous }, 200, { ETag: '"e1"' })
+      if (path.endsWith('/trash')) return json({ ...initial, lifecycle: 'trashed' }, 200, { ETag: '"e2"' })
+      if (path.endsWith('/restore')) return json({ ...initial, lifecycle: previous }, 200, { ETag: '"e3"' })
+      return undefined
+    })
+    await screen.findByDisplayValue('Saved title')
+    for (const lifecycle of ['active', 'archived', 'trashed']) auth.queries.setQueryData(
+      noteKeys.list(auth.session.viewerScope, { lifecycle, sort: 'updatedAtDesc' }),
+      { pages: [{ items: [], nextCursor: null }], pageParams: [null] })
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: ' Exact title ' } })
+    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: 'Exact\n**draft** ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Trash' }))
+    const confirmation = screen.getByRole('button', { name: 'Trash and keep draft' })
+    expect(document.activeElement).toBe(confirmation)
+    fireEvent.keyDown(confirmation, { key: 'Tab' })
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Keep editing' }))
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Trash' }))
+    expect(calls.some(call => call.method === 'POST')).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: 'Trash' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Trash and keep draft' }))
+    await readyButton('Restore')
+    expect(screen.getByRole('button', { name: 'Save note' }).hasAttribute('disabled')).toBe(true)
+    expect(screen.getByRole('button', { name: 'Edit tags' }).hasAttribute('disabled')).toBe(true)
+    fireEvent.keyDown(document, { key: 's', ctrlKey: true })
+    expect(calls.some(call => call.method === 'PUT')).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: 'Restore' }))
+    await readyButton('Trash')
+    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(' Exact title ')
+    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe('Exact\n**draft** ')
+    expect(screen.getByText('Unsaved changes')).toBeTruthy()
+    expect(calls.filter(call => call.method === 'POST')).toEqual([
+      { method: 'POST', path: `/api/notes/${id}/trash`, body: null, ifMatch: '"e1"' },
+      { method: 'POST', path: `/api/notes/${id}/restore`, body: null, ifMatch: '"e2"' },
+    ])
+    expect(screen.getByRole('button', { name: 'Save note' }).hasAttribute('disabled')).toBe(previous === 'archived')
+    for (const lifecycle of ['active', 'archived', 'trashed']) expect(auth.queries.getQueryState(
+      noteKeys.list(auth.session.viewerScope, { lifecycle, sort: 'updatedAtDesc' }))?.isInvalidated).toBe(true)
+  })
+
+  it('requires a separate explicit public-copy confirmation, never inferred from dirty confirmation', async () => {
+    let confirmed = false
+    const { calls } = mount(`/notes/${id}`, 'authenticated', (_method, path, body) => {
+      if (path.endsWith('/trash')) {
+        confirmed = !!(body as { confirmPublicationUnpublish?: boolean } | null)?.confirmPublicationUnpublish
+        return confirmed ? json({ ...initial, lifecycle: 'trashed' }, 200, { ETag: '"e2"' })
+          : problem(409, 'publication_consequence_required')
+      }
+      return undefined
+    })
+    await screen.findByDisplayValue('Saved title')
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: ' Unsaved ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Trash' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Trash and keep draft' }))
+    const publicConfirmation = await screen.findByRole('button', { name: 'Unpublish and trash' })
+    await waitFor(() => expect(publicConfirmation.hasAttribute('disabled')).toBe(false))
+    expect(document.activeElement).toBe(publicConfirmation)
+    expect(screen.getByText('Continuing will unpublish the current public copy. Restore will not republish it.')).toBeTruthy()
+    expect(confirmed).toBe(false)
+    expect(calls.filter(call => call.method === 'POST')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }))
+    expect(calls.filter(call => call.method === 'POST')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Trash' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Trash and keep draft' }))
+    fireEvent.click(await readyButton('Unpublish and trash'))
+    await readyButton('Restore')
+    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(' Unsaved ')
+    expect(calls.filter(call => call.method === 'POST').map(call => [call.body, call.ifMatch])).toEqual([
+      [null, '"e1"'], [null, '"e1"'], [{ confirmPublicationUnpublish: true }, '"e1"'],
+    ])
+  })
+
+  it.each(['trash', 'restore'] as const)('preserves draft and validator on stale %s', async command => {
+    const { calls } = mount(`/notes/${id}`, 'authenticated', (method, path) => {
+      if (method === 'GET' && path === `/api/notes/${id}`) return json({ ...initial,
+        lifecycle: command === 'restore' ? 'trashed' : 'active' }, 200, { ETag: '"e1"' })
+      if (path.endsWith('/' + command)) return problem(412, 'stale_write')
+      return undefined
+    })
+    await screen.findByDisplayValue('Saved title')
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Exact stale draft' } })
+    fireEvent.click(screen.getByRole('button', { name: command === 'trash' ? 'Trash' : 'Restore' }))
+    if (command === 'trash') fireEvent.click(screen.getByRole('button', { name: 'Trash and keep draft' }))
+    await screen.findByRole('heading', { name: 'Another version was saved' })
+    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Exact stale draft')
+    expect(calls.filter(call => call.method === 'POST')).toHaveLength(1)
+    expect(calls.find(call => call.method === 'POST')?.ifMatch).toBe('"e1"')
+  })
+
+  it('loads the Trashed collection through the existing Notes list query family', async () => {
+    const { calls } = mount('/notes', 'authenticated', (_method, path) => {
+      if (path === '/api/notes?lifecycle=trashed') return json({ items: [{ ...initial, lifecycle: 'trashed' }], nextCursor: null })
+      return undefined
+    })
+    await screen.findByText('No notes yet')
+    fireEvent.click(screen.getByRole('button', { name: 'Trashed notes' }))
+    await screen.findByRole('link', { name: /Saved title/ })
+    expect(calls.some(call => call.path === '/api/notes?lifecycle=trashed')).toBe(true)
+    expect(window.location.pathname).toBe('/notes')
+  })
+
   it('pins and unpins with current validators without saving a dirty draft', async () => {
     const { calls, auth } = mount(`/notes/${id}`, 'authenticated', (method, path, body) => {
       if (path === `/api/notes/${id}/pin`) return json({ ...initial, pinned: method === 'PUT' },
