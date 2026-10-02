@@ -156,6 +156,21 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
     } finally { setBusy(false) }
   }
 
+  async function changeAiAccess() {
+    if (lifecycleBlocked || !session.id || !session.etag || !session.serverVersion) return
+    setBusy(true); setError('')
+    try {
+      const result = await notesApi.setAiAccess(auth, session.id, session.etag, !session.serverVersion.value.aiEnabled)
+      dispatch({ type: 'coreCommandSucceeded', server: result })
+      auth.queries.setQueryData(noteKeys.core(scope, session.id), result)
+      await auth.queries.invalidateQueries({ queryKey: noteKeys.lists(scope) })
+    } catch (failure) {
+      if (failure instanceof ApiProblemError && failure.problem.status === 412) {
+        dispatch({ type: 'conflict' }); await loadConflictVersion()
+      } else setError(issue(failure))
+    } finally { setBusy(false) }
+  }
+
   async function organize(command: NoteOrganizationCommand) {
     if (commandBlocked || !session.id || !session.etag) return
     setBusy(true); setError('')
@@ -320,6 +335,17 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
                   onClick={() => { setTagsEditing(false); setTagError('') }}>Cancel tag editing</button>
               </form>}
             {tagError && <p role="alert">{tagError}</p>}
+          </section>}
+          {!creating && <section aria-label="Note AI access">
+            <h2>Use this note with AI</h2>
+            <p aria-live="polite">AI access is {session.serverVersion?.value.aiEnabled ? 'ON' : 'OFF'}.</p>
+            <p id="note-ai-help">{session.serverVersion?.value.aiEnabled
+              ? 'This note may participate in AI features once all processing permissions and availability checks are satisfied. Enabling access does not mean processing is ready.'
+              : 'Normal note use remains available with AI off. This is not encryption or a visibility change.'}</p>
+            <p>Changing AI access does not save your title or Markdown draft.</p>
+            <button type="button" className="button-secondary" aria-describedby="note-ai-help"
+              disabled={lifecycleBlocked} onClick={() => void changeAiAccess()}>
+              {session.serverVersion?.value.aiEnabled ? 'Disable AI' : 'Enable AI'}</button>
           </section>}
           {error && <p role="alert">{error}</p>}
           {session.serverChangedWhileDirty && session.phase !== 'Conflict'

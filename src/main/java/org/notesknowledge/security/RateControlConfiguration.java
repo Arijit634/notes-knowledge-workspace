@@ -6,7 +6,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties(IdentityRateProperties.class)
+@EnableConfigurationProperties({IdentityRateProperties.class, NotesRateProperties.class})
 class RateControlConfiguration {
     @Bean
     @ConditionalOnMissingBean(RateControlService.class)

@@ -165,6 +165,40 @@ class NotesRepository {
                 .param("now", Timestamp.from(now)).update();
     }
 
+    Optional<UUID> aiAccessUpperBound(UUID owner) {
+        return jdbc().sql("""
+                select note_id from notes.note where owner_user_id = :owner
+                  and lifecycle_state <> 'logically_deleted' order by note_id desc limit 1
+                """).param("owner", owner).query(UUID.class).optional();
+    }
+
+    List<UUID> lockAiAccessBatch(UUID owner, boolean enabled, List<UUID> selection,
+            UUID after, UUID upper, int limit) {
+        String selected = selection.isEmpty() ? "" : " and note_id in (:selection)";
+        String continuation = after == null ? "" : " and note_id > :after";
+        var query = jdbc().sql("""
+                select note_id from notes.note where owner_user_id = :owner
+                  and lifecycle_state <> 'logically_deleted' and ai_enabled <> :enabled
+                  and note_id <= :upper
+                """ + selected + continuation + " order by note_id limit :limit for update")
+                .param("owner", owner).param("enabled", enabled).param("upper", upper).param("limit", limit);
+        if (!selection.isEmpty()) query = query.param("selection", selection);
+        if (after != null) query = query.param("after", after);
+        return query.query(UUID.class).list();
+    }
+
+    int setAiAccess(UUID owner, List<UUID> ids, boolean enabled, Instant now) {
+        // Both real transitions get fresh lineage; OFF/ON cannot reactivate old work.
+        // Locks serialize against Save/tags/lifecycle; only these AI-owned fields change.
+        return jdbc().sql("""
+                update notes.note set ai_enabled = :enabled, ai_generation = ai_generation + 1,
+                    revision = revision + 1, updated_at = greatest(updated_at, :now)
+                where owner_user_id = :owner and note_id in (:ids)
+                  and lifecycle_state <> 'logically_deleted' and ai_enabled <> :enabled
+                """).param("owner", owner).param("ids", ids).param("enabled", enabled)
+                .param("now", Timestamp.from(now)).update();
+    }
+
     List<NoteRecord> page(UUID owner, String lifecycle, Boolean pinned, Instant beforeTime,
             UUID beforeId, int count) {
         String pinFilter = pinned == null ? "" : " and pinned = :pinned\n";

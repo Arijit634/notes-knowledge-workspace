@@ -63,6 +63,11 @@ export const notesApi = {
       { json: { title, markdown }, ifMatch: etag, retryOnCsrfInvalid: false })
     return etagged(result.body, result.metadata.etag)
   },
+  setAiAccess: async (auth: AuthRuntime, id: string, etag: string, aiEnabled: boolean) => {
+    const result = await auth.api.request<unknown>('PUT', `/api/notes/${encodeURIComponent(id)}/ai-access`,
+      { json: { aiEnabled }, ifMatch: etag, retryOnCsrfInvalid: false })
+    return etagged(result.body, result.metadata.etag)
+  },
   list: async (auth: AuthRuntime, cursor: string | null, lifecycle: NoteCore['lifecycle'] = 'active'): Promise<CursorPage<NoteCore>> => {
     const params = new URLSearchParams()
     if (lifecycle !== 'active') params.set('lifecycle', lifecycle)

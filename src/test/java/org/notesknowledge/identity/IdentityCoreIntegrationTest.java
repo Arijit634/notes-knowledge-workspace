@@ -149,7 +149,8 @@ class IdentityCoreIntegrationTest {
                 "/api/me/account", "/api/me/note-preferences", "/api/notes",
                 "/api/notes/{noteId}", "/api/notes/{noteId}/tags", "/api/notes/{noteId}/pin",
                 "/api/notes/{noteId}/archive", "/api/notes/{noteId}/return-from-archive",
-                "/api/notes/{noteId}/trash", "/api/notes/{noteId}/restore");
+                "/api/notes/{noteId}/trash", "/api/notes/{noteId}/restore",
+                "/api/notes/{noteId}/ai-access", "/api/notes/ai-access-bulk");
     }
 
     @Test
