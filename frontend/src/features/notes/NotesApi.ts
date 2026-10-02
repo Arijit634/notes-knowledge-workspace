@@ -16,6 +16,23 @@ export type NoteCore = {
 
 export type NoteOrganizationCommand = 'pin' | 'unpin' | 'archive' | 'returnFromArchive'
 
+export type NoteVersionSummary = {
+  id: string
+  title: string
+  sourceRevision: number
+  checkpointKind: 'policy' | 'pre_restore' | 'publication'
+  createdAt: string
+}
+export type NoteVersion = NoteVersionSummary & { markdown: string }
+
+function versionSummary(value: unknown): NoteVersionSummary {
+  if (!object(value) || typeof value.id !== 'string' || typeof value.title !== 'string'
+      || !Number.isSafeInteger(value.sourceRevision) || Number(value.sourceRevision) < 1
+      || !['policy', 'pre_restore', 'publication'].includes(String(value.checkpointKind))
+      || typeof value.createdAt !== 'string') throw new ApiProtocolError()
+  return value as NoteVersionSummary
+}
+
 function object(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -35,6 +52,26 @@ function etagged(body: unknown, etag: string | null): Etagged<NoteCore> {
 }
 
 export const notesApi = {
+  versions: async (auth: AuthRuntime, id: string, cursor: string | null): Promise<CursorPage<NoteVersionSummary>> => {
+    const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''
+    const body = (await auth.api.request<unknown>('GET', `/api/notes/${encodeURIComponent(id)}/versions${query}`)).body
+    if (!object(body) || !Array.isArray(body.items)
+        || !(body.nextCursor === null || typeof body.nextCursor === 'string')) throw new ApiProtocolError()
+    return { items: body.items.map(versionSummary), nextCursor: body.nextCursor }
+  },
+  version: async (auth: AuthRuntime, id: string, versionId: string): Promise<NoteVersion> => {
+    const body = (await auth.api.request<unknown>('GET',
+      `/api/notes/${encodeURIComponent(id)}/versions/${encodeURIComponent(versionId)}`)).body
+    const summary = versionSummary(body)
+    if (!object(body) || typeof body.markdown !== 'string') throw new ApiProtocolError()
+    return { ...summary, markdown: body.markdown }
+  },
+  restoreVersion: async (auth: AuthRuntime, id: string, versionId: string, etag: string) => {
+    const result = await auth.api.request<unknown>('POST',
+      `/api/notes/${encodeURIComponent(id)}/versions/${encodeURIComponent(versionId)}/restore`,
+      { json: { confirmRestore: true }, ifMatch: etag, retryOnCsrfInvalid: false })
+    return etagged(result.body, result.metadata.etag)
+  },
   preference: async (auth: AuthRuntime): Promise<boolean> => {
     const body: unknown = (await auth.api.request<unknown>('GET', '/api/me/note-preferences')).body
     if (!object(body) || typeof body.defaultAiEnabledForNewNotes !== 'boolean') throw new ApiProtocolError()

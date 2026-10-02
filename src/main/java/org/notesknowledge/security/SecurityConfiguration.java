@@ -143,7 +143,8 @@ public class SecurityConfiguration {
                         .requestMatchers(HttpMethod.POST, "/api/me/security/mfa/recovery-codes")
                         .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.GET, "/api/me/note-preferences", "/api/notes",
-                                "/api/notes/{noteId}")
+                                "/api/notes/{noteId}", "/api/notes/{noteId}/versions",
+                                "/api/notes/{noteId}/versions/{versionId}")
                         .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.PUT, "/api/me/note-preferences",
                                 "/api/notes/{noteId}", "/api/notes/{noteId}/tags", "/api/notes/{noteId}/pin",
@@ -153,7 +154,8 @@ public class SecurityConfiguration {
                         .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.POST, "/api/notes/{noteId}/archive",
                                 "/api/notes/{noteId}/return-from-archive",
-                                "/api/notes/{noteId}/trash", "/api/notes/{noteId}/restore")
+                                "/api/notes/{noteId}/trash", "/api/notes/{noteId}/restore",
+                                "/api/notes/{noteId}/versions/{versionId}/restore")
                         .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.POST, "/api/notes", "/api/notes/ai-access-bulk")
                         .hasAuthority("ROLE_USER")

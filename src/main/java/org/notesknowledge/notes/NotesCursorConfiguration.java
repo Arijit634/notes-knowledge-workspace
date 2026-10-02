@@ -10,7 +10,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties(NotesCursorProperties.class)
+@EnableConfigurationProperties({NotesCursorProperties.class, NoteCheckpointPolicy.class})
 class NotesCursorConfiguration {
     @Bean
     CursorKeyRing notesCursorKeyRing(NotesCursorProperties properties) {

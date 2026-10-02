@@ -39,16 +39,18 @@ class NotesService {
     private final StrongCoreEtagCodec etags;
     private final IfMatchPrecondition preconditions;
     private final OpaqueCursorCodec cursors;
+    private final NoteVersionService versions;
 
     NotesService(NotesRepository repository, DatabaseUuidV7Generator ids, Clock clock,
             StrongCoreEtagCodec etags, IfMatchPrecondition preconditions,
-            OpaqueCursorCodec cursors) {
+            OpaqueCursorCodec cursors, NoteVersionService versions) {
         this.repository = repository;
         this.ids = ids;
         this.clock = clock;
         this.etags = etags;
         this.preconditions = preconditions;
         this.cursors = cursors;
+        this.versions = versions;
     }
 
     boolean preference(UUID owner) { return repository.preference(owner); }
@@ -74,14 +76,16 @@ class NotesService {
 
     @Transactional
     EtaggedNote save(UUID owner, UUID id, String ifMatch, String title, String markdown) {
-        NoteRecord current = repository.find(owner, id)
+        NoteRecord current = repository.lock(owner, id)
                 .orElseThrow(() -> ApiFailureException.of(ApiFailureException.Kind.RESOURCE_NOT_FOUND));
         preconditions.requireCurrent(ifMatch, tag(current));
         validateEditor(title, markdown);
         if (!"active".equals(current.lifecycle())) {
             throw ApiFailureException.of(ApiFailureException.Kind.INVALID_LIFECYCLE_TRANSITION);
         }
-        int updated = repository.save(owner, id, current.revision(), title, markdown, now());
+        var time = now();
+        versions.checkpointForSave(owner, current, title, markdown, time);
+        int updated = repository.save(owner, id, current.revision(), title, markdown, time);
         if (updated == 0) {
             NoteRecord latest = repository.find(owner, id)
                     .orElseThrow(() -> ApiFailureException.of(ApiFailureException.Kind.RESOURCE_NOT_FOUND));
