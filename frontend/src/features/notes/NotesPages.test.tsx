@@ -51,6 +51,66 @@ beforeAll(async () => { await import('./NotesPages') })
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); window.history.replaceState(null, '', '/') })
 
 describe('private Notes browser journey', () => {
+  it('adopts AI permission and ETag without saving or changing the exact dirty draft', async () => {
+    const { calls } = mount(`/notes/${id}`, 'authenticated', (method, path, body) => {
+      if (method === 'PUT' && path.endsWith('/ai-access')) return json({ ...initial, aiEnabled: true }, 200, { ETag: '"e2"' })
+      if (method === 'PUT' && path === `/api/notes/${id}`) return json({ ...initial, ...body as object, aiEnabled: true }, 200, { ETag: '"e3"' })
+      return undefined
+    })
+    await screen.findByDisplayValue('Saved title')
+    expect(screen.getByText(/Normal note use remains available/)).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: ' Exact title ' } })
+    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: 'Exact\n**draft** ' } })
+    fireEvent.click(await readyButton('Enable AI'))
+    await readyButton('Disable AI')
+    expect(screen.getByText('AI access is ON.')).toBeTruthy()
+    expect(screen.getByText(/once all processing permissions/)).toBeTruthy()
+    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(' Exact title ')
+    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe('Exact\n**draft** ')
+    expect(screen.getByText('Unsaved changes')).toBeTruthy()
+    expect(calls.filter(call => call.method === 'PUT')).toEqual([
+      { method: 'PUT', path: `/api/notes/${id}/ai-access`, body: { aiEnabled: true }, ifMatch: '"e1"' },
+    ])
+    fireEvent.click(await readyButton('Save note'))
+    await screen.findByText('Saved')
+    expect(calls.filter(call => call.method === 'PUT')[1]).toEqual({ method: 'PUT', path: `/api/notes/${id}`,
+      body: { title: ' Exact title ', markdown: 'Exact\n**draft** ' }, ifMatch: '"e2"' })
+    expect(calls.some(call => /knowledge|processing|acknowledgement|ai-access-bulk/.test(call.path))).toBe(false)
+  })
+
+  it('AI conflict retains the exact draft and requires reconciliation, not a silent retry', async () => {
+    let conflict = false
+    const { calls } = mount(`/notes/${id}`, 'authenticated', (method, path) => {
+      if (method === 'PUT' && path.endsWith('/ai-access')) { conflict = true; return problem(412, 'stale_write') }
+      if (conflict && method === 'GET' && path === `/api/notes/${id}`) return json({ ...initial, aiEnabled: true }, 200, { ETag: '"e2"' })
+      return undefined
+    })
+    await screen.findByDisplayValue('Saved title')
+    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: ' Exact draft\n ' } })
+    fireEvent.click(await readyButton('Enable AI'))
+    await screen.findByRole('region', { name: 'Save conflict' })
+    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe(' Exact draft\n ')
+    expect((screen.getByRole('button', { name: 'Save note' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(calls.filter(call => call.method === 'PUT')).toHaveLength(1)
+    expect(calls.some(call => call.path === '/api/notes/ai-access-bulk')).toBe(false)
+  })
+
+  it('disabling AI displays authoritative OFF without implying encryption or saving', async () => {
+    const { calls } = mount(`/notes/${id}`, 'authenticated', (method, path) => {
+      if (method === 'GET' && path === `/api/notes/${id}`) return json({ ...initial, aiEnabled: true }, 200, { ETag: '"e1"' })
+      if (method === 'PUT' && path.endsWith('/ai-access')) return json(initial, 200, { ETag: '"e2"' })
+      return undefined
+    })
+    await screen.findByDisplayValue('Saved title')
+    fireEvent.click(await readyButton('Disable AI'))
+    await readyButton('Enable AI')
+    expect(screen.getByText('AI access is OFF.')).toBeTruthy()
+    expect(screen.getByText(/not encryption or a visibility change/)).toBeTruthy()
+    expect(calls.filter(call => call.method === 'PUT')).toEqual([
+      { method: 'PUT', path: `/api/notes/${id}/ai-access`, body: { aiEnabled: false }, ifMatch: '"e1"' },
+    ])
+  })
+
   it.each(['active', 'archived'] as const)('does not offer permanent deletion for %s notes', async lifecycle => {
     mount(`/notes/${id}`, 'authenticated', (method, path) => method === 'GET' && path === `/api/notes/${id}`
       ? json({ ...initial, lifecycle }, 200, { ETag: '"e1"' }) : undefined)

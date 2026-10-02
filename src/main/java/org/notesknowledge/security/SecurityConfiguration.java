@@ -146,7 +146,8 @@ public class SecurityConfiguration {
                                 "/api/notes/{noteId}")
                         .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.PUT, "/api/me/note-preferences",
-                                "/api/notes/{noteId}", "/api/notes/{noteId}/tags", "/api/notes/{noteId}/pin")
+                                "/api/notes/{noteId}", "/api/notes/{noteId}/tags", "/api/notes/{noteId}/pin",
+                                "/api/notes/{noteId}/ai-access")
                         .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.DELETE, "/api/notes/{noteId}/pin", "/api/notes/{noteId}")
                         .hasAuthority("ROLE_USER")
@@ -154,7 +155,7 @@ public class SecurityConfiguration {
                                 "/api/notes/{noteId}/return-from-archive",
                                 "/api/notes/{noteId}/trash", "/api/notes/{noteId}/restore")
                         .hasAuthority("ROLE_USER")
-                        .requestMatchers(HttpMethod.POST, "/api/notes")
+                        .requestMatchers(HttpMethod.POST, "/api/notes", "/api/notes/ai-access-bulk")
                         .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.PUT, "/api/me/security/password")
                         .hasAuthority("ROLE_USER")

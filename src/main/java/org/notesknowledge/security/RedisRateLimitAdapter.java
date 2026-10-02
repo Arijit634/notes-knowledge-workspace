@@ -16,19 +16,23 @@ final class RedisRateLimitAdapter implements RateLimitPort {
             """;
     private final StringRedisTemplate redis;
     private final IdentityRateProperties properties;
+    private final NotesRateProperties notes;
     private final DefaultRedisScript<String> script = new DefaultRedisScript<>(LUA, String.class);
 
-    RedisRateLimitAdapter(StringRedisTemplate redis, IdentityRateProperties properties) {
+    RedisRateLimitAdapter(StringRedisTemplate redis, IdentityRateProperties properties, NotesRateProperties notes) {
         this.redis = redis;
         this.properties = properties;
+        this.notes = notes;
     }
 
     @Override
     public Decision evaluate(Request request) {
         // The bucket is server-owned, bounded, and never includes raw email, IP, token, or path.
-        int ceiling = properties.ceiling(request.controlClass().value());
-        int window = properties.windowSeconds(request.controlClass().value());
-        String key = "identity:rate:" + request.controlClass().value() + ":"
+        String control = request.controlClass().value();
+        boolean noteControl = "NOTE_AI_BULK".equals(control) || "NOTE_AI_BULK_GLOBAL".equals(control);
+        int ceiling = noteControl ? notes.ceiling(control) : properties.ceiling(control);
+        int window = noteControl ? notes.windowSeconds() : properties.windowSeconds(control);
+        String key = (noteControl ? "notes:rate:" : "identity:rate:") + control + ":"
                 + request.enforcementKey().value();
         try {
             String result = redis.execute(script, List.of(key),

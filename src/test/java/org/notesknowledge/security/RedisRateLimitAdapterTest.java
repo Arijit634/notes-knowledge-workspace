@@ -27,7 +27,7 @@ class RedisRateLimitAdapterTest {
             var template = new StringRedisTemplate(factory);
             template.afterPropertiesSet();
             var adapter = new RedisRateLimitAdapter(template,
-                    new IdentityRateProperties(60, 86400, 6, 6, 12, 10, 6, 12, 1200, 250, 8, 6, 8));
+                    new IdentityRateProperties(60, 86400, 6, 6, 12, 10, 6, 12, 1200, 250, 8, 6, 8), new NotesRateProperties(60, 60, 1200));
             var request = new RateLimitPort.Request(
                     new RateLimitPort.ControlClass("REGISTRATION"),
                     new RateLimitPort.OpaqueKey("syntheticOpaqueRateKey789"), 1);
@@ -51,7 +51,7 @@ class RedisRateLimitAdapterTest {
             var template = new StringRedisTemplate(factory);
             template.afterPropertiesSet();
             var adapter = new RedisRateLimitAdapter(template,
-                    new IdentityRateProperties(60, 86400, 10, 10, 10, 10, 6, 12, 3, 2, 8, 6, 8));
+                    new IdentityRateProperties(60, 86400, 10, 10, 10, 10, 6, 12, 3, 2, 8, 6, 8), new NotesRateProperties(60, 60, 1200));
             var keys = new RateKeyDeriver(
                     "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=");
             for (int index = 0; index < 4; index++) {
@@ -96,7 +96,7 @@ class RedisRateLimitAdapterTest {
             var template = new StringRedisTemplate(factory);
             template.afterPropertiesSet();
             var adapter = new RedisRateLimitAdapter(template,
-                    new IdentityRateProperties(60, 86400, 6, 6, 12, 10, 6, 12, 1200, 1, 8, 6, 8));
+                    new IdentityRateProperties(60, 86400, 6, 6, 12, 10, 6, 12, 1200, 1, 8, 6, 8), new NotesRateProperties(60, 60, 1200));
             String key = "identity:rate:SECURITY_EMAIL_PROVIDER:syntheticOpaqueTtlKey789";
             var request = request("SECURITY_EMAIL_PROVIDER",
                     new RateLimitPort.OpaqueKey("syntheticOpaqueTtlKey789"));
@@ -121,7 +121,7 @@ class RedisRateLimitAdapterTest {
             template.afterPropertiesSet();
             var adapter = new RedisRateLimitAdapter(template,
                     new IdentityRateProperties(60, 86400, 6, 6, 12, 10, 6, 12,
-                            1200, 250, 8, 6, 8));
+                            1200, 250, 8, 6, 8), new NotesRateProperties(60, 60, 1200));
             var keys = new RateKeyDeriver(
                     "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=");
             for (String control : new String[] {
@@ -160,7 +160,7 @@ class RedisRateLimitAdapterTest {
             template.afterPropertiesSet();
             var adapter = new RedisRateLimitAdapter(template,
                     new IdentityRateProperties(60, 86400, 6, 6, 12, 10, 6, 12,
-                            1200, 250, 8, 6, 8));
+                            1200, 250, 8, 6, 8), new NotesRateProperties(60, 60, 1200));
             var keys = new RateKeyDeriver(
                     "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=");
             var opaque = keys.derive("ACCOUNT_DELETE", "subject:synthetic-user-b");
@@ -179,6 +179,29 @@ class RedisRateLimitAdapterTest {
         } finally {
             factory.destroy();
         }
+    }
+
+    @Test
+    void noteBulkHasSeparateBoundedTransientBucketsAndSharedCapacity() {
+        var factory = new LettuceConnectionFactory(redis.getHost(), redis.getMappedPort(6379));
+        factory.afterPropertiesSet();
+        try {
+            var template = new StringRedisTemplate(factory);
+            template.afterPropertiesSet();
+            var adapter = new RedisRateLimitAdapter(template,
+                    new IdentityRateProperties(60, 86400, 6, 6, 12, 10, 6, 12, 1200, 250, 8, 6, 8),
+                    new NotesRateProperties(60, 2, 1));
+            var keys = new RateKeyDeriver("AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=");
+            var specific = request("NOTE_AI_BULK", keys.derive("NOTE_AI_BULK", "subject:synthetic-note-owner"));
+            assertThat(adapter.evaluate(specific)).isInstanceOf(RateLimitPort.Allowed.class);
+            assertThat(adapter.evaluate(specific)).isInstanceOf(RateLimitPort.Allowed.class);
+            assertThat(adapter.evaluate(specific)).isEqualTo(new RateLimitPort.Throttled(60));
+            var global = request("NOTE_AI_BULK_GLOBAL", keys.derive("NOTE_AI_BULK_GLOBAL", "whole-deployment"));
+            assertThat(adapter.evaluate(global)).isInstanceOf(RateLimitPort.Allowed.class);
+            assertThat(adapter.evaluate(global)).isEqualTo(new RateLimitPort.Throttled(60));
+            assertThat(template.keys("notes:rate:*")).hasSize(2).allSatisfy(key ->
+                    assertThat(key).doesNotContain("synthetic-note-owner", "subject:", "whole-deployment"));
+        } finally { factory.destroy(); }
     }
 
     private RateLimitPort.Request request(String control, RateLimitPort.OpaqueKey key) {

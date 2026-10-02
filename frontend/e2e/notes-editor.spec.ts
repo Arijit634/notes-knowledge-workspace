@@ -45,6 +45,13 @@ async function fakeNotesBackend(page: Page, requireRecent = false) {
       const input = body as { title: string; markdown: string }
       note = { ...note, ...input, updatedAt: '2026-09-30T00:00:01Z' }
       revision++; response = note; headers = { ETag: `"n${revision}"` }
+    } else if (path === `/api/notes/${id}/ai-access` && method === 'PUT' && note) {
+      expect(request.headers()['if-match']).toBe(`"n${revision}"`)
+      const enabled = (body as { aiEnabled: boolean }).aiEnabled
+      expect(body).toEqual({ aiEnabled: enabled })
+      if (note.aiEnabled !== enabled) revision++
+      note = { ...note, aiEnabled: enabled }
+      response = note; headers = { ETag: `"n${revision}"` }
     } else if (path === `/api/notes/${id}/tags` && method === 'PUT' && note) {
       expect(request.headers()['if-match']).toBe(`"n${revision}"`)
       note = { ...note, tags: (body as { tags: string[] }).tags }
@@ -85,6 +92,32 @@ async function fakeNotesBackend(page: Page, requireRecent = false) {
   })
   return calls
 }
+
+test('AI access changes preserve drafts and explicit Save adopts the current ETag', async ({ page }) => {
+  const calls = await fakeNotesBackend(page)
+  await page.goto('/notes/new')
+  await page.getByLabel('Title').fill('Original synthetic title')
+  await page.getByRole('button', { name: 'Create note' }).click()
+  await expect(page).toHaveURL(new RegExp(`/notes/${id}$`))
+  await page.getByLabel('Title').fill(' Exact draft title ')
+  await page.getByRole('textbox', { name: 'Markdown' }).fill('Exact\n**draft** ')
+  await page.getByRole('button', { name: 'Enable AI', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Disable AI', exact: true })).toBeEnabled()
+  await expect(page.getByText('AI access is ON.')).toBeVisible()
+  await expect(page.getByLabel('Title')).toHaveValue(' Exact draft title ')
+  await expect(page.getByRole('textbox', { name: 'Markdown' })).toHaveValue('Exact\n**draft** ')
+  await expect(page.getByText('Unsaved changes')).toBeVisible()
+  expect(calls.filter(call => call.method === 'PUT')).toHaveLength(1)
+  await page.getByRole('button', { name: 'Save note', exact: true }).click()
+  await expect(page.getByText('Saved', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Disable AI', exact: true }).click()
+  await expect(page.getByText('AI access is OFF.')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Enable AI', exact: true })).toBeEnabled()
+  expect(calls.filter(call => call.method === 'PUT').map(call => call.path)).toEqual([
+    `/api/notes/${id}/ai-access`, `/api/notes/${id}`, `/api/notes/${id}/ai-access`,
+  ])
+  expect(calls.some(call => /knowledge|processing|acknowledgement|ai-access-bulk/.test(call.path))).toBe(false)
+})
 
 test('permanent deletion requires renewed deliberate action after recent auth and clears Trash', async ({ page }) => {
   const calls = await fakeNotesBackend(page, true)

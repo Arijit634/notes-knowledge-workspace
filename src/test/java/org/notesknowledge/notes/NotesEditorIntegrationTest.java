@@ -75,12 +75,303 @@ class NotesEditorIntegrationTest {
     @MockitoBean org.notesknowledge.security.RateLimitPort rates;
     @Autowired AdjustableClock clock;
     @Autowired org.springframework.security.crypto.password.PasswordEncoder passwords;
+    @org.springframework.test.context.bean.override.mockito.MockitoSpyBean NotesRepository noteRepository;
+    @org.springframework.test.context.bean.override.mockito.MockitoSpyBean(name = "googleOidcProtocolAdapter") Object oidcProvider;
+    @Autowired org.springframework.context.ApplicationContext application;
 
     @BeforeEach
     void currentClock() {
         clock.offset = java.time.Duration.ZERO;
+        org.mockito.Mockito.clearInvocations(oidcProvider);
         org.mockito.Mockito.when(rates.evaluate(org.mockito.ArgumentMatchers.any()))
                 .thenReturn(new org.notesknowledge.security.RateLimitPort.Allowed());
+    }
+
+    @Test
+    void aiTransitionsHaveFreshGenerationsAndCurrentNoopsButNeverSaveContent() throws Exception {
+        UUID user = account();
+        Browser owner = browser(user, "ROLE_USER");
+        var created = createNote(owner);
+        String id = json.readTree(body(created)).get("id").asText();
+        String initial = created.getResponse().getHeader("ETag");
+        var noop = aiAccess(owner, id, initial, false).andExpect(status().isOk()).andReturn();
+        assertThat(noop.getResponse().getHeader("ETag")).isEqualTo(initial);
+        assertAiRow(id, false, 1, 1);
+        var on = aiAccess(owner, id, initial, true).andExpect(status().isOk()).andReturn();
+        String enabled = on.getResponse().getHeader("ETag");
+        assertThat(enabled).isNotEqualTo(initial);
+        assertThat(json.readTree(body(on)).get("aiEnabled").asBoolean()).isTrue();
+        assertThat(body(on)).doesNotContain("aiGeneration", "status", "processing", "acknowledgement");
+        assertThat(on.getResponse().getHeader("Cache-Control")).isEqualTo("no-store");
+        assertAiRow(id, true, 2, 2);
+        aiAccess(owner, id, initial, true).andExpect(status().isPreconditionFailed());
+        aiAccess(owner, id, enabled, true).andExpect(status().isOk());
+        assertAiRow(id, true, 2, 2);
+        var off = aiAccess(owner, id, enabled, false).andExpect(status().isOk()).andReturn();
+        assertAiRow(id, false, 3, 3);
+        var saved = mvc.perform(put("/api/notes/{noteId}", id).cookie(owner.cookie())
+                .header("X-CSRF-TOKEN", owner.csrf()).header("If-Match", off.getResponse().getHeader("ETag"))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"title\":\"Still usable\",\"markdown\":\"Saved with AI off\"}"))
+                .andExpect(status().isOk()).andReturn();
+        assertThat(json.readTree(body(saved)).get("aiEnabled").asBoolean()).isFalse();
+        assertThat(jdbc.queryForObject("select ai_generation from notes.note where note_id = ?::uuid", Long.class, id)).isEqualTo(3);
+        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname='knowledge'", Integer.class)).isZero();
+        org.mockito.Mockito.verifyNoInteractions(oidcProvider);
+        assertThat(application.containsBean("managedEmailDeliveryAdapter")).isFalse();
+    }
+
+    @Test
+    void aiAccessRequiresOwnerCsrfTypedBooleanAndCurrentPrecondition() throws Exception {
+        Browser owner = browser(account(), "ROLE_USER"), other = browser(account(), "ROLE_USER");
+        var created = createNote(owner);
+        String id = json.readTree(body(created)).get("id").asText();
+        String etag = created.getResponse().getHeader("ETag");
+        aiAccess(owner, id, null, true).andExpect(status().isPreconditionRequired());
+        aiAccess(other, id, etag, true).andExpect(status().isNotFound());
+        aiAccess(owner, UUID.randomUUID().toString(), etag, true).andExpect(status().isNotFound());
+        mvc.perform(put("/api/notes/{noteId}/ai-access", id).cookie(owner.cookie())
+                .header("If-Match", etag).contentType(MediaType.APPLICATION_JSON).content("{\"aiEnabled\":true}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(put("/api/notes/{noteId}/ai-access", id).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"aiEnabled\":true}")).andExpect(status().isForbidden()); // CSRF rejects first.
+        for (String invalid : List.of("{}", "{\"aiEnabled\":null}", "{\"aiEnabled\":\"true\"}",
+                "{\"aiEnabled\":1}")) {
+            mvc.perform(put("/api/notes/{noteId}/ai-access", id).cookie(owner.cookie())
+                    .header("If-Match", etag).header("X-CSRF-TOKEN", owner.csrf())
+                    .contentType(MediaType.APPLICATION_JSON).content(invalid)).andExpect(status().isUnprocessableContent());
+        }
+        mvc.perform(put("/api/notes/{noteId}/ai-access", id).cookie(owner.cookie())
+                .header("If-Match", etag).header("X-CSRF-TOKEN", owner.csrf())
+                .contentType(MediaType.APPLICATION_JSON).content("{\"aiEnabled\":true,\"ownerUserId\":\"ignored\"}"))
+                .andExpect(status().isBadRequest());
+        assertAiRow(id, false, 1, 1);
+        jdbc.update("update notes.note set lifecycle_state = 'logically_deleted', deleted_at = now() where note_id = ?::uuid", id);
+        aiAccess(owner, id, etag, true).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void bulkExplicitlyChangesApplicableExistingNotesWithoutChangingPreferenceOrDisclosingIds() throws Exception {
+        UUID user = account();
+        Browser owner = browser(user, "ROLE_USER"), other = browser(account(), "ROLE_USER");
+        var created = createNote(owner);
+        String id = json.readTree(body(created)).get("id").asText();
+        String otherId = json.readTree(body(createNote(other))).get("id").asText();
+        String deletedId = json.readTree(body(createNote(owner))).get("id").asText();
+        var archived = createNote(owner);
+        String archivedId = json.readTree(body(archived)).get("id").asText();
+        command(owner, archivedId, archived.getResponse().getHeader("ETag"), "POST", "archive").andExpect(status().isOk());
+        var trashed = createNote(owner);
+        String trashedId = json.readTree(body(trashed)).get("id").asText();
+        command(owner, trashedId, trashed.getResponse().getHeader("ETag"), "POST", "trash").andExpect(status().isOk());
+        jdbc.update("update notes.note set lifecycle_state='logically_deleted', deleted_at=now() where note_id=?::uuid", deletedId);
+        jdbc.update("insert into notes.note_preferences(user_id, default_ai_enabled, updated_at) values (?, false, now())", user);
+        var selected = java.util.Map.of("aiEnabled", true, "scope", "selected", "confirm", true,
+                "noteIds", List.of(id, archivedId, trashedId, otherId, deletedId, UUID.randomUUID().toString()));
+        var result = bulk(owner, selected).andExpect(status().isOk()).andReturn();
+        assertThat(json.readTree(body(result)).properties()).hasSize(1);
+        assertThat(json.readTree(body(result)).get("affectedCount").asLong()).isEqualTo(3);
+        assertAiRow(id, true, 2, 2);
+        assertAiRow(archivedId, true, 3, 2);
+        assertAiRow(trashedId, true, 3, 2);
+        assertAiRow(otherId, false, 1, 1);
+        assertAiRow(deletedId, false, 1, 1);
+        assertThat(jdbc.queryForObject("select default_ai_enabled from notes.note_preferences where user_id=?", Boolean.class, user)).isFalse();
+        for (String unavailable : List.of(otherId, UUID.randomUUID().toString())) {
+            assertThat(body(bulk(owner, java.util.Map.of("aiEnabled", true, "scope", "selected", "confirm", true,
+                    "noteIds", List.of(unavailable))).andExpect(status().isOk()).andReturn()))
+                    .isEqualTo("{\"affectedCount\":0}");
+        }
+        bulk(owner, selected).andExpect(status().isOk());
+        assertAiRow(id, true, 2, 2);
+        var off = bulk(owner, java.util.Map.of("aiEnabled", false, "scope", "allExisting", "confirm", true))
+                .andExpect(status().isOk()).andReturn();
+        assertThat(json.readTree(body(off)).get("affectedCount").asInt()).isEqualTo(3);
+        assertAiRow(id, false, 3, 3);
+        assertAiRow(deletedId, false, 1, 1);
+        assertThat(jdbc.queryForObject("select lifecycle_state from notes.note where note_id=?::uuid", String.class, archivedId)).isEqualTo("archived");
+        assertThat(jdbc.queryForObject("select lifecycle_state from notes.note where note_id=?::uuid", String.class, trashedId)).isEqualTo("trashed");
+        org.mockito.Mockito.verifyNoInteractions(oidcProvider);
+        assertThat(application.containsBean("managedEmailDeliveryAdapter")).isFalse();
+    }
+
+    @Test
+    void perNoteAiWorksInArchiveAndTrashWithoutChangingTheirLifecycle() throws Exception {
+        Browser owner = browser(account(), "ROLE_USER");
+        for (String lifecycle : List.of("archive", "trash")) {
+            var created = createNote(owner);
+            String id = json.readTree(body(created)).get("id").asText();
+            var changed = command(owner, id, created.getResponse().getHeader("ETag"), "POST", lifecycle)
+                    .andExpect(status().isOk()).andReturn();
+            var on = aiAccess(owner, id, changed.getResponse().getHeader("ETag"), true).andExpect(status().isOk()).andReturn();
+            assertAiRow(id, true, 3, 2);
+            assertThat(json.readTree(body(on)).get("lifecycle").asText()).isEqualTo(lifecycle.equals("archive") ? "archived" : "trashed");
+        }
+    }
+
+    @Test
+    void bulkConfirmationSelectionBoundsAndRateFailuresAreFailSafe() throws Exception {
+        Browser owner = browser(account(), "ROLE_USER");
+        String id = json.readTree(body(createNote(owner))).get("id").asText();
+        for (var invalid : List.of(java.util.Map.of("aiEnabled", true, "scope", "allExisting"),
+                java.util.Map.of("aiEnabled", true, "scope", "allExisting", "confirm", false),
+                java.util.Map.of("aiEnabled", "true", "scope", "allExisting", "confirm", true),
+                java.util.Map.of("aiEnabled", true, "scope", "global", "confirm", true),
+                java.util.Map.of("aiEnabled", true, "scope", "selected", "confirm", true, "noteIds", List.of()),
+                java.util.Map.of("aiEnabled", true, "scope", "selected", "confirm", true, "noteIds", List.of(id, id)),
+                java.util.Map.of("aiEnabled", true, "scope", "selected", "confirm", true, "noteIds", List.of("not-a-uuid")))) {
+            bulk(owner, invalid).andExpect(status().isUnprocessableContent());
+        }
+        bulk(owner, java.util.Map.of("aiEnabled", true, "scope", "allExisting", "confirm", true, "ownerUserId", id))
+                .andExpect(status().isBadRequest());
+        var oversized = java.util.stream.IntStream.range(0, 1001).mapToObj(n -> UUID.randomUUID().toString()).toList();
+        bulk(owner, java.util.Map.of("aiEnabled", true, "scope", "selected", "confirm", true, "noteIds", oversized))
+                .andExpect(status().isPayloadTooLarge());
+        mvc.perform(post("/api/notes/ai-access-bulk").cookie(owner.cookie()).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"aiEnabled\":true,\"scope\":\"allExisting\",\"confirm\":true}"))
+                .andExpect(status().isForbidden());
+        org.mockito.Mockito.when(rates.evaluate(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new org.notesknowledge.security.RateLimitPort.Throttled(12));
+        var throttled = bulk(owner, java.util.Map.of("aiEnabled", true, "scope", "allExisting", "confirm", true))
+                .andExpect(status().isTooManyRequests()).andReturn();
+        assertThat(throttled.getResponse().getHeader("Retry-After")).isEqualTo("12");
+        org.mockito.Mockito.when(rates.evaluate(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new org.notesknowledge.security.RateLimitPort.ControlUnavailable());
+        bulk(owner, java.util.Map.of("aiEnabled", true, "scope", "allExisting", "confirm", true))
+                .andExpect(status().isServiceUnavailable());
+        assertAiRow(id, false, 1, 1);
+    }
+
+    @Test
+    void wholeExistingScopeUsesBoundedLockedBatchesAndCountsOnlyRealChanges() throws Exception {
+        UUID user = account();
+        Browser owner = browser(user, "ROLE_USER");
+        jdbc.update("""
+                insert into notes.note(note_id,owner_user_id,title,markdown,lifecycle_state,pinned,
+                    ai_enabled,ai_generation,revision,created_at,updated_at)
+                select uuidv7(), ?, 'Original', 'Body', 'active', false, false, 1, 1, now(), now()
+                from generate_series(1,205)
+                """, user);
+        org.mockito.Mockito.clearInvocations(noteRepository, rates);
+        var result = bulk(owner, java.util.Map.of("aiEnabled", true, "scope", "allExisting", "confirm", true))
+                .andExpect(status().isOk()).andReturn();
+        assertThat(json.readTree(body(result)).get("affectedCount").asInt()).isEqualTo(205);
+        org.mockito.Mockito.verify(noteRepository, org.mockito.Mockito.times(3)).lockAiAccessBatch(
+                org.mockito.ArgumentMatchers.eq(user), org.mockito.ArgumentMatchers.eq(true),
+                org.mockito.ArgumentMatchers.eq(List.of()), org.mockito.ArgumentMatchers.nullable(UUID.class),
+                org.mockito.ArgumentMatchers.any(UUID.class), org.mockito.ArgumentMatchers.eq(100));
+        var ids = org.mockito.ArgumentCaptor.forClass(List.class);
+        org.mockito.Mockito.verify(noteRepository, org.mockito.Mockito.times(3)).setAiAccess(
+                org.mockito.ArgumentMatchers.eq(user), ids.capture(), org.mockito.ArgumentMatchers.eq(true),
+                org.mockito.ArgumentMatchers.any(Instant.class));
+        assertThat(ids.getAllValues().stream().map(List::size).toList()).containsExactly(100, 100, 5);
+        assertThat(jdbc.queryForObject("select count(*) from notes.note where owner_user_id=? and ai_enabled and revision=2 and ai_generation=2", Integer.class, user)).isEqualTo(205);
+        org.mockito.Mockito.verify(rates, org.mockito.Mockito.times(9)).evaluate(org.mockito.ArgumentMatchers.any());
+        assertThat(body(bulk(owner, java.util.Map.of("aiEnabled", true, "scope", "allExisting", "confirm", true))
+                .andExpect(status().isOk()).andReturn())).isEqualTo("{\"affectedCount\":0}");
+    }
+
+    @Test
+    void bulkFailureRollsBackItsBatchAndNeverReportsPartialSuccess() throws Exception {
+        UUID user = account();
+        Browser owner = browser(user, "ROLE_USER");
+        String id = json.readTree(body(createNote(owner))).get("id").asText();
+        org.mockito.Mockito.doAnswer(invocation -> {
+            invocation.callRealMethod();
+            throw ApiFailureException.of(ApiFailureException.Kind.SERVICE_UNAVAILABLE);
+        }).when(noteRepository).setAiAccess(org.mockito.ArgumentMatchers.eq(user),
+                org.mockito.ArgumentMatchers.anyList(), org.mockito.ArgumentMatchers.eq(true), org.mockito.ArgumentMatchers.any());
+        bulk(owner, java.util.Map.of("aiEnabled", true, "scope", "allExisting", "confirm", true))
+                .andExpect(status().isServiceUnavailable());
+        assertAiRow(id, false, 1, 1);
+    }
+
+    @Test
+    void lateBatchThrottleReportsErrorAndRetryCountsOnlyRemainingChanges() throws Exception {
+        UUID user = account();
+        Browser owner = browser(user, "ROLE_USER");
+        jdbc.update("""
+                insert into notes.note(note_id,owner_user_id,title,markdown,lifecycle_state,pinned,
+                    ai_enabled,ai_generation,revision,created_at,updated_at)
+                select uuidv7(), ?, 'Original', 'Body', 'active', false, false, 1, 1, now(), now()
+                from generate_series(1,205)
+                """, user);
+        var evaluations = new java.util.concurrent.atomic.AtomicInteger();
+        org.mockito.Mockito.when(rates.evaluate(org.mockito.ArgumentMatchers.any())).thenAnswer(invocation -> {
+            assertThat(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            return evaluations.incrementAndGet() <= 3 ? new org.notesknowledge.security.RateLimitPort.Allowed()
+                    : new org.notesknowledge.security.RateLimitPort.Throttled(10);
+        });
+        var failed = bulk(owner, java.util.Map.of("aiEnabled", true, "scope", "allExisting", "confirm", true))
+                .andExpect(status().isTooManyRequests()).andReturn();
+        assertThat(body(failed)).doesNotContain("affectedCount");
+        assertThat(jdbc.queryForObject("select count(*) from notes.note where owner_user_id=? and ai_enabled and revision=2", Integer.class, user)).isEqualTo(100);
+        org.mockito.Mockito.when(rates.evaluate(org.mockito.ArgumentMatchers.any())).thenAnswer(invocation -> {
+            assertThat(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            return new org.notesknowledge.security.RateLimitPort.Allowed();
+        });
+        var retried = bulk(owner, java.util.Map.of("aiEnabled", true, "scope", "allExisting", "confirm", true))
+                .andExpect(status().isOk()).andReturn();
+        assertThat(json.readTree(body(retried)).get("affectedCount").asInt()).isEqualTo(105);
+        assertThat(jdbc.queryForObject("select count(*) from notes.note where owner_user_id=? and ai_enabled and revision=2 and ai_generation=2", Integer.class, user)).isEqualTo(205);
+    }
+
+    @Test
+    void bulkWaitsForUnrelatedCurrentWriteAndNeverOverwritesIt() throws Exception {
+        UUID user = account();
+        Browser owner = browser(user, "ROLE_USER");
+        String id = json.readTree(body(createNote(owner))).get("id").asText();
+        CountDownLatch locked = new CountDownLatch(1), batchReached = new CountDownLatch(1), release = new CountDownLatch(1);
+        org.mockito.Mockito.doAnswer(invocation -> {
+            batchReached.countDown();
+            return invocation.callRealMethod();
+        }).when(noteRepository).lockAiAccessBatch(org.mockito.ArgumentMatchers.eq(user), org.mockito.ArgumentMatchers.eq(true),
+                org.mockito.ArgumentMatchers.anyList(), org.mockito.ArgumentMatchers.nullable(UUID.class),
+                org.mockito.ArgumentMatchers.any(UUID.class), org.mockito.ArgumentMatchers.eq(100));
+        try (var workers = Executors.newFixedThreadPool(2)) {
+            var save = workers.submit(() -> {
+                var tx = new org.springframework.transaction.support.TransactionTemplate(
+                        new org.springframework.jdbc.datasource.DataSourceTransactionManager(jdbc.getDataSource()));
+                tx.executeWithoutResult(status -> {
+                    jdbc.queryForObject("select note_id from notes.note where note_id=?::uuid for update", UUID.class, id);
+                    locked.countDown();
+                    try { if (!release.await(30, TimeUnit.SECONDS)) throw new IllegalStateException("release timed out"); }
+                    catch (InterruptedException failure) { throw new IllegalStateException(failure); }
+                    jdbc.update("update notes.note set title='Concurrent', markdown='Saved current body', pinned=true, revision=revision+1 where note_id=?::uuid", id);
+                    jdbc.update("insert into notes.note_tag(note_id,owner_user_id,normalized_label,display_label,created_at) values (?::uuid,?,'films','Films',now())", id, user);
+                });
+            });
+            assertThat(locked.await(30, TimeUnit.SECONDS)).isTrue();
+            var change = workers.submit(() -> bulk(owner, java.util.Map.of("aiEnabled", true, "scope", "allExisting", "confirm", true))
+                    .andExpect(status().isOk()).andReturn());
+            assertThat(batchReached.await(30, TimeUnit.SECONDS)).isTrue();
+            release.countDown();
+            save.get(30, TimeUnit.SECONDS);
+            assertThat(json.readTree(body(change.get(30, TimeUnit.SECONDS))).get("affectedCount").asInt()).isEqualTo(1);
+            var current = jdbc.queryForMap("select title, markdown, pinned, revision, lifecycle_state from notes.note where note_id=?::uuid", id);
+            assertThat(current).containsEntry("title", "Concurrent").containsEntry("markdown", "Saved current body")
+                    .containsEntry("pinned", true).containsEntry("revision", 3L).containsEntry("lifecycle_state", "active");
+            assertThat(jdbc.queryForObject("select display_label from notes.note_tag where note_id=?::uuid", String.class, id)).isEqualTo("Films");
+        } finally { release.countDown(); }
+    }
+
+    private org.springframework.test.web.servlet.ResultActions aiAccess(Browser browser, String id, String etag, boolean enabled) throws Exception {
+        var request = put("/api/notes/{noteId}/ai-access", id).cookie(browser.cookie())
+                .header("X-CSRF-TOKEN", browser.csrf()).contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(java.util.Map.of("aiEnabled", enabled)));
+        if (etag != null) request.header("If-Match", etag);
+        return mvc.perform(request);
+    }
+
+    private org.springframework.test.web.servlet.ResultActions bulk(Browser browser, java.util.Map<String, ?> body) throws Exception {
+        return mvc.perform(post("/api/notes/ai-access-bulk").cookie(browser.cookie())
+                .header("X-CSRF-TOKEN", browser.csrf()).contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(body)));
+    }
+
+    private void assertAiRow(String id, boolean enabled, long revision, long generation) {
+        assertThat(jdbc.queryForMap("select ai_enabled,revision,ai_generation,title,markdown from notes.note where note_id=?::uuid", id))
+                .containsEntry("ai_enabled", enabled).containsEntry("revision", revision).containsEntry("ai_generation", generation)
+                .containsEntry("title", "Original").containsEntry("markdown", "Body");
     }
 
     @Test
