@@ -6,6 +6,7 @@ import type { AuthRuntime } from '../auth/AuthRuntime'
 import { ApiProblemError } from '../../app/api/ProblemDetailsDecoder'
 import { MarkdownView } from './MarkdownView'
 import { NoteVersionPanel } from './NoteVersionPanel'
+import { NotesWorkspace } from './NotesWorkspace'
 import { emptyEditorSession, isDirty, noteEditorSession } from './NoteEditorSession'
 import { notesApi, type NoteCore, type NoteOrganizationCommand, type NoteVersion } from './NotesApi'
 import { noteKeys, notePreferenceKeys } from './NotesKeys'
@@ -28,24 +29,26 @@ export function NotesListPage({ auth }: { auth: AuthRuntime }) {
     getNextPageParam: last => last.nextCursor ?? undefined, retry: false }, auth.queries)
   const entries = [...new Map(page.data?.pages.flatMap(part => part.items)
     .map(item => [item.id, item] as const) ?? []).values()]
-  return <main className="notes-layout"><div className="notes-shell">
-    <nav className="notes-top"><Link to="/">Notes &amp; Knowledge</Link><Link to="/settings/security">Security settings</Link></nav>
+  return <NotesWorkspace>
     <header className="notes-heading"><div><p className="eyebrow">Your workspace</p><h1>Notes</h1></div>
       <Link className="button" to="/notes/new">New note</Link></header>
-    <nav aria-label="Note views" className="notes-actions">
+    <p className="notes-intro">Make room for a thought. Keep it close.</p>
+    <nav aria-label="Note views" className="notes-views">
       <button type="button" className="button-secondary" aria-pressed={lifecycle === 'active'} onClick={() => setLifecycle('active')}>Active notes</button>
       <button type="button" className="button-secondary" aria-pressed={lifecycle === 'archived'} onClick={() => setLifecycle('archived')}>Archived notes</button>
       <button type="button" className="button-secondary" aria-pressed={lifecycle === 'trashed'} onClick={() => setLifecycle('trashed')}>Trashed notes</button>
     </nav>
-    {page.isPending && <p role="status">Loading notes…</p>}
-    {page.isError && <p role="alert">{issue(page.error)} <button onClick={() => void page.refetch()}>Retry</button></p>}
+    {page.isPending && <p className="notes-message" role="status">Loading notes…</p>}
+    {page.isError && <p className="notes-message notes-message-error" role="alert">{issue(page.error)} <button onClick={() => void page.refetch()}>Retry</button></p>}
     {!page.isPending && !page.isError && entries.length === 0 && <div className="notes-empty"><h2>{lifecycle === 'active' ? 'No notes yet' : lifecycle === 'archived' ? 'No archived notes' : 'No trashed notes'}</h2><p>{lifecycle === 'active' ? 'Start with a thought worth keeping.' : 'Notes in this view will appear here.'}</p><Link to="/notes/new">Create a note</Link></div>}
     {entries.length > 0 && <ul className="notes-list">{entries.map(note => <li key={note.id}>
-      <Link to={`/notes/${note.id}`}><strong>{note.title}</strong>{note.pinned && <span>Pinned</span>}<span>Updated {new Date(note.updatedAt).toLocaleString()}</span></Link>
+      <Link to={`/notes/${note.id}`}><div className="notes-card-heading"><strong>{note.title}</strong>{note.pinned && <span className="notes-pill">Pinned</span>}</div>
+        <span className="notes-card-meta">Updated <time dateTime={note.updatedAt}>{new Date(note.updatedAt).toLocaleString()}</time></span>
+        {note.tags.length > 0 && <ul className="notes-tags" aria-label="Tags">{note.tags.map(tag => <li key={tag}>{tag}</li>)}</ul>}</Link>
     </li>)}</ul>}
     {page.hasNextPage && <button className="button-secondary" disabled={page.isFetchingNextPage}
       onClick={() => void page.fetchNextPage()}>Load more</button>}
-  </div></main>
+  </NotesWorkspace>
 }
 
 export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; creating?: boolean }) {
@@ -79,6 +82,8 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
   const deleteButton = useRef<HTMLButtonElement>(null)
   const deleteCancelButton = useRef<HTMLButtonElement>(null)
   const previousDeleteConfirmation = useRef(false)
+  const leaveCancel = useRef<HTMLButtonElement>(null)
+  const leaveInvoker = useRef<HTMLElement | null>(null)
   const [conflictLoading, setConflictLoading] = useState(false)
   const [conflictLoadError, setConflictLoadError] = useState(false)
   const initialPreference = useRef(false)
@@ -103,8 +108,15 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
   const commandBlocked = busy || !organizationEligible || session.phase === 'Conflict' || session.serverChangedWhileDirty
   const lifecycleBlocked = busy || (!organizationEligible && !trashed)
     || session.phase === 'Conflict' || session.serverChangedWhileDirty
-  const blocker = useBlocker(({ currentLocation, nextLocation }) =>
-    !allowNavigation.current && dirty && currentLocation.pathname !== nextLocation.pathname)
+  const blocker = useBlocker(({ currentLocation, nextLocation }) => {
+    const blocked = !allowNavigation.current && dirty && currentLocation.pathname !== nextLocation.pathname
+    if (blocked) leaveInvoker.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    return blocked
+  })
+  useEffect(() => {
+    if (blocker.state === 'blocked') leaveCancel.current?.focus()
+    else if (leaveInvoker.current) { leaveInvoker.current.focus(); leaveInvoker.current = null }
+  }, [blocker.state])
   useEffect(() => {
     if (!dirty) return
     const prevent = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
@@ -121,7 +133,7 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
   }
 
   async function save() {
-    if (busy || archived || trashed || archiveConfirmation || trashConfirmation || deleteConfirmation || restoreConfirmation || !dirty || session.phase === 'Conflict' || !session.draft.title.trim()) return
+    if (busy || archived || trashed || archiveConfirmation || trashConfirmation || deleteConfirmation || restoreConfirmation || blocker.state === 'blocked' || !dirty || session.phase === 'Conflict' || !session.draft.title.trim()) return
     if (!creating && (!session.id || !session.etag)) return
     const { title, markdown } = session.draft
     setBusy(true); setError(''); dispatch({ type: 'saving' })
@@ -311,29 +323,51 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
     : loaded.isPending || (!!loaded.data && session.id !== loaded.data.value.id)
   const loadError = creating ? preference.error : loaded.error
   if (deleted) return <main><p role="status">Note permanently deleted.</p></main>
-  return <main className="notes-layout"><div className="notes-shell"><div inert={archiveConfirmation || trashConfirmation !== null || deleteConfirmation !== null || restoreConfirmation !== null}>
-    <nav className="notes-top"><Link to="/notes">All notes</Link><Link to="/settings/security">Security settings</Link></nav>
-    {loading ? <p role="status">Loading editor…</p> : loadError
-      ? <p role="alert">{issue(loadError)} <button onClick={() => void (creating ? preference.refetch() : loaded.refetch())}>Retry</button></p>
+  return <NotesWorkspace modalOpen={archiveConfirmation || trashConfirmation !== null || deleteConfirmation !== null || restoreConfirmation !== null || blocker.state === 'blocked'}>
+    <div inert={archiveConfirmation || trashConfirmation !== null || deleteConfirmation !== null || restoreConfirmation !== null || blocker.state === 'blocked'}>
+    {loading ? <p className="notes-message" role="status">Loading editor…</p> : loadError
+      ? <p className="notes-message notes-message-error" role="alert">{issue(loadError)} <button onClick={() => void (creating ? preference.refetch() : loaded.refetch())}>Retry</button></p>
         : <><header className="notes-heading"><div><p className="eyebrow">{creating ? 'New note' : 'Private note'}</p>
-          <h1>{creating ? 'Create a note' : 'Edit note'}</h1></div><span role="status" className="notes-state">
+          <h1>{creating ? 'Create a note' : 'Edit note'}</h1></div><span role="status" className="notes-state" data-phase={session.phase}>
             {session.phase === 'Clean' ? creating ? 'Not created' : 'Saved' : session.phase === 'Dirty' ? 'Unsaved changes'
               : session.phase === 'Saving' ? 'Saving…' : session.phase === 'SaveFailed' ? 'Save failed'
                 : 'Conflict'}</span></header>
+          <div className={`notes-workbench${creating ? ' notes-workbench-new' : ''}`}>
+          <div className="notes-authoring">
           <form className="notes-editor" onSubmit={submit}>
             <label htmlFor="note-title">Title</label><input id="note-title" maxLength={500} required
               value={session.draft.title} onChange={event => dispatch({ type: 'edit', field: 'title', value: event.target.value })} />
             {creating && <label className="notes-checkbox"><input type="checkbox" checked={aiEnabled}
               onChange={event => setAiEnabled(event.target.checked)} />Use this note with AI</label>}
             <label htmlFor="note-markdown">Markdown</label>
-            <textarea id="note-markdown" rows={14} maxLength={1_000_000} value={session.draft.markdown}
+            <p id="markdown-help" className="notes-help">Write in Markdown. Save when you’re ready — Ctrl/Cmd + S.</p>
+            <textarea id="note-markdown" rows={14} maxLength={1_000_000} aria-describedby="markdown-help" value={session.draft.markdown}
               onChange={event => dispatch({ type: 'edit', field: 'markdown', value: event.target.value })} />
             <div className="notes-actions"><button type="submit" disabled={busy || archiveConfirmation || trashConfirmation !== null || archived || trashed || !dirty || session.phase === 'Conflict' || !session.draft.title.trim()}>
               {creating ? 'Create note' : session.phase === 'SaveFailed' ? 'Retry save' : 'Save note'}</button>
               <button type="button" className="button-secondary" aria-pressed={preview} onClick={() => setPreview(value => !value)}>
                 {preview ? 'Hide preview' : 'Show preview'}</button></div>
           </form>
-          {!creating && <section className="notes-preview" aria-label="Note organization">
+          {error && <p className="notes-message notes-message-error" role="alert">{error}</p>}
+          {session.serverChangedWhileDirty && session.phase !== 'Conflict'
+            && <p className="notes-message notes-message-warning" role="alert">This note changed on the server while you were editing. Your draft was kept.</p>}
+          {session.phase === 'Conflict' && <section className="notes-conflict" aria-label="Save conflict">
+            <h2>Another version was saved</h2><p>Your draft is still here. Review the current version before deciding what to keep.</p>
+            {!session.serverVersion && <>{conflictLoading && <p role="status">Loading current saved version…</p>}
+              {conflictLoadError && <p role="alert">The current saved version could not be loaded. Your draft is unchanged.</p>}
+              <button type="button" className="button-secondary" disabled={conflictLoading}
+                onClick={() => void loadConflictVersion()}>Retry loading saved version</button></>}
+            {session.serverVersion && <><h3>Current saved version</h3>
+              <p>{session.serverVersion.value.title}</p><MarkdownView markdown={session.serverVersion.value.markdown} />
+              <button type="button" className="button-secondary" onClick={() => dispatch({ type: 'reloadServer' })}>Discard my draft and load saved version</button>
+              <button type="button" className="button-secondary" onClick={() => dispatch({ type: 'rebase' })}>Keep my draft and use current version as save base</button></>}
+          </section>}
+          {preview && <section className="notes-preview" aria-label="Markdown preview"><h2>Preview</h2>
+            {!session.draft.markdown && <p className="notes-help">Your Markdown preview will appear here.</p>}
+            <MarkdownView markdown={session.draft.markdown} /></section>}
+          </div>
+          {!creating && <aside className="notes-tools" aria-label="Note tools">
+          <section className="notes-tool" aria-label="Note organization">
             <h2>Organization</h2><p>{session.serverVersion
               ? `${trashed ? 'Trashed' : archived ? 'Archived' : organizationEligible ? 'Active' : 'Organization changes unavailable'} · ${session.serverVersion.value.pinned ? 'Pinned' : 'Not pinned'}`
               : 'Current organization state unavailable'}</p>
@@ -343,22 +377,22 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
               <button type="button" className="button-secondary" ref={archiveButton} disabled={commandBlocked}
                 onClick={() => archived ? void organize('returnFromArchive') : dirty ? setArchiveConfirmation(true) : void organize('archive')}>
                 {archived ? 'Return from archive' : 'Archive'}</button>
-              <button type="button" className="button-secondary" ref={trashButton} disabled={lifecycleBlocked}
+              <button type="button" className="button-secondary notes-danger" ref={trashButton} disabled={lifecycleBlocked}
                 onClick={() => {
                   if (trashed) void changeLifecycle('restore')
                   else if (dirty) { setTrashConfirmationEtag(session.etag); setTrashConfirmation('draft') }
                   else void changeLifecycle('trash')
                 }}>
                 {trashed ? 'Restore' : 'Trash'}</button>
-              {trashed && <button type="button" className="button-secondary" ref={deleteButton} disabled={lifecycleBlocked}
+              {trashed && <button type="button" className="button-secondary notes-danger" ref={deleteButton} disabled={lifecycleBlocked}
                 onClick={() => { setDeleteEtag(session.etag); setDeleteConfirmation('delete') }}>Permanent delete</button>}</div>
             {archived && <p role="status">This note is archived. Return it to Active before saving title or Markdown. Any unsaved draft is kept in this tab.</p>}
             {trashed && <p role="status">This note is in Trash. Restore it before saving. Your title and Markdown draft are kept in this tab; leaving can lose the draft.</p>}
-          </section>}
-          {!creating && <section className="notes-preview" aria-label="Note tags">
+          </section>
+          <section className="notes-tool" aria-label="Note tags">
             <h2>Tags</h2>
             {session.serverVersion?.value.tags.length
-              ? <ul>{session.serverVersion.value.tags.map(tag => <li key={tag}>{tag}</li>)}</ul>
+              ? <ul className="notes-tags">{session.serverVersion.value.tags.map(tag => <li key={tag}>{tag}</li>)}</ul>
               : <p>No tags</p>}
             {!tagsEditing ? <button type="button" className="button-secondary"
               disabled={busy || !organizationEligible || session.phase === 'Conflict' || session.serverChangedWhileDirty}
@@ -373,8 +407,8 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
                   onClick={() => { setTagsEditing(false); setTagError('') }}>Cancel tag editing</button>
               </form>}
             {tagError && <p role="alert">{tagError}</p>}
-          </section>}
-          {!creating && <section aria-label="Note AI access">
+          </section>
+          <section className="notes-tool" aria-label="Note AI access">
             <h2>Use this note with AI</h2>
             <p aria-live="polite">AI access is {session.serverVersion?.value.aiEnabled ? 'ON' : 'OFF'}.</p>
             <p id="note-ai-help">{session.serverVersion?.value.aiEnabled
@@ -384,8 +418,8 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
             <button type="button" className="button-secondary" aria-describedby="note-ai-help"
               disabled={lifecycleBlocked} onClick={() => void changeAiAccess()}>
               {session.serverVersion?.value.aiEnabled ? 'Disable AI' : 'Enable AI'}</button>
-          </section>}
-          {!creating && session.id && <>
+          </section>
+          {session.id && <div className="notes-tool notes-history-tool">
             <button type="button" className="button-secondary" aria-expanded={historyOpen}
               aria-controls="note-history" onClick={() => setHistoryOpen(value => !value)}>
               {historyOpen ? 'Hide version history' : 'Show version history'}</button>
@@ -395,22 +429,9 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
                 restoreInvoker.current = invoker
                 setRestoreConfirmation({ version, etag: session.etag })
               }} /></div>}
-          </>}
-          {error && <p role="alert">{error}</p>}
-          {session.serverChangedWhileDirty && session.phase !== 'Conflict'
-            && <p role="alert">This note changed on the server while you were editing. Your draft was kept.</p>}
-          {session.phase === 'Conflict' && <section className="notes-conflict" aria-label="Save conflict">
-            <h2>Another version was saved</h2><p>Your draft is still here. Review the current version before deciding what to keep.</p>
-            {!session.serverVersion && <>{conflictLoading && <p role="status">Loading current saved version…</p>}
-              {conflictLoadError && <p role="alert">The current saved version could not be loaded. Your draft is unchanged.</p>}
-              <button type="button" className="button-secondary" disabled={conflictLoading}
-                onClick={() => void loadConflictVersion()}>Retry loading saved version</button></>}
-            {session.serverVersion && <><h3>Current saved version</h3>
-              <p>{session.serverVersion.value.title}</p><MarkdownView markdown={session.serverVersion.value.markdown} />
-              <button type="button" className="button-secondary" onClick={() => dispatch({ type: 'reloadServer' })}>Discard my draft and load saved version</button>
-              <button type="button" className="button-secondary" onClick={() => dispatch({ type: 'rebase' })}>Keep my draft and use current version as save base</button></>}
-          </section>}
-          {preview && <section className="notes-preview" aria-label="Markdown preview"><h2>Preview</h2><MarkdownView markdown={session.draft.markdown} /></section>}
+          </div>}
+          </aside>}
+          </div>
         </>}
     </div>
     {restoreConfirmation && <div className="dialog-backdrop"><div className="confirm-dialog" role="dialog" aria-modal="true"
@@ -431,9 +452,18 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
       <button type="button" disabled={lifecycleBlocked || archived || trashed} onClick={() => void restoreCheckpoint()}>
         {dirty ? 'Restore and discard draft' : 'Confirm restore'}</button>
     </div></div>}
-    {blocker.state === 'blocked' && <div className="dialog-backdrop"><div className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="leave-title">
+    {blocker.state === 'blocked' && <div className="dialog-backdrop"><div className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="leave-title"
+      onKeyDown={event => {
+        if (event.key === 'Escape') blocker.reset()
+        if (event.key === 'Tab') {
+          event.preventDefault()
+          const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button'))
+          const position = buttons.indexOf(document.activeElement as HTMLButtonElement)
+          buttons[(position + (event.shiftKey ? buttons.length - 1 : 1)) % buttons.length]?.focus()
+        }
+      }}>
       <h2 id="leave-title">Leave with unsaved changes?</h2><p>Your draft will be lost if you leave.</p>
-      <button type="button" onClick={() => blocker.reset()}>Keep editing</button>
+      <button type="button" ref={leaveCancel} onClick={() => blocker.reset()}>Keep editing</button>
       <button type="button" className="button-secondary" onClick={() => blocker.proceed()}>Discard changes and leave</button>
     </div></div>}
     {archiveConfirmation && <div className="dialog-backdrop"><div className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="archive-title"
@@ -495,5 +525,5 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
       <button type="button" className="button-secondary" disabled={busy}
         onClick={() => { setTrashConfirmation(null); trashButton.current?.focus() }}>Keep editing</button>
     </div></div>}
-  </div></main>
+  </NotesWorkspace>
 }
