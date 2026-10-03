@@ -41,6 +41,6 @@ class ProductionApiSurfaceTest {
                 "/api/notes/{noteId}/trash", "/api/notes/{noteId}/restore",
                 "/api/notes/{noteId}/ai-access", "/api/notes/ai-access-bulk",
                 "/api/notes/{noteId}/versions", "/api/notes/{noteId}/versions/{versionId}",
-                "/api/notes/{noteId}/versions/{versionId}/restore");
+                "/api/notes/{noteId}/versions/{versionId}/restore", "/api/me/profile");
     }
 }
