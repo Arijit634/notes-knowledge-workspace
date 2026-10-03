@@ -4,6 +4,7 @@ const challenge = 'B'.repeat(43)
 async function fakeBackend(page: Page, initial: 'anonymous' | 'mfaRequired' | 'authenticated' = 'anonymous',
   passwordConfigured = true) {
   let state = initial
+  await page.route('**/api/notes*', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [], nextCursor: null }) }))
   await page.route('**/api/me/security', route => route.fulfill({ status: 200,
     contentType: 'application/json', body: JSON.stringify({ email: 'person@example.test',
       passwordConfigured, mfaState: 'disabled', oidcLinks: [] }) }))
@@ -33,7 +34,7 @@ async function fakeBackend(page: Page, initial: 'anonymous' | 'mfaRequired' | 'a
 test('anonymous landing to signup uses generic accepted copy', async ({ page }) => {
   await fakeBackend(page)
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: /quieter place/i })).toBeVisible()
+  await expect(page.getByRole('heading', { name: /thoughts, in good order/i })).toBeVisible()
   await page.getByRole('link', { name: 'Create an account' }).click()
   await page.getByLabel('Email').fill('person@example.test')
   await page.getByLabel('Create password').fill('Synthetic-password-123!')
@@ -49,14 +50,14 @@ test('verification fragment is scrubbed and confirmation succeeds', async ({ pag
   await expect(page.getByText(/Email confirmed/i)).toBeVisible()
 })
 
-test('password login without MFA reaches authenticated landing', async ({ page }) => {
+test('password login without MFA enters the Notes library', async ({ page }) => {
   await fakeBackend(page)
   await page.goto('/login')
   await page.getByLabel('Email').fill('person@example.test')
   await page.getByLabel('Password').fill('Synthetic-password-123!')
   await page.getByRole('button', { name: 'Log in', exact: true }).click()
-  await expect(page.getByText('You are signed in.')).toBeVisible()
-  await expect(page).toHaveURL(/\/$/)
+  await expect(page.getByRole('heading', { name: 'Notes', exact: true })).toBeVisible()
+  await expect(page).toHaveURL(/\/notes$/)
 })
 
 test('password login with MFA and recovery-code continuation reaches full authority', async ({ page }) => {
@@ -69,7 +70,7 @@ test('password login with MFA and recovery-code continuation reaches full author
   await page.getByRole('button', { name: 'Recovery code' }).click()
   await page.getByLabel('Recovery code').fill('synthetic-recovery-code')
   await page.getByRole('button', { name: 'Verify and continue' }).click()
-  await expect(page.getByText('You are signed in.')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Notes', exact: true })).toBeVisible()
   expect(page.url()).not.toContain(challenge)
 })
 
@@ -120,6 +121,30 @@ test('passwordless recent authentication guides to existing recovery', async ({ 
 test('authenticated authority cannot remain on login', async ({ page }) => {
   await fakeBackend(page, 'authenticated')
   await page.goto('/login')
-  await expect(page).toHaveURL(/\/$/)
-  await expect(page.getByText('You are signed in.')).toBeVisible()
+  await expect(page).toHaveURL(/\/notes$/)
+  await expect(page.getByRole('heading', { name: 'Notes', exact: true })).toBeVisible()
+})
+
+for (const entry of ['/', '/signup', '/auth/complete']) test(`authenticated ${entry} enters the app without an interstitial`, async ({ page }) => {
+  await fakeBackend(page, 'authenticated')
+  await page.goto(entry)
+  await expect(page).toHaveURL(/\/notes$/)
+  await expect(page.getByRole('heading', { name: 'Notes', exact: true })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Continue', exact: true })).toHaveCount(0)
+})
+
+for (const mfa of [false, true]) test(`safe protected destination survives password login${mfa ? ' and MFA' : ''}`, async ({ page }) => {
+  await fakeBackend(page)
+  await page.goto('/settings/security')
+  await expect(page).toHaveURL(/\/login$/)
+  await page.getByLabel('Email').fill(mfa ? 'mfa@example.test' : 'person@example.test')
+  await page.getByLabel('Password', { exact: true }).fill('Synthetic-password-123!')
+  await page.getByRole('button', { name: 'Log in', exact: true }).click()
+  if (mfa) {
+    await page.getByRole('button', { name: 'Recovery code' }).click()
+    await page.getByLabel('Recovery code').fill('synthetic-recovery-code')
+    await page.getByRole('button', { name: 'Verify and continue' }).click()
+  }
+  await expect(page).toHaveURL(/\/settings\/security$/)
+  await expect(page.getByRole('heading', { name: 'Account security', exact: true })).toBeVisible()
 })

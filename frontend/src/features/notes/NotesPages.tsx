@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef, useState, type FormEvent } from 'react'
+import { lazy, Suspense, useEffect, useReducer, useRef, useState, type FormEvent } from 'react'
 import { Link, useBlocker, useLocation, useNavigate, useParams } from 'react-router'
 import { flushSync } from 'react-dom'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
@@ -10,6 +10,9 @@ import { NotesWorkspace } from './NotesWorkspace'
 import { emptyEditorSession, isDirty, noteEditorSession } from './NoteEditorSession'
 import { notesApi, type NoteCore, type NoteOrganizationCommand, type NoteVersion } from './NotesApi'
 import { noteKeys, notePreferenceKeys } from './NotesKeys'
+import { NotesCollection } from './NotesCollection'
+const FormattedEditor = lazy(() => import('./FormattedEditor').then(module => ({ default: module.FormattedEditor })))
+import { TagDraftEditor } from './TagDraftEditor'
 
 function issue(error: unknown): string {
   if (error instanceof ApiProblemError) {
@@ -21,34 +24,7 @@ function issue(error: unknown): string {
 }
 
 export function NotesListPage({ auth }: { auth: AuthRuntime }) {
-  const scope = auth.session.viewerScope
-  const location = useLocation()
-  const [lifecycle, setLifecycle] = useState<NoteCore['lifecycle']>(location.state?.notesView === 'trashed' ? 'trashed' : 'active')
-  const page = useInfiniteQuery({ queryKey: noteKeys.list(scope, { lifecycle, sort: 'updatedAtDesc' }),
-    queryFn: ({ pageParam }) => notesApi.list(auth, pageParam, lifecycle), initialPageParam: null as string | null,
-    getNextPageParam: last => last.nextCursor ?? undefined, retry: false }, auth.queries)
-  const entries = [...new Map(page.data?.pages.flatMap(part => part.items)
-    .map(item => [item.id, item] as const) ?? []).values()]
-  return <NotesWorkspace>
-    <header className="notes-heading"><div><p className="eyebrow">Your workspace</p><h1>Notes</h1></div>
-      <Link className="button" to="/notes/new">New note</Link></header>
-    <p className="notes-intro">Make room for a thought. Keep it close.</p>
-    <nav aria-label="Note views" className="notes-views">
-      <button type="button" className="button-secondary" aria-pressed={lifecycle === 'active'} onClick={() => setLifecycle('active')}>Active notes</button>
-      <button type="button" className="button-secondary" aria-pressed={lifecycle === 'archived'} onClick={() => setLifecycle('archived')}>Archived notes</button>
-      <button type="button" className="button-secondary" aria-pressed={lifecycle === 'trashed'} onClick={() => setLifecycle('trashed')}>Trashed notes</button>
-    </nav>
-    {page.isPending && <p className="notes-message" role="status">Loading notes…</p>}
-    {page.isError && <p className="notes-message notes-message-error" role="alert">{issue(page.error)} <button onClick={() => void page.refetch()}>Retry</button></p>}
-    {!page.isPending && !page.isError && entries.length === 0 && <div className="notes-empty"><h2>{lifecycle === 'active' ? 'No notes yet' : lifecycle === 'archived' ? 'No archived notes' : 'No trashed notes'}</h2><p>{lifecycle === 'active' ? 'Start with a thought worth keeping.' : 'Notes in this view will appear here.'}</p><Link to="/notes/new">Create a note</Link></div>}
-    {entries.length > 0 && <ul className="notes-list">{entries.map(note => <li key={note.id}>
-      <Link to={`/notes/${note.id}`}><div className="notes-card-heading"><strong>{note.title}</strong>{note.pinned && <span className="notes-pill">Pinned</span>}</div>
-        <span className="notes-card-meta">Updated <time dateTime={note.updatedAt}>{new Date(note.updatedAt).toLocaleString()}</time></span>
-        {note.tags.length > 0 && <ul className="notes-tags" aria-label="Tags">{note.tags.map(tag => <li key={tag}>{tag}</li>)}</ul>}</Link>
-    </li>)}</ul>}
-    {page.hasNextPage && <button className="button-secondary" disabled={page.isFetchingNextPage}
-      onClick={() => void page.fetchNextPage()}>Load more</button>}
-  </NotesWorkspace>
+  return <NotesWorkspace auth={auth}><NotesCollection auth={auth} /></NotesWorkspace>
 }
 
 export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; creating?: boolean }) {
@@ -57,9 +33,19 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
   const [session, dispatch] = useReducer(noteEditorSession, emptyEditorSession)
   const [aiEnabled, setAiEnabled] = useState(false)
   const [error, setError] = useState('')
-  const [preview, setPreview] = useState(true)
+  const [detailsOpen, setDetailsOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
+  const toolClose = useRef<HTMLButtonElement>(null)
+  const detailsTrigger = useRef<HTMLButtonElement>(null)
+  const historyTrigger = useRef<HTMLButtonElement>(null)
+  const previousTool = useRef<'details' | 'history' | null>(null)
+  useEffect(() => {
+    const open = historyOpen ? 'history' : detailsOpen ? 'details' : null
+    if (open) toolClose.current?.focus()
+    else if (previousTool.current) (previousTool.current === 'history' ? historyTrigger : detailsTrigger).current?.focus()
+    previousTool.current = open
+  }, [detailsOpen, historyOpen])
   const [restoreConfirmation, setRestoreConfirmation] = useState<{ version: NoteVersion; etag: string } | null>(null)
   const restoreCancel = useRef<HTMLButtonElement>(null)
   const restoreInvoker = useRef<HTMLElement | null>(null)
@@ -323,30 +309,26 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
     : loaded.isPending || (!!loaded.data && session.id !== loaded.data.value.id)
   const loadError = creating ? preference.error : loaded.error
   if (deleted) return <main><p role="status">Note permanently deleted.</p></main>
-  return <NotesWorkspace modalOpen={archiveConfirmation || trashConfirmation !== null || deleteConfirmation !== null || restoreConfirmation !== null || blocker.state === 'blocked'}>
-    <div inert={archiveConfirmation || trashConfirmation !== null || deleteConfirmation !== null || restoreConfirmation !== null || blocker.state === 'blocked'}>
+  return <NotesWorkspace auth={auth} modalOpen={archiveConfirmation || trashConfirmation !== null || deleteConfirmation !== null || restoreConfirmation !== null || blocker.state === 'blocked'}>
+    <div className={`note-workspace${detailsOpen || historyOpen ? ' has-tool' : ''}${creating ? ' is-new' : ''}`} inert={archiveConfirmation || trashConfirmation !== null || deleteConfirmation !== null || restoreConfirmation !== null || blocker.state === 'blocked'}>
+    {!creating && !detailsOpen && !historyOpen && <aside className="note-context-list" aria-label="Notes library"><NotesCollection auth={auth} compact selected={id} /></aside>}
+    <div className="note-document">
     {loading ? <p className="notes-message" role="status">Loading editor…</p> : loadError
       ? <p className="notes-message notes-message-error" role="alert">{issue(loadError)} <button onClick={() => void (creating ? preference.refetch() : loaded.refetch())}>Retry</button></p>
-        : <><header className="notes-heading"><div><p className="eyebrow">{creating ? 'New note' : 'Private note'}</p>
-          <h1>{creating ? 'Create a note' : 'Edit note'}</h1></div><span role="status" className="notes-state" data-phase={session.phase}>
+        : <><header className="notes-heading"><Link to="/notes" aria-label="Back to notes">← <span>Notes</span></Link><h1 className="sr-only">{creating ? 'Create a note' : 'Edit note'}</h1><span role="status" className="notes-state" data-phase={session.phase}>
             {session.phase === 'Clean' ? creating ? 'Not created' : 'Saved' : session.phase === 'Dirty' ? 'Unsaved changes'
               : session.phase === 'Saving' ? 'Saving…' : session.phase === 'SaveFailed' ? 'Save failed'
-                : 'Conflict'}</span></header>
+                : 'Conflict'}</span><button type="submit" form="note-edit-form" disabled={busy || archiveConfirmation || trashConfirmation !== null || deleteConfirmation !== null || restoreConfirmation !== null || blocker.state === 'blocked' || archived || trashed || !dirty || session.phase === 'Conflict' || !session.draft.title.trim()}>{creating ? 'Create note' : session.phase === 'SaveFailed' ? 'Retry save' : 'Save note'}</button>
+          {!creating && <><button ref={detailsTrigger} type="button" className="text-button" aria-expanded={detailsOpen} onClick={() => { setDetailsOpen(value => !value); setHistoryOpen(false) }}>Details</button>
+            <button ref={historyTrigger} type="button" className="text-button" aria-expanded={historyOpen} onClick={() => { setHistoryOpen(value => !value); setDetailsOpen(false) }}>History</button></>}</header>
           <div className={`notes-workbench${creating ? ' notes-workbench-new' : ''}`}>
           <div className="notes-authoring">
-          <form className="notes-editor" onSubmit={submit}>
-            <label htmlFor="note-title">Title</label><input id="note-title" maxLength={500} required
+          <form id="note-edit-form" className="notes-editor" onSubmit={submit}>
+            <label className="sr-only" htmlFor="note-title">Title</label><input id="note-title" placeholder="Untitled note" maxLength={500} required
               value={session.draft.title} onChange={event => dispatch({ type: 'edit', field: 'title', value: event.target.value })} />
             {creating && <label className="notes-checkbox"><input type="checkbox" checked={aiEnabled}
               onChange={event => setAiEnabled(event.target.checked)} />Use this note with AI</label>}
-            <label htmlFor="note-markdown">Markdown</label>
-            <p id="markdown-help" className="notes-help">Write in Markdown. Save when you’re ready — Ctrl/Cmd + S.</p>
-            <textarea id="note-markdown" rows={14} maxLength={1_000_000} aria-describedby="markdown-help" value={session.draft.markdown}
-              onChange={event => dispatch({ type: 'edit', field: 'markdown', value: event.target.value })} />
-            <div className="notes-actions"><button type="submit" disabled={busy || archiveConfirmation || trashConfirmation !== null || archived || trashed || !dirty || session.phase === 'Conflict' || !session.draft.title.trim()}>
-              {creating ? 'Create note' : session.phase === 'SaveFailed' ? 'Retry save' : 'Save note'}</button>
-              <button type="button" className="button-secondary" aria-pressed={preview} onClick={() => setPreview(value => !value)}>
-                {preview ? 'Hide preview' : 'Show preview'}</button></div>
+            <Suspense fallback={<p role="status">Preparing writing surface…</p>}><FormattedEditor value={session.draft.markdown} onChange={value => dispatch({ type: 'edit', field: 'markdown', value })} /></Suspense>
           </form>
           {error && <p className="notes-message notes-message-error" role="alert">{error}</p>}
           {session.serverChangedWhileDirty && session.phase !== 'Conflict'
@@ -362,11 +344,15 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
               <button type="button" className="button-secondary" onClick={() => dispatch({ type: 'reloadServer' })}>Discard my draft and load saved version</button>
               <button type="button" className="button-secondary" onClick={() => dispatch({ type: 'rebase' })}>Keep my draft and use current version as save base</button></>}
           </section>}
-          {preview && <section className="notes-preview" aria-label="Markdown preview"><h2>Preview</h2>
-            {!session.draft.markdown && <p className="notes-help">Your Markdown preview will appear here.</p>}
-            <MarkdownView markdown={session.draft.markdown} /></section>}
           </div>
-          {!creating && <aside className="notes-tools" aria-label="Note tools">
+          </div>
+        </>}
+    </div>
+          {!creating && (detailsOpen || historyOpen) && <aside className="notes-tools" aria-label="Note tools" onKeyDown={event => {
+            if (event.key === 'Escape' && !tagsEditing) { event.preventDefault(); setDetailsOpen(false); setHistoryOpen(false) }
+          }}>
+          <button ref={toolClose} type="button" className="tool-close" onClick={() => { setDetailsOpen(false); setHistoryOpen(false) }}>Close {historyOpen ? 'history' : 'details'} ×</button>
+          {detailsOpen && <>
           <section className="notes-tool" aria-label="Note organization">
             <h2>Organization</h2><p>{session.serverVersion
               ? `${trashed ? 'Trashed' : archived ? 'Archived' : organizationEligible ? 'Active' : 'Organization changes unavailable'} · ${session.serverVersion.value.pinned ? 'Pinned' : 'Not pinned'}`
@@ -398,9 +384,7 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
               disabled={busy || !organizationEligible || session.phase === 'Conflict' || session.serverChangedWhileDirty}
               onClick={() => { setTagInput((session.serverVersion?.value.tags ?? []).join('\n')); setTagEtag(session.etag); setTagError(''); setTagsEditing(true) }}>Edit tags</button>
               : <form onSubmit={event => void replaceTags(event)}>
-                <label htmlFor="note-tags">Tags, one per line</label>
-                <textarea id="note-tags" rows={4} maxLength={5100} value={tagInput} disabled={busy}
-                  onChange={event => setTagInput(event.target.value)} aria-describedby="tags-help" />
+                <TagDraftEditor value={tagInput} onChange={setTagInput} disabled={busy} />
                 <p id="tags-help">Up to 50 tags, 100 characters each. Apply tags separately; your title and Markdown draft are not saved.</p>
                 <button type="submit" disabled={busy || !organizationEligible || session.phase === 'Conflict' || session.serverChangedWhileDirty}>Apply tags</button>
                 <button type="button" className="button-secondary" disabled={busy}
@@ -419,10 +403,8 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
               disabled={lifecycleBlocked} onClick={() => void changeAiAccess()}>
               {session.serverVersion?.value.aiEnabled ? 'Disable AI' : 'Enable AI'}</button>
           </section>
-          {session.id && <div className="notes-tool notes-history-tool">
-            <button type="button" className="button-secondary" aria-expanded={historyOpen}
-              aria-controls="note-history" onClick={() => setHistoryOpen(value => !value)}>
-              {historyOpen ? 'Hide version history' : 'Show version history'}</button>
+          </>}
+          {session.id && historyOpen && <div className="notes-tool notes-history-tool">
             {historyOpen && <div id="note-history"><NoteVersionPanel auth={auth} noteId={session.id}
               restoreBlocked={lifecycleBlocked || archived || trashed} onRestore={(version, invoker) => {
                 if (!session.etag || lifecycleBlocked || archived || trashed) return
@@ -431,8 +413,6 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
               }} /></div>}
           </div>}
           </aside>}
-          </div>
-        </>}
     </div>
     {restoreConfirmation && <div className="dialog-backdrop"><div className="confirm-dialog" role="dialog" aria-modal="true"
       aria-labelledby="checkpoint-restore-title" aria-describedby="checkpoint-restore-help" onKeyDown={event => {

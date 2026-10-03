@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router'
+import { createPortal } from 'react-dom'
 import { useForm } from 'react-hook-form'
 import { useQuery } from '@tanstack/react-query'
 import { QRCodeCanvas } from 'qrcode.react'
 import type { AuthRuntime } from '../auth/AuthRuntime'
+import { AppShell } from '../../shared/AppShell'
 import { navigateToGoogle } from '../auth/OidcNavigationCoordinator'
 import { ApiProblemError } from '../../app/api/ProblemDetailsDecoder'
 import { CsrfUnavailableError } from '../../app/security/CsrfManager'
@@ -60,15 +62,15 @@ function useAction(auth: AuthRuntime, route: SecurityRoute) {
   return { busy, error, setError, run }
 }
 
-function Page({ title, children }: { title: string; children: ReactNode }) {
-  return <main className="settings-layout"><div className="settings-card">
+function Page({ title, children, auth }: { title: string; children: ReactNode; auth: AuthRuntime }) {
+  return <AppShell onLogout={() => auth.logout()}><div className="settings-layout"><div className="settings-card">
     <nav aria-label="Security settings" className="settings-nav">
-      <Link to="/">Home</Link><Link to="/settings/security">Security</Link>
+      <Link to="/settings/security">Security</Link>
       <Link to="/settings/security/mfa">MFA</Link>
       <Link to="/settings/security/sessions">Sessions</Link>
     </nav>
     <h1>{title}</h1>{children}
-  </div></main>
+  </div></div></AppShell>
 }
 
 function Status({ children }: { children: ReactNode }) { return <p role="status" className="success">{children}</p> }
@@ -81,8 +83,10 @@ function ConfirmDialog({ title, description, confirmText, onCancel, onConfirm, b
   const first = useRef<HTMLButtonElement>(null), last = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const root = document.getElementById('root'), wasInert = root?.inert ?? false
+    if (root) root.inert = true
     first.current?.focus()
-    return () => previous?.focus()
+    return () => { if (root) root.inert = wasInert; previous?.focus() }
   }, [])
   function keys(event: KeyboardEvent) {
     if (event.key === 'Escape') { event.preventDefault(); onCancel() }
@@ -92,14 +96,14 @@ function ConfirmDialog({ title, description, confirmText, onCancel, onConfirm, b
       event.preventDefault(); last.current?.focus()
     }
   }
-  return <div className="dialog-backdrop"><div role="alertdialog" aria-modal="true"
+  return createPortal(<div className="dialog-backdrop"><div role="alertdialog" aria-modal="true"
     aria-labelledby="confirm-title" aria-describedby="confirm-description" className="confirm-dialog"
     onKeyDown={keys}>
     <h2 id="confirm-title">{title}</h2><p id="confirm-description">{description}</p>
     <div className="actions"><button ref={first} type="button" className="button-secondary"
       onClick={onCancel} disabled={busy}>Cancel</button>
       <button ref={last} type="button" onClick={onConfirm} disabled={busy}>{confirmText}</button></div>
-  </div></div>
+  </div></div>, document.body)
 }
 
 async function refreshSecurity(auth: AuthRuntime, includeSessions = false) {
@@ -158,7 +162,7 @@ export function SecuritySettingsPage({ auth }: Props) {
       })
     }
   }
-  return <Page title="Account security">
+  return <Page title="Account security" auth={auth}>
     {summary.isPending && <p role="status">Loading security settings…</p>}
     {summary.isError && <ErrorText>{safeError(summary.error)}</ErrorText>}
     {notice && <Status>{notice}</Status>}{action.error && <ErrorText>{action.error}</ErrorText>}
@@ -168,17 +172,17 @@ export function SecuritySettingsPage({ auth }: Props) {
         {tokenReady && <div className="settings-panel"><h3>Confirm email change</h3>
           <p>Confirm the address from the link you opened.</p>
           <button type="button" onClick={confirmEmail} disabled={action.busy}>Confirm email change</button></div>}
-        <p>If a confirmation link was lost while confirming your identity, reopen the original email link.</p>
+        <details className="settings-disclosure"><summary>Change email</summary><p>If a confirmation link was lost while confirming your identity, reopen the original email link.</p>
         <form onSubmit={requestEmail} noValidate><label htmlFor="new-email">New email</label>
           <input id="new-email" type="email" autoComplete="email" maxLength={254}
             aria-invalid={!!emailForm.formState.errors.newEmail}
             {...emailForm.register('newEmail', { required: 'Enter a new email.' })} />
           {emailForm.formState.errors.newEmail && <span className="field-error" role="alert">{emailForm.formState.errors.newEmail.message}</span>}
-          <button disabled={action.busy || emailForm.formState.isSubmitting}>Request email change</button></form>
+          <button disabled={action.busy || emailForm.formState.isSubmitting}>Request email change</button></form></details>
       </section>
       <section aria-labelledby="password-heading"><h2 id="password-heading">Password</h2>
         <p>{summary.data.passwordConfigured ? 'A password is configured.' : 'No password is configured.'}</p>
-        <form onSubmit={changePassword} noValidate>
+        <details className="settings-disclosure"><summary>Change password</summary><form onSubmit={changePassword} noValidate>
           <label htmlFor="security-password">New password</label><input id="security-password"
             type="password" autoComplete="new-password" maxLength={1024}
             aria-invalid={!!passwordForm.formState.errors.newPassword}
@@ -189,7 +193,7 @@ export function SecuritySettingsPage({ auth }: Props) {
             aria-invalid={!!passwordForm.formState.errors.confirmation}
             {...passwordForm.register('confirmation', { required: 'Confirm the new password.' })} />
           {passwordForm.formState.errors.confirmation && <span className="field-error" role="alert">{passwordForm.formState.errors.confirmation.message}</span>}
-          <button disabled={action.busy || passwordForm.formState.isSubmitting}>Change password</button></form>
+          <button disabled={action.busy || passwordForm.formState.isSubmitting}>Change password</button></form></details>
       </section>
       <section aria-labelledby="google-heading"><h2 id="google-heading">Google sign-in</h2>
         {summary.data.oidcLinks.length === 0 ? <p>No Google sign-in is linked.</p>
@@ -254,7 +258,7 @@ export function MfaSettingsPage({ auth }: Props) {
       }, async () => { await refreshSecurity(auth) })
     }
   }
-  return <Page title="Multi-factor authentication">
+  return <Page title="Multi-factor authentication" auth={auth}>
     {summary.isPending && <p role="status">Loading MFA settings…</p>}
     {summary.isError && <ErrorText>{safeError(summary.error)}</ErrorText>}
     {action.error && <ErrorText>{action.error}</ErrorText>}{notice && <Status>{notice}</Status>}
@@ -306,7 +310,7 @@ export function SessionsSettingsPage({ auth }: Props) {
       }
     })
   }
-  return <Page title="Your sessions">
+  return <Page title="Your sessions" auth={auth}>
     {sessions.isPending && <p role="status">Loading sessions…</p>}
     {sessions.isError && <ErrorText>{safeError(sessions.error)}</ErrorText>}
     {action.error && <ErrorText>{action.error}</ErrorText>}{notice && <Status>{notice}</Status>}

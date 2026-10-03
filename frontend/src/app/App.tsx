@@ -53,20 +53,22 @@ function message(error: unknown): string {
 const Alert = ({ children }: { children: ReactNode }) => <p className="alert" role="alert">{children}</p>
 const BlindAcceptedPanel = () => <div className="success" role="status"><h2>Check your email</h2><p>If the details can be used, check your email for the next step.</p></div>
 function Shell({ title, eyebrow, children }: { title: string; eyebrow?: string; children: ReactNode }) {
-  return <main className="auth-layout"><section className="auth-card" aria-labelledby="page-title">
+  return <main className="auth-layout"><aside className="auth-brand-panel" aria-label="Notes and Knowledge"><Link className="brand" to="/">n<span>.</span></Link><div><p>Notes &amp; Knowledge</p><h2>A place for<br />your thinking.</h2><p>Write. Keep. Come back to it.</p></div><span>YOUR PERSONAL NOTES LIBRARY</span></aside><section className="auth-card" aria-labelledby="page-title">
     <Link className="brand" to="/">Notes <span>&amp;</span> Knowledge</Link>
-    {eyebrow && <p className="eyebrow">{eyebrow}</p>}<h1 id="page-title">{title}</h1>{children}
+    <h1 id="page-title">{title}</h1>{children}
   </section></main>
 }
 function Gate({ access, children }: { access: RouteAccess; children: ReactNode }) {
   const auth = useAuth()
+  const location = useLocation()
   if (auth.state === 'unknown') return <Shell title="Checking your session"><p role="status">Please wait…</p></Shell>
   if (auth.state === 'mfaRequired' && !auth.continuation.challengeId && access !== 'PUBLIC') return <RestartLogin />
   if (canEnterRoute(auth.state, access)) {
     return <>{children}</>
   }
   if (auth.state === 'mfaRequired' && auth.continuation.challengeId) return <Navigate to="/mfa" replace />
-  return <Navigate to={auth.state === 'authenticated' ? '/' : '/login'} replace />
+  if (auth.state === 'anonymous' && access === 'FULL_AUTHENTICATED') auth.rememberLoginDestination(location.pathname)
+  return <Navigate to={auth.state === 'authenticated' ? auth.loginDestinationTarget : '/login'} replace />
 }
 function RestartLogin() {
   const auth = useAuth(), navigate = useNavigate()
@@ -75,17 +77,11 @@ function RestartLogin() {
   return <Shell title="Restart sign in"><p>Your verification session is no longer available.</p>{error && <Alert>{error}</Alert>}<button onClick={restart}>Restart sign in</button></Shell>
 }
 function Landing() {
-  const auth = useAuth(), navigate = useNavigate()
-  const [error, setError] = useState('')
-  async function logout() { try { await auth.logout(); navigate('/') } catch (e) { setError(message(e)) } }
-  return <Shell title="A quieter place for what you need to remember" eyebrow="Your workspace starts here">
-    <p className="lead">Keep your notes and knowledge together. Sign in to continue when your workspace is ready.</p>
-    {error && <Alert>{error}</Alert>}
-    {auth.state === 'authenticated' ? <><p role="status">You are signed in.</p>
-      <Link className="button" to="/notes">Your notes</Link>
-      <Link className="button button-secondary" to="/settings/security">Security settings</Link>
-      <button onClick={logout}>Log out</button></>
-      : auth.state === 'mfaRequired' ? <Link className="button" to={auth.continuation.challengeId ? '/mfa' : '/login'}>{auth.continuation.challengeId ? 'Continue verification' : 'Restart sign in'}</Link>
+  const auth = useAuth()
+  if (auth.state === 'authenticated') return <Navigate to="/notes" replace />
+  return <Shell title="Your thoughts, in good order.">
+    <p className="lead">A personal library for your notes. Write something down, make it your own, and find your place again.</p>
+    {auth.state === 'mfaRequired' ? <Link className="button" to={auth.continuation.challengeId ? '/mfa' : '/login'}>{auth.continuation.challengeId ? 'Continue verification' : 'Restart sign in'}</Link>
         : <nav className="actions" aria-label="Get started"><Link className="button" to="/signup">Create an account</Link><Link className="button button-secondary" to="/login">Log in</Link></nav>}
   </Shell>
 }
@@ -142,11 +138,11 @@ function Login() {
     try {
       const result = await auth.api.request<{ state?: unknown; challengeId?: unknown }>('POST', '/api/auth/login/password', { json: values })
       if (result.metadata.status === 202 && result.body?.state === 'mfaRequired') { await auth.establish('mfaRequired', result.body.challengeId); navigate('/mfa', { replace: true }) }
-      else if (result.metadata.status === 200 && result.body?.state === 'authenticated') { await auth.establish('authenticated'); navigate('/', { replace: true }) }
+      else if (result.metadata.status === 200 && result.body?.state === 'authenticated') { const destination = auth.takeLoginDestination(); await auth.establish('authenticated', undefined, destination); navigate(destination, { replace: true }) }
       else setError('Sign in could not be completed safely.')
     } catch (e) { setError(message(e)) }
   })
-  async function google() { setGoogleBusy(true); setError(''); try { const r = await auth.api.request<{ authorizationUrl?: unknown }>('POST', '/api/auth/oidc/google/authorizations'); navigateToGoogle(r.body?.authorizationUrl) } catch (e) { setError(message(e)) } finally { setGoogleBusy(false) } }
+  async function google() { auth.clearLoginDestination(); setGoogleBusy(true); setError(''); try { const r = await auth.api.request<{ authorizationUrl?: unknown }>('POST', '/api/auth/oidc/google/authorizations'); navigateToGoogle(r.body?.authorizationUrl) } catch (e) { setError(message(e)) } finally { setGoogleBusy(false) } }
   return <Shell title="Welcome back" eyebrow="Log in"><form onSubmit={submit} noValidate><CredentialsFields register={register} errors={errors} />{error && <Alert>{error}</Alert>}<button disabled={isSubmitting || googleBusy}>Log in</button></form>
     <div className="divider" aria-hidden="true">or</div><button className="button-secondary" onClick={google} disabled={isSubmitting || googleBusy}>Continue with Google</button>
     <p className="footnote"><Link to="/forgot-password">Forgot password?</Link></p><p className="footnote">New here? <Link to="/signup">Create an account</Link></p></Shell>
@@ -161,7 +157,8 @@ function Mfa() {
     try {
       const result = await auth.api.request<{ state?: unknown }>('POST', `/api/auth/mfa/challenges/${challenge}/${method}`, { json: { code } })
       if (result.body?.state !== 'authenticated') throw new Error('Unexpected response')
-      await auth.establish('authenticated'); navigate('/', { replace: true })
+      const destination = auth.takeLoginDestination()
+      await auth.establish('authenticated', undefined, destination); navigate(destination, { replace: true })
     } catch (e) {
       if (e instanceof ApiProblemError && [404, 409, 410].includes(e.problem.status)) {
         auth.continuation.clear()
@@ -206,13 +203,14 @@ function ResetPassword() {
 }
 function AuthComplete() {
   const auth = useAuth(), navigate = useNavigate()
-  const [result, setResult] = useState<'checking' | 'signedIn' | 'unsuccessful'>('checking')
+  const [result, setResult] = useState<'checking' | 'unsuccessful'>('checking')
   useEffect(() => { let active = true; auth.refreshSession().then(() => {
     if (!active) return
     if (auth.state === 'mfaRequired') { if (auth.continuation.challengeId) navigate('/mfa', { replace: true }); else setResult('unsuccessful') }
-    else setResult(auth.state === 'authenticated' ? 'signedIn' : 'unsuccessful')
+    else if (auth.state === 'authenticated') navigate('/notes', { replace: true })
+    else setResult('unsuccessful')
   }).catch(() => { if (active) setResult('unsuccessful') }); return () => { active = false } }, [auth, navigate])
-  return <Shell title="Completing sign in" eyebrow="Authentication">{result === 'checking' && <p role="status">Checking your session…</p>}{result === 'signedIn' && <><p role="status">You are signed in.</p><Link to="/">Continue</Link></>}{result === 'unsuccessful' && <><p role="status">This sign-in could not be completed. Try again.</p><Link to="/login">Log in</Link></>}</Shell>
+  return <Shell title="Completing sign in">{result === 'checking' && <p role="status">Checking your session…</p>}{result === 'unsuccessful' && <><p role="status">This sign-in could not be completed. Try again.</p><Link to="/login">Log in</Link></>}</Shell>
 }
 function RecentAuth() {
   const auth = useAuth(), navigate = useNavigate()
@@ -232,6 +230,7 @@ function RecentAuth() {
 function AuthRoutes() {
   const auth = useAuth(), location = useLocation(), priorPath = useRef<string | null>(null)
   useEffect(() => {
+    if (auth.state === 'authenticated' && location.pathname === auth.loginDestinationTarget) auth.clearLoginDestination()
     if (priorPath.current === '/verify-email' && location.pathname !== '/verify-email') auth.continuation.verificationToken = null
     if (priorPath.current === '/reset-password' && location.pathname !== '/reset-password') auth.continuation.resetToken = null
     if (priorPath.current === '/settings/security' && location.pathname !== '/settings/security') auth.continuation.emailChangeToken = null

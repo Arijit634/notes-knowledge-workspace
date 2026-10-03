@@ -7,6 +7,7 @@ import { SensitiveStateRegistry } from '../../app/security/SensitiveStateRegistr
 import { SessionCoordinator, type LocalSessionState } from '../../app/security/SessionCoordinator'
 import { AuthContinuationState, validChallenge } from './AuthContinuationState'
 import { captureSecurityLink } from './SecurityLinkIngress'
+import { safeDestination } from './SafeDestination'
 
 type SessionProjection = { state?: unknown; challengeId?: unknown }
 
@@ -20,6 +21,16 @@ export class AuthRuntime {
   private bootPromise: Promise<void> | null = null
   private listeners = new Set<() => void>()
   private registered = false
+  private loginDestination: string | null = null
+
+  rememberLoginDestination(value: unknown): void { this.loginDestination = safeDestination(value) }
+  takeLoginDestination(): string {
+    const destination = this.loginDestination
+    this.loginDestination = null
+    return destination ?? '/notes'
+  }
+  clearLoginDestination(): void { this.loginDestination = null }
+  get loginDestinationTarget(): string { return this.loginDestination ?? '/notes' }
 
   constructor() {
     captureSecurityLink(window.location, window.history, this.continuation)
@@ -65,17 +76,19 @@ export class AuthRuntime {
       this.continuation.challengeId = null
     }
     if (!this.registered) {
-      this.sensitive.register(() => this.continuation.clear())
+      this.sensitive.register(() => { this.continuation.clear(); this.clearLoginDestination() })
       this.registered = true
     }
     // A changed authority invalidates the old proof; fetch for the new session.
     try { await this.csrf.refresh() } finally { this.notify() }
   }
 
-  async establish(state: 'anonymous' | 'mfaRequired' | 'authenticated', challengeId?: unknown): Promise<void> {
+  async establish(state: 'anonymous' | 'mfaRequired' | 'authenticated', challengeId?: unknown, loginTarget?: string): Promise<void> {
     if (state === 'mfaRequired' && !validChallenge(challengeId)) throw new ApiProtocolError()
+    const destination = this.state === 'anonymous' && state === 'mfaRequired' ? this.loginDestination : null
     this.session.transition(state)
     this.continuation.clear()
+    this.loginDestination = state === 'authenticated' ? safeDestination(loginTarget) : destination
     if (state === 'mfaRequired') {
       this.continuation.challengeId = challengeId as string
     }
@@ -83,6 +96,7 @@ export class AuthRuntime {
   }
 
   async logout(): Promise<void> {
+    this.clearLoginDestination()
     await this.api.request('POST', '/api/auth/logout')
     await this.establish('anonymous')
   }

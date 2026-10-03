@@ -52,6 +52,7 @@ test('authenticated security summary and password change stay protected', async 
   const calls = await fakeSecurityBackend(page)
   await page.goto('/settings/security')
   await expect(page.getByText('Current email: owner@example.test')).toBeVisible()
+  await page.locator('summary').filter({ hasText: 'Change password' }).click()
   await page.getByLabel('New password', { exact: true }).fill('SyntheticNewPassword!')
   await page.getByLabel('Confirm new password').fill('SyntheticNewPassword!')
   await page.getByRole('button', { name: 'Change password' }).click()
