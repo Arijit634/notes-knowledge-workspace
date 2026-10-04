@@ -35,13 +35,13 @@ class SessionDescriptorSchemaMigrationTest {
                         "V005__identity__application_session_descriptor.sql",
                         "V006__identity__privilege_assignment.sql",
                         "V007__notes__editor_core.sql", "V008__notes__tags.sql", "V009__notes__versions.sql",
-                        "V010__profile__private_core.sql");
+                        "V010__profile__private_core.sql", "V011__profile__avatar_management.sql");
         JdbcTemplate jdbc = migrator();
         assertThat(jdbc.queryForObject("""
                 select count(*) from information_schema.tables
                 where table_schema in ('identity','profile','notes','knowledge',
                     'publishing','discovery','moderation') and table_type = 'BASE TABLE'
-                """, Integer.class)).isEqualTo(17);
+                """, Integer.class)).isEqualTo(18);
         assertThat(jdbc.queryForList("""
                 select column_name from information_schema.columns
                 where table_schema = 'identity' and table_name = 'application_session_descriptor'

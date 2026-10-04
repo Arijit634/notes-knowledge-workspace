@@ -60,7 +60,7 @@ final class ProfileController {
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(view);
     }
 
-    private UUID owner() {
+    static UUID owner() {
         var authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null || !authentication.isAuthenticated()
                 || !(authentication.getPrincipal() instanceof IdentitySessionPrincipal principal)

@@ -28,7 +28,7 @@ class ProfileTest {
         Profile profile = new Profile(ID, ID, "", "", null, Instant.EPOCH);
         assertThat(profile.normalizedHandle()).isNull();
         assertThat(profile.view().handle()).isNull();
-        assertThat(ProfileView.absent()).isEqualTo(new ProfileView("", "", null, null));
+        assertThat(ProfileView.absent()).isEqualTo(new ProfileView("", "", null, null, null));
     }
 
     @Test void contentBoundsMatchPostgresUnicodeCodePointSemantics() {

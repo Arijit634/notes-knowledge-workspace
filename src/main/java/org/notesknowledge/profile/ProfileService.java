@@ -12,16 +12,18 @@ class ProfileService {
     private final JpaProfileRepositoryAdapter repository;
     private final DatabaseUuidV7Generator ids;
     private final Clock clock;
+    private final AvatarAssetRepository avatars;
 
-    ProfileService(JpaProfileRepositoryAdapter repository, DatabaseUuidV7Generator ids, Clock clock) {
+    ProfileService(JpaProfileRepositoryAdapter repository, DatabaseUuidV7Generator ids, Clock clock, AvatarAssetRepository avatars) {
         this.repository = repository;
         this.ids = ids;
         this.clock = clock;
+        this.avatars = avatars;
     }
 
     @Transactional(readOnly = true)
     ProfileView read(UUID owner) {
-        return repository.find(owner).map(Profile::view).orElseGet(ProfileView::absent);
+        return repository.find(owner).map(p -> p.view().withAvatar(avatars.summary(p.id()))).orElseGet(ProfileView::absent);
     }
 
     @Transactional
@@ -29,6 +31,6 @@ class ProfileService {
         Profile profile = new Profile(ids.generate(), owner, name, biography, handle,
                 clock.instant().truncatedTo(ChronoUnit.MILLIS));
         repository.replace(profile);
-        return repository.find(owner).orElseThrow().view();
+        return read(owner);
     }
 }

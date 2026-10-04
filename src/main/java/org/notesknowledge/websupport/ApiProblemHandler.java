@@ -20,6 +20,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.MultipartException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
@@ -100,6 +101,12 @@ public final class ApiProblemHandler {
             HttpServletRequest request) {
         return response(problemWriter.create(request, HttpStatus.CONTENT_TOO_LARGE,
                 "request_too_large", "Request is too large"));
+    }
+
+    @ExceptionHandler(MultipartException.class)
+    ResponseEntity<ProblemDetail> malformedMultipart(MultipartException exception, HttpServletRequest request) {
+        return response(problemWriter.create(request, HttpStatus.BAD_REQUEST,
+                "malformed_request", "Malformed request"));
     }
 
     @ExceptionHandler(ApiFailureException.class)
