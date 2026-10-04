@@ -1,11 +1,15 @@
 package org.notesknowledge.notes;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.jar.JarEntry;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDDocumentNameDictionary;
 import org.apache.pdfbox.pdmodel.PDEmbeddedFilesNameTreeNode;
@@ -20,10 +24,56 @@ import org.apache.tika.parser.CompositeParser;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 @Tag("FAST")
 class AttachmentParserRuntimeTest {
     @TempDir Path temporary;
+
+    @ParameterizedTest
+    @ValueSource(strings = {"../tika-evil.jar", "..\\tika-evil.jar", "/tmp/tika-evil.jar",
+            "\\\\server\\share\\tika-evil.jar", "subdir/tika-evil.jar", "subdir\\tika-evil.jar",
+            ".", "..", "", "   ", "C:\\tika-evil.jar", "C:/tika-evil.jar", "C:tika-evil.jar",
+            "tika-evil.jar:stream", "tika-\u0000evil.jar"})
+    void rejectsNonFilenameExtractionPathsOnEveryPlatform(String filename) {
+        assertThatThrownBy(() -> AttachmentParserRuntime.parserLibraryDestination(temporary,
+                new JarEntry("BOOT-INF/lib/" + filename)))
+                .isInstanceOf(IOException.class).hasMessage("Unexpected parser artifact").hasNoCause();
+    }
+
+    @Test
+    void rejectsDirectoryEntriesAndEntriesOutsideTheLibraryPrefix() {
+        for (String name : java.util.List.of("BOOT-INF/lib/tika-core.jar/", "tika-core.jar",
+                "OTHER/lib/tika-core.jar")) {
+            assertThatThrownBy(() -> AttachmentParserRuntime.parserLibraryDestination(temporary, new JarEntry(name)))
+                    .isInstanceOf(IOException.class).hasMessage("Unexpected parser artifact").hasNoCause();
+        }
+    }
+
+    @Test
+    void approvedFilenameResolvesDirectlyWithinAbsoluteNormalizedRoot() throws Exception {
+        Path root = temporary.resolve("unused").resolve("..").resolve("libraries");
+        Path destination = AttachmentParserRuntime.parserLibraryDestination(root,
+                new JarEntry("BOOT-INF/lib/tika-core-4.1.0.jar"));
+        assertThat(destination).isAbsolute().isEqualTo(root.toAbsolutePath().normalize().resolve("tika-core-4.1.0.jar"));
+        assertThat(destination.getParent()).isEqualTo(root.toAbsolutePath().normalize());
+        assertThat(destination.startsWith(root.toAbsolutePath().normalize())).isTrue();
+    }
+
+    @Test
+    void duplicateValidatedDestinationCannotOverwriteAnExtractedLibrary() throws Exception {
+        Path root = Files.createDirectory(temporary.resolve("libraries"));
+        var entry = new JarEntry("BOOT-INF/lib/tika-core-4.1.0.jar");
+        Path destination = AttachmentParserRuntime.parserLibraryDestination(root, entry);
+        try (var input = new ByteArrayInputStream(new byte[]{1, 2, 3})) { Files.copy(input, destination); }
+        assertThatThrownBy(() -> {
+            try (var duplicate = new ByteArrayInputStream(new byte[]{4, 5, 6})) {
+                Files.copy(duplicate, AttachmentParserRuntime.parserLibraryDestination(root, entry));
+            }
+        }).isInstanceOf(FileAlreadyExistsException.class);
+        assertThat(Files.readAllBytes(destination)).containsExactly(1, 2, 3);
+    }
 
     @Test
     void effectiveRegistryContainsOnlyPdfAndMp4() throws Exception {

@@ -3,6 +3,7 @@ package org.notesknowledge.notes;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.attribute.AclEntry;
 import java.nio.file.attribute.AclEntryFlag;
@@ -15,6 +16,7 @@ import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
+import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import org.apache.tika.config.TimeoutLimits;
 import org.apache.tika.metadata.Metadata;
@@ -156,18 +158,46 @@ final class AttachmentParserRuntime implements AutoCloseable {
                     var candidate = entries.nextElement();
                     String name = candidate.getName();
                     if (!name.startsWith("BOOT-INF/lib/") || !name.endsWith(".jar")) continue;
+                    Path destination = parserLibraryDestination(libraries, candidate);
                     String filename = name.substring("BOOT-INF/lib/".length());
-                    if (filename.contains("/") || filename.contains("\\") || !parserLibrary(filename)) continue;
+                    if (!parserLibrary(filename)) continue;
                     if (++count > 64 || candidate.getSize() < 0 || candidate.getSize() > 32L * 1024 * 1024) {
                         throw new IOException("Unexpected parser artifact");
                     }
-                    try (var input = jar.getInputStream(candidate)) { Files.copy(input, libraries.resolve(filename)); }
+                    try (var input = jar.getInputStream(candidate)) { Files.copy(input, destination); }
                 }
                 if (count == 0) throw new IOException("Parser libraries unavailable");
                 return libraries + File.separator + "*";
             }
         }
         return classpath;
+    }
+
+    static Path parserLibraryDestination(Path libraries, JarEntry entry) throws IOException {
+        String name = entry.getName();
+        if (entry.isDirectory() || !name.startsWith("BOOT-INF/lib/")) {
+            throw new IOException("Unexpected parser artifact");
+        }
+        String filename = name.substring("BOOT-INF/lib/".length());
+        // Reject both platforms' separators and Windows drive/stream forms on every host.
+        if (filename.isBlank() || filename.contains("/") || filename.contains("\\")
+                || filename.contains(":") || filename.equals(".") || filename.equals("..")) {
+            throw new IOException("Unexpected parser artifact");
+        }
+        try {
+            Path relative = Path.of(filename);
+            if (relative.isAbsolute() || relative.getNameCount() != 1) {
+                throw new IOException("Unexpected parser artifact");
+            }
+            Path root = libraries.toAbsolutePath().normalize();
+            Path destination = root.resolve(relative).normalize();
+            if (!destination.startsWith(root) || !root.equals(destination.getParent())) {
+                throw new IOException("Unexpected parser artifact");
+            }
+            return destination;
+        } catch (InvalidPathException failure) {
+            throw new IOException("Unexpected parser artifact");
+        }
     }
 
     private static boolean parserLibrary(String name) {
