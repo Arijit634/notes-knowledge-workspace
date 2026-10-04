@@ -1,0 +1,2 @@
+# Test-only registered component for deterministic child-JVM fault qualification.
+attachment-failure-fixture=org.notesknowledge.notes.AttachmentForkFailureFixture:key=org.apache.tika.parser.Parser

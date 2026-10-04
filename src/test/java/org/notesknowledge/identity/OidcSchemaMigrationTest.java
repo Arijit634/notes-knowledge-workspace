@@ -34,7 +34,8 @@ class OidcSchemaMigrationTest {
                         "V005__identity__application_session_descriptor.sql",
                         "V006__identity__privilege_assignment.sql",
                         "V007__notes__editor_core.sql", "V008__notes__tags.sql", "V009__notes__versions.sql",
-                        "V010__profile__private_core.sql", "V011__profile__avatar_management.sql");
+                        "V010__profile__private_core.sql", "V011__profile__avatar_management.sql",
+                        "V012__notes__attachment_upload_core.sql");
         JdbcTemplate jdbc = migrator();
         assertThat(jdbc.queryForObject("""
                 select count(*) from information_schema.tables

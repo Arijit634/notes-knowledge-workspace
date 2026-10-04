@@ -1,0 +1,4 @@
+<configuration>
+  <!-- A parser exception or library log may contain private document material. -->
+  <root level="OFF"/>
+</configuration>

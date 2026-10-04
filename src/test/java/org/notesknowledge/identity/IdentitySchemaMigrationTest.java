@@ -44,7 +44,8 @@ class IdentitySchemaMigrationTest {
                         "V005__identity__application_session_descriptor.sql",
                         "V006__identity__privilege_assignment.sql",
                         "V007__notes__editor_core.sql", "V008__notes__tags.sql", "V009__notes__versions.sql",
-                        "V010__profile__private_core.sql", "V011__profile__avatar_management.sql");
+                        "V010__profile__private_core.sql", "V011__profile__avatar_management.sql",
+                        "V012__notes__attachment_upload_core.sql");
         byte[] v001 = Files.readAllBytes(Path.of("src/main/resources/db/migration/"
                 + "V001__platform__spring_session.sql"));
         assertThat(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(v001)))
@@ -67,7 +68,7 @@ class IdentitySchemaMigrationTest {
                         "identity.mfa_recovery_code", "identity.privilege_assignment",
                         "identity.security_audit_fact", "identity.security_email_delivery",
                         "identity.spring_session", "identity.spring_session_attributes",
-                "notes.note", "notes.note_preferences", "notes.note_tag", "notes.note_version", "notes.note_version_hold", "profile.avatar_asset", "profile.profile");
+                "notes.attachment", "notes.note", "notes.note_preferences", "notes.note_tag", "notes.note_version", "notes.note_version_hold", "profile.avatar_asset", "profile.profile");
         assertThat(jdbc.queryForList("""
                 select indexname from pg_indexes where schemaname = 'identity'
                 """, String.class)).contains("ix_security_email_delivery_ready",

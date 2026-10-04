@@ -1,0 +1,6 @@
+{
+  "pipes": {"maxInlineBytes": 0, "maxIpcPayloadBytes": 65536, "startupTimeoutMillis": 15000},
+  "parsers": [{"attachment-failure-fixture": {}}],
+  "text-recognizers": [],
+  "parse-context": {"exception-reporting": {"level": "MESSAGE_REDACTED", "maxLength": 128}}
+}

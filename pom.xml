@@ -23,6 +23,7 @@
         <spring-ai.version>2.0.1</spring-ai.version>
         <springdoc.version>3.1.1</springdoc.version>
         <bouncycastle.version>1.86</bouncycastle.version>
+        <tika.version>4.1.0</tika.version>
     </properties>
 
     <dependencyManagement>
@@ -45,6 +46,31 @@
     </dependencyManagement>
 
     <dependencies>
+        <dependency>
+            <groupId>org.apache.tika</groupId>
+            <artifactId>tika-pipes-fork-parser</artifactId>
+            <version>${tika.version}</version>
+            <exclusions>
+                <exclusion><groupId>org.apache.tika</groupId><artifactId>tika-parsers-standard-package</artifactId></exclusion>
+                <exclusion><groupId>org.apache.tika</groupId><artifactId>tika-langdetect-charsoup</artifactId></exclusion>
+                <exclusion><groupId>org.apache.tika</groupId><artifactId>tika-eval-core</artifactId></exclusion>
+                <exclusion><groupId>org.apache.logging.log4j</groupId><artifactId>log4j-slf4j2-impl</artifactId></exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.tika</groupId>
+            <artifactId>tika-parser-pdf-module</artifactId>
+            <version>${tika.version}</version>
+            <exclusions>
+                <exclusion><groupId>org.bouncycastle</groupId><artifactId>bcjmail-jdk18on</artifactId></exclusion>
+                <exclusion><groupId>org.bouncycastle</groupId><artifactId>bcprov-jdk18on</artifactId></exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.tika</groupId>
+            <artifactId>tika-parser-audiovideo-module</artifactId>
+            <version>${tika.version}</version>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>

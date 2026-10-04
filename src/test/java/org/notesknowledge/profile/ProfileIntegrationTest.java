@@ -215,7 +215,7 @@ class ProfileIntegrationTest {
 
     @Test void migrationAddsOnlyPrivateRootAndRestrictsIdentityHandleAndBounds() throws Exception {
         assertThat(jdbc.queryForObject("show server_version", String.class)).startsWith("18.");
-        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname in ('identity','profile','notes','knowledge','publishing','discovery','moderation')", Integer.class)).isEqualTo(18);
+        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname in ('identity','profile','notes','knowledge','publishing','discovery','moderation')", Integer.class)).isEqualTo(19);
         assertThat(jdbc.queryForList("select tablename from pg_tables where schemaname='profile'", String.class)).containsExactlyInAnyOrder("profile", "avatar_asset");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_schema='profile' and table_name='profile' order by ordinal_position", String.class))
                 .containsExactly("profile_id", "user_id", "display_name", "biography", "public_handle_original", "public_handle_normalized", "updated_at", "selected_avatar_id");
@@ -231,9 +231,8 @@ class ProfileIntegrationTest {
         assertThatThrownBy(() -> jdbc.update("update profile.profile set public_handle_original='Reader',public_handle_normalized=null where user_id=?", user)).isInstanceOf(DataIntegrityViolationException.class);
         assertThatThrownBy(() -> jdbc.update("update profile.profile set public_handle_original='Reader',public_handle_normalized='WRONG' where user_id=?", user)).isInstanceOf(DataIntegrityViolationException.class);
         assertThatThrownBy(() -> jdbc.update("update profile.profile set public_handle_original='a-b',public_handle_normalized='a-b' where user_id=?", user)).isInstanceOf(DataIntegrityViolationException.class);
-        for (String table : List.of("profile.public_profile_projection", "notes.attachment")) {
-            assertThat(jdbc.queryForObject("select to_regclass(?) is null", Boolean.class, table)).isTrue();
-        }
+        assertThat(jdbc.queryForObject("select to_regclass('profile.public_profile_projection') is null", Boolean.class)).isTrue();
+        assertThat(jdbc.queryForObject("select to_regclass('notes.attachment') is not null", Boolean.class)).isTrue();
     }
 
     private org.springframework.test.web.servlet.ResultActions replace(Browser owner, String input) throws Exception {

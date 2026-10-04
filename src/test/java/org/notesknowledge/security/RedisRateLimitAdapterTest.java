@@ -199,12 +199,35 @@ class RedisRateLimitAdapterTest {
             var global = request("NOTE_AI_BULK_GLOBAL", keys.derive("NOTE_AI_BULK_GLOBAL", "whole-deployment"));
             assertThat(adapter.evaluate(global)).isInstanceOf(RateLimitPort.Allowed.class);
             assertThat(adapter.evaluate(global)).isEqualTo(new RateLimitPort.Throttled(60));
-            assertThat(template.keys("notes:rate:*")).hasSize(2).allSatisfy(key ->
+            assertThat(template.keys("notes:rate:NOTE_AI_BULK*")).hasSize(2).allSatisfy(key ->
                     assertThat(key).doesNotContain("synthetic-note-owner", "subject:", "whole-deployment"));
         } finally { factory.destroy(); }
     }
 
     private RateLimitPort.Request request(String control, RateLimitPort.OpaqueKey key) {
         return new RateLimitPort.Request(new RateLimitPort.ControlClass(control), key, 1);
+    }
+
+    @Test
+    void attachmentAdmissionHasSeparateOpaqueSubjectAndGlobalBuckets() {
+        var factory = new LettuceConnectionFactory(redis.getHost(), redis.getMappedPort(6379));
+        factory.afterPropertiesSet();
+        try {
+            var template = new StringRedisTemplate(factory); template.afterPropertiesSet();
+            var adapter = new RedisRateLimitAdapter(template,
+                    new IdentityRateProperties(60, 86400, 6, 6, 12, 10, 6, 12, 1200, 250, 8, 6, 8),
+                    new NotesRateProperties(60, 60, 1200));
+            var keys = new RateKeyDeriver("AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=");
+            for (String control : new String[]{"ATTACHMENT_UPLOAD", "ATTACHMENT_UPLOAD_GLOBAL"}) {
+                var opaque = keys.derive(control, control.endsWith("GLOBAL") ? "whole-deployment" : "subject:synthetic-owner");
+                var request = request(control, opaque);
+                int ceiling = control.endsWith("GLOBAL") ? 120 : 12;
+                for (int i = 0; i < ceiling; i++) assertThat(adapter.evaluate(request)).isInstanceOf(RateLimitPort.Allowed.class);
+                assertThat(adapter.evaluate(request)).isEqualTo(new RateLimitPort.Throttled(60));
+                assertThat(template.getExpire("notes:rate:" + control + ":" + opaque.value())).isBetween(1L, 60L);
+            }
+            assertThat(template.keys("notes:rate:ATTACHMENT_*")).hasSize(2).allSatisfy(key ->
+                    assertThat(key).doesNotContain("synthetic-owner", "subject:", "whole-deployment"));
+        } finally { factory.destroy(); }
     }
 }

@@ -165,7 +165,8 @@ public class SecurityConfiguration {
                                 "/api/notes/{noteId}/trash", "/api/notes/{noteId}/restore",
                                 "/api/notes/{noteId}/versions/{versionId}/restore")
                         .hasAuthority("ROLE_USER")
-                        .requestMatchers(HttpMethod.POST, "/api/notes", "/api/notes/ai-access-bulk")
+                        .requestMatchers(HttpMethod.POST, "/api/notes", "/api/notes/ai-access-bulk",
+                                "/api/notes/{noteId}/attachments")
                         .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.PUT, "/api/me/security/password")
                         .hasAuthority("ROLE_USER")
