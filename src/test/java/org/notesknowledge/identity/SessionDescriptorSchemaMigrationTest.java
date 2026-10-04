@@ -34,13 +34,14 @@ class SessionDescriptorSchemaMigrationTest {
                         "V004__identity__google_oidc_core.sql",
                         "V005__identity__application_session_descriptor.sql",
                         "V006__identity__privilege_assignment.sql",
-                        "V007__notes__editor_core.sql", "V008__notes__tags.sql", "V009__notes__versions.sql");
+                        "V007__notes__editor_core.sql", "V008__notes__tags.sql", "V009__notes__versions.sql",
+                        "V010__profile__private_core.sql");
         JdbcTemplate jdbc = migrator();
         assertThat(jdbc.queryForObject("""
                 select count(*) from information_schema.tables
                 where table_schema in ('identity','profile','notes','knowledge',
                     'publishing','discovery','moderation') and table_type = 'BASE TABLE'
-                """, Integer.class)).isEqualTo(16);
+                """, Integer.class)).isEqualTo(17);
         assertThat(jdbc.queryForList("""
                 select column_name from information_schema.columns
                 where table_schema = 'identity' and table_name = 'application_session_descriptor'

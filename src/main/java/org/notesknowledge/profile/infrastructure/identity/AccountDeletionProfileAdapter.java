@@ -7,7 +7,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Profile currently has no persisted state; this seam owns its later denial writes. */
+/** Public-state denial seam; private Profile access is gated by current Identity eligibility. */
 @Component
 public class AccountDeletionProfileAdapter implements AccountDeletionProfileConsequence {
     @Override
