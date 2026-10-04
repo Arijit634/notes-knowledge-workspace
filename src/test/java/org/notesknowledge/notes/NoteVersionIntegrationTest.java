@@ -260,7 +260,7 @@ class NoteVersionIntegrationTest {
         assertThat(row(version)).isEqualTo(before);
         assertThat(jdbc.queryForList("select indexname from pg_indexes where schemaname='notes'", String.class))
                 .contains("ux_note_version_scope", "ux_note_version_lineage", "ix_note_version_owner_created");
-        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname in ('identity','notes')", Integer.class)).isEqualTo(16);
+        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname in ('identity','notes')", Integer.class)).isEqualTo(17);
     }
 
     @Test void failedSaveAndRestoreRollBackCheckpointInsertionAndCompactionTogether() {

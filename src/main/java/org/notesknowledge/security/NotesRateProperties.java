@@ -17,6 +17,8 @@ record NotesRateProperties(@DefaultValue("60") int windowSeconds,
         return switch (control) {
             case "NOTE_AI_BULK" -> bulkCeiling;
             case "NOTE_AI_BULK_GLOBAL" -> aggregateCeiling;
+            case "ATTACHMENT_UPLOAD" -> 12;
+            case "ATTACHMENT_UPLOAD_GLOBAL" -> 120;
             default -> throw new IllegalArgumentException("Unknown Notes rate class");
         };
     }

@@ -261,8 +261,8 @@ class AvatarIntegrationTest {
     }
 
     @Test void realServletMultipartBoundRejectsOversizedFileAndRequest() throws Exception {
-        assertThat(multipartLimits.getMaxFileSize()).isEqualTo(5242880);
-        assertThat(multipartLimits.getMaxRequestSize()).isEqualTo(6291456);
+        assertThat(multipartLimits.getMaxFileSize()).isEqualTo(26214400);
+        assertThat(multipartLimits.getMaxRequestSize()).isEqualTo(27262976);
         Browser owner=browser(account(),"ROLE_USER");
         try(var client=HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(5)).build()) {
             for(int bytes:new int[] {5242881,6291457}) {
@@ -301,8 +301,8 @@ class AvatarIntegrationTest {
         remove(first).andExpect(status().isNoContent());
         assertThatThrownBy(() -> jdbc.update("update profile.profile set selected_avatar_id=? where user_id=?",asset,one)).isInstanceOf(DataIntegrityViolationException.class);
         assertThatThrownBy(() -> jdbc.update("update profile.avatar_asset set state='validated',removed_at=null,cleaned_at=null where avatar_asset_id=?",asset)).isInstanceOf(DataIntegrityViolationException.class);
-        assertThat(jdbc.queryForObject("select to_regclass('profile.public_profile_projection') is null and to_regclass('notes.attachment') is null",Boolean.class)).isTrue();
-        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname in ('identity','profile','notes','knowledge','publishing','discovery','moderation')",Integer.class)).isEqualTo(18);
+        assertThat(jdbc.queryForObject("select to_regclass('profile.public_profile_projection') is null and to_regclass('notes.attachment') is not null",Boolean.class)).isTrue();
+        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname in ('identity','profile','notes','knowledge','publishing','discovery','moderation')",Integer.class)).isEqualTo(19);
     }
 
     @Test void accountDeletionConsequenceIsAtomicAndDoesNoStorageIo() throws Exception {

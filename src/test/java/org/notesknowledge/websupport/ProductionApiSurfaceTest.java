@@ -41,6 +41,11 @@ class ProductionApiSurfaceTest {
                 "/api/notes/{noteId}/trash", "/api/notes/{noteId}/restore",
                 "/api/notes/{noteId}/ai-access", "/api/notes/ai-access-bulk",
                 "/api/notes/{noteId}/versions", "/api/notes/{noteId}/versions/{versionId}",
-                "/api/notes/{noteId}/versions/{versionId}/restore", "/api/me/profile", "/api/me/profile/avatar");
+                "/api/notes/{noteId}/versions/{versionId}/restore", "/api/me/profile", "/api/me/profile/avatar",
+                "/api/notes/{noteId}/attachments");
+        assertThat(requestMappings.getHandlerMethods().keySet().stream()
+                .filter(mapping -> mapping.getPatternValues().contains("/api/notes/{noteId}/attachments"))
+                .flatMap(mapping -> mapping.getMethodsCondition().getMethods().stream()))
+                .containsExactly(org.springframework.web.bind.annotation.RequestMethod.POST);
     }
 }

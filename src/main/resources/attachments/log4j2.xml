@@ -1,0 +1,3 @@
+<Configuration status="OFF">
+  <Loggers><Root level="OFF"/></Loggers>
+</Configuration>

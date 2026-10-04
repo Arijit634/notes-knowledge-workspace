@@ -1,0 +1,24 @@
+{
+  "pipes": {"maxInlineBytes": 0, "maxIpcPayloadBytes": 65536, "startupTimeoutMillis": 15000},
+  "parsers": [
+    {"pdf-parser": {
+      "pages": {"text": "NONE", "inference": [], "emit": {"enabled": false}},
+      "extractInlineImages": false,
+      "extractInlineImageMetadataOnly": false,
+      "extractAcroFormContent": false,
+      "extractAnnotationText": false,
+      "extractBookmarksText": false,
+      "extractActions": true,
+      "ifXFAExtractOnlyXFA": false,
+      "parseIncrementalUpdates": false,
+      "extractIncrementalUpdateInfo": false,
+      "maxMainMemoryBytes": 1048576,
+      "maxPages": 100
+    }},
+    {"mp4-parser": {"maxBoxSize": 8388608}}
+  ],
+  "text-recognizers": [],
+  "parse-context": {
+    "exception-reporting": {"level": "FULL", "maxLength": 128}
+  }
+}
