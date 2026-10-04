@@ -54,6 +54,6 @@ class Profile {
     UUID id() { return id; }
     UUID userId() { return userId; }
     String normalizedHandle() { return handleNormalized; }
-    ProfileView view() { return new ProfileView(displayName, biography, handleOriginal, updatedAt); }
+    ProfileView view() { return new ProfileView(displayName, biography, handleOriginal, updatedAt, null); }
     @Override public String toString() { return "Profile[REDACTED]"; }
 }

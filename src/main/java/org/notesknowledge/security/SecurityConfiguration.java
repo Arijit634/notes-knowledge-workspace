@@ -129,6 +129,10 @@ public class SecurityConfiguration {
                         .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.PUT, "/api/me/profile")
                         .hasAuthority("ROLE_USER")
+                        .requestMatchers(HttpMethod.PUT, "/api/me/profile/avatar")
+                        .hasAuthority("ROLE_USER")
+                        .requestMatchers(HttpMethod.DELETE, "/api/me/profile/avatar")
+                        .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.GET, "/api/me/security/sessions")
                         .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.DELETE,

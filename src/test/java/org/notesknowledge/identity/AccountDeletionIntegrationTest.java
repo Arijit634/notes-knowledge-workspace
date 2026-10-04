@@ -213,6 +213,7 @@ class AccountDeletionIntegrationTest {
             UUID owner = account("active");
             Browser browser = csrf(cookie(session(owner, "ROLE_USER", "password", clock.instant())));
             String other = session(owner, "ROLE_USER", null, clock.instant());
+            UUID avatar = privateAvatar(owner);
             UUID capability = capability(owner);
             UUID delivery = delivery(capability);
             checkpoint.failAt = stage;
@@ -221,6 +222,8 @@ class AccountDeletionIntegrationTest {
                         .andExpect(status().isInternalServerError());
             } finally { checkpoint.failAt = null; }
             assertThat(state(owner)).as(stage).isEqualTo("active");
+            assertThat(jdbc.queryForObject("select selected_avatar_id from profile.profile where user_id=?", UUID.class, owner)).as(stage).isEqualTo(avatar);
+            assertThat(jdbc.queryForObject("select state from profile.avatar_asset where avatar_asset_id=?", String.class, avatar)).as(stage).isEqualTo("validated");
             assertThat(sessions.findById(raw(browser.cookie()))).as(stage).isNotNull();
             assertThat(sessions.findById(other)).as(stage).isNotNull();
             assertThat(jdbc.queryForObject("select revoked_at from identity.identity_capability "
@@ -255,6 +258,7 @@ class AccountDeletionIntegrationTest {
     @Test void claimedEmailWorkCannotStartAfterDeletionAndRetainsNoTokenMaterial()
             throws Exception {
         UUID owner = account("active");
+        UUID avatar = privateAvatar(owner);
         Browser browser = csrf(cookie(session(owner, "ROLE_USER", "password", clock.instant())));
         UUID capability = capability(owner);
         UUID work = delivery(capability);
@@ -268,6 +272,8 @@ class AccountDeletionIntegrationTest {
         assertThat(emailWork.ownsUsableClaim(claims.getFirst(), clock.instant())).isTrue();
         performDelete(browser, "{\"confirmAccountDeletion\":true}")
                 .andExpect(status().isNoContent());
+        assertThat(jdbc.queryForObject("select selected_avatar_id from profile.profile where user_id=?", UUID.class, owner)).isNull();
+        assertThat(jdbc.queryForObject("select state='removed' and cleaned_at is null from profile.avatar_asset where avatar_asset_id=?", Boolean.class, avatar)).isTrue();
         assertThat(emailWork.ownsUsableClaim(claims.getFirst(), clock.instant())).isFalse();
         emailWorker.process(claims.getFirst());
         assertThat(jdbc.queryForObject("select state from identity.security_email_delivery "
@@ -363,6 +369,17 @@ class AccountDeletionIntegrationTest {
         assertThat(jdbc.queryForObject("select count(*) from identity.security_audit_fact "
                 + "where actor_user_id = ? and event_category = 'password_change'",
                 Integer.class, owner)).isZero();
+    }
+
+    private UUID privateAvatar(UUID owner) {
+        UUID profileId = jdbc.queryForObject("select uuidv7()", UUID.class);
+        UUID avatarId = jdbc.queryForObject("select uuidv7()", UUID.class);
+        jdbc.update("insert into profile.profile(profile_id,user_id,display_name,biography,updated_at) values(?,?,'','',now())", profileId, owner);
+        // Synthetic metadata-only fixture; no runtime object or provider effect.
+        String reference = "private-avatar/" + avatarId.toString().replace("-", "") + profileId.toString().replace("-", "");
+        jdbc.update("insert into profile.avatar_asset(avatar_asset_id,profile_id,object_reference,state,media_type,byte_size,width,height,display_filename,created_at) values(?,?,?,'validated','image/png',12,1,1,'fixture.png',now())", avatarId, profileId, reference);
+        jdbc.update("update profile.profile set selected_avatar_id=? where profile_id=?", avatarId, profileId);
+        return avatarId;
     }
 
     private org.springframework.test.web.servlet.ResultActions performDelete(Browser browser,

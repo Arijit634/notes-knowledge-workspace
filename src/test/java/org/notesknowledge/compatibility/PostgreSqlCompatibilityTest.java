@@ -73,10 +73,10 @@ class PostgreSqlCompatibilityTest {
                         "V005__identity__application_session_descriptor.sql",
                         "V006__identity__privilege_assignment.sql",
                         "V007__notes__editor_core.sql", "V008__notes__tags.sql", "V009__notes__versions.sql",
-                        "V010__profile__private_core.sql");
+                        "V010__profile__private_core.sql", "V011__profile__avatar_management.sql");
         assertThat(jdbc.queryForObject(
                 "select to_regclass('public.flyway_schema_history') is not null", Boolean.class)).isTrue();
-        assertThat(productRelationCount()).isEqualTo(17);
+        assertThat(productRelationCount()).isEqualTo(18);
         assertThat(publicNonFrameworkRelationCount()).isZero();
     }
 

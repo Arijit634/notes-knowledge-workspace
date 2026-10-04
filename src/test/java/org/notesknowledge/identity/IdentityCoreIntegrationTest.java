@@ -146,7 +146,7 @@ class IdentityCoreIntegrationTest {
                 "/api/me/security/sessions/{sessionHandle}",
                 "/api/me/security/sessions/revoke-others",
                 "/api/me/security/sessions/revoke-all",
-                "/api/me/account", "/api/me/profile", "/api/me/note-preferences", "/api/notes",
+                "/api/me/account", "/api/me/profile", "/api/me/profile/avatar", "/api/me/note-preferences", "/api/notes",
                 "/api/notes/{noteId}", "/api/notes/{noteId}/tags", "/api/notes/{noteId}/pin",
                 "/api/notes/{noteId}/archive", "/api/notes/{noteId}/return-from-archive",
                 "/api/notes/{noteId}/trash", "/api/notes/{noteId}/restore",

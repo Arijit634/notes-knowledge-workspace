@@ -51,7 +51,7 @@ class PrivilegeAssignmentDatabaseTest {
                 select count(*) from information_schema.tables
                 where table_schema in ('identity','profile','notes','knowledge',
                     'publishing','discovery','moderation') and table_type = 'BASE TABLE'
-                """, Integer.class)).isEqualTo(17);
+                """, Integer.class)).isEqualTo(18);
         assertThat(jdbc.queryForList("""
                 select indexname from pg_indexes where schemaname = 'identity'
                   and tablename = 'privilege_assignment'
