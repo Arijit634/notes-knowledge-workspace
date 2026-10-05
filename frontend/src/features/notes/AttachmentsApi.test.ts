@@ -3,7 +3,7 @@ import { ApiProtocolError } from '../../app/api/ProblemDetailsDecoder'
 import type { AuthRuntime } from '../auth/AuthRuntime'
 import { attachmentsApi, attachmentContentUrl, attachmentDescription, decodeAttachment, type AttachmentCore } from './AttachmentsApi'
 
-export const syntheticAttachment: AttachmentCore = {
+const syntheticAttachment: AttachmentCore = {
   id: '01990a55-9e12-7ac4-8f5b-31aa4a91d402', noteId: '01990a55-9e12-7ac4-8f5b-31aa4a91d401',
   mediaKind: 'image', displayFilename: 'synthetic.png', mediaType: 'image/png', sizeBytes: 1024,
   width: 32, height: 24, durationSeconds: null, pageCount: null, storageState: 'stored', validationState: 'accepted',
@@ -31,24 +31,9 @@ describe('Attachment protocol', () => {
     const { width: omitted, ...missing } = syntheticAttachment; void omitted
     for (const body of [missing, null, [], 'bad']) expect(() => decodeAttachment(body)).toThrow(ApiProtocolError)
   })
-  it.each([null, 'W/"a1"', '*', 'a1'])('rejects invalid detail and upload ETag %s', async etag => {
+  it.each([null, 'W/"a1"', '*', 'a1'])('rejects invalid detail ETag %s', async etag => {
     const { auth } = client(syntheticAttachment, 200, etag)
     await expect(attachmentsApi.detail(auth, syntheticAttachment.noteId, syntheticAttachment.id)).rejects.toThrow(ApiProtocolError)
-    const upload = client(syntheticAttachment, 201, etag)
-    await expect(attachmentsApi.upload(upload.auth, syntheticAttachment.noteId, new File(['x'], 'synthetic.png'))).rejects.toThrow(ApiProtocolError)
-  })
-  it('requires 201, matching parent, canonical Location and only one multipart file', async () => {
-    const location = `/api/notes/${syntheticAttachment.noteId}/attachments/${syntheticAttachment.id}`
-    const good = client(syntheticAttachment, 201, '"a1"', location)
-    const file = new File(['synthetic'], 'synthetic.png', { type: 'image/png' })
-    expect((await attachmentsApi.upload(good.auth, syntheticAttachment.noteId, file)).etag).toBe('"a1"')
-    const options = good.request.mock.calls[0] as unknown as [string, string, { multipart: FormData }]
-    expect(Array.from(options[2].multipart.keys())).toEqual(['file'])
-    expect(options[2].multipart.get('file')).toBe(file)
-    for (const candidate of [client(syntheticAttachment, 200, '"a1"', location), client(syntheticAttachment, 201, '"a1"', '/wrong'),
-      client({ ...syntheticAttachment, noteId: 'other' }, 201, '"a1"', location)]) {
-      await expect(attachmentsApi.upload(candidate.auth, syntheticAttachment.noteId, file)).rejects.toThrow(ApiProtocolError)
-    }
   })
   it('decodes cursor pages, rejects foreign rows and malformed pages', async () => {
     const good = client({ items: [syntheticAttachment], nextCursor: 'opaque+/=' })

@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Link } from 'react-router'
 import { useInfiniteQuery, type InfiniteData } from '@tanstack/react-query'
 import type { CursorPage, Etagged } from '../../app/api/ApiClient'
 import { ApiProblemError } from '../../app/api/ProblemDetailsDecoder'
 import type { AuthRuntime } from '../auth/AuthRuntime'
 import { attachmentsApi, attachmentDescription, attachmentIssue, type AttachmentCore } from './AttachmentsApi'
 import { noteKeys } from './NotesKeys'
+import { AttachmentMediaViewer } from './AttachmentMediaViewer'
+import { uploadAttachment } from './AttachmentUploadTransport'
 
 export function AttachmentPanel({ auth, noteId, lifecycle, onModalChange }: {
   auth: AuthRuntime; noteId: string; lifecycle: string; onModalChange: (open: boolean) => void
@@ -20,16 +21,26 @@ export function AttachmentPanel({ auth, noteId, lifecycle, onModalChange }: {
   const [busy, setBusy] = useState<'upload' | 'detail' | 'remove' | null>(null)
   const [error, setError] = useState(''), [status, setStatus] = useState('')
   const [confirmation, setConfirmation] = useState<Etagged<AttachmentCore> | null>(null)
+  const [viewing, setViewing] = useState<string | null>(null)
+  const [progress, setProgress] = useState<number | null>(null)
+  const [validating, setValidating] = useState(false)
   const input = useRef<HTMLInputElement>(null), cancel = useRef<HTMLButtonElement>(null)
   const panel = useRef<HTMLElement>(null), invoker = useRef<HTMLElement | null>(null)
   const dialog = useRef<HTMLDivElement>(null)
+  const viewerClose = useRef<HTMLButtonElement>(null)
   const controller = useRef<AbortController | null>(null), alive = useRef(false)
   const current = () => alive.current && auth.session.viewerScope === scope
-  useEffect(() => { alive.current = true; return () => { alive.current = false; controller.current?.abort() } }, [])
-  useEffect(() => { onModalChange(confirmation !== null); if (confirmation) cancel.current?.focus()
-    return () => onModalChange(false) }, [confirmation, onModalChange])
+  useEffect(() => {
+    alive.current = true
+    const clear = () => { alive.current = false; controller.current?.abort() }
+    const unregister = auth.sensitive.register(clear)
+    return () => { clear(); unregister() }
+  }, [auth])
+  useEffect(() => { onModalChange(confirmation !== null || viewing !== null)
+    if (confirmation) cancel.current?.focus(); else if (viewing) viewerClose.current?.focus()
+    return () => onModalChange(false) }, [confirmation, viewing, onModalChange])
   useEffect(() => { if (busy === 'remove') dialog.current?.focus() }, [busy])
-  function close() { onModalChange(false); setConfirmation(null); requestAnimationFrame(() => {
+  function close() { onModalChange(false); setConfirmation(null); setViewing(null); requestAnimationFrame(() => {
     if (invoker.current?.isConnected) invoker.current.focus(); else panel.current?.focus()
   }) }
   async function invalidate(id?: string, removed = false) {
@@ -39,7 +50,7 @@ export function AttachmentPanel({ auth, noteId, lifecycle, onModalChange }: {
     await auth.queries.invalidateQueries({ queryKey: noteKeys.attachments(scope, noteId), exact: true })
   }
   function begin(operation: 'upload' | 'detail' | 'remove') {
-    controller.current = new AbortController(); setBusy(operation); setError(''); setStatus('')
+    controller.current = new AbortController(); setBusy(operation); setError(''); setStatus(''); setProgress(null); setValidating(false)
     return controller.current.signal
   }
   async function upload(file: File) {
@@ -47,12 +58,19 @@ export function AttachmentPanel({ auth, noteId, lifecycle, onModalChange }: {
     if (file.size > 25 * 1024 * 1024) { setError('That file is too large. Choose a file up to 25 MiB.'); if (input.current) input.current.value = ''; return }
     const signal = begin('upload')
     try {
-      const entry = await attachmentsApi.upload(auth, noteId, file, signal)
+      const entry = await uploadAttachment(auth.csrf, noteId, file, { signal,
+        onProgress: value => { if (current() && !signal.aborted) setProgress(value) },
+        onUploadComplete: () => { if (current() && !signal.aborted) setValidating(true) } })
       if (!current() || signal.aborted) return
       auth.queries.setQueryData(noteKeys.attachment(scope, noteId, entry.value.id), entry)
       await invalidate()
       if (current()) setStatus('File added.')
-    } catch (failure) { if (current() && !signal.aborted) setError(attachmentIssue(failure)) }
+    } catch (failure) { if (current()) {
+      if (signal.aborted) {
+        setStatus('Upload stopped in this tab. Refresh files if it had already finished on the server.')
+        await invalidate()
+      } else setError(attachmentIssue(failure))
+    } }
     finally { if (current() && controller.current?.signal === signal) { setBusy(null); if (input.current) input.current.value = '' } }
   }
   async function prepare(file: AttachmentCore, button: HTMLButtonElement) {
@@ -96,7 +114,7 @@ export function AttachmentPanel({ auth, noteId, lifecycle, onModalChange }: {
       } else setError(attachmentIssue(failure))
     } finally { if (current()) setBusy(null) }
   }
-  return <><section ref={panel} tabIndex={-1} className="notes-tool notes-attachments" aria-label="Attachments" inert={!!confirmation}>
+  return <><section ref={panel} tabIndex={-1} className="notes-tool notes-attachments" aria-label="Attachments" inert={!!confirmation || !!viewing}>
     <h2>Attachments</h2><p>Adding or removing files does not save your note text.</p>
     <label htmlFor="note-attachment-file">Add file</label>
     <input ref={input} id="note-attachment-file" type="file" accept=".png,.jpg,.jpeg,.wav,.mp4,.pdf"
@@ -104,7 +122,9 @@ export function AttachmentPanel({ auth, noteId, lifecycle, onModalChange }: {
         const file = event.target.files?.[0]; if (file) void upload(file)
       }} />
     {lifecycle === 'trashed' && <p>Restore this note before adding more files.</p>}
-    {busy === 'upload' && <div role="status">Uploading… <progress aria-label="Uploading file" /></div>}
+    {busy === 'upload' && <div role="status">{validating ? 'Validating file…' : `Uploading…${progress === null ? '' : ` ${progress}%`}`}
+      {!validating && <><progress aria-label="Uploading file" max={100} value={progress ?? undefined} />
+        <button type="button" className="button-secondary" onClick={() => controller.current?.abort()}>Stop upload</button></>}</div>}
     {busy === 'detail' && <p role="status">Checking file…</p>}
     {status && <p role="status">{status}</p>}{error && <p role="alert">{error}</p>}
     {list.isPending && <p role="status">Loading attachments…</p>}
@@ -113,26 +133,32 @@ export function AttachmentPanel({ auth, noteId, lifecycle, onModalChange }: {
     {files.length > 0 && <><p>{files.length} {files.length === 1 ? 'file' : 'files'}{list.hasNextPage ? ' loaded' : ''}</p>
       <ul className="notes-attachment-list">{files.map(file => <li key={file.id}>
         <strong>{file.displayFilename}</strong><span>{attachmentDescription(file)}</span>
-        <div className="notes-actions"><Link to={`/notes/${encodeURIComponent(noteId)}/attachments/${encodeURIComponent(file.id)}`}>Open <span className="attachment-sr-only">{file.displayFilename}</span></Link>
+        <div className="notes-actions"><button type="button" className="button-secondary" disabled={busy !== null} onClick={event => {
+          invoker.current = event.currentTarget; onModalChange(true); setViewing(file.id)
+        }}>Open <span className="attachment-sr-only">{file.displayFilename}</span></button>
           <button type="button" className="button-secondary" disabled={busy !== null} onClick={event => void prepare(file, event.currentTarget)}>Remove <span className="attachment-sr-only">{file.displayFilename}</span></button></div>
       </li>)}</ul></>}
+    <button type="button" className="button-secondary" disabled={busy !== null || list.isFetching} onClick={() => void list.refetch()}>Refresh files</button>
     {list.hasNextPage && <button type="button" className="button-secondary" disabled={list.isFetchingNextPage}
       onClick={() => void list.fetchNextPage()}>Load more files</button>}
-  </section>{confirmation && createPortal(<div className="notes-layout notes-attachment-modal"><div className="dialog-backdrop">
-    <div ref={dialog} tabIndex={-1} className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="attachment-remove-title" aria-describedby="attachment-remove-help"
+  </section>{(confirmation || viewing) && createPortal(<div className="notes-layout notes-attachment-modal"><div className="dialog-backdrop">
+    <div ref={dialog} tabIndex={-1} className={`confirm-dialog${viewing ? ' notes-media-dialog' : ''}`} role="dialog" aria-modal="true"
+      aria-labelledby={viewing ? 'attachment-viewer-title' : 'attachment-remove-title'} aria-describedby={viewing ? undefined : 'attachment-remove-help'}
       onKeyDown={event => {
         if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); event.stopPropagation() }
         if (event.key === 'Escape' && busy !== 'remove') close()
         if (event.key === 'Tab') { event.preventDefault()
-          const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'))
+          const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], audio[controls], video[controls]'))
           if (buttons.length === 0) { event.currentTarget.focus(); return }
-          const index = buttons.indexOf(document.activeElement as HTMLButtonElement)
+          const index = buttons.indexOf(document.activeElement as HTMLElement)
           buttons[(index + (event.shiftKey ? buttons.length - 1 : 1)) % buttons.length]?.focus()
         }
       }}>
-      <h2 id="attachment-remove-title">Remove attachment?</h2><p id="attachment-remove-help">“{confirmation.value.displayFilename}” will no longer be available from this note.</p>
+      {viewing ? <><button ref={viewerClose} type="button" className="button-secondary" onClick={close}>Close attachment</button>
+        <AttachmentMediaViewer key={viewing} auth={auth} noteId={noteId} attachmentId={viewing} /></>
+        : confirmation && <><h2 id="attachment-remove-title">Remove attachment?</h2><p id="attachment-remove-help">“{confirmation.value.displayFilename}” will no longer be available from this note.</p>
       <button type="button" ref={cancel} className="button-secondary" disabled={busy === 'remove'} onClick={close}>Keep file</button>
       <button type="button" disabled={busy === 'remove'} onClick={() => void remove()}>{busy === 'remove' ? 'Removing…' : 'Remove file'}</button>
-      {error && <p role="alert">{error}</p>}
+      {error && <p role="alert">{error}</p>}</>}
     </div></div></div>, document.body)}</>
 }

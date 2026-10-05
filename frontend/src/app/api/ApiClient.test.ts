@@ -13,32 +13,6 @@ function problem(status: number, code: string, extra: Record<string, unknown> = 
 }
 
 describe('ApiClient transport', () => {
-  it('sends multipart through the same-origin CSRF pipeline without a manual Content-Type', async () => {
-    const csrf = new CsrfManager(); csrf.set('synthetic-proof')
-    const fetcher = vi.fn(async () => new Response('{}', { headers: { 'Content-Type': 'application/json' } }))
-    const multipart = new FormData(); multipart.append('file', new File(['x'], 'synthetic.png'))
-    await new ApiClient(csrf, fetcher as typeof fetch).request('POST', '/api/notes/synthetic/attachments', { multipart })
-    const init = (fetcher.mock.calls as unknown as Array<[string, RequestInit]>)[0][1]
-    expect(init.body).toBe(multipart)
-    expect(init.credentials).toBe('same-origin'); expect(init.redirect).toBe('error')
-    expect(new Headers(init.headers).get('X-CSRF-TOKEN')).toBe('synthetic-proof')
-    expect(new Headers(init.headers).has('Content-Type')).toBe(false)
-  })
-  it('rejects ambiguous, safe-method, invalid and cross-origin multipart before dispatch', async () => {
-    const fetcher = vi.fn(), client = new ApiClient(new CsrfManager(), fetcher)
-    const multipart = new FormData()
-    for (const method of ['GET', 'HEAD'] as const) await expect(client.request(method, '/api/notes', { multipart })).rejects.toBeInstanceOf(ApiProtocolError)
-    await expect(client.request('POST', '/api/notes', { multipart, json: {} })).rejects.toBeInstanceOf(ApiProtocolError)
-    await expect(client.request('POST', '/api/notes', { multipart: undefined })).rejects.toBeInstanceOf(ApiProtocolError)
-    await expect(client.request('POST', 'https://other.invalid/api/notes', { multipart })).rejects.toBeInstanceOf(ApiProtocolError)
-    expect(fetcher).not.toHaveBeenCalled()
-  })
-  it('decodes typed multipart failures without replaying an upload', async () => {
-    const csrf = new CsrfManager(); csrf.set('synthetic-proof')
-    const fetcher = vi.fn(async () => problem(415, 'unsupported_media_type'))
-    await expect(new ApiClient(csrf, fetcher as typeof fetch).request('POST', '/api/notes', { multipart: new FormData() })).rejects.toBeInstanceOf(ApiProblemError)
-    expect(fetcher).toHaveBeenCalledTimes(1)
-  })
   it('uses same-origin credentials and captures protocol metadata without a success wrapper', async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({ id: 'synthetic' }), {
       status: 200, headers: { 'Content-Type': 'application/json', ETag: '"revision-1"',

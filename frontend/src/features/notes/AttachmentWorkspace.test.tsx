@@ -1,10 +1,11 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { MemoryRouter } from 'react-router'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { App } from '../../app/App'
 import { AuthRuntime } from '../auth/AuthRuntime'
 import { AttachmentPanel } from './AttachmentPanel'
-import { AttachmentViewerPage } from './AttachmentViewerPage'
+import { AttachmentMediaViewer } from './AttachmentMediaViewer'
+import { AttachmentXhrDouble } from './AttachmentUpload.test-support'
 import { noteKeys } from './NotesKeys'
 import type { AttachmentCore } from './AttachmentsApi'
 
@@ -19,7 +20,14 @@ const problem = (status: number) => json({ status, type: 'about:blank', title: '
   code: 'request_failed', traceId: `tr_${'a'.repeat(32)}` }, status, { 'Content-Type': 'application/problem+json' })
 type Call = { method: string; path: string; init?: RequestInit }
 function runtime(handler?: (call: Call) => Response | Promise<Response> | undefined, authenticated = true) {
-  const calls: Call[] = []
+  const calls: Call[] = [], uploads: AttachmentXhrDouble[] = []
+  vi.stubGlobal('XMLHttpRequest', class extends AttachmentXhrDouble {
+    constructor() { super(xhr => {
+      uploads.push(xhr)
+      const call: Call = { method: xhr.method, path: xhr.path, init: { body: xhr.body, headers: xhr.headers } }; calls.push(call)
+      void Promise.resolve(handler?.(call) ?? problem(503)).then(response => xhr.respond(response))
+    }) }
+  })
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const call = { method: init?.method ?? 'GET', path: String(input), init }; calls.push(call)
     const result = handler?.(call); if (result) return await result
@@ -30,7 +38,7 @@ function runtime(handler?: (call: Call) => Response | Promise<Response> | undefi
     return problem(503)
   }))
   const auth = new AuthRuntime(); if (authenticated) auth.session.transition('authenticated'); auth.csrf.set('synthetic-proof')
-  return { auth, calls }
+  return { auth, calls, uploads }
 }
 function panel(handler?: Parameters<typeof runtime>[0], lifecycle = 'active') {
   const state = runtime(handler), modal = vi.fn()
@@ -99,7 +107,7 @@ describe('Attachment panel', () => {
     expect(screen.getByText('Uploading…')).toBeTruthy()
     expect(screen.queryByRole('button', { name: /cancel upload/i })).toBeNull()
     expect(screen.queryByText('Upload cancelled.')).toBeNull()
-    expect(state.calls.find(call => call.method === 'POST')!.init!.signal!.aborted).toBe(false)
+    expect(state.uploads[0].abort).not.toHaveBeenCalled()
     uploaded = status === 201
     resolve(status === 201 ? json(added, 201, { ETag: '"a2"', Location: `/api/notes/${noteId}/attachments/second` }) : problem(status))
     if (status === 201) {
@@ -118,20 +126,53 @@ describe('Attachment panel', () => {
     const state = panel(call => call.method === 'POST' ? new Promise<Response>(done => { resolve = done }) : undefined)
     await screen.findByText('synthetic.png', { selector: 'strong' }); pick()
     await waitFor(() => expect(resolve).toBeTypeOf('function'))
-    const signal = state.calls.find(call => call.method === 'POST')!.init!.signal!
+    const xhr = state.uploads[0]
     const scope = state.auth.session.viewerScope
     state.view.unmount()
-    expect(signal.aborted).toBe(true)
+    expect(xhr.abort).toHaveBeenCalledTimes(1)
     await act(async () => { resolve(json(file, 201, { ETag: '"a1"', Location: `/api/notes/${noteId}/attachments/${id}` })) })
     expect(state.auth.queries.getQueryData(noteKeys.attachment(scope, noteId, id))).toBeUndefined()
     expect(state.calls.filter(call => call.method === 'GET' && call.path.endsWith('/attachments'))).toHaveLength(1)
     expect(screen.queryByText('File added.')).toBeNull()
     expect(screen.queryByRole('alert')).toBeNull()
   })
+  it('shows real upload progress then validation without inventing percentages', async () => {
+    let resolve!: (response: Response) => void
+    const state = panel(call => call.method === 'POST' ? new Promise<Response>(done => { resolve = done }) : undefined)
+    await screen.findByText('synthetic.png', { selector: 'strong' }); pick()
+    await waitFor(() => expect(state.uploads).toHaveLength(1))
+    expect(screen.getByRole('progressbar').hasAttribute('value')).toBe(false)
+    act(() => state.uploads[0].progress(42, 100))
+    expect(screen.getByText('Uploading… 42%')).toBeTruthy()
+    expect(screen.getByRole('progressbar').getAttribute('value')).toBe('42')
+    act(() => state.uploads[0].uploaded())
+    expect(screen.getByText('Validating file…')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Stop upload' })).toBeNull()
+    resolve(json(file, 201, { ETag: '"a1"', Location: `/api/notes/${noteId}/attachments/${id}` })); await screen.findByText('File added.')
+  })
+  it('stops only the client upload and refetches files that may have committed on the server', async () => {
+    let resolve!: (response: Response) => void, committed = false
+    const state = panel(call => {
+      if (call.method === 'POST') return new Promise<Response>(done => { resolve = done })
+      if (call.path.endsWith('/attachments')) return json({ items: committed ? [file, { ...file, id: 'late', displayFilename: 'late.png' }] : [file], nextCursor: null })
+    })
+    await screen.findByText('synthetic.png', { selector: 'strong' }); pick()
+    await waitFor(() => expect(state.uploads).toHaveLength(1)); committed = true
+    fireEvent.click(screen.getByRole('button', { name: 'Stop upload' }))
+    await screen.findByText('Upload stopped in this tab. Refresh files if it had already finished on the server.')
+    await screen.findByText('late.png', { selector: 'strong' })
+    expect(state.uploads[0].abort).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText('Upload cancelled.')).toBeNull()
+    expect(screen.queryByText('File added.')).toBeNull()
+    await act(async () => { resolve(json(file, 201)) })
+    expect(screen.queryByText('File added.')).toBeNull()
+    await waitFor(() => expect(screen.getByLabelText('Add file').hasAttribute('disabled')).toBe(false))
+    expect(state.calls.some(call => call.method === 'PUT')).toBe(false)
+  })
   it('disables upload in Trash but preserves Open and Remove', async () => {
     panel(undefined, 'trashed'); await screen.findByText('synthetic.png', { selector: 'strong' })
     expect(screen.getByLabelText('Add file').hasAttribute('disabled')).toBe(true)
-    expect(screen.getByRole('link', { name: 'Open synthetic.png' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Open synthetic.png' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Remove synthetic.png' }).hasAttribute('disabled')).toBe(false)
   })
   it('rejects files above 25 MiB without dispatch', async () => {
@@ -222,8 +263,7 @@ describe('Attachment viewer and editor integration', () => {
   })
   it.each([404, 503])('keeps viewer %s contained without loading media bytes', async status => {
     const { auth } = runtime(() => problem(status))
-    const view = render(<MemoryRouter initialEntries={[`/notes/${noteId}/attachments/${id}`]}><Routes>
-      <Route path="/notes/:noteId/attachments/:attachmentId" element={<AttachmentViewerPage auth={auth} />} /></Routes></MemoryRouter>)
+    const view = render(<MemoryRouter><AttachmentMediaViewer auth={auth} noteId={noteId} attachmentId={id} /></MemoryRouter>)
     expect(screen.getByText('Loading attachment…')).toBeTruthy()
     await screen.findByRole('alert'); expect(view.container.querySelector('img,audio,video,iframe,object,embed')).toBeNull()
   })
@@ -237,7 +277,7 @@ describe('Attachment viewer and editor integration', () => {
   it('evicts Attachment metadata on full authority replacement and ignores a late upload response', async () => {
     let resolve!: (response: Response) => void
     const state = panel(call => call.method === 'POST' ? new Promise<Response>(done => { resolve = done }) : undefined)
-    await screen.findByRole('link', { name: 'Open synthetic.png' }); pick()
+    await screen.findByRole('button', { name: 'Open synthetic.png' }); pick()
     await waitFor(() => expect(resolve).toBeTypeOf('function'))
     const oldScope = state.auth.session.viewerScope
     state.auth.session.transition('anonymous')
@@ -248,20 +288,17 @@ describe('Attachment viewer and editor integration', () => {
   it.each([['image', 'image/png', 'img'], ['audio', 'audio/wav', 'audio'], ['video', 'video/mp4', 'video']])(
     'renders %s only from authenticated backend content', async (mediaKind, mediaType, tag) => {
       const { auth } = runtime(call => call.path.endsWith(`/${id}`) ? json({ ...file, mediaKind, mediaType }, 200, { ETag: '"a1"' }) : undefined)
-      const view = render(<MemoryRouter initialEntries={[`/notes/${noteId}/attachments/${id}`]}><Routes>
-        <Route path="/notes/:noteId/attachments/:attachmentId" element={<AttachmentViewerPage auth={auth} />} /></Routes></MemoryRouter>)
+      const view = render(<MemoryRouter><AttachmentMediaViewer auth={auth} noteId={noteId} attachmentId={id} /></MemoryRouter>)
       await screen.findByRole('heading', { name: 'synthetic.png' })
       const media = view.container.querySelector(tag)!
       expect(media.getAttribute('src')).toBe(`/api/notes/${noteId}/attachments/${id}/content`)
-      expect(screen.getByRole('link', { name: 'Back to note' }).getAttribute('href')).toBe(`/notes/${noteId}`)
       if (tag === 'audio' || tag === 'video') { expect(media.hasAttribute('controls')).toBe(true); expect(media.getAttribute('preload')).toBe('metadata') }
       fireEvent.error(media); expect((await screen.findByRole('alert')).textContent).toBe('This attachment could not be loaded.')
     })
   it('offers PDF metadata and a safe top-level private content link without embedding or fetching bytes', async () => {
     const { auth, calls } = runtime(call => call.path.endsWith(`/${id}`)
       ? json({ ...file, mediaKind: 'pdf', mediaType: 'application/pdf', displayFilename: 'synthetic.pdf', pageCount: 3, width: null, height: null }, 200, { ETag: '"a1"' }) : undefined)
-    const view = render(<MemoryRouter initialEntries={[`/notes/${noteId}/attachments/${id}`]}><Routes>
-      <Route path="/notes/:noteId/attachments/:attachmentId" element={<AttachmentViewerPage auth={auth} />} /></Routes></MemoryRouter>)
+    const view = render(<MemoryRouter><AttachmentMediaViewer auth={auth} noteId={noteId} attachmentId={id} /></MemoryRouter>)
     await screen.findByRole('heading', { name: 'synthetic.pdf' })
     expect(screen.getByText('PDF · 1.0 KB · 3 pages')).toBeTruthy()
     expect(view.container.querySelector('iframe,object,embed')).toBeNull()
@@ -270,16 +307,15 @@ describe('Attachment viewer and editor integration', () => {
     expect(open.getAttribute('target')).toBe('_blank')
     expect(open.getAttribute('rel')).toBe('noopener noreferrer')
     expect(calls.some(call => call.path.endsWith('/content'))).toBe(false)
-    expect(screen.getByRole('link', { name: 'Back to note' }).getAttribute('href')).toBe(`/notes/${noteId}`)
   })
   it.each(['anonymous', 'mfaRequired'] as const)('gates viewer for %s before any Attachment fetch', async state => {
-    window.history.replaceState(null, '', `/notes/${noteId}/attachments/${id}`)
+    window.history.replaceState(null, '', `/notes/${noteId}`)
     const { auth, calls } = runtime(call => call.path === '/api/auth/session' ? json({ state }) : undefined, false)
     render(<App auth={auth} />)
     await waitFor(() => expect(auth.state).toBe(state))
     expect(calls.some(call => call.path.includes('/attachments'))).toBe(false)
   })
-  it('preserves exact dirty title/body and Note ETag through upload/removal and dirty Open cancellation', async () => {
+  it('preserves exact dirty title/body and Note ETag through upload, modal viewing and removal', async () => {
     window.history.replaceState(null, '', `/notes/${noteId}`)
     const note = { id: noteId, title: 'Saved', markdown: 'Saved body', lifecycle: 'active', pinned: false,
       tags: [], aiEnabled: false, createdAt: file.createdAt, updatedAt: file.updatedAt }
@@ -295,9 +331,17 @@ describe('Attachment viewer and editor integration', () => {
     await waitFor(() => expect((title as HTMLInputElement).value).toBe('Saved'))
     fireEvent.change(title, { target: { value: ' Exact dirty title ' } }); fireEvent.change(body, { target: { value: ' Exact draft\n ' } })
     pick(); await screen.findByText('File added.')
-    fireEvent.click(screen.getByRole('link', { name: 'Open synthetic.png' }))
-    await screen.findByRole('dialog', { name: 'Leave with unsaved changes?' })
-    fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Open synthetic.png' }))
+    const viewer = await screen.findByRole('dialog', { name: 'synthetic.png' })
+    expect(window.location.pathname).toBe(`/notes/${noteId}`)
+    expect(screen.queryByRole('dialog', { name: 'Leave with unsaved changes?' })).toBeNull()
+    expect((title as HTMLInputElement).value).toBe(' Exact dirty title ')
+    expect((body as HTMLTextAreaElement).value).toBe(' Exact draft\n ')
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close attachment' }))
+    fireEvent.keyDown(document, { ctrlKey: true, key: 's' })
+    expect(calls.some(call => call.method === 'PUT')).toBe(false)
+    expect(title.closest('[inert]')).toBeTruthy()
+    fireEvent.keyDown(viewer, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     fireEvent.click(screen.getByRole('button', { name: 'Remove synthetic.png' }))
     await screen.findByRole('dialog', { name: 'Remove attachment?' })

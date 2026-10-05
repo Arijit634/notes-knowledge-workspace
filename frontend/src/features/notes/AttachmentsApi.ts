@@ -40,7 +40,7 @@ function path(noteId: string, attachmentId?: string): string {
   return `/api/notes/${encodeURIComponent(noteId)}/attachments${attachmentId === undefined ? '' : `/${encodeURIComponent(attachmentId)}`}`
 }
 export const attachmentContentUrl = (noteId: string, attachmentId: string) => `${path(noteId, attachmentId)}/content`
-function core(body: unknown, etag: string | null, noteId: string, id?: string): Etagged<AttachmentCore> {
+export function attachmentCore(body: unknown, etag: string | null, noteId: string, id?: string): Etagged<AttachmentCore> {
   const value = decodeAttachment(body)
   if (!etag || !/^"[A-Za-z0-9_-]+"$/.test(etag) || value.noteId !== noteId || (id !== undefined && value.id !== id)) {
     throw new ApiProtocolError()
@@ -60,14 +60,7 @@ export const attachmentsApi = {
   detail: async (auth: AuthRuntime, noteId: string, id: string, signal?: AbortSignal) => {
     const result = await auth.api.request<unknown>('GET', path(noteId, id), { signal })
     if (result.metadata.status !== 200) throw new ApiProtocolError()
-    return core(result.body, result.metadata.etag, noteId, id)
-  },
-  upload: async (auth: AuthRuntime, noteId: string, file: File, signal?: AbortSignal) => {
-    const multipart = new FormData(); multipart.append('file', file)
-    const result = await auth.api.request<unknown>('POST', path(noteId), { multipart, signal, retryOnCsrfInvalid: false })
-    const entry = core(result.body, result.metadata.etag, noteId)
-    if (result.metadata.status !== 201 || result.metadata.location !== path(noteId, entry.value.id)) throw new ApiProtocolError()
-    return entry
+    return attachmentCore(result.body, result.metadata.etag, noteId, id)
   },
   remove: async (auth: AuthRuntime, noteId: string, id: string, etag: string, signal?: AbortSignal) => {
     const result = await auth.api.request('DELETE', path(noteId, id), { ifMatch: etag, signal, retryOnCsrfInvalid: false })
