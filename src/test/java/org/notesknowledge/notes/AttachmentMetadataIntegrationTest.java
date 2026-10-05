@@ -299,7 +299,7 @@ class AttachmentMetadataIntegrationTest {
         }
     }
 
-    @Test void deleteAndAiProcessingRemainUnavailable() throws Exception {
+    @Test void deleteRequiresCsrfAndAiProcessingRemainsUnavailable() throws Exception {
         UUID owner = account(), note = note(owner), id = attachment(owner, note, "pdf", CREATED);
         Cookie cookie = browser(owner, "ROLE_USER");
         mvc.perform(delete(path(note) + "/" + id).cookie(cookie)).andExpect(status().isForbidden());

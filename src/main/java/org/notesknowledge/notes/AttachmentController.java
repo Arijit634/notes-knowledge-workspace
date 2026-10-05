@@ -18,6 +18,8 @@ import org.springframework.transaction.TransactionException;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -30,8 +32,18 @@ class AttachmentController {
     private final AttachmentUploadService uploads;
     private final ReadAttachmentQuery reads;
     private final StrongCoreEtagCodec etags;
-    AttachmentController(AttachmentUploadService uploads, ReadAttachmentQuery reads, StrongCoreEtagCodec etags) {
-        this.uploads = uploads; this.reads = reads; this.etags = etags;
+    private final AttachmentDeleteService deletes;
+    AttachmentController(AttachmentUploadService uploads, ReadAttachmentQuery reads, StrongCoreEtagCodec etags, AttachmentDeleteService deletes) {
+        this.uploads = uploads; this.reads = reads; this.etags = etags; this.deletes = deletes;
+    }
+
+    @DeleteMapping("/{attachmentId}")
+    ResponseEntity<Void> delete(@PathVariable UUID noteId, @PathVariable UUID attachmentId,
+            @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch, HttpServletRequest request) {
+        try {
+            deletes.delete(NotesActor.owner(), noteId, attachmentId, ifMatch, request);
+            return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
+        } catch (DataAccessException | TransactionException failure) { throw ApiFailureException.of(ApiFailureException.Kind.SERVICE_UNAVAILABLE); }
     }
 
     @GetMapping

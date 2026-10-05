@@ -57,6 +57,11 @@ class ProductionSecuritySurfaceTest {
                 "/api/notes/{noteId}/versions/{versionId}/restore", "/api/me/profile", "/api/me/profile/avatar",
                 "/api/notes/{noteId}/attachments", "/api/notes/{noteId}/attachments/{attachmentId}",
                 "/api/notes/{noteId}/attachments/{attachmentId}/content");
+        assertThat(requestMappings.getHandlerMethods().keySet().stream()
+                .filter(mapping -> mapping.getPatternValues().contains("/api/notes/{noteId}/attachments/{attachmentId}"))
+                .flatMap(mapping -> mapping.getMethodsCondition().getMethods().stream()))
+                .containsExactlyInAnyOrder(org.springframework.web.bind.annotation.RequestMethod.GET,
+                        org.springframework.web.bind.annotation.RequestMethod.DELETE);
     }
 
     @Test
