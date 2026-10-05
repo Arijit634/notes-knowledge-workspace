@@ -102,9 +102,10 @@ class AttachmentUploadIntegrationTest {
         assertThat(reference).matches("private-attachment/[0-9a-f]{64}").doesNotContain("synthetic");
         assertThat(store.bytes).containsOnlyKeys(reference);
         assertThat(store.sawTransaction).isFalse();
-        // Future canonical resource exists as a Location only, not an activated read/content API.
-        mvc.perform(get(path(note)).cookie(browser.cookie())).andExpect(status().isForbidden());
-        mvc.perform(get(path(note) + "/" + id).cookie(browser.cookie())).andExpect(status().isForbidden());
+        mvc.perform(get(path(note)).cookie(browser.cookie())).andExpect(status().isOk());
+        var read = mvc.perform(get(path(note) + "/" + id).cookie(browser.cookie())).andExpect(status().isOk()).andReturn();
+        assertThat(read.getResponse().getHeader("ETag")).isEqualTo(response.getResponse().getHeader("ETag"));
+        assertThat(json.readTree(read.getResponse().getContentAsString())).isEqualTo(body);
     }
 
     @Test void authorityAndCsrfFailBeforeStaging() throws Exception {

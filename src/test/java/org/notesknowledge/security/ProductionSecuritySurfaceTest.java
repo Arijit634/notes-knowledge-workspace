@@ -55,7 +55,7 @@ class ProductionSecuritySurfaceTest {
                 "/api/notes/{noteId}/ai-access", "/api/notes/ai-access-bulk",
                 "/api/notes/{noteId}/versions", "/api/notes/{noteId}/versions/{versionId}",
                 "/api/notes/{noteId}/versions/{versionId}/restore", "/api/me/profile", "/api/me/profile/avatar",
-                "/api/notes/{noteId}/attachments");
+                "/api/notes/{noteId}/attachments", "/api/notes/{noteId}/attachments/{attachmentId}");
     }
 
     @Test
