@@ -20,6 +20,25 @@ class RedisRateLimitAdapterTest {
             .withExposedPorts(6379);
 
     @Test
+    void ordinarySearchUsesSeparateBoundedOwnerAndAggregateNotesPolicies() {
+        var factory = new LettuceConnectionFactory(redis.getHost(), redis.getMappedPort(6379));
+        factory.afterPropertiesSet();
+        try {
+            var template = new StringRedisTemplate(factory);
+            template.afterPropertiesSet();
+            var adapter = new RedisRateLimitAdapter(template,
+                    new IdentityRateProperties(60,86400,6,6,12,10,6,12,1200,250,8,6,8),
+                    new NotesRateProperties(60,60,1200,2,3));
+            for (String control : new String[]{"NOTE_SEARCH","NOTE_SEARCH_GLOBAL"}) {
+                var request = request(control,new RateLimitPort.OpaqueKey("syntheticSearchPolicyKey789"));
+                int ceiling=control.equals("NOTE_SEARCH")?2:3;
+                for(int i=0;i<ceiling;i++) assertThat(adapter.evaluate(request)).isInstanceOf(RateLimitPort.Allowed.class);
+                assertThat(adapter.evaluate(request)).isEqualTo(new RateLimitPort.Throttled(60));
+            }
+        } finally { factory.destroy(); }
+    }
+
+    @Test
     void transientAtomicLimitThrottlesAndDoesNotTreatKeyAsAuthority() {
         var factory = new LettuceConnectionFactory(redis.getHost(), redis.getMappedPort(6379));
         factory.afterPropertiesSet();

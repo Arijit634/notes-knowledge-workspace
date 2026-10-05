@@ -208,8 +208,13 @@ class NoteVersionIntegrationTest {
         assertThat(result.getResponse().getHeader("ETag")).isNotEqualTo(core.etag());
         var after = jdbc.queryForMap("select * from notes.note where note_id=?", core.id());
         assertThat(after.get("revision")).isEqualTo(2L);
-        for (String key : before.keySet()) if (!List.of("title", "markdown", "revision", "updated_at").contains(key))
+        for (String key : before.keySet()) if (!List.of("title", "markdown", "revision", "updated_at",
+                "search_title", "search_body", "search_text", "search_simple", "search_english").contains(key))
             assertThat(after.get(key)).as(key).isEqualTo(before.get(key));
+        assertThat(after.get("search_title")).isEqualTo("historical");
+        assertThat(after.get("search_body")).isEqualTo("historical body");
+        assertThat(after.get("search_text")).isEqualTo("historical historical body");
+        assertThat(jdbc.queryForObject("select search_simple @@ plainto_tsquery('simple','historical body') and search_english @@ plainto_tsquery('english','historical bodies') from notes.note where note_id=?", Boolean.class, core.id())).isTrue();
         assertThat(row(version)).isEqualTo(selected);
         assertThat(jdbc.queryForObject("select count(*) from notes.note_version where note_id=? and title='Original' and markdown='Body' and checkpoint_kind='pre_restore'", Integer.class, core.id())).isEqualTo(1);
     }

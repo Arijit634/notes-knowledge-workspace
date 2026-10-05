@@ -35,7 +35,7 @@ class ProductionApiSurfaceTest {
         assertThat(paths)
                 .noneMatch(path -> path.startsWith("/__api-probe"));
         assertThat(paths.stream().filter(path -> path.startsWith("/api/"))).containsExactlyInAnyOrder(
-                "/api/me/note-preferences", "/api/notes", "/api/notes/{noteId}",
+                "/api/me/note-preferences", "/api/notes", "/api/notes/search", "/api/notes/{noteId}",
                 "/api/notes/{noteId}/tags", "/api/notes/{noteId}/pin",
                 "/api/notes/{noteId}/archive", "/api/notes/{noteId}/return-from-archive",
                 "/api/notes/{noteId}/trash", "/api/notes/{noteId}/restore",
@@ -44,6 +44,10 @@ class ProductionApiSurfaceTest {
                 "/api/notes/{noteId}/versions/{versionId}/restore", "/api/me/profile", "/api/me/profile/avatar",
                 "/api/notes/{noteId}/attachments", "/api/notes/{noteId}/attachments/{attachmentId}",
                 "/api/notes/{noteId}/attachments/{attachmentId}/content");
+        assertThat(requestMappings.getHandlerMethods().keySet().stream()
+                .filter(mapping -> mapping.getPatternValues().contains("/api/notes/search"))
+                .flatMap(mapping -> mapping.getMethodsCondition().getMethods().stream()))
+                .containsExactly(org.springframework.web.bind.annotation.RequestMethod.POST);
         assertThat(requestMappings.getHandlerMethods().keySet().stream()
                 .filter(mapping -> mapping.getPatternValues().contains("/api/notes/{noteId}/attachments"))
                 .flatMap(mapping -> mapping.getMethodsCondition().getMethods().stream()))
