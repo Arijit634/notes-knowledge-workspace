@@ -77,3 +77,25 @@ for (const phone of [false, true]) test(`Attachment workspace preserves dirty dr
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
   expect(mutations).toEqual([`POST /api/notes/${noteId}/attachments`, `PUT /api/notes/${noteId}`, `DELETE /api/notes/${noteId}/attachments/${second}`])
 })
+
+test('PDF viewer offers private top-level access without framed content', async ({ page }) => {
+  await backend(page)
+  await page.route(`**/api/notes/${noteId}/attachments/${first}`, route => route.fulfill({
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ETag: '"a1"' },
+    body: JSON.stringify({ id: first, noteId, mediaKind: 'pdf', mediaType: 'application/pdf', displayFilename: 'synthetic.pdf',
+      sizeBytes: 1024, width: null, height: null, durationSeconds: null, pageCount: 3, storageState: 'stored',
+      validationState: 'accepted', cleanupState: 'retained', createdAt: '2026-10-01T00:00:00Z', updatedAt: '2026-10-01T00:00:00Z' }),
+  }))
+  const byteRequests: string[] = []
+  page.on('request', request => { if (new URL(request.url()).pathname.endsWith('/content')) byteRequests.push(request.url()) })
+  await page.goto(`/notes/${noteId}/attachments/${first}`)
+  await expect(page.getByRole('heading', { name: 'synthetic.pdf' })).toBeVisible()
+  await expect(page.getByText('PDF · 1.0 KB · 3 pages')).toBeVisible()
+  await expect(page.locator('iframe,object,embed')).toHaveCount(0)
+  const open = page.getByRole('link', { name: 'Open PDF' })
+  await expect(open).toHaveAttribute('href', `/api/notes/${noteId}/attachments/${first}/content`)
+  await expect(open).toHaveAttribute('target', '_blank')
+  await expect(open).toHaveAttribute('rel', 'noopener noreferrer')
+  expect(byteRequests).toEqual([])
+  await expect(page.getByRole('link', { name: 'Back to note' })).toHaveAttribute('href', `/notes/${noteId}`)
+})

@@ -104,8 +104,7 @@ export function AttachmentPanel({ auth, noteId, lifecycle, onModalChange }: {
         const file = event.target.files?.[0]; if (file) void upload(file)
       }} />
     {lifecycle === 'trashed' && <p>Restore this note before adding more files.</p>}
-    {busy === 'upload' && <div role="status">Uploading… <progress aria-label="Uploading file" />
-      <button type="button" className="button-secondary" onClick={() => { controller.current?.abort(); setStatus('Upload cancelled.'); setBusy(null) }}>Cancel upload</button></div>}
+    {busy === 'upload' && <div role="status">Uploading… <progress aria-label="Uploading file" /></div>}
     {busy === 'detail' && <p role="status">Checking file…</p>}
     {status && <p role="status">{status}</p>}{error && <p role="alert">{error}</p>}
     {list.isPending && <p role="status">Loading attachments…</p>}
