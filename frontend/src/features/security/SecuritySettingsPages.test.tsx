@@ -65,7 +65,7 @@ describe('security settings browser journey', () => {
     expect(PRODUCT_ROUTES).toEqual(['/', '/signup', '/verify-email', '/login', '/mfa',
       '/forgot-password', '/reset-password', '/auth/complete', '/reauth',
       '/settings/security', '/settings/security/mfa', '/settings/security/sessions',
-      '/notes', '/notes/new', '/notes/:id'])
+      '/notes', '/notes/new', '/notes/:id', '/notes/:noteId/attachments/:attachmentId'])
   })
 
   it.each(['/settings/security', '/settings/security/mfa', '/settings/security/sessions'])(

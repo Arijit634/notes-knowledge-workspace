@@ -24,6 +24,7 @@ export interface CursorPage<T> {
 
 export interface ApiRequestOptions {
   readonly json?: unknown
+  readonly multipart?: FormData
   readonly signal?: AbortSignal
   readonly responseType?: ApiResponseType
   readonly ifMatch?: string
@@ -59,11 +60,13 @@ export class ApiClient {
   async request<T>(method: ApiMethod, path: string, options: ApiRequestOptions = {}): Promise<ApiResult<T>> {
     const target = apiTarget(path)
     const unsafe = method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE'
-    if (!unsafe && Object.hasOwn(options, 'json')) throw new ApiProtocolError()
+    const hasJson = Object.hasOwn(options, 'json'), hasMultipart = Object.hasOwn(options, 'multipart')
+    if ((!unsafe && (hasJson || hasMultipart)) || (hasJson && hasMultipart)
+        || (hasMultipart && !(options.multipart instanceof FormData))) throw new ApiProtocolError()
 
     const send = async (csrfRetry: boolean): Promise<ApiResult<T>> => {
       const headers = new Headers({ Accept: 'application/json, application/problem+json' })
-      let body: string | undefined
+      let body: string | FormData | undefined = options.multipart
       if (Object.hasOwn(options, 'json')) {
         try {
           body = JSON.stringify(options.json)

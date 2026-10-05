@@ -36,6 +36,7 @@ function mount(path: string, state: 'authenticated' | 'anonymous' | 'mfaRequired
     if (target === '/api/me/note-preferences') return json({ defaultAiEnabledForNewNotes: false })
     const response = onRequest?.(method, target, body)
     if (response) return response
+    if (target === `/api/notes/${id}/attachments` && method === 'GET') return json({ items: [], nextCursor: null })
     if (target === `/api/notes/${id}` && method === 'GET') return json(initial, 200, { ETag: '"e1"' })
     if (target === '/api/notes' && method === 'GET') return json({ items: [], nextCursor: null })
     return problem(503, 'service_unavailable')

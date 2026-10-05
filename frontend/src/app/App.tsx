@@ -13,7 +13,7 @@ export const AUTH_ROUTES = ['/', '/signup', '/verify-email', '/login', '/mfa',
   '/forgot-password', '/reset-password', '/auth/complete', '/reauth'] as const
 export const SECURITY_ROUTES = ['/settings/security', '/settings/security/mfa',
   '/settings/security/sessions'] as const
-export const NOTES_ROUTES = ['/notes', '/notes/new', '/notes/:id'] as const
+export const NOTES_ROUTES = ['/notes', '/notes/new', '/notes/:id', '/notes/:noteId/attachments/:attachmentId'] as const
 export const PRODUCT_ROUTES = [...AUTH_ROUTES, ...SECURITY_ROUTES, ...NOTES_ROUTES] as const
 const SecuritySettingsPage = lazy(() => import('../features/security/SecuritySettingsPages')
   .then(module => ({ default: module.SecuritySettingsPage })))
@@ -25,6 +25,8 @@ const NotesListPage = lazy(() => import('../features/notes/NotesPages')
   .then(module => ({ default: module.NotesListPage })))
 const NoteEditorPage = lazy(() => import('../features/notes/NotesPages')
   .then(module => ({ default: module.NoteEditorPage })))
+const AttachmentViewerPage = lazy(() => import('../features/notes/AttachmentViewerPage')
+  .then(module => ({ default: module.AttachmentViewerPage })))
 const Context = createContext<{ auth: AuthRuntime; version: number } | null>(null)
 const useAuth = () => {
   const value = useContext(Context)
@@ -253,6 +255,7 @@ function AuthRoutes() {
     <Route path={NOTES_ROUTES[0]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<Shell title="Loading notes"><p role="status">Please wait…</p></Shell>}><NotesListPage auth={auth} /></Suspense></Gate>} />
     <Route path={NOTES_ROUTES[1]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<Shell title="Loading editor"><p role="status">Please wait…</p></Shell>}><NoteEditorPage auth={auth} creating /></Suspense></Gate>} />
     <Route path={NOTES_ROUTES[2]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<Shell title="Loading editor"><p role="status">Please wait…</p></Shell>}><NoteEditorPage key={location.pathname} auth={auth} /></Suspense></Gate>} />
+    <Route path={NOTES_ROUTES[3]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<Shell title="Loading attachment"><p role="status">Please wait…</p></Shell>}><AttachmentViewerPage key={location.pathname} auth={auth} /></Suspense></Gate>} />
     <Route path="*" element={<Shell title="Page not found"><p>That page is unavailable.</p><Link to="/">Go home</Link></Shell>} />
   </Routes>
 }
