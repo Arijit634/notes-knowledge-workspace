@@ -6,6 +6,9 @@ export const notePreferenceKeys = {
 }
 
 export const noteKeys = {
+  attachments: (viewer: ViewerCacheScope, noteId: string) => ['notes', viewer, 'attachments', noteId] as const,
+  attachment: (viewer: ViewerCacheScope, noteId: string, attachmentId: string) =>
+    ['notes', viewer, 'attachment', noteId, attachmentId] as const,
   lists: (viewer: ViewerCacheScope) => ['notes', viewer, 'list'] as const,
   list: (viewer: ViewerCacheScope, filters: Readonly<{ lifecycle: string; sort: string }>) =>
     [...noteKeys.lists(viewer), filters] as const,

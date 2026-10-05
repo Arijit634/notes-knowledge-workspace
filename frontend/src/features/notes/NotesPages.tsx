@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState, type FormEvent } from 'react'
 import { Link, useBlocker, useLocation, useNavigate, useParams } from 'react-router'
 import { flushSync } from 'react-dom'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
@@ -6,6 +6,7 @@ import type { AuthRuntime } from '../auth/AuthRuntime'
 import { ApiProblemError } from '../../app/api/ProblemDetailsDecoder'
 import { MarkdownView } from './MarkdownView'
 import { NoteVersionPanel } from './NoteVersionPanel'
+import { AttachmentPanel } from './AttachmentPanel'
 import { NotesWorkspace } from './NotesWorkspace'
 import { emptyEditorSession, isDirty, noteEditorSession } from './NoteEditorSession'
 import { notesApi, type NoteCore, type NoteOrganizationCommand, type NoteVersion } from './NotesApi'
@@ -60,6 +61,11 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
   const [preview, setPreview] = useState(true)
   const [busy, setBusy] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [attachmentModal, setAttachmentModal] = useState(false)
+  const attachmentModalRef = useRef(false)
+  const changeAttachmentModal = useCallback((open: boolean) => {
+    attachmentModalRef.current = open; setAttachmentModal(open)
+  }, [])
   const [restoreConfirmation, setRestoreConfirmation] = useState<{ version: NoteVersion; etag: string } | null>(null)
   const restoreCancel = useRef<HTMLButtonElement>(null)
   const restoreInvoker = useRef<HTMLElement | null>(null)
@@ -133,7 +139,7 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
   }
 
   async function save() {
-    if (busy || archived || trashed || archiveConfirmation || trashConfirmation || deleteConfirmation || restoreConfirmation || blocker.state === 'blocked' || !dirty || session.phase === 'Conflict' || !session.draft.title.trim()) return
+    if (busy || archived || trashed || attachmentModalRef.current || archiveConfirmation || trashConfirmation || deleteConfirmation || restoreConfirmation || blocker.state === 'blocked' || !dirty || session.phase === 'Conflict' || !session.draft.title.trim()) return
     if (!creating && (!session.id || !session.etag)) return
     const { title, markdown } = session.draft
     setBusy(true); setError(''); dispatch({ type: 'saving' })
@@ -323,8 +329,8 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
     : loaded.isPending || (!!loaded.data && session.id !== loaded.data.value.id)
   const loadError = creating ? preference.error : loaded.error
   if (deleted) return <main><p role="status">Note permanently deleted.</p></main>
-  return <NotesWorkspace modalOpen={archiveConfirmation || trashConfirmation !== null || deleteConfirmation !== null || restoreConfirmation !== null || blocker.state === 'blocked'}>
-    <div inert={archiveConfirmation || trashConfirmation !== null || deleteConfirmation !== null || restoreConfirmation !== null || blocker.state === 'blocked'}>
+  return <NotesWorkspace modalOpen={attachmentModal || archiveConfirmation || trashConfirmation !== null || deleteConfirmation !== null || restoreConfirmation !== null || blocker.state === 'blocked'}>
+    <div inert={attachmentModal || archiveConfirmation || trashConfirmation !== null || deleteConfirmation !== null || restoreConfirmation !== null || blocker.state === 'blocked'}>
     {loading ? <p className="notes-message" role="status">Loading editor…</p> : loadError
       ? <p className="notes-message notes-message-error" role="alert">{issue(loadError)} <button onClick={() => void (creating ? preference.refetch() : loaded.refetch())}>Retry</button></p>
         : <><header className="notes-heading"><div><p className="eyebrow">{creating ? 'New note' : 'Private note'}</p>
@@ -367,6 +373,7 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
             <MarkdownView markdown={session.draft.markdown} /></section>}
           </div>
           {!creating && <aside className="notes-tools" aria-label="Note tools">
+          {session.id && <AttachmentPanel auth={auth} noteId={session.id} lifecycle={session.serverVersion?.value.lifecycle ?? loaded.data?.value.lifecycle ?? 'trashed'} onModalChange={changeAttachmentModal} />}
           <section className="notes-tool" aria-label="Note organization">
             <h2>Organization</h2><p>{session.serverVersion
               ? `${trashed ? 'Trashed' : archived ? 'Archived' : organizationEligible ? 'Active' : 'Organization changes unavailable'} · ${session.serverVersion.value.pinned ? 'Pinned' : 'Not pinned'}`

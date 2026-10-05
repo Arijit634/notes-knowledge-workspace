@@ -21,6 +21,7 @@ async function fakeNotesBackend(page: Page, requireRecent = false) {
     let status = 200, response: unknown = {}, headers: Record<string, string> = {}
     if (path === '/api/auth/session') response = { state: 'authenticated' }
     else if (path === '/api/auth/csrf') response = { csrfToken: 'synthetic-csrf' }
+    else if (path === `/api/notes/${id}/attachments` && method === 'GET') response = { items: [], nextCursor: null }
     else if (path === '/api/me/note-preferences') response = { defaultAiEnabledForNewNotes: false }
     else if (path === '/api/me/security') response = { email: 'synthetic@example.test', passwordConfigured: true, mfaState: 'disabled', oidcLinks: [] }
     else if (path === '/api/auth/reauth/password') { recent = true; status = 204 }
