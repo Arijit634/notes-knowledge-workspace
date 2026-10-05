@@ -45,6 +45,20 @@ class AttachmentRepository {
 
     record Core(AttachmentView view, long revision) { }
 
+    Optional<AttachmentContentDescriptor> content(UUID owner, UUID note, UUID attachment) {
+        return clients.getObject().sql("""
+                select attachment_id, object_reference, media_type, display_filename, size_bytes, revision
+                from notes.attachment where owner_user_id = :owner and note_id = :note
+                    and attachment_id = :attachment and cleanup_state = 'retained'
+                    and storage_state = 'stored' and validation_state = 'accepted' and size_bytes > 0
+                    and exists (select 1 from notes.note n where n.note_id = :note
+                        and n.owner_user_id = :owner and n.lifecycle_state <> 'logically_deleted')
+                """).param("owner", owner).param("note", note).param("attachment", attachment)
+                .query((row, index) -> new AttachmentContentDescriptor(row.getObject("attachment_id", UUID.class),
+                        row.getString("object_reference"), row.getString("media_type"), row.getString("display_filename"),
+                        row.getLong("size_bytes"), row.getLong("revision"))).optional();
+    }
+
     private static Core core(ResultSet row, int index) throws SQLException {
         return new Core(new AttachmentView(row.getObject("attachment_id", UUID.class),
                 row.getObject("note_id", UUID.class), row.getString("media_kind"),

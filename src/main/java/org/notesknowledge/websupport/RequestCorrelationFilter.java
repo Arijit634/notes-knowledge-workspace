@@ -53,6 +53,7 @@ public final class RequestCorrelationFilter extends OncePerRequestFilter {
             } finally {
                 MDC.remove(RequestTraceContext.MDC_KEY);
                 request.removeAttribute(RequestTraceContext.REQUEST_ATTRIBUTE);
+                request.removeAttribute(ResponseStreamInterruptedException.REQUEST_ATTRIBUTE);
             }
         }
     }
@@ -64,12 +65,14 @@ public final class RequestCorrelationFilter extends OncePerRequestFilter {
             long startedAt,
             boolean failedBeforeResponse) {
         int status = response.getStatus();
-        if (failedBeforeResponse && status < 400) {
+        boolean interrupted = Boolean.TRUE.equals(request.getAttribute(ResponseStreamInterruptedException.REQUEST_ATTRIBUTE));
+        if (failedBeforeResponse && status < 400 && !interrupted) {
             status = HttpServletResponse.SC_INTERNAL_SERVER_ERROR;
         }
         long durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
-        String outcome = status < 400 ? "success" : "failure";
-        LoggingEventBuilder event = status < 400 ? LOGGER.atInfo() : LOGGER.atWarn();
+        boolean successful = status < 400 && !interrupted;
+        String outcome = successful ? "success" : "failure";
+        LoggingEventBuilder event = successful ? LOGGER.atInfo() : LOGGER.atWarn();
         event.addKeyValue("event.name", "request.completed")
                 .addKeyValue("http.route", resolvedRoute(request))
                 .addKeyValue("http.method", safeMethod(request.getMethod()))

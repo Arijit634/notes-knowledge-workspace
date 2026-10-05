@@ -153,7 +153,7 @@ class IdentityCoreIntegrationTest {
                 "/api/notes/{noteId}/ai-access", "/api/notes/ai-access-bulk",
                 "/api/notes/{noteId}/versions", "/api/notes/{noteId}/versions/{versionId}",
                 "/api/notes/{noteId}/versions/{versionId}/restore", "/api/notes/{noteId}/attachments",
-                "/api/notes/{noteId}/attachments/{attachmentId}");
+                "/api/notes/{noteId}/attachments/{attachmentId}", "/api/notes/{noteId}/attachments/{attachmentId}/content");
     }
 
     @Test

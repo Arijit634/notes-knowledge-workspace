@@ -11,6 +11,10 @@ import java.util.List;
  * Storage stays separate from parser temporary custody and public/avatar storage.
  */
 interface PrivateAttachmentObjectStore {
+    /** Open at offset, with positive length bounded by the authorized representation.
+     * Callers consume at most length bytes and always close the stream. No DB transaction.
+     */
+    InputStream openRange(String generatedReference, long offset, long length);
     void write(String generatedReference, InputStream source, long sizeBytes);
     void delete(String generatedReference);
     List<StoredObject> inventoryBefore(Instant cutoff, String afterReference, int limit);

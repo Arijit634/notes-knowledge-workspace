@@ -299,10 +299,9 @@ class AttachmentMetadataIntegrationTest {
         }
     }
 
-    @Test void contentDeleteAndAiProcessingRemainUnavailable() throws Exception {
+    @Test void deleteAndAiProcessingRemainUnavailable() throws Exception {
         UUID owner = account(), note = note(owner), id = attachment(owner, note, "pdf", CREATED);
         Cookie cookie = browser(owner, "ROLE_USER");
-        mvc.perform(get(path(note) + "/" + id + "/content").cookie(cookie)).andExpect(status().isForbidden());
         mvc.perform(delete(path(note) + "/" + id).cookie(cookie)).andExpect(status().isForbidden());
         mvc.perform(get("/api/notes/" + note + "/ai-processing").cookie(cookie)).andExpect(status().isForbidden());
         assertThat(row(id).get("cleanup_state")).isEqualTo("retained");

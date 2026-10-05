@@ -14,6 +14,7 @@ class AttachmentConfiguration {
     @Bean @ConditionalOnMissingBean(PrivateAttachmentObjectStore.class)
     PrivateAttachmentObjectStore unavailableAttachmentObjectStore() {
         return new PrivateAttachmentObjectStore() {
+            public InputStream openRange(String reference, long offset, long length) { throw unavailable(); }
             public void write(String reference, InputStream input, long size) { throw unavailable(); }
             public void delete(String reference) { throw unavailable(); }
             public List<StoredObject> inventoryBefore(Instant cutoff, String after, int limit) { throw unavailable(); }

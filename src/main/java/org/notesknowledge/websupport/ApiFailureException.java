@@ -31,6 +31,8 @@ public final class ApiFailureException extends RuntimeException {
                 "unsupported_media_type", "Unsupported media type"),
         PRECONDITION_REQUIRED(HttpStatus.PRECONDITION_REQUIRED,
                 "precondition_required", "Required precondition is missing"),
+        RANGE_NOT_SATISFIABLE(HttpStatus.REQUESTED_RANGE_NOT_SATISFIABLE,
+                "range_not_satisfiable", "Requested range is not satisfiable"),
         RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS,
                 "rate_limited", "Request rate limit reached"),
         SERVICE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE,
@@ -51,15 +53,21 @@ public final class ApiFailureException extends RuntimeException {
 
     private final Kind kind;
     private final Integer retryAfterSeconds;
+    private final Long representationSize;
 
     private ApiFailureException(Kind kind, Integer retryAfterSeconds) {
+        this(kind, retryAfterSeconds, null);
+    }
+
+    private ApiFailureException(Kind kind, Integer retryAfterSeconds, Long representationSize) {
         super(kind.code);
         this.kind = kind;
         this.retryAfterSeconds = retryAfterSeconds;
+        this.representationSize = representationSize;
     }
 
     public static ApiFailureException of(Kind kind) {
-        if (kind == null || kind == Kind.RATE_LIMITED) {
+        if (kind == null || kind == Kind.RATE_LIMITED || kind == Kind.RANGE_NOT_SATISFIABLE) {
             throw new IllegalArgumentException("A registered non-rate-limited kind is required");
         }
         return new ApiFailureException(kind, null);
@@ -75,6 +83,13 @@ public final class ApiFailureException extends RuntimeException {
     public Kind kind() {
         return kind;
     }
+
+    public static ApiFailureException rangeNotSatisfiable(long representationSize) {
+        if (representationSize <= 0) throw new IllegalArgumentException("Positive representation size required");
+        return new ApiFailureException(Kind.RANGE_NOT_SATISFIABLE, null, representationSize);
+    }
+
+    Long representationSize() { return representationSize; }
 
     HttpStatus status() {
         return kind.status;

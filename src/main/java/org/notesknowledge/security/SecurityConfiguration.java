@@ -153,7 +153,8 @@ public class SecurityConfiguration {
                         .requestMatchers(HttpMethod.GET, "/api/me/note-preferences", "/api/notes",
                                 "/api/notes/{noteId}", "/api/notes/{noteId}/versions",
                                 "/api/notes/{noteId}/versions/{versionId}", "/api/notes/{noteId}/attachments",
-                                "/api/notes/{noteId}/attachments/{attachmentId}")
+                                "/api/notes/{noteId}/attachments/{attachmentId}",
+                                "/api/notes/{noteId}/attachments/{attachmentId}/content")
                         .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.PUT, "/api/me/note-preferences",
                                 "/api/notes/{noteId}", "/api/notes/{noteId}/tags", "/api/notes/{noteId}/pin",

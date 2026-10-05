@@ -106,6 +106,10 @@ class AttachmentUploadIntegrationTest {
         var read = mvc.perform(get(path(note) + "/" + id).cookie(browser.cookie())).andExpect(status().isOk()).andReturn();
         assertThat(read.getResponse().getHeader("ETag")).isEqualTo(response.getResponse().getHeader("ETag"));
         assertThat(json.readTree(read.getResponse().getContentAsString())).isEqualTo(body);
+        var content = mvc.perform(get(path(note) + "/" + id + "/content").cookie(browser.cookie()))
+                .andExpect(status().isOk()).andReturn();
+        assertThat(content.getResponse().getContentAsByteArray()).isEqualTo(store.bytes.get(reference));
+        assertThat(content.getResponse().getHeader("ETag")).isEqualTo(response.getResponse().getHeader("ETag"));
     }
 
     @Test void authorityAndCsrfFailBeforeStaging() throws Exception {
@@ -390,9 +394,40 @@ class AttachmentUploadIntegrationTest {
         final ConcurrentHashMap<String, Instant> created = new ConcurrentHashMap<>();
         volatile boolean failWrite, failDelete, sawTransaction;
         volatile int lastLimit;
+        volatile boolean failOpen, ignoreRangeBound;
+        volatile int opens, closes, maxReadRequest, shortAfter = -1, failReadAfter = -1;
+        volatile long lastOffset, lastLength;
         volatile Runnable afterWrite = () -> { };
-        void clear() { bytes.clear(); created.clear(); failWrite = false; failDelete = false; sawTransaction = false; lastLimit = 0; afterWrite = () -> { }; }
+        void clear() { bytes.clear(); created.clear(); failWrite = false; failDelete = false; sawTransaction = false; lastLimit = 0; afterWrite = () -> { };
+            failOpen = false; ignoreRangeBound = false; opens = 0; closes = 0; maxReadRequest = 0; shortAfter = -1; failReadAfter = -1; lastOffset = 0; lastLength = 0; }
         private void outside() { if (TransactionSynchronizationManager.isActualTransactionActive()) { sawTransaction = true; throw new AssertionError("Storage I/O in transaction"); } }
+        public InputStream openRange(String reference, long offset, long length) {
+            outside(); opens++; lastOffset = offset; lastLength = length;
+            if (failOpen) throw new IllegalStateException("SYNTHETIC_PRIVATE_DIAGNOSTIC");
+            byte[] payload = bytes.get(reference);
+            if (payload == null || offset < 0 || length <= 0 || offset >= payload.length || length > payload.length - offset)
+                throw new IllegalStateException("SYNTHETIC_PRIVATE_DIAGNOSTIC");
+            int start = Math.toIntExact(offset), end = ignoreRangeBound ? payload.length : Math.toIntExact(offset + length);
+            return new InputStream() {
+                int position = start, consumed;
+                boolean closed;
+                public int read() throws java.io.IOException {
+                    byte[] one = new byte[1]; int count = read(one, 0, 1); return count < 0 ? -1 : Byte.toUnsignedInt(one[0]);
+                }
+                public int read(byte[] buffer, int off, int count) throws java.io.IOException {
+                    outside(); maxReadRequest = Math.max(maxReadRequest, count);
+                    if (closed) throw new java.io.IOException("SYNTHETIC_PRIVATE_DIAGNOSTIC");
+                    if (failReadAfter >= 0 && consumed >= failReadAfter) throw new java.io.IOException("SYNTHETIC_PRIVATE_DIAGNOSTIC");
+                    int available = end - position;
+                    if (shortAfter >= 0) available = Math.min(available, shortAfter - consumed);
+                    if (failReadAfter >= 0) available = Math.min(available, failReadAfter - consumed);
+                    if (available <= 0) return -1;
+                    int read = Math.min(count, available);
+                    System.arraycopy(payload, position, buffer, off, read); position += read; consumed += read; return read;
+                }
+                public void close() { outside(); if (!closed) { closes++; closed = true; } }
+            };
+        }
         public void write(String reference, InputStream source, long size) {
             outside();
             try {
