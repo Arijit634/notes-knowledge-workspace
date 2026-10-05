@@ -1,6 +1,7 @@
 package org.notesknowledge.websupport;
 
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 
 import java.util.Comparator;
 import java.util.List;
@@ -121,6 +122,9 @@ public final class ApiProblemHandler {
             response.header(HttpHeaders.RETRY_AFTER,
                     Integer.toString(exception.retryAfterSeconds()));
         }
+        if (exception.representationSize() != null) {
+            response.header(HttpHeaders.CONTENT_RANGE, "bytes */" + exception.representationSize());
+        }
         return response.body(problemWriter.create(
                 request,
                 exception.status(),
@@ -135,6 +139,18 @@ public final class ApiProblemHandler {
         LOGGER.error("Request failed with internal_error");
         return response(problemWriter.create(request, HttpStatus.INTERNAL_SERVER_ERROR,
                 "internal_error", "Request could not be completed"));
+    }
+
+    @ExceptionHandler(ResponseStreamInterruptedException.class)
+    void interruptedStream(ResponseStreamInterruptedException exception, HttpServletRequest request, HttpServletResponse response) {
+        // The declared Content-Length remains intact so truncation is observable.
+        // Never append ProblemDetails or change status after media bytes were sent.
+        try { response.getOutputStream().close(); }
+        catch (java.io.IOException disconnected) { /* The interrupted connection cannot be recovered. */ }
+        request.setAttribute(ResponseStreamInterruptedException.REQUEST_ATTRIBUTE, Boolean.TRUE);
+        // Propagate only this sanitized signal to the container. Closing servlet
+        // output alone need not abort a keep-alive connection with a short body.
+        throw exception;
     }
 
     private ResponseEntity<ProblemDetail> response(ProblemDetail problem) {
