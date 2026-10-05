@@ -170,6 +170,8 @@ public class SecurityConfiguration {
                         .requestMatchers(HttpMethod.POST, "/api/notes", "/api/notes/ai-access-bulk",
                                 "/api/notes/{noteId}/attachments")
                         .hasAuthority("ROLE_USER")
+                        .requestMatchers(HttpMethod.DELETE, "/api/notes/{noteId}/attachments/{attachmentId}")
+                        .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.PUT, "/api/me/security/password")
                         .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.POST,

@@ -52,7 +52,8 @@ class ProductionApiSurfaceTest {
         assertThat(requestMappings.getHandlerMethods().keySet().stream()
                 .filter(mapping -> mapping.getPatternValues().contains("/api/notes/{noteId}/attachments/{attachmentId}"))
                 .flatMap(mapping -> mapping.getMethodsCondition().getMethods().stream()))
-                .containsExactly(org.springframework.web.bind.annotation.RequestMethod.GET);
+                .containsExactlyInAnyOrder(org.springframework.web.bind.annotation.RequestMethod.GET,
+                        org.springframework.web.bind.annotation.RequestMethod.DELETE);
         assertThat(requestMappings.getHandlerMethods().keySet().stream()
                 .filter(mapping -> mapping.getPatternValues().contains("/api/notes/{noteId}/attachments/{attachmentId}/content"))
                 .flatMap(mapping -> mapping.getMethodsCondition().getMethods().stream()))

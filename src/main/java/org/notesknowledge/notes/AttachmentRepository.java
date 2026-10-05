@@ -45,6 +45,53 @@ class AttachmentRepository {
 
     record Core(AttachmentView view, long revision) { }
 
+    Optional<AttachmentCleanupTarget> lockRetained(UUID owner, UUID note, UUID attachment) {
+        return clients.getObject().sql("""
+                select attachment_id, object_reference, revision from notes.attachment
+                where owner_user_id = :owner and note_id = :note and attachment_id = :attachment
+                    and cleanup_state = 'retained' for update
+                """).param("owner", owner).param("note", note).param("attachment", attachment)
+                .query(AttachmentRepository::cleanupTarget).optional();
+    }
+
+    int remove(UUID owner, UUID note, UUID attachment, long revision, Instant now) {
+        return clients.getObject().sql("""
+                update notes.attachment set cleanup_state = 'pending', removed_at = greatest(:now, updated_at),
+                    updated_at = greatest(:now, updated_at), revision = revision + 1,
+                    processing_generation = processing_generation + 1
+                where owner_user_id = :owner and note_id = :note and attachment_id = :attachment
+                    and cleanup_state = 'retained' and revision = :revision
+                """).param("owner", owner).param("note", note).param("attachment", attachment)
+                .param("revision", revision).param("now", Timestamp.from(now)).update();
+    }
+
+    List<AttachmentCleanupTarget> pendingCleanup() {
+        return clients.getObject().sql("""
+                select attachment_id, object_reference, revision from notes.attachment
+                where cleanup_state = 'pending' order by removed_at asc, attachment_id asc limit 100
+                """).query(AttachmentRepository::cleanupTarget).list();
+    }
+
+    Optional<AttachmentCleanupTarget> lockPending(AttachmentCleanupTarget target) {
+        return clients.getObject().sql("""
+                select attachment_id, object_reference, revision from notes.attachment
+                where attachment_id = :id and object_reference = :reference and cleanup_state = 'pending' for update
+                """).param("id", target.id()).param("reference", target.reference())
+                .query(AttachmentRepository::cleanupTarget).optional();
+    }
+
+    void finalizeCleanup(AttachmentCleanupTarget target, Instant now) {
+        clients.getObject().sql("""
+                update notes.attachment set cleanup_state = 'deleted', cleaned_at = greatest(:now, removed_at, updated_at),
+                    updated_at = greatest(:now, removed_at, updated_at), revision = revision + 1
+                where attachment_id = :id and object_reference = :reference and cleanup_state = 'pending'
+                """).param("id", target.id()).param("reference", target.reference()).param("now", Timestamp.from(now)).update();
+    }
+
+    private static AttachmentCleanupTarget cleanupTarget(ResultSet row, int index) throws SQLException {
+        return new AttachmentCleanupTarget(row.getObject("attachment_id", UUID.class), row.getString("object_reference"), row.getLong("revision"));
+    }
+
     Optional<AttachmentContentDescriptor> content(UUID owner, UUID note, UUID attachment) {
         return clients.getObject().sql("""
                 select attachment_id, object_reference, media_type, display_filename, size_bytes, revision
