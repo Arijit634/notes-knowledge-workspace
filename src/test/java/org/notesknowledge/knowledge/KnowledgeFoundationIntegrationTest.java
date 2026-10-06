@@ -126,8 +126,15 @@ class KnowledgeFoundationIntegrationTest {
     @Test void postBoundaryNoteIsExcludedAndBoundaryIsBoundToCurrentOwner() throws Exception {
         UUID owner=account();var b=browser(owner,"ROLE_USER");activate(b);note(owner,"Before","https://example.test/before",false);
         var boundary=tx(()->sources.capture(active));
-        note(owner,"After","https://example.test/after",false);
+        UUID later=note(owner,"After","https://example.test/after",false);
+        assertThat(jdbc.queryForObject("select created_at from notes.note where note_id=?",java.sql.Timestamp.class,later).toInstant())
+                .isAfter(boundary.startedAt());
         assertThat(tx(()->sources.readCurrent(boundary,null,PrivateKnowledgeSource.Purpose.DETERMINISTIC_URL_EXTRACTION)).items()).hasSize(1);
+        doReturn(boundary).when(sourceSpy()).capture(active);
+        var result=extraction.extract(active);
+        assertThat(result.coverage()).isEqualTo(DeterministicUrlExtraction.Coverage.COMPLETE);
+        assertThat(result.fingerprint().count()).isEqualTo(1);
+        assertThat(result.items().stream().map(DeterministicUrlExtraction.Item::value)).containsExactly("https://example.test/before");
         activate(browser(account(),"ROLE_USER"));
         assertThatThrownBy(()->tx(()->sources.readMetadata(boundary,null))).isInstanceOf(org.notesknowledge.websupport.ApiFailureException.class);
     }
@@ -143,15 +150,74 @@ class KnowledgeFoundationIntegrationTest {
         doAnswer(call->{sessions.deleteById(b.sessionId);return call.callRealMethod();}).when(sourceSpy()).readMetadata(any(),any());
         assertThatThrownBy(()->extraction.extract(active)).isInstanceOf(org.notesknowledge.websupport.ApiFailureException.class);
     }
-    @Test void newlyVisibleSourceInsideCapturedFamilyBoundaryCannotBeSilentlyOmitted() throws Exception {
-        UUID owner=account();activate(browser(owner,"ROLE_USER"));note(owner,"Existing","https://example.test/existing",false);
-        doAnswer(call->{
-            var n=note(owner,"Newly visible","https://example.test/inflight",false);
-            // Test-only pre-boundary timestamp models a newly visible captured-family member, not a later source.
-            jdbc.update("update notes.note set created_at=created_at-interval '1 minute' where note_id=?",n);
-            return call.callRealMethod();
-        }).when(sourceSpy()).readMetadata(any(),any());
-        var result=extraction.extract(active);assertThat(result.coverage()).isEqualTo(DeterministicUrlExtraction.Coverage.CHANGED);assertThat(result.items()).isEmpty();
+    @Test void preBoundaryInFlightInsertAboveVisibleFrontierInvalidatesExtraction() throws Exception {
+        assertInFlightCreationInvalidates(false,false);
+    }
+    @Test void emptyVisibleCorpusWithPreBoundaryInFlightInsertInvalidatesExtraction() throws Exception {
+        assertInFlightCreationInvalidates(true,false);
+    }
+    @Test void preBoundaryInsertCommittedAfterMetadataTraversalIsCaughtByTerminalFingerprint() throws Exception {
+        assertInFlightCreationInvalidates(false,true);
+    }
+    private void assertInFlightCreationInvalidates(boolean initiallyEmpty,boolean commitAtTerminal) throws Exception {
+        UUID owner=account();activate(browser(owner,"ROLE_USER"));
+        UUID existing=initiallyEmpty?null:note(owner,"Existing","https://example.test/existing",false);
+        try(var inserting=java.sql.DriverManager.getConnection(postgres.getJdbcUrl(),postgres.getUsername(),postgres.getPassword())) {
+            inserting.setAutoCommit(false);
+            // Dedicated synthetic-container fixture only: an INSERT's FK key-share lock on
+            // Account would serialize capture's normal Account FOR UPDATE reauthorization.
+            // Suppress triggers only in this insertion transaction to isolate the MVCC race;
+            // the existing owner is valid and all extraction authorization stays real.
+            // Supply the actual V013 projection functions since its trigger is suppressed too.
+            try(var setup=inserting.createStatement()) { setup.execute("set local session_replication_role=replica"); }
+            UUID pending;java.time.Instant created;
+            try(var insert=inserting.prepareStatement("""
+                    with projection as (select left(lower(notes.search_plain_v1('In flight')),500) as title,
+                        notes.search_body_v1('https://example.test/inflight') as body)
+                    insert into notes.note(note_id,owner_user_id,title,markdown,lifecycle_state,ai_enabled,
+                        revision,ai_generation,created_at,updated_at,
+                        search_title,search_body,search_text,search_simple,search_english)
+                    select uuidv7(),?,'In flight','https://example.test/inflight','active',false,
+                        1,1,clock_timestamp(),clock_timestamp(),title,body,title||' '||body,
+                        setweight(to_tsvector('simple',title),'A')||setweight(to_tsvector('simple',body),'D'),
+                        setweight(to_tsvector('english',title),'A')||setweight(to_tsvector('english',body),'D')
+                    from projection returning note_id,created_at
+                    """)) {
+                insert.setObject(1,owner);
+                try(var row=insert.executeQuery()) {
+                    assertThat(row.next()).isTrue();pending=row.getObject(1,UUID.class);created=row.getTimestamp(2).toInstant();
+                }
+            }
+            if(existing!=null) {
+                var visibleCreated=jdbc.queryForObject("select created_at from notes.note where note_id=?",java.sql.Timestamp.class,existing).toInstant();
+                // This row is ABOVE the old visible frontier, not a backdated row below it.
+                assertThat(created).isAfter(visibleCreated);
+            }
+            assertThat(jdbc.queryForObject("select count(*) from notes.note where note_id=?",Integer.class,pending)).isZero();
+            var traversed=new java.util.concurrent.atomic.AtomicInteger();var committed=new AtomicBoolean();
+            doAnswer(call->{
+                PrivateKnowledgeSource.Boundary boundary=call.getArgument(0);
+                assertThat(created).isBeforeOrEqualTo(boundary.startedAt());
+                var page=(PrivateKnowledgeSource.BodyPage)call.callRealMethod();
+                assertThat(page.items()).noneMatch(n->n.metadata().noteId().equals(pending));
+                traversed.addAndGet(page.items().size());
+                return page;
+            }).when(sourceSpy()).readCurrent(any(),any(),any());
+            org.mockito.stubbing.Answer<Object> publish=call->{
+                assertThat(traversed.get()).isEqualTo(initiallyEmpty?0:1);
+                if(committed.compareAndSet(false,true)) inserting.commit();
+                return call.callRealMethod();
+            };
+            if(commitAtTerminal) doAnswer(publish).when(sourceSpy()).currentFingerprint(any());
+            else doAnswer(publish).when(sourceSpy()).readMetadata(any(),any());
+            var result=extraction.extract(active);
+            assertThat(committed).isTrue();
+            assertThat(result.coverage()).isEqualTo(DeterministicUrlExtraction.Coverage.CHANGED);
+            assertThat(result.items()).isEmpty();
+            assertThat(result.inspectedSources()).isEqualTo(initiallyEmpty?0:1);
+            assertThat(result.fingerprint().count()).isEqualTo(initiallyEmpty?1:2);
+            assertThat(jdbc.queryForObject("select created_at from notes.note where note_id=?",java.sql.Timestamp.class,pending).toInstant()).isEqualTo(created);
+        }
     }
     @Test void saveBetweenBodyAndMetadataPassInvalidatesAllRetainedResults() throws Exception {
         UUID owner=account();activate(browser(owner,"ROLE_USER"));var n=note(owner,"Before","https://example.test/before",false);

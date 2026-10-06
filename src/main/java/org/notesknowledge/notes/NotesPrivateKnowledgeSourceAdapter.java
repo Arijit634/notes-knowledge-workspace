@@ -42,13 +42,10 @@ class NotesPrivateKnowledgeSourceAdapter implements PrivateKnowledgeSource {
     public Boundary capture(Scope scope) {
         UUID owner=owner();
         Instant start=clients.getObject().sql("select clock_timestamp()").query(Timestamp.class).single().toInstant();
-        var upper=clients.getObject().sql("""
-                select created_at,note_id from notes.note where owner_user_id=:owner
-                and lifecycle_state=any(cast(:states as text[])) and created_at<=:start
-                order by created_at desc,note_id desc limit 1
-                """).param("owner",owner).param("states",states(scope)).param("start",Timestamp.from(start))
-                .query((r,i)->new Boundary(start,r.getTimestamp(1).toInstant(),r.getObject(2,UUID.class),binding(owner),scope)).optional();
-        return upper.orElse(new Boundary(start,start,new UUID(0,0),binding(owner),scope));
+        // The family cutoff is time, NOT the greatest row visible in this transaction.
+        // A pre-cutoff insert can still be uncommitted here and must enter later validation.
+        // PostgreSQL orders UUIDs unsigned; this sentinel includes every ID at the cutoff.
+        return new Boundary(start,start,new UUID(-1L,-1L),binding(owner),scope);
     }
     private org.springframework.jdbc.core.SqlParameterValue states(Scope scope) {
         return new org.springframework.jdbc.core.SqlParameterValue(java.sql.Types.ARRAY,

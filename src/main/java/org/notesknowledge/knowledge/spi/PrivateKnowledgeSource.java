@@ -15,6 +15,7 @@ public interface PrivateKnowledgeSource {
     record Scope(Set<Lifecycle> lifecycles) {
         public Scope { lifecycles=Set.copyOf(lifecycles); if(lifecycles.isEmpty()) throw new IllegalArgumentException("Empty source scope"); }
     }
+    /** Creation-time family cutoff: (startedAt, maximum UUID), independent of visible rows and page continuation. */
     record Boundary(Instant startedAt, Instant upperCreatedAt, UUID upperId, String actorBinding, Scope scope) {
         @Override public String toString() { return "SourceBoundary[REDACTED]"; }
     }
