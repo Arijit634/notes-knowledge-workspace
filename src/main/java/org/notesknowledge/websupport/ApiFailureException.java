@@ -25,6 +25,8 @@ public final class ApiFailureException extends RuntimeException {
                 "oidc_account_action_required", "Additional account action required"),
         STALE_WRITE(HttpStatus.PRECONDITION_FAILED,
                 "stale_write", "Resource changed since it was loaded"),
+        PROCESSING_POLICY_CHANGED(HttpStatus.CONFLICT,
+                "processing_policy_changed", "Processing policy changed"),
         REQUEST_TOO_LARGE(HttpStatus.CONTENT_TOO_LARGE,
                 "request_too_large", "Request is too large"),
         UNSUPPORTED_MEDIA_TYPE(HttpStatus.UNSUPPORTED_MEDIA_TYPE,

@@ -302,7 +302,7 @@ class AvatarIntegrationTest {
         assertThatThrownBy(() -> jdbc.update("update profile.profile set selected_avatar_id=? where user_id=?",asset,one)).isInstanceOf(DataIntegrityViolationException.class);
         assertThatThrownBy(() -> jdbc.update("update profile.avatar_asset set state='validated',removed_at=null,cleaned_at=null where avatar_asset_id=?",asset)).isInstanceOf(DataIntegrityViolationException.class);
         assertThat(jdbc.queryForObject("select to_regclass('profile.public_profile_projection') is null and to_regclass('notes.attachment') is not null",Boolean.class)).isTrue();
-        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname in ('identity','profile','notes','knowledge','publishing','discovery','moderation')",Integer.class)).isEqualTo(19);
+        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname in ('identity','profile','notes','knowledge','publishing','discovery','moderation')",Integer.class)).isEqualTo(22);
     }
 
     @Test void accountDeletionConsequenceIsAtomicAndDoesNoStorageIo() throws Exception {
