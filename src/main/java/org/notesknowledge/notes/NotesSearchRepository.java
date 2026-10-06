@@ -71,15 +71,18 @@ class NotesSearchRepository {
               select note_id, revision, sum(value)::bigint as rank from ranked
               group by note_id, revision order by rank desc, note_id desc limit 100)
             select n.note_id, n.title, n.lifecycle_state, n.pinned, n.updated_at, f.rank,
-                   n.markdown,
+                   substring(n.search_body from greatest(1,
+                       coalesce(nullif(strpos(n.search_body, :query), 0),
+                                nullif(strpos(n.search_body, :variant), 0), 1) - 60)
+                       for 240) as snippet_source,
                    array(select t.display_label from notes.note_tag t where t.owner_user_id = :owner
                        and t.note_id = n.note_id order by t.normalized_label) as tags,
                    array_remove(array[
-                     case when to_tsvector('simple', n.search_title) @@ q.simple
-                         or to_tsvector('english', n.search_title) @@ q.english
+                     case when ts_filter(n.search_simple, '{A}') @@ q.simple
+                         or ts_filter(n.search_english, '{A}') @@ q.english
                          or (char_length(:query) >= 3 and word_similarity(:query,n.search_title) >= :threshold) then 'title' end,
-                     case when to_tsvector('simple', n.search_body) @@ q.simple
-                         or to_tsvector('english', n.search_body) @@ q.english
+                     case when ts_filter(n.search_simple, '{D}') @@ q.simple
+                         or ts_filter(n.search_english, '{D}') @@ q.english
                          or (char_length(:query) >= 3 and word_similarity(:query,n.search_body) >= :threshold) then 'body' end,
                      case when
             """ + TAG_MATCH + """
@@ -109,7 +112,7 @@ class NotesSearchRepository {
                 row.getObject("note_id", UUID.class), row.getString("title"), row.getString("lifecycle_state"),
                 row.getBoolean("pinned"), List.copyOf(Arrays.asList((String[]) row.getArray("tags").getArray())),
                 row.getTimestamp("updated_at").toInstant(),
-                SearchTextProjection.of(row.getString("markdown")).snippet(request.query(), request.lexicalVariant()),
+                SearchTextProjection.snippet(row.getString("snippet_source")),
                 List.copyOf(Arrays.asList((String[]) row.getArray("labels").getArray()))), row.getLong("rank"))).list();
     }
 }

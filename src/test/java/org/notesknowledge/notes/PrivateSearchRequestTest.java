@@ -64,39 +64,38 @@ class PrivateSearchRequestTest {
         }
         assertThat(sql).doesNotContain("ai_enabled", "note_version", "knowledge.", "for update", "http");
         assertThat(sql).contains("n.revision = f.revision", "limit 100", "60 + row_number()");
+        assertThat(sql).doesNotContain("n.markdown", "getString(\"markdown\")");
+        assertThat(sql).contains("for 240", "as snippet_source");
+        assertThat(sql).doesNotContain("to_tsvector('simple', n.search_body)", "to_tsvector('english', n.search_body)");
+        assertThat(sql).contains("ts_filter(n.search_simple, '{A}')", "ts_filter(n.search_simple, '{D}')");
     }
     @Test void searchPolicyCannotSelectUnboundedBudgetsOrDegenerateFuzzyThreshold() {
         assertThatThrownBy(() -> new NotesSearchProperties(51, 0.3, 2000)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new NotesSearchProperties(50, Double.NaN, 2000)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new NotesSearchProperties(50, 0.1, 2000)).isInstanceOf(IllegalArgumentException.class);
     }
-    @Test void presentationReductionPreservesOffsetsUnicodeUrlAndCodeWithoutHtmlExecution() {
+    @Test void presentationReductionPreservesUnicodeUrlAndCodeWithoutHtmlExecution() {
         String raw="## Cafe\u0301\n**Project** `client_id` [guide](https://example.invalid/a-b) <b>東京</b>";
         var projected=SearchTextProjection.of(raw);
         assertThat(projected.text()).isEqualTo("café project client_id [guide](https://example.invalid/a-b) 東京");
-        int accent=projected.text().indexOf('é');
-        assertThat(raw.substring(projected.sourceStart(accent),projected.sourceEnd(accent))).isEqualTo("e\u0301");
-        int code=projected.text().indexOf("client_id");
-        assertThat(raw.charAt(projected.sourceStart(code))).isEqualTo('c');
         assertThat(projected.toString()).isEqualTo("SearchTextProjection[REDACTED]");
     }
-    @Test void snippetIsBoundedAroundCurrentExactStemOrTypoMatchAndNeverHtml() {
-        for(String query:List.of("google","goohle","run")) {
-            var text=SearchTextProjection.of("background ".repeat(100)+"Google running <b>today</b>"+" trailing".repeat(100));
-            assertThat(text.snippet(query,query)).hasSizeLessThanOrEqualTo(240).contains("google running").doesNotContain("<b>");
-        }
+    @Test void snippetClipsOnlyBoundedSqlSourceAndDoesNotSplitAstralCharacters() {
+        assertThat(SearchTextProjection.snippet("a".repeat(239)+"🚀"+"suffix"))
+                .hasSize(239).doesNotContain("🚀");
+        assertThat(SearchTextProjection.snippet("🚀".repeat(240))).hasSize(240);
+        assertThatThrownBy(() -> SearchTextProjection.snippet("x".repeat(481))).isInstanceOf(IllegalArgumentException.class);
     }
-    @Test void normalizationKeepsComposedHangulAndAstralGraphemeOffsets() {
+    @Test void normalizationKeepsComposedHangulAndAstralCharactersWithinPrefixBound() {
         String raw="\u1100\u1161 \ud83d\ude80 Cafe\u0301";
         var projection=SearchTextProjection.of(raw);
         assertThat(projection.text()).isEqualTo("가 🚀 café");
-        assertThat(raw.substring(projection.sourceStart(0),projection.sourceEnd(0))).isEqualTo("\u1100\u1161");
-        assertThat(raw.substring(projection.sourceStart(2),projection.sourceEnd(2))).isEqualTo("🚀");
+        assertThat(SearchTextProjection.of("🚀".repeat(1024)+"excluded").text()).isEqualTo("🚀".repeat(1024));
     }
     @Test void markdownAutolinksRemainSearchableRatherThanBeingTreatedAsHtmlTags() {
         var text=SearchTextProjection.of("<https://example.test/path> <person@example.test> <b>Text</b>");
         assertThat(text.text()).contains("https://example.test/path", "person@example.test").doesNotContain("<b>");
-        assertThat(text.snippet("https://example.test/path","https://example.test/path"))
+        assertThat(SearchTextProjection.snippet(text.text()))
                 .contains("https://example.test/path").doesNotContain("<",">");
     }
 }

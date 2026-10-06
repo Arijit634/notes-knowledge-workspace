@@ -156,10 +156,45 @@ class PrivateNoteSearchIntegrationTest {
 
     @Test void snippetsAreBoundedPlainTextAndSourceOffsetsAreNotApiAuthority() throws Exception {
         var b=browser(account(),"ROLE_USER");
-        create(b,"Snippet","filler ".repeat(150)+" **needleword** <script>unsafeMarkup</script> after");
+        create(b,"Snippet","filler ".repeat(100)+" **needleword** <script>unsafeMarkup</script> after");
         var item=search(b,Map.of("query","needleword")).get("items").get(0);
         assertThat(item.get("snippet").asText()).hasSizeLessThanOrEqualTo(240).contains("needleword").doesNotContain("<script>","**");
         assertThat(item.toString()).doesNotContain("sourceStart","sourceEnd");
+    }
+
+    @Test void maximumBodyCreateSaveRestoreAndFiftyHitPageRemainBounded() throws Exception {
+        var b=browser(account(),"ROLE_USER");
+        String large=NotesSearchMigrationTest.largeBody("largeprefixneedle");
+        var note=create(b,"Large fixture",large);
+        String id=id(note);
+        UUID version=jdbc.queryForObject("""
+                insert into notes.note_version(note_version_id,note_id,owner_user_id,title,markdown,source_revision,checkpoint_kind,created_at)
+                select uuidv7(),note_id,owner_user_id,title,markdown,revision,'policy',now() from notes.note where note_id=?::uuid
+                returning note_version_id
+                """,UUID.class,id);
+        String savedBody=NotesSearchMigrationTest.largeBody("savedprefixneedle");
+        var saved=mvc.perform(put("/api/notes/{id}",id).cookie(b.cookie).header("X-CSRF-TOKEN",b.csrf)
+                .header("If-Match",note.getResponse().getHeader("ETag")).contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(Map.of("title","Large fixture","markdown",savedBody))))
+                .andExpect(status().isOk()).andReturn();
+        assertThat(jdbc.queryForObject("select markdown from notes.note where note_id=?::uuid",String.class,id)).isEqualTo(savedBody);
+        assertThat(ids(search(b,Map.of("query","savedprefixneedle")))).containsExactly(id);
+        mvc.perform(post("/api/notes/{id}/versions/{v}/restore",id,version).cookie(b.cookie)
+                .header("X-CSRF-TOKEN",b.csrf).header("If-Match",saved.getResponse().getHeader("ETag"))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"confirmRestore\":true}"))
+                .andExpect(status().isOk());
+        assertThat(jdbc.queryForObject("select markdown from notes.note where note_id=?::uuid",String.class,id)).isEqualTo(large);
+        assertThat(ids(search(b,Map.of("query","largeprefixneedle")))).containsExactly(id);
+        assertThat(ids(search(b,Map.of("query","beyondprojectionneedle")))).isEmpty();
+        jdbc.update("""
+                insert into notes.note(note_id,owner_user_id,title,markdown,lifecycle_state,ai_enabled,revision,ai_generation,created_at,updated_at)
+                select uuidv7(),?,'Large fixture',?,'active',false,1,1,now(),now() from generate_series(1,49)
+                """,b.user,large);
+        var page=search(b,Map.of("query","largeprefixneedle","limit",50));
+        assertThat(page.get("items")).hasSize(50);
+        page.get("items").forEach(item -> assertThat(item.get("snippet").asText())
+                .hasSizeLessThanOrEqualTo(240).contains("largeprefixneedle").doesNotContain("beyondprojectionneedle"));
+        assertThat(page.toString()).doesNotContain("markdown","ownerUserId").hasSizeLessThan(40_000);
     }
 
     @Test void keysetPaginationIsOpaqueBoundToOwnerAndNormalizedRequestAndExpires() throws Exception {

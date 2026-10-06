@@ -17,11 +17,26 @@ ALTER TABLE notes.note
     ADD COLUMN search_simple tsvector,
     ADD COLUMN search_english tsvector;
 
+-- Authoritative Markdown still permits 1,000,000 Java characters. Ordinary search
+-- indexes only the first 1024 Unicode code points, cut BEFORE normalization and
+-- capped again AFTER lowercase/NFC/presentation reduction. This bounds both FTS
+-- and trigram input, including hostile Unicode; normalized title is capped at500
+-- code points as well (ordinary titles are fully represented).
+-- Stock simple/english dictionaries and the 23 built-in parser token classes:
+-- even charging every code point to every overlapping class, 3x casing expansion,
+-- 4 UTF8 bytes/code point and 12 bytes entry/position overhead gives an upper bound
+-- (1024+500)*23*(3*4+12)=841248 bytes, below 1MiB. No expanding custom dictionary.
+-- This is deliberately NOT exhaustive maximum-Note search.
+CREATE FUNCTION notes.search_body_v1(value text) RETURNS text
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
+    SELECT left(lower(notes.search_plain_v1(left(value, 1024))), 1024);
+$$;
+
 CREATE FUNCTION notes.refresh_search_v1() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
-    NEW.search_title := lower(notes.search_plain_v1(NEW.title));
-    NEW.search_body := lower(notes.search_plain_v1(NEW.markdown));
+    NEW.search_title := left(lower(notes.search_plain_v1(NEW.title)), 500);
+    NEW.search_body := notes.search_body_v1(NEW.markdown);
     NEW.search_text := NEW.search_title || ' ' || NEW.search_body;
     NEW.search_simple := setweight(to_tsvector('simple', NEW.search_title), 'A')
         || setweight(to_tsvector('simple', NEW.search_body), 'D');
