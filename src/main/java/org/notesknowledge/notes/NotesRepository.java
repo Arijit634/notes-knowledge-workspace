@@ -17,8 +17,11 @@ import org.springframework.stereotype.Repository;
 @Repository
 class NotesRepository {
     private final ObjectProvider<JdbcClient> clients;
+    private final org.notesknowledge.knowledge.KnowledgeInvalidationApi invalidation;
 
-    NotesRepository(ObjectProvider<JdbcClient> clients) { this.clients = clients; }
+    NotesRepository(ObjectProvider<JdbcClient> clients,org.notesknowledge.knowledge.KnowledgeInvalidationApi invalidation) {
+        this.clients = clients;this.invalidation=invalidation;
+    }
 
     private JdbcClient jdbc() { return clients.getObject(); }
 
@@ -90,18 +93,19 @@ class NotesRepository {
     }
 
     int advanceTagRevision(UUID owner, UUID id, long revision, Instant now) {
-        return jdbc().sql("""
+        int changed=jdbc().sql("""
                 update notes.note set revision = revision + 1,
                     updated_at = greatest(updated_at, :now)
                 where owner_user_id = :owner and note_id = :id and revision = :revision
                   and lifecycle_state in ('active', 'archived')
                 """).param("owner", owner).param("id", id).param("revision", revision)
                 .param("now", Timestamp.from(now)).update();
+        return changed(owner,id,changed);
     }
 
     int save(UUID owner, UUID id, long revision, String title, String markdown,
             Instant now) {
-        return jdbc().sql("""
+        int changed=jdbc().sql("""
                 update notes.note set title = :title, markdown = :markdown,
                     revision = revision + 1, updated_at = greatest(updated_at, :now)
                 where owner_user_id = :owner and note_id = :id
@@ -109,31 +113,34 @@ class NotesRepository {
                 """).param("owner", owner).param("id", id).param("revision", revision)
                 .param("title", title).param("markdown", markdown)
                 .param("now", Timestamp.from(now)).update();
+        return changed(owner,id,changed);
     }
 
     int setPin(UUID owner, UUID id, long revision, boolean pinned, Instant now) {
-        return jdbc().sql("""
+        int changed=jdbc().sql("""
                 update notes.note set pinned = :pinned, revision = revision + 1,
                     updated_at = greatest(updated_at, :now)
                 where owner_user_id = :owner and note_id = :id and revision = :revision
                   and lifecycle_state in ('active', 'archived') and pinned <> :pinned
                 """).param("owner", owner).param("id", id).param("revision", revision)
                 .param("pinned", pinned).param("now", Timestamp.from(now)).update();
+        return changed(owner,id,changed);
     }
 
     int transitionLifecycle(UUID owner, UUID id, long revision, String from,
             String to, Instant now) {
-        return jdbc().sql("""
+        int changed=jdbc().sql("""
                 update notes.note set lifecycle_state = :to, revision = revision + 1,
                     updated_at = greatest(updated_at, :now)
                 where owner_user_id = :owner and note_id = :id and revision = :revision
                   and lifecycle_state = :from
                 """).param("owner", owner).param("id", id).param("revision", revision)
                 .param("from", from).param("to", to).param("now", Timestamp.from(now)).update();
+        return changed(owner,id,changed);
     }
 
     int trash(UUID owner, UUID id, long revision, Instant now) {
-        return jdbc().sql("""
+        int changed=jdbc().sql("""
                 update notes.note set pre_trash_state = lifecycle_state,
                     lifecycle_state = 'trashed', trashed_at = :now, revision = revision + 1,
                     updated_at = greatest(updated_at, :now)
@@ -141,10 +148,11 @@ class NotesRepository {
                   and lifecycle_state in ('active', 'archived')
                 """).param("owner", owner).param("id", id).param("revision", revision)
                 .param("now", Timestamp.from(now)).update();
+        return changed(owner,id,changed);
     }
 
     int restore(UUID owner, UUID id, long revision, Instant now) {
-        return jdbc().sql("""
+        int changed=jdbc().sql("""
                 update notes.note set lifecycle_state = pre_trash_state,
                     pre_trash_state = null, trashed_at = null, revision = revision + 1,
                     updated_at = greatest(updated_at, :now)
@@ -152,10 +160,11 @@ class NotesRepository {
                   and lifecycle_state = 'trashed' and pre_trash_state in ('active', 'archived')
                 """).param("owner", owner).param("id", id).param("revision", revision)
                 .param("now", Timestamp.from(now)).update();
+        return changed(owner,id,changed);
     }
 
     int logicallyDelete(UUID owner, UUID id, long revision, Instant now) {
-        return jdbc().sql("""
+        int changed=jdbc().sql("""
                 update notes.note set lifecycle_state = 'logically_deleted', deleted_at = :now,
                     pre_trash_state = null, trashed_at = null, revision = revision + 1,
                     ai_generation = ai_generation + 1, updated_at = greatest(updated_at, :now)
@@ -163,6 +172,7 @@ class NotesRepository {
                   and lifecycle_state = 'trashed'
                 """).param("owner", owner).param("id", id).param("revision", revision)
                 .param("now", Timestamp.from(now)).update();
+        return changed(owner,id,changed);
     }
 
     Optional<UUID> aiAccessUpperBound(UUID owner) {
@@ -190,13 +200,23 @@ class NotesRepository {
     int setAiAccess(UUID owner, List<UUID> ids, boolean enabled, Instant now) {
         // Both real transitions get fresh lineage; OFF/ON cannot reactivate old work.
         // Locks serialize against Save/tags/lifecycle; only these AI-owned fields change.
-        return jdbc().sql("""
+        List<UUID> changed=jdbc().sql("""
                 update notes.note set ai_enabled = :enabled, ai_generation = ai_generation + 1,
                     revision = revision + 1, updated_at = greatest(updated_at, :now)
                 where owner_user_id = :owner and note_id in (:ids)
                   and lifecycle_state <> 'logically_deleted' and ai_enabled <> :enabled
+                returning note_id
                 """).param("owner", owner).param("ids", ids).param("enabled", enabled)
-                .param("now", Timestamp.from(now)).update();
+                .param("now", Timestamp.from(now)).query(UUID.class).list();
+        for(UUID id:changed)invalidation.noteChanged(owner,id);
+        return changed.size();
+    }
+
+    private int changed(UUID owner,UUID id,int changed) {
+        // Single owner-module mutation gateway covers Save, version restore, tags,
+        // pin, lifecycle and AI commands in their caller's existing transaction.
+        if(changed>0)invalidation.noteChanged(owner,id);
+        return changed;
     }
 
     List<NoteRecord> page(UUID owner, String lifecycle, Boolean pinned, Instant beforeTime,

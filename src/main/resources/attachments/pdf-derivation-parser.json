@@ -1,0 +1,12 @@
+{
+  "pipes": {"maxInlineBytes": 0, "maxIpcPayloadBytes": 262144, "startupTimeoutMillis": 15000, "maxWaitForClientMillis": 1000, "socketTimeoutMillis": 20000},
+  "parsers": [{"pdf-parser": {
+    "pages": {"text": "EXTRACT", "inference": [], "emit": {"enabled": false}},
+    "extractInlineImages": false, "extractInlineImageMetadataOnly": false,
+    "extractAcroFormContent": false, "extractAnnotationText": false, "extractBookmarksText": false,
+    "extractActions": true, "ifXFAExtractOnlyXFA": false, "parseIncrementalUpdates": false,
+    "extractIncrementalUpdateInfo": false, "maxMainMemoryBytes": 1048576, "maxPages": 100
+  }}],
+  "text-recognizers": [],
+  "parse-context": {"exception-reporting": {"level": "MESSAGE_REDACTED", "maxLength": 128}}
+}

@@ -22,17 +22,20 @@ class KnowledgeWorkRepository {
     private final ObjectProvider<JdbcClient> clients;
     KnowledgeWorkRepository(ObjectProvider<JdbcClient> clients) { this.clients=clients; }
     KnowledgeWork.Intent enqueue(KnowledgeWork.Kind kind,PrivateAiSourceCurrentness.Expected e) {
+        return enqueue(kind,e,"legacy_unassigned");
+    }
+    KnowledgeWork.Intent enqueue(KnowledgeWork.Kind kind,PrivateAiSourceCurrentness.Expected e,String lineage) {
         if((kind==KnowledgeWork.Kind.ATTACHMENT)!=(e.attachmentId()!=null)) throw new IllegalArgumentException("Source kind mismatch");
-        String dedupe=dedupe(kind,e);
+        String dedupe=dedupe(kind,e,lineage);
         // DO NOTHING, then a new statement snapshot: concurrent winner may have committed after the INSERT snapshot.
         var insert=clients.getObject().sql("""
                 insert into knowledge.knowledge_work_intent(owner_user_id,work_class,source_kind,source_note_id,source_attachment_id,
-                    expected_revision,expected_ai_generation,expected_attachment_generation,max_attempts,next_attempt_at,dedupe_key)
-                values(:owner,:workClass,:sourceKind,:note,:attachment,:revision,:generation,:attachmentGeneration,:attempts,clock_timestamp(),:dedupe)
+                    expected_revision,expected_ai_generation,expected_attachment_generation,max_attempts,next_attempt_at,dedupe_key,target_lineage_id)
+                values(:owner,:workClass,:sourceKind,:note,:attachment,:revision,:generation,:attachmentGeneration,:attempts,clock_timestamp(),:dedupe,:lineage)
                 on conflict(owner_user_id,dedupe_key) where state in ('queued','claimed','retry_wait') do nothing
                 returning *
                 """);
-        bind(insert,kind,e).param("attempts",MAX_ATTEMPTS).param("dedupe",dedupe);
+        bind(insert,kind,e).param("attempts",MAX_ATTEMPTS).param("dedupe",dedupe).param("lineage",lineage);
         for(int attempt=0;attempt<3;attempt++) {
             var created=insert.query((r,i)->intent(r)).optional();
             if(created.isPresent()) return created.get();
@@ -50,7 +53,11 @@ class KnowledgeWorkRepository {
                 .param("attachmentGeneration",e.attachmentGeneration(),java.sql.Types.BIGINT);
     }
     static String dedupe(KnowledgeWork.Kind kind,PrivateAiSourceCurrentness.Expected e) {
+        return dedupe(kind,e,"legacy_unassigned");
+    }
+    static String dedupe(KnowledgeWork.Kind kind,PrivateAiSourceCurrentness.Expected e,String lineage) {
         String identity=e.owner()+"|"+kind.workClass+"|"+e.noteId()+"|"+e.attachmentId()+"|"+e.revision()+"|"+e.aiGeneration()+"|"+e.attachmentGeneration();
+        identity+="|text_surrogate|"+lineage;
         try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(identity.getBytes(StandardCharsets.UTF_8))); }
         catch(NoSuchAlgorithmException impossible) { throw new IllegalStateException("SHA-256 unavailable"); }
     }
@@ -96,11 +103,12 @@ class KnowledgeWorkRepository {
                 +"and lease_token=:token and lease_until>clock_timestamp() and owner_user_id=:owner "
                 +"and source_note_id=:note and source_attachment_id is not distinct from :attachment "
                 +"and expected_revision=:revision and expected_ai_generation=:generation "
-                +"and expected_attachment_generation is not distinct from :attachmentGeneration and work_class=:workClass")
+                +"and expected_attachment_generation is not distinct from :attachmentGeneration and work_class=:workClass "
+                +"and derivation_class=:derivation and target_lineage_id=:lineage")
                 .param("id",c.intent().id()).param("leaseOwner",c.owner().alias()).param("token",c.token().value())
                 .param("owner",e.owner()).param("note",e.noteId()).param("attachment",e.attachmentId(),java.sql.Types.OTHER)
                 .param("revision",e.revision()).param("generation",e.aiGeneration()).param("attachmentGeneration",e.attachmentGeneration(),java.sql.Types.BIGINT)
-                .param("workClass",c.intent().kind().workClass);
+                .param("workClass",c.intent().kind().workClass).param("derivation",c.intent().derivationClass()).param("lineage",c.intent().targetLineageId());
     }
     boolean currentLease(KnowledgeWork.Claim c) {
         return leaseStatement(c,"select count(*) from knowledge.knowledge_work_intent where ").query(Integer.class).single()==1;
@@ -110,6 +118,7 @@ class KnowledgeWorkRepository {
                 "note".equals(r.getString("source_kind"))?KnowledgeWork.Kind.NOTE:KnowledgeWork.Kind.ATTACHMENT,
                 new PrivateAiSourceCurrentness.Expected(r.getObject("owner_user_id",UUID.class),r.getObject("source_note_id",UUID.class),
                         r.getObject("source_attachment_id",UUID.class),r.getLong("expected_revision"),r.getLong("expected_ai_generation"),
-                        r.getObject("expected_attachment_generation",Long.class)),r.getString("state"),r.getInt("attempt_count"),r.getInt("max_attempts"));
+                        r.getObject("expected_attachment_generation",Long.class)),r.getString("state"),r.getInt("attempt_count"),r.getInt("max_attempts"),
+                        r.getString("derivation_class"),r.getString("target_lineage_id"));
     }
 }

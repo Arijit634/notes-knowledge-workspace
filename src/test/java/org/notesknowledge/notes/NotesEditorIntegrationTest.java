@@ -115,7 +115,7 @@ class NotesEditorIntegrationTest {
                 .andExpect(status().isOk()).andReturn();
         assertThat(json.readTree(body(saved)).get("aiEnabled").asBoolean()).isFalse();
         assertThat(jdbc.queryForObject("select ai_generation from notes.note where note_id = ?::uuid", Long.class, id)).isEqualTo(3);
-        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname='knowledge'", Integer.class)).isEqualTo(3);
+        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname='knowledge'", Integer.class)).isEqualTo(5);
         org.mockito.Mockito.verifyNoInteractions(oidcProvider);
         assertThat(application.containsBean("managedEmailDeliveryAdapter")).isFalse();
     }
@@ -737,7 +737,7 @@ class NotesEditorIntegrationTest {
                 select count(*) from information_schema.tables
                 where table_schema in ('identity','profile','notes','knowledge',
                     'publishing','discovery','moderation') and table_type = 'BASE TABLE'
-                """, Integer.class)).isEqualTo(22);
+                """, Integer.class)).isEqualTo(24);
         assertThat(jdbc.queryForList("""
                 select table_name from information_schema.tables
                 where table_schema = 'notes' and table_type = 'BASE TABLE'
