@@ -11,7 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 /** Each signal starts in owner/lifecycle scope, before its scoring and budget. */
 @Repository
 class NotesSearchRepository {
-    record Row(NoteSearchResult result, long rank) { }
+    record Row(NoteSearchResult result, long rank, long revision) { }
     private final ObjectProvider<JdbcClient> clients;
     private final NotesSearchProperties policy;
     NotesSearchRepository(ObjectProvider<JdbcClient> clients, NotesSearchProperties policy) {
@@ -70,7 +70,7 @@ class NotesSearchRepository {
             fused as materialized (
               select note_id, revision, sum(value)::bigint as rank from ranked
               group by note_id, revision order by rank desc, note_id desc limit 100)
-            select n.note_id, n.title, n.lifecycle_state, n.pinned, n.updated_at, f.rank,
+            select n.note_id, n.title, n.lifecycle_state, n.pinned, n.updated_at, n.revision, f.rank,
                    substring(n.search_body from greatest(1,
                        coalesce(nullif(strpos(n.search_body, :query), 0),
                                 nullif(strpos(n.search_body, :variant), 0), 1) - 60)
@@ -113,6 +113,6 @@ class NotesSearchRepository {
                 row.getBoolean("pinned"), List.copyOf(Arrays.asList((String[]) row.getArray("tags").getArray())),
                 row.getTimestamp("updated_at").toInstant(),
                 SearchTextProjection.snippet(row.getString("snippet_source")),
-                List.copyOf(Arrays.asList((String[]) row.getArray("labels").getArray()))), row.getLong("rank"))).list();
+                List.copyOf(Arrays.asList((String[]) row.getArray("labels").getArray()))), row.getLong("rank"),row.getLong("revision"))).list();
     }
 }
