@@ -27,7 +27,7 @@ class NotesSearchMigrationTest {
                     'active',7,false,3,'2026-01-01T00:00:00Z','2026-01-02T00:00:00Z'
                 from generate_series(1,1003)
                 """,owner);
-        var flyway=Flyway.configure().dataSource(ds).load();
+        var flyway=Flyway.configure().dataSource(ds).target("13").load();
         String large = largeBody("prefixneedle");
         assertThat(large).hasSize(1_000_000);
         // The old full-body projection exceeds PostgreSQL's vector limit, not just a repeated word.

@@ -28,4 +28,10 @@ public class AccountEligibilityApi {
             throw ApiFailureException.of(ApiFailureException.Kind.INVALID_CREDENTIALS);
         }
     }
+
+    /** Current Account fact for background revalidation; not browser/session or source authority. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public boolean isEligible(UUID expectedUserId) {
+        return identity.lockActiveAccount(expectedUserId);
+    }
 }
