@@ -150,7 +150,7 @@ class IdentityCoreIntegrationTest {
                 "/api/notes/{noteId}", "/api/notes/{noteId}/tags", "/api/notes/{noteId}/pin",
                 "/api/notes/{noteId}/archive", "/api/notes/{noteId}/return-from-archive",
                 "/api/notes/{noteId}/trash", "/api/notes/{noteId}/restore",
-                "/api/notes/{noteId}/ai-access", "/api/notes/ai-access-bulk",
+                "/api/notes/{noteId}/ai-access", "/api/notes/{noteId}/ai-processing", "/api/notes/ai-access-bulk",
                 "/api/notes/{noteId}/versions", "/api/notes/{noteId}/versions/{versionId}",
                 "/api/notes/{noteId}/versions/{versionId}/restore", "/api/notes/{noteId}/attachments",
                 "/api/notes/{noteId}/attachments/{attachmentId}", "/api/notes/{noteId}/attachments/{attachmentId}/content", "/api/ai/processing-policy", "/api/ai/processing-policy/acknowledgements");

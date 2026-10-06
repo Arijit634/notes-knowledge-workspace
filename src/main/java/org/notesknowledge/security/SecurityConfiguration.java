@@ -127,7 +127,7 @@ public class SecurityConfiguration {
                         .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.GET, "/api/me/profile")
                         .hasAuthority("ROLE_USER")
-                        .requestMatchers(HttpMethod.GET, "/api/ai/processing-policy")
+                        .requestMatchers(HttpMethod.GET, "/api/ai/processing-policy", "/api/notes/{noteId}/ai-processing")
                         .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.POST, "/api/ai/processing-policy/acknowledgements")
                         .hasAuthority("ROLE_USER")

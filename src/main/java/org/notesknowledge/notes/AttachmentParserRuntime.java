@@ -37,11 +37,14 @@ final class AttachmentParserRuntime implements AutoCloseable {
     private final PipesForkParser parser;
 
     AttachmentParserRuntime() {
+        this(false);
+    }
+    AttachmentParserRuntime(boolean extractPdfText) {
         Path created = null;
         PipesForkParser started = null;
         try {
             created = privateDirectory();
-            Path json = resource(created, "parser.json");
+            Path json = resource(created, extractPdfText?"pdf-derivation-parser.json":"parser.json");
             Path logback = resource(created, "logback.xml");
             Path log4j = resource(created, "log4j2.xml");
             var arguments = new ArrayList<>(List.of("-Xmx256m", "-XX:MaxDirectMemorySize=64m",
@@ -53,10 +56,11 @@ final class AttachmentParserRuntime implements AutoCloseable {
                     .setPluginsDir(created.resolve("plugins"))
                     .setJavaPath(Path.of(System.getProperty("java.home"), "bin",
                             System.getProperty("os.name").startsWith("Windows") ? "java.exe" : "java").toString())
-                    .setNumClients(1).setMaxFilesPerProcess(25).setWriteLimit(256).setMaxEmbeddedCount(0)
+                    .setNumClients(1).setMaxFilesPerProcess(25).setWriteLimit(extractPdfText?65536:256).setMaxEmbeddedCount(0)
                     .setTimeoutLimits(new TimeoutLimits(15_000, 5_000)).setJvmArgs(arguments);
             configuration.getPipesConfig().setMaxInlineBytes(0);
-            configuration.getPipesConfig().setMaxIpcPayloadBytes(MAX_IPC_BYTES);
+            configuration.getPipesConfig().setMaxIpcPayloadBytes(extractPdfText?262144:MAX_IPC_BYTES);
+            if(extractPdfText)configuration.setHandlerType(org.apache.tika.sax.BasicContentHandlerFactory.HANDLER_TYPE.XML);
             started = new PipesForkParser(configuration);
             directory = created;
             parser = started;
@@ -65,6 +69,19 @@ final class AttachmentParserRuntime implements AutoCloseable {
             if (created != null) removeDirectory(created);
             throw unavailable(); // Never attach parser-controlled diagnostics as a cause.
         }
+    }
+
+    synchronized String extractPdfXhtml(Path ownedInput) {
+        try {
+            var result=parser.parse(ownedInput);requireSuccess(result);
+            if(result.getMetadataList().size()!=1||!"application/pdf".equals(result.getMetadata().get("Content-Type")))throw invalid();
+            if("true".equalsIgnoreCase(result.getMetadata().get(TikaCoreProperties.WRITE_LIMIT_REACHED)))throw invalid();
+            String content=result.getContent();
+            if(content==null||content.length()>65536)throw invalid();
+            return content;
+        } catch(ApiFailureException failure){throw failure;}
+        catch(InterruptedException failure){Thread.currentThread().interrupt();throw unavailable();}
+        catch(Exception failure){throw unavailable();}
     }
 
     synchronized Metadata parse(Path ownedInput) {

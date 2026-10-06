@@ -28,6 +28,7 @@ record NotesRateProperties(@DefaultValue("60") int windowSeconds,
             case "ATTACHMENT_UPLOAD_GLOBAL" -> 120;
             case "NOTE_SEARCH" -> searchCeiling;
             case "NOTE_SEARCH_GLOBAL" -> searchAggregateCeiling;
+            case "KNOWLEDGE_STATUS" -> 120;
             default -> throw new IllegalArgumentException("Unknown Notes rate class");
         };
     }

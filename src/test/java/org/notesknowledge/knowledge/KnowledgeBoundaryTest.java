@@ -20,7 +20,7 @@ class KnowledgeBoundaryTest {
     @Test void durableOperationsAreNotHttpOrScheduledAndOnlyMetadataPrerequisitesExist() {
         assertThat(Arrays.stream(KnowledgeWorkService.class.getDeclaredMethods()).flatMap(m->Arrays.stream(m.getAnnotations()))
                 .map(a->a.annotationType().getName())).noneMatch(n->n.startsWith("org.springframework.web.bind.annotation")||n.equals("org.springframework.scheduling.annotation.Scheduled"));
-        assertThat(KnowledgeWork.Failure.values()).hasSize(4);
+        assertThat(KnowledgeWork.Failure.values()).hasSize(9);
         assertThat(KnowledgeWork.Kind.values()).hasSize(2);
         assertThat(KnowledgeWorkService.POLICY.maximumBatchSize()).isEqualTo(10);
         assertThat(KnowledgeWorkService.POLICY.leaseDuration()).isEqualTo(java.time.Duration.ofSeconds(30));

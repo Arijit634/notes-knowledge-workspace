@@ -91,7 +91,7 @@ class PrivateNoteSearchIntegrationTest {
         assertThat(page.toString()).doesNotContain("markdown", "ownerUserId", "search_text", "rank", "revision", "aiGeneration");
         assertThat(jdbc.queryForObject("select ai_enabled from notes.note where note_id=?::uuid",Boolean.class,id)).isFalse();
         verifyNoInteractions(provider);
-        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname='knowledge'",Integer.class)).isEqualTo(3);
+        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname='knowledge'",Integer.class)).isEqualTo(5);
     }
 
     @Test void everyCandidateBudgetIsOwnerScopedAndLifecycleScoped() throws Exception {
@@ -293,10 +293,10 @@ class PrivateNoteSearchIntegrationTest {
 
     @Test void indexesAndRealPostgresOwnerAccessAreAvailableWithoutNewRelations() {
         assertThat(jdbc.queryForObject("select current_setting('server_version')",String.class)).startsWith("18.");
-        assertThat(jdbc.queryForList("select extname from pg_extension",String.class)).contains("pg_trgm").doesNotContain("vector");
+        assertThat(jdbc.queryForList("select extname from pg_extension",String.class)).contains("pg_trgm","vector");
         assertThat(jdbc.queryForList("select indexname from pg_indexes where schemaname='notes'",String.class))
                 .contains("ix_note_search_simple","ix_note_search_english","ix_note_search_trigram","ix_note_search_title_trigram");
-        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname in ('identity','notes','profile','knowledge','publishing','discovery','moderation')",Integer.class)).isEqualTo(22);
+        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname in ('identity','notes','profile','knowledge','publishing','discovery','moderation')",Integer.class)).isEqualTo(24);
         UUID owner=account();
         var transaction=new org.springframework.transaction.support.TransactionTemplate(new org.springframework.jdbc.support.JdbcTransactionManager(jdbc.getDataSource()));
         transaction.executeWithoutResult(s -> {

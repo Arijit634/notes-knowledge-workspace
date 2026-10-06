@@ -21,11 +21,14 @@ class AttachmentDeleteTransactions {
     private final IfMatchPrecondition preconditions;
     private final StrongCoreEtagCodec etags;
     private final Clock clock;
+    private final org.notesknowledge.knowledge.KnowledgeInvalidationApi invalidation;
 
     AttachmentDeleteTransactions(ObjectProvider<AccountEligibilityApi> eligibility, NotesRepository notes,
-            AttachmentRepository attachments, IfMatchPrecondition preconditions, StrongCoreEtagCodec etags, Clock clock) {
+            AttachmentRepository attachments, IfMatchPrecondition preconditions, StrongCoreEtagCodec etags, Clock clock,
+            org.notesknowledge.knowledge.KnowledgeInvalidationApi invalidation) {
         this.eligibility = eligibility; this.notes = notes; this.attachments = attachments;
         this.preconditions = preconditions; this.etags = etags; this.clock = clock;
+        this.invalidation=invalidation;
     }
 
     @Transactional
@@ -40,6 +43,7 @@ class AttachmentDeleteTransactions {
         if (attachments.remove(owner, note, attachment, current.revision(), clock.instant().truncatedTo(ChronoUnit.MILLIS)) != 1) {
             throw missing();
         }
+        invalidation.attachmentChanged(owner,note,attachment);
         return new AttachmentCleanupTarget(attachment, current.reference(), Math.incrementExact(current.revision()));
     }
 

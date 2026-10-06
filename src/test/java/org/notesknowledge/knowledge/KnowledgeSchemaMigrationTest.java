@@ -16,21 +16,21 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 class KnowledgeSchemaMigrationTest {
     @Container static final PostgreSQLContainer postgres=new PostgreSQLContainer("pgvector/pgvector:0.8.6-pg18-trixie")
             .withDatabaseName("knowledge_upgrade").withUsername("knowledge_migrator").withPassword("synthetic-knowledge-migrator-password");
-    @Test void forwardUpgradeAddsExactlyThreeApprovedRelationsAndPreservesExistingRows() throws Exception {
+    @Test void forwardUpgradeAddsExactlyFiveApprovedRelationsAndPreservesExistingRows() throws Exception {
         var ds=new DriverManagerDataSource(postgres.getJdbcUrl(),postgres.getUsername(),postgres.getPassword());
         var jdbc=new JdbcTemplate(ds);
         Flyway.configure().dataSource(ds).target("13").load().migrate();
         UUID owner=jdbc.queryForObject("insert into identity.account(user_id,canonical_email,display_email,email_verified_at,account_state,created_at,updated_at) values(uuidv7(),'synthetic@example.test','synthetic@example.test',now(),'active',now(),now()) returning user_id",UUID.class);
         UUID note=jdbc.queryForObject("insert into notes.note(note_id,owner_user_id,title,markdown,lifecycle_state,revision,ai_enabled,ai_generation,created_at,updated_at) values(uuidv7(),?,'Synthetic','https://example.test/saved','active',7,false,3,now(),now()) returning note_id",UUID.class,owner);
         var flyway=Flyway.configure().dataSource(ds).load();
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(1);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(2);
         assertThat(flyway.validateWithResult().validationSuccessful).isTrue();
         assertThat(flyway.migrate().migrationsExecuted).isZero();
         assertThat(jdbc.queryForList("select tablename from pg_tables where schemaname='knowledge' order by tablename",String.class))
-                .containsExactly("knowledge_work_intent","processing_policy","processing_policy_acknowledgement");
-        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname in ('identity','notes','profile','knowledge','publishing','discovery','moderation')",Integer.class)).isEqualTo(22);
+                .containsExactly("knowledge_work_intent","private_derived_representation","private_derived_segment","processing_policy","processing_policy_acknowledgement");
+        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname in ('identity','notes','profile','knowledge','publishing','discovery','moderation')",Integer.class)).isEqualTo(24);
         assertThat(jdbc.queryForObject("select count(*) from notes.note where note_id=? and revision=7 and ai_generation=3 and not ai_enabled and markdown='https://example.test/saved'",Integer.class,note)).isEqualTo(1);
-        assertThat(jdbc.queryForList("select extname from pg_extension",String.class)).contains("pg_trgm").doesNotContain("vector");
+        assertThat(jdbc.queryForList("select extname from pg_extension",String.class)).contains("pg_trgm","vector");
         assertThat(jdbc.queryForObject("select count(*) from knowledge.processing_policy",Integer.class)).isZero();
         assertThat(jdbc.queryForList("select indexname from pg_indexes where schemaname='knowledge'",String.class))
                 .contains("ux_knowledge_work_active_dedupe","ix_knowledge_work_ready","ix_knowledge_work_reclaim","ix_policy_ack_policy","ix_processing_policy_current");

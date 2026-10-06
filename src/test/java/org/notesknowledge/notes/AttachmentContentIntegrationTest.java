@@ -303,7 +303,7 @@ class AttachmentContentIntegrationTest {
         assertThat(output.getAll()).contains("\"outcome\":\"failure\"");
     }
 
-    @Test void conditionalHeadersAreNotSelectedAndHeadDeleteAiAndWildcardsRemainDenied() throws Exception {
+    @Test void conditionalHeadersAreNotSelectedAndStatusDoesNotOpenBytesWhileUnsafeMethodsRemainDenied() throws Exception {
         Fixture f=fixture("pdf","application/pdf",payload(100),"synthetic.pdf");Cookie cookie=browser(f.owner(),"ROLE_USER");
         var response=mvc.perform(get(path(f)).cookie(cookie).header("If-None-Match",etags.encode(new AttachmentCoreVersion(f.id(),1)))
                 .header("If-Modified-Since","Wed, 01 Jan 2030 00:00:00 GMT")).andExpect(status().isOk()).andReturn().getResponse();
@@ -313,7 +313,8 @@ class AttachmentContentIntegrationTest {
         int opens=store.opens;
         mvc.perform(head(path(f)).cookie(cookie)).andExpect(status().isForbidden());
         mvc.perform(delete("/api/notes/"+f.note()+"/attachments/"+f.id()).cookie(cookie)).andExpect(status().isForbidden());
-        mvc.perform(get("/api/notes/"+f.note()+"/ai-processing").cookie(cookie)).andExpect(status().isForbidden());
+        mvc.perform(get("/api/notes/"+f.note()+"/ai-processing").cookie(cookie)).andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().doesNotExist("ETag"));
         mvc.perform(get(path(f)+"/other").cookie(cookie)).andExpect(status().isForbidden());
         assertThat(store.opens).isEqualTo(opens);
     }

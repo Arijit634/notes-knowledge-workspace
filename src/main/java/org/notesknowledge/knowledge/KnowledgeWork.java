@@ -15,10 +15,15 @@ public final class KnowledgeWork {
         Kind(String workClass,String sourceKind) { this.workClass=workClass;this.sourceKind=sourceKind; }
     }
     public enum Failure {
-        TRANSIENT_DEPENDENCY, INVALID_SOURCE, POLICY_BLOCKED, ATTEMPTS_EXHAUSTED;
+        TRANSIENT_DEPENDENCY, INVALID_SOURCE, POLICY_BLOCKED, ATTEMPTS_EXHAUSTED,
+        QUOTA, PROVIDER_UNAVAILABLE, INVALID_OUTPUT, BUDGET_EXCEEDED, LINEAGE_OBSOLETE;
         String code() { return name().toLowerCase(java.util.Locale.ROOT); }
     }
-    public record Intent(UUID id,Kind kind,PrivateAiSourceCurrentness.Expected expected,String state,int attemptCount,int maxAttempts) {
+    public record Intent(UUID id,Kind kind,PrivateAiSourceCurrentness.Expected expected,String state,int attemptCount,int maxAttempts,
+            String derivationClass,String targetLineageId) {
+        public Intent(UUID id,Kind kind,PrivateAiSourceCurrentness.Expected expected,String state,int attemptCount,int maxAttempts) {
+            this(id,kind,expected,state,attemptCount,maxAttempts,"text_surrogate","legacy_unassigned");
+        }
         @Override public String toString() { return "KnowledgeIntent[REDACTED]"; }
     }
     public record Claim(Intent intent,LeaseOwner owner,LeaseToken token,Instant until) {

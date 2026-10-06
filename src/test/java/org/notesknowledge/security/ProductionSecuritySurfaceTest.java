@@ -56,7 +56,7 @@ class ProductionSecuritySurfaceTest {
                 "/api/notes/{noteId}/versions", "/api/notes/{noteId}/versions/{versionId}",
                 "/api/notes/{noteId}/versions/{versionId}/restore", "/api/me/profile", "/api/me/profile/avatar",
                 "/api/notes/{noteId}/attachments", "/api/notes/{noteId}/attachments/{attachmentId}",
-                "/api/notes/{noteId}/attachments/{attachmentId}/content", "/api/ai/processing-policy", "/api/ai/processing-policy/acknowledgements");
+                "/api/notes/{noteId}/attachments/{attachmentId}/content", "/api/ai/processing-policy", "/api/ai/processing-policy/acknowledgements", "/api/notes/{noteId}/ai-processing");
         assertThat(requestMappings.getHandlerMethods().keySet().stream()
                 .filter(mapping -> mapping.getPatternValues().contains("/api/notes/search"))
                 .flatMap(mapping -> mapping.getMethodsCondition().getMethods().stream()))

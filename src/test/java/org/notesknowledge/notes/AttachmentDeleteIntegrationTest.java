@@ -259,7 +259,7 @@ class AttachmentDeleteIntegrationTest {
         Fixture f=fixture();Browser b=browser(f.owner(),"ROLE_USER");
         for(String url:List.of(path(f)+"/content",path(f)+"/arbitrary"))assertThat(mvc.perform(delete(url).cookie(b.cookie()).header("X-CSRF-TOKEN",b.csrf())).andReturn().getResponse().getStatus()).isEqualTo(403);
         assertThat(mvc.perform(head(path(f)+"/content").cookie(b.cookie())).andReturn().getResponse().getStatus()).isEqualTo(403);
-        assertThat(mvc.perform(get("/api/notes/"+f.note()+"/ai-processing").cookie(b.cookie())).andReturn().getResponse().getStatus()).isEqualTo(403);
+        assertThat(mvc.perform(get("/api/notes/"+f.note()+"/ai-processing").cookie(b.cookie())).andReturn().getResponse().getStatus()).isEqualTo(200);
         assertThat(store.attempts).isEmpty();
     }
 

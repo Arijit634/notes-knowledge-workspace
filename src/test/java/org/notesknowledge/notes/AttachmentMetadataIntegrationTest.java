@@ -299,11 +299,11 @@ class AttachmentMetadataIntegrationTest {
         }
     }
 
-    @Test void deleteRequiresCsrfAndAiProcessingRemainsUnavailable() throws Exception {
+    @Test void deleteRequiresCsrfAndProcessingStatusDoesNotChangeAttachmentState() throws Exception {
         UUID owner = account(), note = note(owner), id = attachment(owner, note, "pdf", CREATED);
         Cookie cookie = browser(owner, "ROLE_USER");
         mvc.perform(delete(path(note) + "/" + id).cookie(cookie)).andExpect(status().isForbidden());
-        mvc.perform(get("/api/notes/" + note + "/ai-processing").cookie(cookie)).andExpect(status().isForbidden());
+        mvc.perform(get("/api/notes/" + note + "/ai-processing").cookie(cookie)).andExpect(status().isOk());
         assertThat(row(id).get("cleanup_state")).isEqualTo("retained");
     }
 
