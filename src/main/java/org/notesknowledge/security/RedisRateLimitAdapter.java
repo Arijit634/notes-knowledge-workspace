@@ -30,7 +30,8 @@ final class RedisRateLimitAdapter implements RateLimitPort {
         // The bucket is server-owned, bounded, and never includes raw email, IP, token, or path.
         String control = request.controlClass().value();
         boolean noteControl = "NOTE_AI_BULK".equals(control) || "NOTE_AI_BULK_GLOBAL".equals(control)
-                || "ATTACHMENT_UPLOAD".equals(control) || "ATTACHMENT_UPLOAD_GLOBAL".equals(control);
+                || "ATTACHMENT_UPLOAD".equals(control) || "ATTACHMENT_UPLOAD_GLOBAL".equals(control)
+                || "NOTE_SEARCH".equals(control) || "NOTE_SEARCH_GLOBAL".equals(control);
         int ceiling = noteControl ? notes.ceiling(control) : properties.ceiling(control);
         int window = noteControl ? notes.windowSeconds() : properties.windowSeconds(control);
         String key = (noteControl ? "notes:rate:" : "identity:rate:") + control + ":"
