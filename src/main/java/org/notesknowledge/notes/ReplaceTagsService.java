@@ -31,6 +31,7 @@ class ReplaceTagsService {
     }
 
     @Transactional
+    @org.notesknowledge.CoordinatedMutation
     NotesService.EtaggedNote replace(UUID owner, UUID id, String ifMatch, List<String> values) {
         // Lock the Note root even for a no-op: the precondition and full set belong
         // to the same committed revision, including concurrent text Save commands.

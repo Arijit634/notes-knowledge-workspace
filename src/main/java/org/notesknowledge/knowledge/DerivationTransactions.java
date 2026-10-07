@@ -20,7 +20,10 @@ class DerivationTransactions {
         return sources.acquire(claim.intent().expected());
     }
     @Transactional(timeout=3)
-    boolean activate(KnowledgeWork.Claim claim,EmbeddingLineage expected,List<DerivedSegment> segments,List<float[]> vectors) {
+    boolean activate(KnowledgeWork.Claim claim,EmbeddingLineage expected,List<DerivedSegment> segments,List<float[]> vectors,
+            List<org.notesknowledge.DispatchCoordinator.Handle> dispatches) {
+        // Independent veto: unchanged source and a current lease cannot rehabilitate lost coordination.
+        if(dispatches.isEmpty()||dispatches.stream().anyMatch(d->!d.safelyReleased()))return false;
         var permit=gate.issue(claim);
         if(permit.isEmpty()||!permit.get().lineage().equals(expected))return false;
         representations.activate(claim.intent().expected(),expected,segments,vectors);

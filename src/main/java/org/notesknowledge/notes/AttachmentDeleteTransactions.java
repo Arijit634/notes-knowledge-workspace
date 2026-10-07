@@ -32,6 +32,7 @@ class AttachmentDeleteTransactions {
     }
 
     @Transactional
+    @org.notesknowledge.CoordinatedMutation
     AttachmentCleanupTarget remove(UUID owner, UUID note, UUID attachment, String ifMatch, HttpServletRequest request) {
         var guard = eligibility.getIfAvailable();
         if (guard == null) throw ApiFailureException.of(ApiFailureException.Kind.SERVICE_UNAVAILABLE);

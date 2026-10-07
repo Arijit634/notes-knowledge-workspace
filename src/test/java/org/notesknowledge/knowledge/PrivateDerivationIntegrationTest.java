@@ -67,6 +67,9 @@ class PrivateDerivationIntegrationTest {
     @Autowired ExactPrivateVectorSearch search;
     @Autowired KnowledgeInvalidationApi invalidation;
     @MockitoSpyBean AiProcessingGate gate;
+    @MockitoSpyBean org.notesknowledge.DispatchCoordinator coordination;
+    @MockitoSpyBean DerivationTransactions derivationTransactions;
+    @Autowired javax.sql.DataSource dataSource;
     @MockitoBean AiDerivationProperties configuration;
     @MockitoBean ProviderDispatchProperties dispatchConfiguration;
     @MockitoBean KnowledgePolicyProperties policyConfiguration;
@@ -77,7 +80,11 @@ class PrivateDerivationIntegrationTest {
     Browser browser;
     String code;
     @BeforeEach void prepare() throws Exception {
-        reset(configuration,dispatchConfiguration,policyConfiguration,embeddings,media,rates,gate,representations);
+        reset(configuration,dispatchConfiguration,policyConfiguration,embeddings,media,rates,gate,representations,coordination,derivationTransactions);
+        doAnswer(call->{assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();return call.callRealMethod();})
+            .when(coordination).noteMutation(any(),any());
+        doAnswer(call->{assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();return call.callRealMethod();})
+            .when(coordination).ownerMutation(any());
         when(configuration.configured()).thenReturn(true);when(configuration.provider()).thenReturn("synthetic");
         when(configuration.embeddingModel()).thenReturn("synthetic-embedding");when(configuration.mediaModel()).thenReturn("synthetic-media");
         when(configuration.modelRevision()).thenReturn("v1");when(configuration.configurationId()).thenReturn("synthetic-v1");
@@ -149,19 +156,25 @@ class PrivateDerivationIntegrationTest {
         assertThat(lineageForPolicy(policy,1,"note").id()).isEqualTo(lineage);
     }
     @Test void issuedSyntheticPermitCannotReachEitherGoogleAdapterAndRevokedApprovalCannotDispatch() {
-        var fake=gate.issue(claim(noteExpected(),"note")).orElseThrow();
+        var syntheticClaim=claim(noteExpected(),"note");
         @SuppressWarnings("unchecked") org.springframework.beans.factory.ObjectProvider<com.google.genai.Client> sdk=mock(org.springframework.beans.factory.ObjectProvider.class);
         var adapters=new GoogleDerivationAdapters();
+        try(var handle=coordination.dispatch(owner,note)) {
+        var fake=gate.issueForDispatch(syntheticClaim,handle).orElseThrow();
         assertThatThrownBy(()->adapters.googleTextEmbeddingPort(configuration,sdk).embed(fake,List.of("Synthetic")))
             .isInstanceOfSatisfying(DerivationFailure.class,failure->assertThat(failure.category).isEqualTo(KnowledgeWork.Failure.INVALID_SOURCE));
         assertThatThrownBy(()->adapters.googleMediaUnderstandingPort(configuration,sdk,json).describe(fake,new byte[0],"image/png"))
             .isInstanceOfSatisfying(DerivationFailure.class,failure->assertThat(failure.category).isEqualTo(KnowledgeWork.Failure.INVALID_SOURCE));
         unpaidGemini();approve(noteExpected());
         assertThatThrownBy(fake::requireGoogleDispatch).isInstanceOf(DerivationFailure.class);
-        var permit=gate.issue(claim(noteExpected(),"note")).orElseThrow();
+        }
+        var approvedClaim=claim(noteExpected(),"note");
+        try(var handle=coordination.dispatch(owner,note)) {
+        var permit=gate.issueForDispatch(approvedClaim,handle).orElseThrow();
         permit.requireGoogleDispatch();when(dispatchConfiguration.approvedSourceFingerprints()).thenReturn(List.of());
         assertThatThrownBy(permit::requireGoogleDispatch).isInstanceOf(DerivationFailure.class);
         assertThat(permit.toString()).doesNotContain(note.toString(),ProviderDispatchPolicy.fingerprint(noteExpected()));
+        }
     }
     @Test @org.junit.jupiter.api.extension.ExtendWith(org.springframework.boot.test.system.OutputCaptureExtension.class)
     void restrictedPolicyDoesNotExposeSourceIdentityOrApprovalInLogsOrProjection(org.springframework.boot.test.system.CapturedOutput output) throws Exception {
@@ -190,7 +203,7 @@ class PrivateDerivationIntegrationTest {
     @Test void disableBeforeFinalDispatchCapturesNoProviderContent() throws Exception {
         var claim=claim(noteExpected(),"note");
         var calls=new java.util.concurrent.atomic.AtomicInteger();
-        doAnswer(call->{if(calls.incrementAndGet()==3)disable();return call.callRealMethod();}).when(gate).issue(any());
+        doAnswer(call->{if(calls.incrementAndGet()==2)disable();return call.callRealMethod();}).when(coordination).dispatch(any(),any());
         executor.execute(claim);verify(embeddings,never()).embed(any(),any());
         assertThat(readyCount()).isZero();assertThat(state(claim)).isEqualTo("obsolete");assertProjection("excluded");
     }
@@ -200,21 +213,16 @@ class PrivateDerivationIntegrationTest {
         doAnswer(call->{assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
             started.countDown();assertThat(release.await(15,TimeUnit.SECONDS)).isTrue();return List.of(vector());}).when(embeddings).embed(any(),any());
         // doAnswer avoids invoking the existing capture stub during restubbing.
-        try(var pool=Executors.newSingleThreadExecutor()) {
+        var committed=new CountDownLatch(1);
+        doAnswer(call->{assertThat(committed.await(15,TimeUnit.SECONDS)).isTrue();return call.callRealMethod();})
+            .when(derivationTransactions).activate(any(),any(),any(),any(),any());
+        try(var pool=Executors.newFixedThreadPool(2)) {
             var result=pool.submit(()->executor.execute(claim));assertThat(started.await(15,TimeUnit.SECONDS)).isTrue();
-            switch(mutation) {
-                case "disable" -> disable();
-                case "save" -> mutate("put","",Map.of("title","Changed","markdown","Changed body"));
-                case "tag" -> mutate("put","/tags",Map.of("tags",List.of("synthetic")));
-                case "pin" -> mutate("put","/pin",null);
-                case "archive" -> mutate("post","/archive",null);
-                case "trash" -> mutate("post","/trash",null);
-                case "suspend" -> jdbc.update("update identity.account set account_state='suspended' where user_id=?",owner);
-                case "policy" -> policy(2,"b");
-                case "lineage" -> when(configuration.configurationId()).thenReturn("synthetic-v2");
-            }
-            release.countDown();result.get(20,TimeUnit.SECONDS);
-        }
+            var invalidation=pool.submit(()->{try {authorityMutation(mutation);committed.countDown();return null;}catch(Exception failure){throw new RuntimeException(failure);}});
+            awaitAdvisoryWaiter();assertThat(invalidation.isDone()).isFalse();
+            assertThat(jdbc.queryForObject("select ai_enabled from notes.note where note_id=?",Boolean.class,note)).isTrue();
+            release.countDown();invalidation.get(20,TimeUnit.SECONDS);result.get(20,TimeUnit.SECONDS);
+        } finally {release.countDown();committed.countDown();}
         assertThat(readyCount()).isZero();assertThat(state(claim)).isEqualTo("obsolete");
         if(mutation.equals("disable"))assertProjection("excluded");
     }
@@ -412,13 +420,19 @@ class PrivateDerivationIntegrationTest {
         UUID attachment=upload("image");var expected=new PrivateAiSourceCurrentness.Expected(owner,note,attachment,1,1,1L);
         var claim=claim(expected,"image");var captured=new CountDownLatch(1);var release=new CountDownLatch(1);
         doAnswer(call->{captured.countDown();assertThat(release.await(15,TimeUnit.SECONDS)).isTrue();return mediaSegments("image");}).when(media).describe(any(),any(),any());
-        try(var pool=Executors.newSingleThreadExecutor()) {
+        var committed=new CountDownLatch(1);
+        try(var pool=Executors.newFixedThreadPool(2)) {
             var result=pool.submit(()->executor.execute(claim));assertThat(captured.await(15,TimeUnit.SECONDS)).isTrue();
             String path="/api/notes/"+note+"/attachments/"+attachment;
             String etag=mvc.perform(get(path).cookie(browser.cookie)).andExpect(status().isOk()).andReturn().getResponse().getHeader("ETag");
-            mvc.perform(delete(path).cookie(browser.cookie).header("X-CSRF-TOKEN",browser.csrf).header("If-Match",etag)).andExpect(status().isNoContent());
-            release.countDown();result.get(20,TimeUnit.SECONDS);
-        }
+            // Hold the next embedding/activation path until the queued deletion has committed.
+            var calls=new java.util.concurrent.atomic.AtomicInteger();
+            doAnswer(call->{if(calls.incrementAndGet()==1)assertThat(committed.await(15,TimeUnit.SECONDS)).isTrue();return call.callRealMethod();})
+                .when(coordination).dispatch(any(),any());
+            var deletion=pool.submit(()->{mvc.perform(delete(path).cookie(browser.cookie).header("X-CSRF-TOKEN",browser.csrf).header("If-Match",etag)).andExpect(status().isNoContent());committed.countDown();return null;});
+            awaitAdvisoryWaiter();assertThat(deletion.isDone()).isFalse();
+            release.countDown();deletion.get(20,TimeUnit.SECONDS);result.get(20,TimeUnit.SECONDS);
+        } finally {release.countDown();committed.countDown();}
         assertThat(readyCount()).isZero();assertThat(state(claim)).isEqualTo("obsolete");
         assertThat(json.readTree(mvc.perform(get("/api/notes/"+note+"/ai-processing").cookie(browser.cookie)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString()).get("attachments").size()).isZero();
     }
@@ -426,6 +440,133 @@ class PrivateDerivationIntegrationTest {
         UUID attachment=upload("audio");var claim=claim(new PrivateAiSourceCurrentness.Expected(owner,note,attachment,1,1,1L),"audio");
         doReturn(List.of(new DerivedSegment("synthetic","transcript","",null,null,null,0.0,900.0,null,null,null,null))).when(media).describe(any(),any(),any());
         executor.execute(claim);assertThat(state(claim)).isEqualTo("failed");assertThat(readyCount()).isZero();verify(embeddings,never()).embed(any(),any());
+    }
+    @ParameterizedTest @ValueSource(strings={"note-disable","note-save","image-disable","image-save"})
+    void invalidationWinsBeforeCrossSessionDispatch(String scenario) throws Exception {
+        boolean image=scenario.startsWith("image");
+        UUID attachment=image?upload("image"):null;
+        var claim=claim(new PrivateAiSourceCurrentness.Expected(owner,note,attachment,1,1,image?1L:null),image?"image":"note");
+        var waiting=new CountDownLatch(1);var release=new CountDownLatch(1);
+        doAnswer(call->{waiting.countDown();assertThat(release.await(15,TimeUnit.SECONDS)).isTrue();return call.callRealMethod();})
+            .when(coordination).dispatch(any(),any());
+        try(var pool=Executors.newSingleThreadExecutor()) {
+            var result=pool.submit(()->executor.execute(claim));assertThat(waiting.await(15,TimeUnit.SECONDS)).isTrue();
+            if(scenario.endsWith("disable"))disable();else mutate("put","",Map.of("title","Changed","markdown","Changed body"));
+            release.countDown();result.get(20,TimeUnit.SECONDS);
+        } finally {release.countDown();}
+        verify(embeddings,never()).embed(any(),any());verify(media,never()).describe(any(),any(),any());
+        assertThat(readyCount()).isZero();assertThat(state(claim)).isEqualTo("obsolete");
+    }
+
+    @Test void afterFinalGateBeforeProviderCaptureInvalidationMustWait() throws Exception {
+        var claim=claim(noteExpected(),"note");var issued=new CountDownLatch(1);var release=new CountDownLatch(1);var committed=new CountDownLatch(1);
+        var calls=new java.util.concurrent.atomic.AtomicInteger();
+        doAnswer(call->{var permit=call.callRealMethod();if(calls.incrementAndGet()==2){issued.countDown();assertThat(release.await(15,TimeUnit.SECONDS)).isTrue();}return permit;})
+            .when(gate).issueForDispatch(any(),any());
+        doAnswer(call->{assertThat(committed.await(15,TimeUnit.SECONDS)).isTrue();return call.callRealMethod();})
+            .when(derivationTransactions).activate(any(),any(),any(),any(),any());
+        try(var pool=Executors.newFixedThreadPool(2)) {
+            var worker=pool.submit(()->executor.execute(claim));assertThat(issued.await(15,TimeUnit.SECONDS)).isTrue();
+            verify(embeddings,never()).embed(any(),any());
+            var disable=pool.submit(()->{disable();committed.countDown();return null;});
+            awaitAdvisoryWaiter();assertThat(disable.isDone()).isFalse();
+            assertThat(jdbc.queryForObject("select ai_enabled from notes.note where note_id=?",Boolean.class,note)).isTrue();
+            release.countDown();disable.get(20,TimeUnit.SECONDS);worker.get(20,TimeUnit.SECONDS);
+        } finally {release.countDown();committed.countDown();}
+        verify(embeddings,times(1)).embed(any(),any());assertThat(readyCount()).isZero();assertProjection("excluded");
+    }
+
+    @Test void reclaimedWorkerCannotEnterWhileAnotherSessionDispatchesSameNote() throws Exception {
+        var a=claim(noteExpected(),"note");var captured=new CountDownLatch(1);var release=new CountDownLatch(1);
+        var concurrent=new java.util.concurrent.atomic.AtomicInteger();var maximum=new java.util.concurrent.atomic.AtomicInteger();
+        doAnswer(call->{assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            maximum.accumulateAndGet(concurrent.incrementAndGet(),Math::max);
+            try {captured.countDown();assertThat(release.await(15,TimeUnit.SECONDS)).isTrue();return List.of(vector());}
+            finally {concurrent.decrementAndGet();}}).when(embeddings).embed(any(),any());
+        try(var pool=Executors.newFixedThreadPool(2)) {
+            var first=pool.submit(()->executor.execute(a));assertThat(captured.await(15,TimeUnit.SECONDS)).isTrue();
+            jdbc.update("update knowledge.knowledge_work_intent set lease_until=clock_timestamp()-interval '1 second' where knowledge_work_intent_id=?",a.intent().id());
+            var b=work.reclaim(new LeaseOwner("synthetic-b"),1).getFirst();assertThat(b.token()).isNotEqualTo(a.token());
+            var second=pool.submit(()->executor.execute(b));awaitAdvisoryWaiter();assertThat(second.isDone()).isFalse();
+            verify(embeddings,times(1)).embed(any(),any());release.countDown();first.get(20,TimeUnit.SECONDS);second.get(20,TimeUnit.SECONDS);
+            assertThat(maximum.get()).isEqualTo(1);assertThat(state(b)).isEqualTo("completed");assertThat(readyCount()).isEqualTo(1);
+        } finally {release.countDown();}
+    }
+
+    @ParameterizedTest @ValueSource(strings={"note","image"})
+    void observedSessionLossAfterFinalGatePoisonsPermitBeforeCapture(String kind) throws Exception {
+        UUID attachment=kind.equals("image")?upload(kind):null;
+        var claim=claim(new PrivateAiSourceCurrentness.Expected(owner,note,attachment,1,1,attachment==null?null:1L),kind);
+        var lost=new java.util.concurrent.atomic.AtomicReference<AiProcessingGate.SourceAiPermit>();
+        var calls=new java.util.concurrent.atomic.AtomicInteger();
+        doAnswer(call->{Object result=call.callRealMethod();
+            if(calls.incrementAndGet()==(attachment==null?2:3)) {
+                var permit=((Optional<AiProcessingGate.SourceAiPermit>)result).orElseThrow();lost.set(permit);
+                terminateDispatchSession();
+                assertThatThrownBy(permit::requireDispatch).isInstanceOf(org.notesknowledge.websupport.ApiFailureException.class);
+            }return result;}).when(gate).issueForDispatch(any(),any());
+        executor.execute(claim);
+        assertThat(lost.get().coordination().state()).isEqualTo(org.notesknowledge.DispatchCoordinator.Handle.State.POISONED);
+        assertThatThrownBy(lost.get()::requireDispatch).isInstanceOf(org.notesknowledge.websupport.ApiFailureException.class);
+        verify(embeddings,never()).embed(any(),any());verify(media,never()).describe(any(),any(),any());assertThat(readyCount()).isZero();
+        // A fresh attempt must reacquire and revalidate; the lost permit stays poisoned forever.
+        reset(gate);
+        jdbc.update("update knowledge.knowledge_work_intent set next_attempt_at=clock_timestamp()-interval '1 second' where knowledge_work_intent_id=?",claim.intent().id());
+        var fresh=work.claim(new LeaseOwner("synthetic-fresh"),10).stream().filter(c->c.intent().id().equals(claim.intent().id())).findFirst().orElseThrow();
+        if(attachment!=null)doReturn(mediaSegments(kind)).when(media).describe(any(),any(),any());
+        executor.execute(fresh);assertThat(readyCount()).isEqualTo(1);
+        assertThat(lost.get().coordination().state()).isEqualTo(org.notesknowledge.DispatchCoordinator.Handle.State.POISONED);
+    }
+
+    @ParameterizedTest @ValueSource(strings={"note","image"})
+    void providerSessionLossIndependentlyVetoesOtherwiseCurrentActivation(String kind) throws Exception {
+        UUID attachment=kind.equals("image")?upload(kind):null;
+        var claim=claim(new PrivateAiSourceCurrentness.Expected(owner,note,attachment,1,1,attachment==null?null:1L),kind);
+        var lost=new java.util.concurrent.atomic.AtomicReference<org.notesknowledge.DispatchCoordinator.Handle>();
+        org.mockito.stubbing.Answer<Object> provider=call->{
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            AiProcessingGate.SourceAiPermit permit=call.getArgument(0);lost.set(permit.coordination());
+            terminateDispatchSession();
+            assertThatThrownBy(permit::requireDispatch).isInstanceOf(org.notesknowledge.websupport.ApiFailureException.class);
+            assertThat(gate.issue(claim)).isPresent(); // Account/source/AI/policy/lineage/lease ALL still pass.
+            assertThat(work.revalidate(claim)).isPresent();
+            assertThat(derivationTransactions.activate(claim,permit.lineage(),new MarkdownChunker().chunk("Synthetic unchanged"),List.of(vector()),List.of(permit.coordination()))).isFalse();
+            verify(representations,never()).activate(any(),any(),any(),any());assertThat(readyCount()).isZero();
+            return kind.equals("note")?List.of(vector()):mediaSegments(kind);
+        };
+        if(attachment==null)doAnswer(provider).when(embeddings).embed(any(),any());else doAnswer(provider).when(media).describe(any(),any(),any());
+        executor.execute(claim);
+        assertThat(lost.get().state()).isEqualTo(org.notesknowledge.DispatchCoordinator.Handle.State.POISONED);
+        assertThat(readyCount()).isZero();assertThat(state(claim)).isEqualTo("retry_wait");
+        assertThat(jdbc.queryForObject("select ai_enabled from notes.note where note_id=?",Boolean.class,note)).isTrue();
+        assertThat(jdbc.queryForObject("select revision from notes.note where note_id=?",Long.class,note)).isEqualTo(1);
+    }
+
+    private void authorityMutation(String mutation) throws Exception {
+        switch(mutation) {
+            case "disable" -> disable();
+            case "save" -> mutate("put","",Map.of("title","Changed","markdown","Changed body"));
+            case "tag" -> mutate("put","/tags",Map.of("tags",List.of("synthetic")));
+            case "pin" -> mutate("put","/pin",null);
+            case "archive" -> mutate("post","/archive",null);
+            case "trash" -> mutate("post","/trash",null);
+            case "suspend" -> {try(var handle=coordination.ownerMutation(owner)){jdbc.update("update identity.account set account_state='suspended' where user_id=?",owner);}}
+            case "policy" -> {try(var handle=coordination.globalMutation()){policy(2,"b");}}
+            case "lineage" -> {try(var handle=coordination.globalMutation()){when(configuration.configurationId()).thenReturn("synthetic-v2");}}
+            default -> throw new IllegalArgumentException("Unknown synthetic mutation");
+        }
+    }
+    private void awaitAdvisoryWaiter() {
+        long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(4);
+        while(System.nanoTime()<deadline) {
+            if(jdbc.queryForObject("select exists(select 1 from pg_locks where locktype='advisory' and classid in (17401,17402,17403) and not granted)",Boolean.class))return;
+            Thread.yield();
+        }
+        fail("No PostgreSQL coordination waiter observed");
+    }
+    private void terminateDispatchSession() {
+        Integer pid=jdbc.queryForObject("select pid from pg_locks where locktype='advisory' and classid=17403 and granted and mode='ExclusiveLock'",Integer.class);
+        assertThat(jdbc.queryForObject("select pg_terminate_backend(?)",Boolean.class,pid)).isTrue();
     }
     private UUID upload(String kind) throws Exception {
         var file=org.notesknowledge.notes.DerivationMediaFixtures.media(kind);
