@@ -25,14 +25,23 @@ class AiProcessingGate {
         private final ProviderDispatchPolicy dispatchPolicy;
         private final AiDerivationProperties configuration;
         private final boolean unpaidGeminiApproved;
+        private final org.notesknowledge.DispatchCoordinator.Handle coordination;
         private SourceAiPermit(EmbeddingLineage lineage,PrivateDerivationSource.Metadata source,ProviderDispatchPolicy dispatchPolicy,AiDerivationProperties configuration) {
+            this(lineage,source,dispatchPolicy,configuration,null);
+        }
+        private SourceAiPermit(EmbeddingLineage lineage,PrivateDerivationSource.Metadata source,ProviderDispatchPolicy dispatchPolicy,AiDerivationProperties configuration,
+                org.notesknowledge.DispatchCoordinator.Handle coordination) {
             this.lineage=lineage;this.source=source;this.expires=Instant.now().plusSeconds(15);
+            this.coordination=coordination;
             this.dispatchPolicy=dispatchPolicy;this.configuration=configuration;
             this.unpaidGeminiApproved=dispatchPolicy.permitsUnpaidGemini(configuration,source.expected());
         }
         EmbeddingLineage lineage(){return lineage;}
         PrivateDerivationSource.Metadata source(){return source;}
+        org.notesknowledge.DispatchCoordinator.Handle coordination(){return coordination;}
         void requireDispatch() {
+            if(coordination==null)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
+            coordination.requireDispatchScope(source.expected().owner(),source.expected().noteId());
             if(Instant.now().isAfter(expires)||org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()
                     ||!dispatchPolicy.permits(configuration,source.expected(),source.modality()))
                 throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
@@ -43,6 +52,11 @@ class AiProcessingGate {
                 throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
         }
         @Override public String toString(){return "SourceAiPermit[REDACTED]";}
+    }
+    @Transactional(timeout=3)
+    Optional<SourceAiPermit> issueForDispatch(KnowledgeWork.Claim claim,org.notesknowledge.DispatchCoordinator.Handle coordination) {
+        coordination.requireDispatchScope(claim.intent().expected().owner(),claim.intent().expected().noteId());
+        return issue(claim).map(p->new SourceAiPermit(p.lineage,p.source,dispatchPolicy,configuration,coordination));
     }
     @Transactional(timeout=3)
     Optional<SourceAiPermit> issue(KnowledgeWork.Claim claim) {

@@ -25,13 +25,15 @@ final class AccountDeletionService {
     private final MfaProperties policy;
     private final Clock clock;
     private final TransactionTemplate transactions;
+    private final org.notesknowledge.DispatchCoordinator coordination;
 
     AccountDeletionService(IdentityPersistence identity, SpringSessionAuthorityAdapter sessions,
             MfaSessionChallengeRepository staleRequests,
             AccountDeletionProfileConsequence profile,
             AccountDeletionPublishingConsequence publishing,
             IdentitySessionTransitionCheckpoint checkpoint,
-            MfaProperties policy, Clock clock, PlatformTransactionManager manager) {
+            MfaProperties policy, Clock clock, PlatformTransactionManager manager,
+            org.notesknowledge.DispatchCoordinator coordination) {
         this.identity = identity;
         this.sessions = sessions;
         this.staleRequests = staleRequests;
@@ -41,13 +43,15 @@ final class AccountDeletionService {
         this.policy = policy;
         this.clock = clock;
         this.transactions = new TransactionTemplate(manager);
+        this.coordination = coordination;
     }
 
     void delete(UUID userId, boolean confirmed, HttpServletRequest request) {
         var requestSession = request.getSession(false);
         if (requestSession == null) throw unauthenticated();
         String sessionId = requestSession.getId();
-        transactions.executeWithoutResult(status -> {
+        var handle = coordination.ownerMutation(userId);
+        try (handle) { transactions.executeWithoutResult(status -> {
             if (!identity.lockActiveAccount(userId)) throw unauthenticated();
             var current = sessions.lockCurrent(userId, sessionId);
             if (current == null) throw unauthenticated();
@@ -72,7 +76,8 @@ final class AccountDeletionService {
             checkpoint.afterAccountDeletionMutation(request);
             identity.auditAccountDeletion(userId, now);
             checkpoint.afterAccountDeletionAudit(request);
-        });
+        }); }
+        if (!handle.safelyReleased()) throw ApiFailureException.of(ApiFailureException.Kind.SERVICE_UNAVAILABLE);
         staleRequests.discardStaleRequestSession(request);
         SecurityContextHolder.clearContext();
     }

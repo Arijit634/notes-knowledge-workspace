@@ -89,6 +89,7 @@ class NoteVersionService {
     }
 
     @Transactional
+    @org.notesknowledge.CoordinatedMutation
     NotesService.EtaggedNote restore(UUID owner, UUID note, UUID version, String ifMatch) {
         var current = notes.lock(owner, note).orElseThrow(NoteVersionService::missing);
         var selected = versions.find(owner, note, version).orElseThrow(NoteVersionService::missing);

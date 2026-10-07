@@ -37,6 +37,7 @@ class DeleteNoteService {
     }
 
     @Transactional
+    @org.notesknowledge.CoordinatedMutation
     void delete(UUID owner, UUID id, String ifMatch, boolean confirmUnpublish,
             HttpServletRequest request) {
         // Unavailable owner-scoped resources remain nonexistent, including repeat deletion.
