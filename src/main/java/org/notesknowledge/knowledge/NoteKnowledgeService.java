@@ -60,7 +60,7 @@ class NoteKnowledgeService {
         List<String> tags=generated.result().aiAnswer().claims().stream().map(String::strip).distinct().toList();
         if(tags.isEmpty()||tags.size()>20||tags.stream().anyMatch(t->t.isBlank()||t.length()>64||t.codePoints().anyMatch(Character::isISOControl)||t.contains("<")||t.contains(">")))throw ApiFailureException.of(ApiFailureException.Kind.SERVICE_UNAVAILABLE);
         UUID id=tx(()->{
-            if(!sources.matches(source,true))throw ApiFailureException.of(ApiFailureException.Kind.STALE_WRITE);
+            if(!sources.validate(List.of(source),true))throw ApiFailureException.of(ApiFailureException.Kind.STALE_WRITE);
             var fresh=gate.query(owner);if(!fresh.lineage("note").id().equals(permit.lineage("note").id()))throw ApiFailureException.of(ApiFailureException.Kind.PROCESSING_POLICY_CHANGED);
             return clients.getObject().sql("insert into knowledge.organization_suggestion(owner_user_id,source_note_id,source_revision,processing_generation,proposal_kind,proposal_values) values(:owner,:note,:revision,:generation,'tags',:tags::jsonb) returning suggestion_id")
                 .param("owner",owner).param("note",note).param("revision",source.expected().revision()).param("generation",source.expected().aiGeneration()).param("tags",json.writeValueAsString(tags)).query(UUID.class).single();

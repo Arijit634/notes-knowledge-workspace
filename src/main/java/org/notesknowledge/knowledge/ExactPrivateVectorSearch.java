@@ -1,7 +1,6 @@
 package org.notesknowledge.knowledge;
 
 import jakarta.servlet.http.HttpServletRequest;
-import java.sql.Types;
 import java.util.List;
 import java.util.UUID;
 import org.notesknowledge.identity.AccountEligibilityApi;
@@ -14,11 +13,11 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Internal exact ranking only. No HTTP/query embedding path is activated. */
+/** Exact owner/current ranking only; no ANN or global candidate retrieval. */
 @Service
 class ExactPrivateVectorSearch {
     record Root(UUID id,PrivateAiSourceCurrentness.Expected expected) { }
-    record Candidate(UUID segmentId,PrivateAiSourceCurrentness.Expected expected,int ordinal,DerivedSegment segment) {
+    record Candidate(UUID segmentId,PrivateAiSourceCurrentness.Expected expected,int ordinal,DerivedSegment segment,double distance) {
         @Override public String toString(){return "PrivateVectorCandidate[REDACTED]";}
     }
     private final ObjectProvider<JdbcClient> clients;
@@ -40,6 +39,15 @@ class ExactPrivateVectorSearch {
     }
     @Transactional(timeout=3)
     List<Candidate> search(UUID owner,String modality,float[] query,int limit) {
+        return rank(owner,null,modality,query,limit);
+    }
+    @Transactional(timeout=3)
+    List<Candidate> searchNotes(UUID owner,List<UUID> notes,float[] query,int limit) {
+        if(notes.isEmpty())return List.of();
+        if(notes.size()>100)throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);
+        return rank(owner,notes,"note",query,limit);
+    }
+    private List<Candidate> rank(UUID owner,List<UUID> notes,String modality,float[] query,int limit) {
         if(limit<1||limit>100)throw new IllegalArgumentException("Invalid candidate budget");
         if(!accounts.getObject().isEligible(owner))throw ApiFailureException.of(ApiFailureException.Kind.INVALID_CREDENTIALS);
         var policy=policies.policyPrerequisite(owner).orElseThrow(()->new DerivationFailure(KnowledgeWork.Failure.POLICY_BLOCKED));
@@ -49,9 +57,10 @@ class ExactPrivateVectorSearch {
             select derived_representation_id,source_note_id,source_attachment_id,source_revision,processing_generation,attachment_generation
             from knowledge.private_derived_representation where owner_user_id=:owner and state='ready' and lineage_id=:lineage
                 and processing_policy_id=:policy and embedding_dimension=:dimension and modality=:modality
+                and (:scoped=false or source_note_id in (:notes))
             order by derived_representation_id limit 1001
             """).param("owner",owner).param("lineage",lineage.id()).param("policy",policy.policyId()).param("dimension",lineage.dimension()).param("modality",modality)
-            .query((r,i)->new Root(r.getObject(1,UUID.class),new PrivateAiSourceCurrentness.Expected(owner,r.getObject(2,UUID.class),r.getObject(3,UUID.class),
+            .param("scoped",notes!=null).param("notes",notes==null?List.of(new UUID(0,0)):notes).query((r,i)->new Root(r.getObject(1,UUID.class),new PrivateAiSourceCurrentness.Expected(owner,r.getObject(2,UUID.class),r.getObject(3,UUID.class),
                 r.getLong(4),r.getLong(5),r.getObject(6,Long.class)))).list();
         if(roots.size()>1000)throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);
         var eligible=roots.stream().filter(r->sources.matches(r.expected())).toList();
@@ -66,7 +75,7 @@ class ExactPrivateVectorSearch {
                 r.getInt("ordinal"),new DerivedSegment(r.getString("surrogate_text"),r.getString("segment_kind"),r.getString("heading_ancestry"),
                     r.getObject("source_start",Integer.class),r.getObject("source_end",Integer.class),r.getObject("page_number",Integer.class),
                     r.getObject("time_start",Double.class),r.getObject("time_end",Double.class),r.getObject("region_x",Double.class),
-                    r.getObject("region_y",Double.class),r.getObject("region_width",Double.class),r.getObject("region_height",Double.class)));}).list();
+                    r.getObject("region_y",Double.class),r.getObject("region_width",Double.class),r.getObject("region_height",Double.class)),r.getDouble("distance"));}).list();
         return result.stream().filter(c->sources.matches(c.expected())).toList();
     }
     static String candidateSql(String operator) {
@@ -78,7 +87,7 @@ class ExactPrivateVectorSearch {
                 where s.owner_user_id=:owner and s.lineage_id=:lineage and s.embedding_dimension=:dimension
                     and r.owner_user_id=:owner and r.state='ready' and r.lineage_id=:lineage and r.processing_policy_id=:policy
                     and r.derived_representation_id in (:parents))
-            select * from eligible order by embedding
-            """+operator+" :vector::vector,derived_segment_id limit :limit";
+            select *,embedding
+            """+operator+" :vector::vector distance from eligible order by distance,derived_segment_id limit :limit";
     }
 }

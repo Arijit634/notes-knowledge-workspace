@@ -28,34 +28,45 @@ class NotesPrivateQuerySourceAdapter implements PrivateQuerySource {
     private void owner(UUID owner){if(accounts.getIfAvailable()==null||!accounts.getObject().isEligible(owner))throw ApiFailureException.of(ApiFailureException.Kind.INVALID_CREDENTIALS);}
     private static final String SOURCES="""
         select n.owner_user_id,n.note_id,null::uuid attachment_id,n.revision,n.ai_generation,null::bigint attachment_generation,
-            n.lifecycle_state,n.ai_enabled,'note' modality,n.created_at,n.title
+            n.lifecycle_state,n.ai_enabled,'note' modality,n.created_at,n.title,0 family,n.note_id source_id
         from notes.note n
         union all
         select n.owner_user_id,n.note_id,a.attachment_id,a.revision,n.ai_generation,a.processing_generation,
-            n.lifecycle_state,n.ai_enabled,a.media_kind,a.created_at,n.title
+            n.lifecycle_state,n.ai_enabled,a.media_kind,a.created_at,n.title,1 family,a.attachment_id source_id
         from notes.note n join notes.attachment a on a.note_id=n.note_id and a.owner_user_id=n.owner_user_id
         where a.storage_state='stored' and a.validation_state='accepted' and a.cleanup_state='retained' and a.removed_at is null
         """;
-    public Boundary capture(UUID user,List<String> states){return transaction(()->{owner(user);return new Boundary(clients.getObject().sql("select clock_timestamp()").query(Timestamp.class).single().toInstant(),states);});}
-    private JdbcClient.StatementSpec scoped(UUID user,Boundary b,boolean ai,String select) {
+    public Boundary capture(UUID user,List<String> states){return transaction(()->{
+        owner(user);
+        var start=clients.getObject().sql("select clock_timestamp()").query(Timestamp.class).single().toInstant();
+        var maxima=clients.getObject().sql("select distinct on (family) family,created_at,source_id from ("+SOURCES+") s where owner_user_id=:owner and lifecycle_state in (:states) order by family,created_at desc,source_id desc")
+            .param("owner",user).param("states",states).query((r,i)->java.util.Map.entry(r.getInt("family"),new FamilyBoundary(false,r.getTimestamp("created_at").toInstant(),r.getObject("source_id",UUID.class)))).list();
+        var families=maxima.stream().collect(java.util.stream.Collectors.toMap(java.util.Map.Entry::getKey,java.util.Map.Entry::getValue));
+        return new Boundary(1,start,states,families.getOrDefault(0,FamilyBoundary.emptyFamily()),families.getOrDefault(1,FamilyBoundary.emptyFamily()));
+    });}
+    private static final String BOUNDARY_SCOPE="""
+         where owner_user_id=:owner and lifecycle_state in (:states) and (
+            (family=0 and not :notesEmpty and (created_at,source_id)<=(:noteTime::timestamptz,:noteId::uuid)) or
+            (family=1 and not :mediaEmpty and (created_at,source_id)<=(:mediaTime::timestamptz,:mediaId::uuid)))
+        """;
+    private JdbcClient.StatementSpec scoped(UUID user,Boundary b,boolean ai,String select,String suffix) {
         owner(user);
         clients.getObject().sql("select set_config('statement_timeout','2000',true)").query(String.class).single();
-        return clients.getObject().sql(select+" from ("+SOURCES+") s where owner_user_id=:owner and lifecycle_state in (:states) and created_at<=:start "+(ai?"and ai_enabled ":"and modality in ('note','pdf') "))
-            .param("owner",user).param("states",b.lifecycles()).param("start",Timestamp.from(b.startedAt()));
+        return clients.getObject().sql(select+" from ("+SOURCES+") s "+BOUNDARY_SCOPE+(ai?"and ai_enabled ":"and modality in ('note','pdf') ")+suffix)
+            .param("owner",user).param("states",b.lifecycles())
+            .param("notesEmpty",b.notes().empty()).param("noteTime",b.notes().empty()?null:b.notes().createdAt().atOffset(java.time.ZoneOffset.UTC),java.sql.Types.TIMESTAMP_WITH_TIMEZONE).param("noteId",b.notes().sourceId(),java.sql.Types.OTHER)
+            .param("mediaEmpty",b.attachments().empty()).param("mediaTime",b.attachments().empty()?null:b.attachments().createdAt().atOffset(java.time.ZoneOffset.UTC),java.sql.Types.TIMESTAMP_WITH_TIMEZONE).param("mediaId",b.attachments().sourceId(),java.sql.Types.OTHER);
     }
     public Page page(UUID user,Boundary b,Position after,int limit,boolean ai) {
         if(limit<1||limit>12)throw new IllegalArgumentException("Invalid query batch");
         return transaction(()->{
-            scoped(user,b,ai,"select *");
-            // Each family's creation cutoff is fixed at acceptance; cursor is only ordering, not authority.
-            String suffix=" and (:after::uuid is null or (note_id,coalesce(attachment_id,'00000000-0000-0000-0000-000000000000'::uuid))>(:after::uuid,:attachment::uuid)) order by note_id,attachment_id nulls first limit :limit";
-            // JdbcClient's SQL is immutable; build the same bounded predicates with the continuation.
-            var rows=clients.getObject().sql("select * from ("+SOURCES+") s where owner_user_id=:owner and lifecycle_state in (:states) and created_at<=:start "+(ai?"and ai_enabled":"and modality in ('note','pdf')")+suffix)
-                .param("owner",user).param("states",b.lifecycles()).param("start",Timestamp.from(b.startedAt()))
-                .param("after",after==null?null:after.noteId(),java.sql.Types.OTHER).param("attachment",after==null||after.attachmentId()==null?new UUID(0,0):after.attachmentId())
+            String suffix=" and (:afterId::uuid is null or (family,created_at,source_id)>(:afterFamily,:afterTime::timestamptz,:afterId::uuid)) order by family,created_at,source_id limit :limit";
+            var rows=scoped(user,b,ai,"select *",suffix)
+                .param("afterFamily",after==null?0:after.family()).param("afterTime",after==null?null:after.createdAt().atOffset(java.time.ZoneOffset.UTC),java.sql.Types.TIMESTAMP_WITH_TIMEZONE)
+                .param("afterId",after==null?null:after.sourceId(),java.sql.Types.OTHER)
                 .param("limit",limit).query(NotesPrivateQuerySourceAdapter::map).list();
-            var last=rows.isEmpty()?null:rows.getLast().expected();
-            return new Page(rows,rows.size()<limit?null:new Position(last.noteId(),last.attachmentId()));
+            var last=rows.isEmpty()?null:rows.getLast();
+            return new Page(rows,rows.size()<limit?null:new Position(last.expected().attachmentId()==null?0:1,last.createdAt(),last.expected().attachmentId()==null?last.expected().noteId():last.expected().attachmentId()));
         });
     }
     public Source note(UUID user,UUID note){return transaction(()->{owner(user);return clients.getObject().sql("select * from ("+SOURCES+") s where owner_user_id=:owner and note_id=:note and attachment_id is null and lifecycle_state in ('active','archived')")
@@ -73,8 +84,8 @@ class NotesPrivateQuerySourceAdapter implements PrivateQuerySource {
         owner(user);
         String hash="encode(sha256(convert_to(note_id::text||'|'||coalesce(attachment_id::text,'-')||'|'||revision||'|'||ai_generation||'|'||coalesce(attachment_generation::text,'-')||'|'||lifecycle_state||'|'||ai_enabled,'UTF8')),'hex')";
         String words=java.util.stream.IntStream.range(0,4).mapToObj(i->"coalesce(bit_xor(('x'||substr(h,"+(1+i*16)+",16))::bit(64)::bigint),0)::text").collect(java.util.stream.Collectors.joining("||':'||"));
-        return clients.getObject().sql("select count(*)::text||':'||"+words+" from (select "+hash+" h from ("+SOURCES+") s where owner_user_id=:owner and lifecycle_state in (:states) and created_at<=:start "+(ai?"and ai_enabled ":"and modality in ('note','pdf') ")+"order by note_id,attachment_id nulls first limit 10001) bounded")
-            .param("owner",user).param("states",b.lifecycles()).param("start",Timestamp.from(b.startedAt())).query(String.class).single();
+        // The fingerprint and traversal use exactly the same tuple-bounded source set.
+        return scoped(user,b,ai,"select count(*)::text||':'||"+words+" from (select "+hash+" h",") bounded").query(String.class).single();
     });}
     public boolean validate(List<Source> expected,boolean ai) {
         if(expected.isEmpty())return true;
@@ -92,10 +103,12 @@ class NotesPrivateQuerySourceAdapter implements PrivateQuerySource {
             var rows=clients.getObject().sql("select * from ("+SOURCES+") s where owner_user_id=:owner and note_id in (:notes) and lifecycle_state in ('active','archived') "+(ai?"and ai_enabled ":"")+"order by note_id,attachment_id nulls first limit 21001")
                 .param("owner",user).param("notes",notes).query(NotesPrivateQuerySourceAdapter::map).list();
             if(rows.size()>21000)return false;
-            var current=rows.stream().collect(java.util.stream.Collectors.toMap(s->new Position(s.expected().noteId(),s.expected().attachmentId()),java.util.function.Function.identity()));
-            return expected.stream().allMatch(s->{var row=current.get(new Position(s.expected().noteId(),s.expected().attachmentId()));return row!=null&&row.expected().equals(s.expected())&&row.lifecycle().equals(s.lifecycle());});
+            var current=rows.stream().collect(java.util.stream.Collectors.toMap(s->key(s),java.util.function.Function.identity()));
+            return expected.stream().allMatch(s->{var row=current.get(key(s));return row!=null&&row.expected().equals(s.expected())&&row.lifecycle().equals(s.lifecycle());});
         });
     }
+    private record SourceKey(UUID note,UUID attachment) { }
+    private static SourceKey key(Source s){return new SourceKey(s.expected().noteId(),s.expected().attachmentId());}
     public List<Text> deterministicText(Source source) {
         if(!matches(source,false))throw ApiFailureException.of(ApiFailureException.Kind.RESOURCE_NOT_FOUND);
         var e=source.expected();

@@ -9,10 +9,16 @@ import org.notesknowledge.websupport.ApiFailureException;
 record KnowledgeQueryRequest(String query,List<String> lifecycles,boolean deduplicate,boolean includeOccurrences) {
     enum Plan { RANKED, FOCUSED, SEMANTIC_CORPUS, DETERMINISTIC_CORPUS }
     KnowledgeQueryRequest {
-        if(query==null||query.isBlank()||query.length()>2048||query.codePoints().anyMatch(c->Character.isISOControl(c)&&c!='\n'&&c!='\t'))throw invalid();
-        query=Normalizer.normalize(query.strip(),Normalizer.Form.NFKC);
-        if(query.isBlank()||query.length()>2048)throw invalid();
+        query=normalize(query);
         lifecycles=List.copyOf(lifecycles);if(lifecycles.isEmpty()||lifecycles.size()>2||!Set.of("active","archived").containsAll(lifecycles))throw invalid();
+    }
+    static String normalize(String query) {
+        if(query==null||query.isBlank()||query.length()>2048||query.codePoints().anyMatch(c->Character.isISOControl(c)&&c!='\n'&&c!='\t'))throw invalid();
+        // NFKC can itself introduce ordinary boundary spaces (for example NBSP).
+        // A final strip makes normalization idempotent across routing and durable replay.
+        query=Normalizer.normalize(query.strip(),Normalizer.Form.NFKC).strip();
+        if(query.isBlank()||query.length()>2048)throw invalid();
+        return query;
     }
     static KnowledgeQueryRequest parse(Map<String,Object> input) {
         if(input==null||!Set.of("query","scope","presentation").containsAll(input.keySet())||!(input.get("query") instanceof String query))throw invalid();

@@ -38,10 +38,12 @@ class KnowledgeQueryEngine {
             signals.add(ids);
         }
         var selected=new ArrayList<QueryEvidenceRepository.Evidence>();String degraded=null;KnowledgeQueryGate.QueryPermit permit=null;
+        var relevant=new LinkedHashMap<UUID,ExactPrivateVectorSearch.Candidate>();
+        var lexicalNotes=sourceMap.values().stream().filter(PrivateQuerySource.Source::aiEnabled).map(s->s.expected().noteId()).toList();
         var provider=providers.getIfAvailable();
         try {
             if(provider==null||!provider.available())throw new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE);
-            permit=gate.query(owner);permit.requireDispatch();float[] query=provider.embedQuery(permit,request.query());
+            permit=gate.query(owner,request.query());permit.requireDispatch();float[] query=provider.embedQuery(permit,request.query());
             // Same embedding configuration, separately compatible modality lineage, never an incompatible fallback.
             for(String modality:List.of("note","image","audio","video","pdf")) {
                 var candidates=vectors.search(owner,modality,query,50);var ids=new ArrayList<UUID>();
@@ -49,22 +51,29 @@ class KnowledgeQueryEngine {
                     var source=sources.source(owner,candidate.expected().noteId(),candidate.expected().attachmentId());
                     if(!request.lifecycles().contains(source.lifecycle())||!source.expected().equals(candidate.expected()))continue;
                     var note=sources.note(owner,source.expected().noteId());sourceMap.put(note.expected().noteId(),note);ids.add(note.expected().noteId());
+                    relevant.putIfAbsent(candidate.segmentId(),candidate);
                 }
                 signals.add(ids.stream().distinct().toList());
             }
+            // A lexical Note does not authorize its media. Only current Note-text nearest
+            // segments are additional candidates; Attachments require independent retrieval.
+            for(var candidate:vectors.searchNotes(owner,lexicalNotes,query,50))
+                if(candidate.expected().equals(sourceMap.get(candidate.expected().noteId()).expected()))relevant.putIfAbsent(candidate.segmentId(),candidate);
         } catch(DerivationFailure failure){degraded=safeReason(failure);}
         var order=ReciprocalRankFusion.fuse(signals,50);
         if(permit!=null&&degraded==null) {
             var qp=permit;
-            for(UUID id:order) {
-                var note=sourceMap.get(id);if(!note.aiEnabled())continue;
-                // Source-owned Note plus current derived media, bounded independently of retrieval rank.
-                var noteEvidence=tx(()->evidence.source(note.expected(),qp.lineage("note")));
-                for(var e:noteEvidence){if(selected.size()==12)break;selected.add(e);}
-                for(var candidate:sourcesForNote(owner,id,request.lifecycles())) {
-                    if(candidate.expected().attachmentId()==null)continue;
-                    for(var e:tx(()->evidence.source(candidate.expected(),qp.lineage(candidate.modality())))){if(selected.size()==12)break;selected.add(e);}
-                }
+            // Conservative nearest cohort, not a calibrated confidence score. Do not
+            // fill a context budget with weaker, unrelated chunks just because room remains.
+            double nearest=relevant.values().stream().mapToDouble(ExactPrivateVectorSearch.Candidate::distance).min().orElse(Double.NaN);
+            var ranks=new java.util.HashMap<UUID,Integer>();for(int i=0;i<order.size();i++)ranks.put(order.get(i),i);
+            for(var candidate:relevant.values().stream().filter(c->Double.isFinite(c.distance())&&Math.abs(c.distance()-nearest)<=0.000001
+                &&(!"cosine".equals(qp.lineage("note").operator())||c.distance()<1))
+                .sorted(java.util.Comparator.comparingInt((ExactPrivateVectorSearch.Candidate c)->ranks.getOrDefault(c.expected().noteId(),Integer.MAX_VALUE))
+                    .thenComparing(ExactPrivateVectorSearch.Candidate::segmentId)).toList()) {
+                String modality=candidate.expected().attachmentId()==null?"note":sources.source(owner,candidate.expected().noteId(),candidate.expected().attachmentId()).modality();
+                var item=tx(()->evidence.candidate(candidate,qp.lineage(modality)));
+                if(item!=null&&selected.stream().noneMatch(e->overlaps(e,item)))selected.add(item);
                 if(selected.size()==12)break;
             }
         }
@@ -73,14 +82,20 @@ class KnowledgeQueryEngine {
         Generated answer=selected.isEmpty()?empty(List.of(),degraded,degraded==null&&request.plan()==KnowledgeQueryRequest.Plan.FOCUSED):generate(owner,request.query(),"answer",selected,()->true);
         var r=answer.result();return new Generated(new KnowledgeQueryResult(deterministic,r.aiAnswer(),r.citations(),new KnowledgeQueryResult.Coverage("bounded",sourceMap.size(),false,false,false,false,false),degraded!=null?degraded:r.degraded(),r.insufficientEvidence()),answer.provenance(),answer.lineages());
     }
-    private List<PrivateQuerySource.Source> sourcesForNote(UUID owner,UUID note,List<String> states) {
-        // Notes owns the bounded source enumeration; no Knowledge SQL over Notes tables.
-        var result=new ArrayList<PrivateQuerySource.Source>();result.add(sources.note(owner,note));
-        var page=sources.page(owner,new PrivateQuerySource.Boundary(java.time.Instant.now(),states),new PrivateQuerySource.Position(note,new UUID(0,0)),12,true);
-        page.sources().stream().filter(s->s.expected().noteId().equals(note)).forEach(result::add);return result;
+    private static boolean overlaps(QueryEvidenceRepository.Evidence a,QueryEvidenceRepository.Evidence b) {
+        if(a.segmentId().equals(b.segmentId()))return true;
+        if(!a.representationId().equals(b.representationId()))return false;
+        var x=a.segment();var y=b.segment();
+        if(x.text().equals(y.text()))return true;
+        if(!x.kind().equals(y.kind())||!java.util.Objects.equals(x.page(),y.page()))return false;
+        if(x.start()!=null&&x.end()!=null&&y.start()!=null&&y.end()!=null) {
+            int overlap=Math.min(x.end(),y.end())-Math.max(x.start(),y.start());
+            return overlap>0&&overlap>=0.8*Math.min(x.end()-x.start(),y.end()-y.start());
+        }
+        return false;
     }
     Generated semanticBatch(UUID owner,String query,List<PrivateQuerySource.Source> batch,java.util.function.BooleanSupplier currentWork) {
-        var permit=gate.query(owner);var selected=new ArrayList<QueryEvidenceRepository.Evidence>();
+        var permit=gate.query(owner,query);var selected=new ArrayList<QueryEvidenceRepository.Evidence>();
         for(var source:batch) {
             var rows=tx(()->evidence.source(source.expected(),permit.lineage(source.modality())));
             if(rows.isEmpty()||rows.size()>12)throw new DerivationFailure(rows.isEmpty()?KnowledgeWork.Failure.LINEAGE_OBSOLETE:KnowledgeWork.Failure.BUDGET_EXCEEDED);
@@ -98,9 +113,9 @@ class KnowledgeQueryEngine {
         try(handle) {
             var permit=tx(()->{
                 if(!currentWork.getAsBoolean())throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
-                var qp=gate.query(owner);
+                var qp=gate.query(owner,query);
                 for(var e:selected){if(!evidence.current(e,qp.lineage(e.modality())))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);lineages.put(e.modality(),qp.lineage(e.modality()).id());}
-                return gate.evidence(owner,provenance,handle);
+                return gate.evidence(owner,query,provenance,handle);
             });
             int total=0;
             for(int i=0;i<selected.size();i++){var e=selected.get(i);total+=e.segment().text().length();if(total>48000)throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);payload.add(new StructuredKnowledgePort.Evidence("e"+i,e.segment().text(),e.modality()));}

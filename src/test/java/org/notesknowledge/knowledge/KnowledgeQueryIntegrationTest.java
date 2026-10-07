@@ -56,14 +56,14 @@ class KnowledgeQueryIntegrationTest {
     @Autowired JdbcTemplate jdbc; @Autowired MockMvc mvc; @Autowired ObjectMapper json;
     @Autowired SessionRepository<? extends Session> sessions; @Autowired PlatformTransactionManager transactions;
     @Autowired KnowledgeOperationService operations; @MockitoSpyBean KnowledgeOperationRepository operationRows;
-    @Autowired PrivateRepresentationRepository representations; @Autowired PrivateQuerySource sources;
+    @Autowired PrivateRepresentationRepository representations; @MockitoSpyBean PrivateQuerySource sources;
     @Autowired KnowledgeOperationMaterialCipher cipher; @Autowired org.notesknowledge.DispatchCoordinator coordination;
     @MockitoBean AiDerivationProperties configuration; @MockitoBean ProviderDispatchProperties dispatch;
     @MockitoBean KnowledgePolicyProperties policyConfiguration; @MockitoBean StructuredKnowledgePort provider;
     @MockitoBean RateLimitPort rates;
     UUID owner,note,policy; Browser browser;
     @BeforeEach void prepare() throws Exception {
-        reset(configuration,dispatch,policyConfiguration,provider,rates,operationRows);
+        reset(configuration,dispatch,policyConfiguration,provider,rates,operationRows,sources);
         when(configuration.configured()).thenReturn(true);when(configuration.provider()).thenReturn("synthetic");
         when(configuration.embeddingModel()).thenReturn("synthetic-embedding");when(configuration.mediaModel()).thenReturn("synthetic-media");
         when(configuration.modelRevision()).thenReturn("v1");when(configuration.configurationId()).thenReturn("synthetic-v1");
@@ -82,6 +82,130 @@ class KnowledgeQueryIntegrationTest {
     }
     @AfterEach void clear(){SecurityContextHolder.clearContext();}
 
+    @ParameterizedTest @ValueSource(strings={"neither","source-only","query-only","both"})
+    void unpaidGoogleQueryAndSourceApprovalAreIndependentAtTheProviderBoundary(String approval) throws Exception {
+        String query="find synthetic plans";
+        when(configuration.provider()).thenReturn("gemini");when(configuration.tier()).thenReturn("unpaid");when(configuration.region()).thenReturn("global");
+        when(dispatch.dispatchPolicy()).thenReturn("unpaid-synthetic-demo");
+        when(dispatch.approvedQueryFingerprints()).thenReturn(approval.equals("query-only")||approval.equals("both")?List.of(ProviderDispatchPolicy.queryFingerprint(query)):List.of());
+        String sourceFingerprint=ProviderDispatchPolicy.fingerprint(sources.note(owner,note).expected());
+        when(dispatch.approvedSourceFingerprints()).thenReturn(approval.equals("source-only")||approval.equals("both")?List.of(sourceFingerprint):List.of());
+        derive(note,"Synthetic safe plans");
+        doAnswer(call->{KnowledgeQueryGate.QueryPermit permit=call.getArgument(0);permit.requireGoogle(call.getArgument(1));assertOutsideTransaction();return vector();}).when(provider).embedQuery(any(),any());
+        doAnswer(call->{KnowledgeQueryGate.EvidencePermit permit=call.getArgument(0);permit.requireGoogle(call.getArgument(1));assertOutsideTransaction();return new StructuredKnowledgePort.Output(List.of(new StructuredKnowledgePort.Claim("Synthetic supported",List.of("e0"))),false);}).when(provider).generate(any(),any(),any(),any());
+        query(query).andExpect(status().isOk());
+        verify(provider,times(approval.equals("query-only")||approval.equals("both")?1:0)).embedQuery(any(),any());
+        verify(provider,times(approval.equals("both")?1:0)).generate(any(),any(),any(),any());
+    }
+
+    @Test void laterSemanticChunkSurvivesFusionAndOnlyItsActualProvenanceIsCited() throws Exception {
+        var chunks=new ArrayList<DerivedSegment>();var embeddings=new ArrayList<float[]>();
+        for(int i=0;i<15;i++){String text=i==14?"Kyoto relevant late answer":"Unrelated early marker "+i;chunks.add(DerivedSegment.note(text,"",i*100,i*100+text.length()));embeddings.add(i==14?vector():orthogonal());}
+        deriveChunks(chunks,embeddings);
+        var t=json.readTree(query("what about Kyoto").andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        var captured=capturedEvidence();assertThat(captured).hasSize(1);assertThat(captured.getFirst().text()).isEqualTo("Kyoto relevant late answer");
+        assertThat(t.get("citations").get(0).get("location").get("start").asInt()).isEqualTo(1400);
+        assertThat(t.get("aiAnswer").isNull()).isFalse();
+    }
+    @ParameterizedTest @ValueSource(strings={"note","media"})
+    void independentlyRelevantEvidenceNeverDumpsOtherMaterialFromItsParent(String relevant) throws Exception {
+        derive(note,relevant.equals("note")?"Kyoto supported text":"UNRELATED_NOTE_SYNTHETIC_SECRET_MARKER",relevant.equals("note")?vector():orthogonal());
+        UUID attachment=upload("image");var source=sources.source(owner,note,attachment);
+        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,"a".repeat(64)),"image");
+        var segment=new DerivedSegment(relevant.equals("media")?"Kyoto supported image":"UNRELATED_MEDIA_SYNTHETIC_SECRET_MARKER","whole_image","",null,null,null,null,null,null,null,null,null);
+        tx(()->{representations.activate(source.expected(),lineage,List.of(segment),List.of(relevant.equals("media")?vector():orthogonal()));return null;});
+        var t=json.readTree(query("what about Kyoto").andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        var captured=capturedEvidence();assertThat(captured).hasSize(1);assertThat(captured.getFirst().text()).startsWith("Kyoto supported").doesNotContain("SYNTHETIC_SECRET_MARKER");
+        assertThat(captured.getFirst().modality()).isEqualTo(relevant.equals("media")?"image":"note");
+        var citation=t.get("citations").get(0);if(relevant.equals("media"))assertThat(citation.get("attachmentId").asText()).isEqualTo(attachment.toString());else assertThat(citation.get("attachmentId").isNull()).isTrue();
+    }
+    @Test void overlappingSemanticAndLexicalCandidatesDoNotExpandContext() throws Exception {
+        jdbc.update("update notes.note set title='Kyoto plans' where note_id=?",note);
+        deriveChunks(List.of(DerivedSegment.note("Kyoto supported overlapping evidence one","",0,100),DerivedSegment.note("Kyoto supported overlapping evidence two","",5,105)),List.of(vector(),vector()));
+        query("find Kyoto").andExpect(status().isOk());assertThat(capturedEvidence()).hasSize(1);
+    }
+    @Test void noPositiveSemanticAffinityKeepsDeterministicResultsWithoutDumpingEvidence() throws Exception {
+        jdbc.update("update notes.note set title='Kyoto plans' where note_id=?",note);derive(note,"Unrelated synthetic marker",orthogonal());
+        var result=json.readTree(query("what about Kyoto").andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(result.get("deterministicResults").toString()).contains(note.toString());assertThat(result.get("aiAnswer").isNull()).isTrue();assertThat(result.get("insufficientEvidence").asBoolean()).isTrue();verify(provider,never()).generate(any(),any(),any(),any());
+    }
+    @SuppressWarnings("unchecked") private List<StructuredKnowledgePort.Evidence> capturedEvidence(){
+        var capture=org.mockito.ArgumentCaptor.forClass(List.class);verify(provider).generate(any(),any(),eq("answer"),capture.capture());return (List<StructuredKnowledgePort.Evidence>)capture.getValue();
+    }
+    private static float[] orthogonal(){return new float[]{0,1,0,0,0,0,0,0};}
+    private void deriveChunks(List<DerivedSegment> segments,List<float[]> embeddings){var source=sources.note(owner,note);var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,"a".repeat(64)),"note");
+        tx(()->{representations.activate(source.expected(),lineage,segments,embeddings);return null;});}
+
+    @Test void suggestionMutationWinningBeforeFinalLockCannotInsertOrReturnStaleProposal() throws Exception {
+        derive(note,"Synthetic suggestion source");String etag=etag(note);var arrived=new CountDownLatch(1);var release=new CountDownLatch(1);
+        doAnswer(call->{arrived.countDown();assertThat(release.await(2,TimeUnit.SECONDS)).isTrue();return call.callRealMethod();}).when(sources).validate(anyList(),eq(true));
+        var pool=Executors.newSingleThreadExecutor();try{var suggestion=pool.submit(()->suggest(etag));assertThat(arrived.await(5,TimeUnit.SECONDS)).isTrue();
+            saveNote(etag).andExpect(status().isOk());release.countDown();assertThat(suggestion.get(5,TimeUnit.SECONDS)).isEqualTo(412);
+            assertThat(jdbc.queryForObject("select count(*) from knowledge.organization_suggestion where source_note_id=?",Integer.class,note)).isZero();
+        }finally{release.countDown();pool.shutdownNow();}
+    }
+    @Test void suggestionLockWinningSerializesInsertThenSaveInvalidatesTheProposal() throws Exception {
+        derive(note,"Synthetic suggestion source");String etag=etag(note);var locked=new CountDownLatch(1);var release=new CountDownLatch(1);
+        doAnswer(call->{boolean valid=(Boolean)call.callRealMethod();assertThat(valid).isTrue();locked.countDown();assertThat(release.await(2,TimeUnit.SECONDS)).isTrue();return valid;}).when(sources).validate(anyList(),eq(true));
+        var pool=Executors.newFixedThreadPool(2);try{var suggestion=pool.submit(()->suggest(etag));assertThat(locked.await(5,TimeUnit.SECONDS)).isTrue();
+            var save=pool.submit(()->saveNote(etag).andReturn().getResponse().getStatus());
+            long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(1);boolean waiting=false;
+            while(System.nanoTime()<deadline&&!waiting)waiting=jdbc.queryForObject("select exists(select 1 from pg_stat_activity where datname=current_database() and wait_event_type='Lock' and query ilike '%notes.note%')",Boolean.class);
+            assertThat(waiting).as("Note Save waits on the finalization row lock").isTrue();assertThat(save.isDone()).isFalse();
+            assertThat(jdbc.queryForObject("select count(*) from knowledge.organization_suggestion where source_note_id=?",Integer.class,note)).isZero();
+            release.countDown();assertThat(suggestion.get(5,TimeUnit.SECONDS)).isEqualTo(200);assertThat(save.get(5,TimeUnit.SECONDS)).isEqualTo(200);
+            assertThat(jdbc.queryForObject("select state from knowledge.organization_suggestion where source_note_id=?",String.class,note)).isEqualTo("obsolete");
+        }finally{release.countDown();pool.shutdownNow();}
+    }
+    private int suggest(String etag)throws Exception{return mvc.perform(post("/api/notes/"+note+"/organization-suggestions").cookie(browser.cookie).header("X-CSRF-TOKEN",browser.csrf).header("If-Match",etag)).andReturn().getResponse().getStatus();}
+    private org.springframework.test.web.servlet.ResultActions saveNote(String etag)throws Exception{return mvc.perform(put("/api/notes/"+note).cookie(browser.cookie).header("X-CSRF-TOKEN",browser.csrf).header("If-Match",etag).contentType(MediaType.APPLICATION_JSON).content("{\"title\":\"Changed\",\"markdown\":\"New synthetic revision\"}"));}
+
+    @Test void backdatedNewNoteAboveCapturedTupleDoesNotChangeFingerprintOrCoverage() throws Exception {
+        jdbc.update("update notes.note set created_at=clock_timestamp()-interval '1 minute',markdown='https://example.test/accepted' where note_id=?",note);
+        String handle=accept("all links");var row=claim();var metadata=json.readValue(row.metadata(),KnowledgeOperationService.Metadata.class);var boundary=metadata.boundary();
+        UUID later=note(owner,false,"Later","https://example.test/later");Instant backdated=boundary.startedAt().minusMillis(1);
+        jdbc.update("update notes.note set created_at=? where note_id=?",java.sql.Timestamp.from(backdated),later);
+        assertThat(backdated).isBefore(boundary.startedAt()).isAfter(boundary.notes().createdAt());
+        assertThat(sources.fingerprint(owner,boundary,false)).isEqualTo(metadata.fingerprint());
+        assertThat(traverse(boundary,false).stream().map(s->s.expected().noteId())).doesNotContain(later);
+        operations.execute(row);var result=poll(handle).get("result");assertThat(result.get("coverage").get("completed").asBoolean()).isTrue();assertThat(result.get("coverage").get("corpusChanged").asBoolean()).isFalse();assertThat(result.toString()).doesNotContain(later.toString());
+    }
+    @Test void backdatedAttachmentCannotEnterAnExplicitlyEmptyCapturedFamily() throws Exception {
+        jdbc.update("update notes.note set markdown='https://example.test/accepted' where note_id=?",note);String handle=accept("all links");var row=claim();var metadata=json.readValue(row.metadata(),KnowledgeOperationService.Metadata.class);
+        assertThat(metadata.boundary().attachments().empty()).isTrue();UUID later=syntheticAttachment(Instant.EPOCH,"pdf");
+        assertThat(sources.source(owner,note,later).createdAt()).isBefore(metadata.boundary().startedAt());
+        assertThat(sources.fingerprint(owner,metadata.boundary(),false)).isEqualTo(metadata.fingerprint());
+        assertThat(traverse(metadata.boundary(),false).stream().map(s->s.expected().attachmentId())).doesNotContain(later);
+        operations.execute(row);assertThat(poll(handle).get("result").get("coverage").get("completed").asBoolean()).isTrue();
+    }
+    @Test void tupleContinuationVisitsEveryFamilyOnceWithStableRestartAndExcludesAboveMaxima() {
+        jdbc.update("update notes.note set created_at='2020-01-01T00:00:00Z' where note_id=?",note);
+        var expectedNotes=new HashSet<UUID>();expectedNotes.add(note);var expectedMedia=new HashSet<UUID>();
+        for(int i=0;i<14;i++){UUID n=note(owner,true,"Batch "+i,"Body");expectedNotes.add(n);jdbc.update("update notes.note set created_at=? where note_id=?",java.sql.Timestamp.from(Instant.parse("2020-01-01T00:00:00Z").plusSeconds(i/2)),n);expectedMedia.add(syntheticAttachment(Instant.parse("2020-01-01T00:00:00Z").plusSeconds(i/2),"image"));}
+        var boundary=sources.capture(owner,List.of("active","archived"));String fingerprint=sources.fingerprint(owner,boundary,true);
+        UUID outsideNote=note(owner,true,"Outside","Body"),outsideMedia=syntheticAttachment(boundary.attachments().createdAt().plusSeconds(1),"image");
+        var actual=traverse(boundary,true);assertThat(actual.stream().filter(s->s.expected().attachmentId()==null).map(s->s.expected().noteId())).containsExactlyInAnyOrderElementsOf(expectedNotes);
+        assertThat(actual.stream().filter(s->s.expected().attachmentId()!=null).map(s->s.expected().attachmentId())).containsExactlyInAnyOrderElementsOf(expectedMedia);
+        assertThat(actual).doesNotHaveDuplicates();assertThat(traverse(boundary,true)).isEqualTo(actual);assertThat(sources.fingerprint(owner,boundary,true)).isEqualTo(fingerprint);
+        assertThat(actual.stream().map(s->s.expected().noteId())).doesNotContain(outsideNote);assertThat(actual.stream().map(s->s.expected().attachmentId())).doesNotContain(outsideMedia);
+        var positions=actual.stream().map(s->new PrivateQuerySource.Position(s.expected().attachmentId()==null?0:1,s.createdAt(),s.expected().attachmentId()==null?s.expected().noteId():s.expected().attachmentId())).toList();
+        assertThat(positions).isSortedAccordingTo(Comparator.comparingInt(PrivateQuerySource.Position::family).thenComparing(PrivateQuerySource.Position::createdAt).thenComparing(p->p.sourceId().toString()));
+    }
+    @Test void backdatedNewAttachmentAboveNonemptyHighWaterIsExcluded() {
+        syntheticAttachment(Instant.parse("2020-01-01T00:00:00Z"),"pdf");var b=sources.capture(owner,List.of("active"));String fingerprint=sources.fingerprint(owner,b,false);
+        Instant backdated=b.startedAt().minusMillis(1);UUID added=syntheticAttachment(backdated,"pdf");assertThat(backdated).isBefore(b.startedAt()).isAfter(b.attachments().createdAt());
+        assertThat(traverse(b,false).stream().map(s->s.expected().attachmentId())).doesNotContain(added);assertThat(sources.fingerprint(owner,b,false)).isEqualTo(fingerprint);
+    }
+    @Test void emptyNoteFamilyRemainsEmptyAfterBackdatedInsertion() {
+        UUID emptyOwner=account();var boundary=sources.capture(emptyOwner,List.of("active"));assertThat(boundary.notes().empty()).isTrue();assertThat(boundary.attachments().empty()).isTrue();String before=sources.fingerprint(emptyOwner,boundary,false);
+        UUID added=note(emptyOwner,false,"Later","Body");jdbc.update("update notes.note set created_at='2020-01-01T00:00:00Z' where note_id=?",added);
+        assertThat(sources.page(emptyOwner,boundary,null,12,false).sources()).isEmpty();assertThat(sources.fingerprint(emptyOwner,boundary,false)).isEqualTo(before);
+    }
+    private List<PrivateQuerySource.Source> traverse(PrivateQuerySource.Boundary b,boolean ai){var all=new ArrayList<PrivateQuerySource.Source>();PrivateQuerySource.Position after=null;int pages=0;
+        do{var page=sources.page(owner,b,after,3,ai);all.addAll(page.sources());after=page.continuation();assertThat(++pages).isLessThan(50);}while(after!=null);return all;}
+    /** Isolated accepted-metadata fixture only; no byte delivery/parse claim and never used as a production store. */
+    private UUID syntheticAttachment(Instant created,String kind){return jdbc.queryForObject("insert into notes.attachment(attachment_id,note_id,owner_user_id,media_kind,object_reference,display_filename,media_type,size_bytes,width,height,page_count,storage_state,validation_state,cleanup_state,revision,processing_generation,created_at,updated_at) values(uuidv7(),?,?,?,'private-attachment/'||encode(sha256(uuidv7()::text::bytea),'hex'),'synthetic',?,100,?,?,?,'stored','accepted','retained',1,1,?,clock_timestamp()) returning attachment_id",UUID.class,note,owner,kind,kind.equals("pdf")?"application/pdf":"image/png",kind.equals("image")?1:null,kind.equals("image")?1:null,kind.equals("pdf")?1:null,java.sql.Timestamp.from(created));}
+
     @Test void rankedSearchKeepsAiOffDeterministicResultsOutOfProviderEvidence() throws Exception {
         UUID off=note(owner,false,"Kyoto excluded","Kyoto private excluded marker");
         jdbc.update("update notes.note set title='Kyoto travel' where note_id=?",note);derive(note,"Kyoto supported evidence",new float[]{0.8f,0.6f,0,0,0,0,0,0});
@@ -96,7 +220,8 @@ class KnowledgeQueryIntegrationTest {
         double reciprocalRank=ranked.indexOf(note.toString())<0?0:1.0/(ranked.indexOf(note.toString())+1);
         assertThat(reciprocalRank).isEqualTo(1.0);
         var captured=org.mockito.ArgumentCaptor.forClass(List.class);verify(provider).generate(any(),any(),eq("answer"),captured.capture());
-        assertThat(captured.getValue().toString()).doesNotContain("excluded marker","Foreign secret marker");
+        @SuppressWarnings("unchecked") List<StructuredKnowledgePort.Evidence> payload=(List<StructuredKnowledgePort.Evidence>)captured.getValue();
+        assertThat(payload).allSatisfy(e->assertThat(e.text()).doesNotContain("excluded marker","Foreign secret marker"));
         assertThat(tree.get("citations").toString()).contains(note.toString()).doesNotContain(off.toString(),other.toString());
         verify(provider).embedQuery(any(),eq("find Kyoto"));assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
     }

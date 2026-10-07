@@ -6,10 +6,18 @@ import java.util.UUID;
 
 /** Explicit owner scope for durable work; every provider implementation re-resolves current source facts. */
 public interface PrivateQuerySource {
-    record Boundary(Instant startedAt,List<String> lifecycles) {
-        public Boundary {lifecycles=List.copyOf(lifecycles);if(lifecycles.isEmpty()||!java.util.Set.of("active","archived").containsAll(lifecycles))throw new IllegalArgumentException("Invalid lifecycle scope");}
+    record FamilyBoundary(boolean empty,Instant createdAt,UUID sourceId) {
+        public FamilyBoundary {if(empty?(createdAt!=null||sourceId!=null):(createdAt==null||sourceId==null))throw new IllegalArgumentException("Invalid source boundary");}
+        public static FamilyBoundary emptyFamily(){return new FamilyBoundary(true,null,null);}
     }
-    record Position(UUID noteId,UUID attachmentId) { }
+    record Boundary(int schemaVersion,Instant startedAt,List<String> lifecycles,FamilyBoundary notes,FamilyBoundary attachments) {
+        public Boundary {lifecycles=List.copyOf(lifecycles);if(schemaVersion!=1||startedAt==null||notes==null||attachments==null
+            ||lifecycles.isEmpty()||lifecycles.size()>2||!java.util.Set.of("active","archived").containsAll(lifecycles))throw new IllegalArgumentException("Invalid corpus boundary");}
+    }
+    /** Family, then the family's exact (creation time, source identity) order. Never authority. */
+    record Position(int family,Instant createdAt,UUID sourceId) {
+        public Position {if(family<0||family>1||createdAt==null||sourceId==null)throw new IllegalArgumentException("Invalid source continuation");}
+    }
     record Source(PrivateAiSourceCurrentness.Expected expected,String lifecycle,boolean aiEnabled,String modality,
         Instant createdAt,String title) {
         @Override public String toString(){return "QuerySource[REDACTED]";}
