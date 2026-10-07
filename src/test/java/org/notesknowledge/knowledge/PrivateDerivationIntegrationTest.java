@@ -68,6 +68,7 @@ class PrivateDerivationIntegrationTest {
     @Autowired KnowledgeInvalidationApi invalidation;
     @MockitoSpyBean AiProcessingGate gate;
     @MockitoBean AiDerivationProperties configuration;
+    @MockitoBean ProviderDispatchProperties dispatchConfiguration;
     @MockitoBean KnowledgePolicyProperties policyConfiguration;
     @MockitoBean TextEmbeddingPort embeddings;
     @MockitoBean MediaUnderstandingPort media;
@@ -76,7 +77,7 @@ class PrivateDerivationIntegrationTest {
     Browser browser;
     String code;
     @BeforeEach void prepare() throws Exception {
-        reset(configuration,policyConfiguration,embeddings,media,rates,gate,representations);
+        reset(configuration,dispatchConfiguration,policyConfiguration,embeddings,media,rates,gate,representations);
         when(configuration.configured()).thenReturn(true);when(configuration.provider()).thenReturn("synthetic");
         when(configuration.embeddingModel()).thenReturn("synthetic-embedding");when(configuration.mediaModel()).thenReturn("synthetic-media");
         when(configuration.modelRevision()).thenReturn("v1");when(configuration.configurationId()).thenReturn("synthetic-v1");
@@ -93,6 +94,90 @@ class PrivateDerivationIntegrationTest {
         owner=account();note=note(owner,true);browser=browser(owner);policy=policy(1,"a");ack(owner,policy);
     }
     @AfterEach void clear(){SecurityContextHolder.clearContext();}
+    @Test void unpaidUnapprovedAcknowledgedAiOnSourceCreatesNoWorkAndCannotUseAnOldClaim() throws Exception {
+        unpaidGemini();reconcileAll();
+        assertThat(ownerWorkCount()).isZero();
+        assertRestrictedProjection();executor.execute(claim(noteExpected(),"note"));
+        verify(embeddings,never()).embed(any(),any());verify(media,never()).describe(any(),any(),any());
+        assertThat(readyCount()).isZero();
+        assertThat(jdbc.queryForObject("select ai_enabled from notes.note where note_id=?",Boolean.class,note)).isTrue();
+    }
+    @Test void exactApprovedUnpaidSourceDispatchesButItsEditRequiresNewOperatorApproval() throws Exception {
+        unpaidGemini();approve(noteExpected());reconcileAll();assertThat(ownerWorkCount()).isEqualTo(1);
+        var first=work.claim(new LeaseOwner("synthetic-approved-worker"),10).stream().filter(c->c.intent().expected().owner().equals(owner)).findFirst().orElseThrow();
+        executor.execute(first);assertThat(readyCount()).isEqualTo(1);verify(embeddings,times(1)).embed(any(),any());
+        mutate("put","",Map.of("title","Edited synthetic","markdown","Edited synthetic body"));
+        clearInvocations(embeddings,media);reconcileAll();assertThat(ownerWorkCount()).isEqualTo(1);assertRestrictedProjection();
+        assertThat(readyCount()).isZero();
+        var edited=new PrivateAiSourceCurrentness.Expected(owner,note,null,2,1,null);
+        executor.execute(claim(edited,"note"));verify(embeddings,never()).embed(any(),any());
+        approve(edited);reconcileAll();
+        var second=work.claim(new LeaseOwner("synthetic-approved-worker"),10).stream().filter(c->c.intent().expected().equals(edited)).findFirst().orElseThrow();
+        executor.execute(second);verify(embeddings,times(1)).embed(any(),any());assertProjection("ready");
+    }
+    @Test void attachmentGenerationChangeDoesNotReuseExactApprovalAndOrdinaryAccessSurvives() throws Exception {
+        UUID attachment=upload("image");var original=new PrivateAiSourceCurrentness.Expected(owner,note,attachment,1,1,1L);
+        unpaidGemini();approve(original);doReturn(mediaSegments("image")).when(media).describe(any(),any(),any());
+        executor.execute(claim(original,"image"));assertThat(readyCount()).isEqualTo(1);
+        jdbc.update("update notes.attachment set processing_generation=processing_generation+1 where attachment_id=?",attachment);
+        var changed=new PrivateAiSourceCurrentness.Expected(owner,note,attachment,1,1,2L);
+        clearInvocations(media,embeddings);reconcileAll();executor.execute(claim(changed,"image"));
+        verify(embeddings,never()).embed(any(),any());verify(media,never()).describe(any(),any(),any());
+        var response=mvc.perform(get("/api/notes/"+note+"/ai-processing").cookie(browser.cookie)).andExpect(status().isOk()).andReturn().getResponse();
+        var state=json.readTree(response.getContentAsString()).get("attachments").get(0);
+        assertThat(state.get("status").asText()).isEqualTo("blocked");assertThat(state.get("reason").asText()).isEqualTo("providerPolicyRestricted");
+        mvc.perform(get("/api/notes/"+note).cookie(browser.cookie)).andExpect(status().isOk());
+        mvc.perform(get("/api/notes/"+note+"/attachments/"+attachment).cookie(browser.cookie)).andExpect(status().isOk());
+        mvc.perform(get("/api/notes/"+note+"/attachments/"+attachment+"/content").cookie(browser.cookie)).andExpect(status().isOk());
+        mvc.perform(post("/api/notes/search").cookie(browser.cookie).header("X-CSRF-TOKEN",browser.csrf).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"query\":\"synthetic\"}")).andExpect(status().isOk());
+        // Allowlist edits do not physically delete retained representations.
+        assertThat(jdbc.queryForObject("select count(*) from knowledge.private_derived_representation where owner_user_id=?",Integer.class,owner)).isEqualTo(1);
+    }
+    @Test void approvalCannotReplaceAcknowledgementOrAiOnAndOwnerApprovalCannotCoverANewNote() throws Exception {
+        unpaidGemini();approve(noteExpected());
+        policy=policy(2,"a");
+        reconcileAll();executor.execute(claim(noteExpected(),"note"));verify(embeddings,never()).embed(any(),any());
+        ack(owner,policy);disable();reconcileAll();assertProjection("excluded");
+        var another=note(owner,true);var e=new PrivateAiSourceCurrentness.Expected(owner,another,null,1,1,null);
+        executor.execute(claim(e,"note"));verify(embeddings,never()).embed(any(),any());assertThat(readyCount()).isZero();
+    }
+    @Test void corpusRevocationAfterCaptureCannotActivateAndDoesNotChangeVectorLineage() {
+        unpaidGemini();approve(noteExpected());var claim=claim(noteExpected(),"note");String lineage=claim.intent().targetLineageId();
+        doAnswer(call->{when(dispatchConfiguration.approvedSourceFingerprints()).thenReturn(List.of());return List.of(vector());}).when(embeddings).embed(any(),any());
+        executor.execute(claim);assertThat(readyCount()).isZero();assertThat(state(claim)).isEqualTo("obsolete");
+        assertThat(lineageForPolicy(policy,1,"note").id()).isEqualTo(lineage);
+    }
+    @Test void issuedSyntheticPermitCannotReachEitherGoogleAdapterAndRevokedApprovalCannotDispatch() {
+        var fake=gate.issue(claim(noteExpected(),"note")).orElseThrow();
+        @SuppressWarnings("unchecked") org.springframework.beans.factory.ObjectProvider<com.google.genai.Client> sdk=mock(org.springframework.beans.factory.ObjectProvider.class);
+        var adapters=new GoogleDerivationAdapters();
+        assertThatThrownBy(()->adapters.googleTextEmbeddingPort(configuration,sdk).embed(fake,List.of("Synthetic")))
+            .isInstanceOfSatisfying(DerivationFailure.class,failure->assertThat(failure.category).isEqualTo(KnowledgeWork.Failure.INVALID_SOURCE));
+        assertThatThrownBy(()->adapters.googleMediaUnderstandingPort(configuration,sdk,json).describe(fake,new byte[0],"image/png"))
+            .isInstanceOfSatisfying(DerivationFailure.class,failure->assertThat(failure.category).isEqualTo(KnowledgeWork.Failure.INVALID_SOURCE));
+        unpaidGemini();approve(noteExpected());
+        assertThatThrownBy(fake::requireGoogleDispatch).isInstanceOf(DerivationFailure.class);
+        var permit=gate.issue(claim(noteExpected(),"note")).orElseThrow();
+        permit.requireGoogleDispatch();when(dispatchConfiguration.approvedSourceFingerprints()).thenReturn(List.of());
+        assertThatThrownBy(permit::requireGoogleDispatch).isInstanceOf(DerivationFailure.class);
+        assertThat(permit.toString()).doesNotContain(note.toString(),ProviderDispatchPolicy.fingerprint(noteExpected()));
+    }
+    @Test @org.junit.jupiter.api.extension.ExtendWith(org.springframework.boot.test.system.OutputCaptureExtension.class)
+    void restrictedPolicyDoesNotExposeSourceIdentityOrApprovalInLogsOrProjection(org.springframework.boot.test.system.CapturedOutput output) throws Exception {
+        unpaidGemini();approve(new PrivateAiSourceCurrentness.Expected(owner,note,null,2,1,null));
+        reconcileAll();String response=assertRestrictedProjection();
+        String fingerprint=ProviderDispatchPolicy.fingerprint(noteExpected());
+        assertThat(response).doesNotContain(owner.toString(),note.toString(),fingerprint,"approvedSourceFingerprints","revision","generation");
+        assertThat(output.getAll()).doesNotContain(owner.toString(),note.toString(),fingerprint,ProviderDispatchPolicy.fingerprint(new PrivateAiSourceCurrentness.Expected(owner,note,null,2,1,null)));
+    }
+    private void unpaidGemini(){when(configuration.provider()).thenReturn("gemini");when(configuration.tier()).thenReturn("unpaid");when(configuration.region()).thenReturn("global");}
+    private void approve(PrivateAiSourceCurrentness.Expected e){when(dispatchConfiguration.dispatchPolicy()).thenReturn("unpaid-synthetic-demo");when(dispatchConfiguration.approvedSourceFingerprints()).thenReturn(List.of(ProviderDispatchPolicy.fingerprint(e)));}
+    private int ownerWorkCount(){return jdbc.queryForObject("select count(*) from knowledge.knowledge_work_intent where owner_user_id=?",Integer.class,owner);}
+    private String assertRestrictedProjection() throws Exception {
+        String response=mvc.perform(get("/api/notes/"+note+"/ai-processing").cookie(browser.cookie)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        var state=json.readTree(response).get("note");assertThat(state.get("status").asText()).isEqualTo("blocked");assertThat(state.get("reason").asText()).isEqualTo("providerPolicyRestricted");return response;
+    }
     @Test void notePipelineActivatesAllSegmentsAtomicallyAndProjectionDoesNotChangeEtag() throws Exception {
         String before=noteEtag();var claim=claim(noteExpected(),"note");
         assertProjection("processing");executor.execute(claim);assertProjection("ready");
