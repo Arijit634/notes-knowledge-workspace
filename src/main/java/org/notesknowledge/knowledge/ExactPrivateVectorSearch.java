@@ -36,6 +36,12 @@ class ExactPrivateVectorSearch {
         var auth=SecurityContextHolder.getContext().getAuthentication();
         if(auth==null||!(auth.getPrincipal() instanceof IdentitySessionPrincipal p))throw ApiFailureException.of(ApiFailureException.Kind.INVALID_CREDENTIALS);
         UUID owner=p.userId();accounts.getObject().requireCurrentOwner(owner,browser);
+        return search(owner,modality,query,limit);
+    }
+    @Transactional(timeout=3)
+    List<Candidate> search(UUID owner,String modality,float[] query,int limit) {
+        if(limit<1||limit>100)throw new IllegalArgumentException("Invalid candidate budget");
+        if(!accounts.getObject().isEligible(owner))throw ApiFailureException.of(ApiFailureException.Kind.INVALID_CREDENTIALS);
         var policy=policies.policyPrerequisite(owner).orElseThrow(()->new DerivationFailure(KnowledgeWork.Failure.POLICY_BLOCKED));
         if(!configuration.configured()||!configuration.approvedPolicyFingerprint().equals(policy.fingerprint()))throw new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE);
         var lineage=EmbeddingLineage.create(configuration,policy,modality);float[] preparedQuery=lineage.prepare(query);

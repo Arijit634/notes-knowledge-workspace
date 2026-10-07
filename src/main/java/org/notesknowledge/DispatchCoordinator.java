@@ -33,6 +33,20 @@ public class DispatchCoordinator implements AutoCloseable {
         if (!accepting.get()) { handle.close(); throw unavailable(); }
         return handle;
     }
+    /** Bounded deterministic advisory-key ordering, including collision deduplication. */
+    public Handle dispatchMany(UUID owner, java.util.Collection<UUID> notes) {
+        if (!accepting.get()) throw unavailable();
+        Handle handle = acquire(true, multiScopes(owner, notes));
+        if (!accepting.get()) { handle.close(); throw unavailable(); }
+        return handle;
+    }
+    private static List<Scope> multiScopes(UUID owner, java.util.Collection<UUID> notes) {
+        if (owner==null || notes==null || notes.isEmpty() || notes.size()>12 || notes.stream().anyMatch(java.util.Objects::isNull)) throw unavailable();
+        var result=new ArrayList<Scope>();
+        result.add(new Scope(17401,0,true)); result.add(new Scope(17402,key(owner),true));
+        notes.stream().map(DispatchCoordinator::key).distinct().sorted().forEach(k->result.add(new Scope(17403,k,false)));
+        return List.copyOf(result);
+    }
     public Handle noteMutation(UUID owner, UUID note) { return acquire(false, scopes(owner, note, false)); }
     public Handle ownerMutation(UUID owner) { return acquire(false, scopes(owner, null, true)); }
     public Handle globalMutation() { return acquire(false, List.of(new Scope(17401, 0, false))); }
@@ -128,6 +142,10 @@ public class DispatchCoordinator implements AutoCloseable {
         public synchronized boolean safelyReleased() { return closed && state == State.SAFELY_RELEASED; }
         public synchronized void requireDispatchScope(UUID owner, UUID note) {
             if (!held.equals(scopes(owner, note, false))) { poison(); throw unavailable(); }
+            requireActive();
+        }
+        public synchronized void requireDispatchScopes(UUID owner, java.util.Collection<UUID> notes) {
+            if (!held.equals(multiScopes(owner,notes))) { poison(); throw unavailable(); }
             requireActive();
         }
         private synchronized void poison() { state = State.POISONED; }

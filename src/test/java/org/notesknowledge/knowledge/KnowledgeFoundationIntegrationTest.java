@@ -461,7 +461,7 @@ class KnowledgeFoundationIntegrationTest {
             assertThatThrownBy(()->jdbc.update("update knowledge.knowledge_work_intent set "+columnValue+" where knowledge_work_intent_id=?",intent.id())).isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
         assertThatThrownBy(()->jdbc.update("delete from notes.note where note_id=?",e.noteId())).isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
         assertThat(jdbc.queryForList("select confdeltype::text from pg_constraint where conrelid='knowledge.knowledge_work_intent'::regclass and contype='f'",String.class)).hasSize(3).containsOnly("r");
-        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname='knowledge'",Integer.class)).isEqualTo(5);
+        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname='knowledge'",Integer.class)).isEqualTo(6);
         assertThat(jdbc.queryForList("select extname from pg_extension",String.class)).contains("vector");
         assertThat(jdbc.queryForObject("select current_setting('server_version')",String.class)).startsWith("18.");
     }
