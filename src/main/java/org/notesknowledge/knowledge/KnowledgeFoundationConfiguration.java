@@ -4,5 +4,5 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 
 @Configuration(proxyBeanMethods=false)
-@EnableConfigurationProperties({DeterministicExtractionProperties.class,KnowledgePolicyProperties.class,AiDerivationProperties.class})
+@EnableConfigurationProperties({DeterministicExtractionProperties.class,KnowledgePolicyProperties.class,AiDerivationProperties.class,ProviderDispatchProperties.class})
 class KnowledgeFoundationConfiguration { }
