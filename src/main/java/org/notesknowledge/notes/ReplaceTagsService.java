@@ -20,19 +20,26 @@ class ReplaceTagsService {
     private final StrongCoreEtagCodec etags;
     private final IfMatchPrecondition preconditions;
     private final Clock clock;
+    private final org.notesknowledge.knowledge.SuggestionAttributionApi suggestions;
 
     ReplaceTagsService(NotesRepository repository, NotesService notes,
-            StrongCoreEtagCodec etags, IfMatchPrecondition preconditions, Clock clock) {
+            StrongCoreEtagCodec etags, IfMatchPrecondition preconditions, Clock clock, org.notesknowledge.knowledge.SuggestionAttributionApi suggestions) {
         this.repository = repository;
         this.notes = notes;
         this.etags = etags;
         this.preconditions = preconditions;
         this.clock = clock;
+        this.suggestions=suggestions;
     }
 
     @Transactional
     @org.notesknowledge.CoordinatedMutation
     NotesService.EtaggedNote replace(UUID owner, UUID id, String ifMatch, List<String> values) {
+        return replace(owner,id,ifMatch,values,null);
+    }
+    @Transactional
+    @org.notesknowledge.CoordinatedMutation
+    NotesService.EtaggedNote replace(UUID owner, UUID id, String ifMatch, List<String> values,UUID acceptedSuggestionId) {
         // Lock the Note root even for a no-op: the precondition and full set belong
         // to the same committed revision, including concurrent text Save commands.
         NoteRecord current = repository.lock(owner, id)
@@ -43,6 +50,7 @@ class ReplaceTagsService {
             throw ApiFailureException.of(ApiFailureException.Kind.INVALID_LIFECYCLE_TRANSITION);
         }
         List<TagLabel> tags = TagLabel.validate(values);
+        if(acceptedSuggestionId!=null)suggestions.accept(owner,id,current.revision(),acceptedSuggestionId,tags.stream().map(TagLabel::display).toList());
         if (!new HashSet<>(current.tags()).equals(
                 new HashSet<>(tags.stream().map(TagLabel::display).toList()))) {
             var now = clock.instant().truncatedTo(ChronoUnit.MILLIS);

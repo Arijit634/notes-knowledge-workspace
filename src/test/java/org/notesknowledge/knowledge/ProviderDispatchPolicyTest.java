@@ -32,9 +32,11 @@ class ProviderDispatchPolicyTest {
     @Test void operatorPropertiesBindWithoutChangingAiConfigurationAndRedactTheirRepresentation() {
         String hash=ProviderDispatchPolicy.fingerprint(source);
         var environment=new MockEnvironment().withProperty("knowledge.derivation.dispatch-policy","unpaid-synthetic-demo")
-            .withProperty("knowledge.derivation.approved-source-fingerprints[0]",hash);
+            .withProperty("knowledge.derivation.approved-source-fingerprints[0]",hash)
+            .withProperty("knowledge.derivation.approved-query-fingerprints[0]",ProviderDispatchPolicy.queryFingerprint("Synthetic query"));
         var p=Binder.get(environment).bind("knowledge.derivation",Bindable.of(ProviderDispatchProperties.class)).get();
         assertThat(new ProviderDispatchPolicy(p).permits(config("gemini","unpaid","global"),source,"note")).isTrue();
+        assertThat(new ProviderDispatchPolicy(p).permitsUnpaidGeminiQuery(config("gemini","unpaid","global"),"Synthetic query")).isTrue();
         assertThat(p.toString()).doesNotContain(hash,owner.toString(),note.toString());
     }
     @Test void missingPolicyOrEmptyCorpusDeniesAndOwnerHashIsNotAnExactSourceApproval() {

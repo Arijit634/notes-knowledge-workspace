@@ -19,11 +19,31 @@ class ProviderDispatchPolicy {
     }
     static void validate(ProviderDispatchProperties properties) {
         var fingerprints=properties.approvedSourceFingerprints();
+        var queries=properties.approvedQueryFingerprints();
         if(properties.dispatchPolicy()!=null&&!properties.dispatchPolicy().isBlank()
                 &&!"unpaid-synthetic-demo".equals(properties.dispatchPolicy())
                 ||fingerprints!=null&&(fingerprints.size()>MAX_APPROVED_SOURCES
-                ||fingerprints.stream().anyMatch(f->f==null||!f.matches("[0-9a-f]{64}"))))
+                ||fingerprints.stream().anyMatch(f->f==null||!f.matches("[0-9a-f]{64}")))
+                ||queries!=null&&(queries.size()>MAX_APPROVED_SOURCES||queries.stream().anyMatch(f->f==null||!f.matches("[0-9a-f]{64}"))))
             throw new IllegalArgumentException("Invalid provider dispatch policy configuration");
+    }
+    boolean permitsQuery(AiDerivationProperties configuration,String normalizedQuery) {
+        validate(properties);
+        return "synthetic".equals(configuration.provider())&&"synthetic".equals(configuration.tier())
+            ||permitsUnpaidGeminiQuery(configuration,normalizedQuery);
+    }
+    boolean permitsUnpaidGeminiQuery(AiDerivationProperties configuration,String normalizedQuery) {
+        validate(properties);
+        return "gemini".equals(configuration.provider())&&"unpaid".equals(configuration.tier())
+            &&"global".equals(configuration.region())&&"unpaid-synthetic-demo".equals(properties.dispatchPolicy())
+            &&normalizedQuery!=null&&properties.approvedQueryFingerprints()!=null
+            &&properties.approvedQueryFingerprints().contains(queryFingerprint(normalizedQuery));
+    }
+    /** Exactly the request's strip/NFKC normalization; no case-folding or inferred approval. */
+    static String queryFingerprint(String query) {
+        String canonical="nkw-private-query-v1\n"+KnowledgeQueryRequest.normalize(query);
+        try {return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8)));}
+        catch(java.security.NoSuchAlgorithmException impossible){throw new IllegalStateException("SHA-256 unavailable");}
     }
     boolean permits(AiDerivationProperties configuration,PrivateAiSourceCurrentness.Expected source,String modality) {
         if(!Set.of("note","image","audio","video","pdf").contains(modality))return false;

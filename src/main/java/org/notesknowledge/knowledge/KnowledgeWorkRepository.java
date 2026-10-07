@@ -69,7 +69,7 @@ class KnowledgeWorkRepository {
         return clients.getObject().sql("""
                 with picked as (select knowledge_work_intent_id,
                 """+order+" as due,created_at from knowledge.knowledge_work_intent where "
-                +predicate+" order by "+order+",created_at,knowledge_work_intent_id limit :limit for update skip locked), changed as ("
+                +"work_class in ('private_note_derivation','private_attachment_derivation') and "+predicate+" order by "+order+",created_at,knowledge_work_intent_id limit :limit for update skip locked), changed as ("
                 +"update knowledge.knowledge_work_intent w set "
                 +"state=case when w.attempt_count<w.max_attempts then 'claimed' else 'failed' end, "
                 +"attempt_count=least(w.attempt_count+1,w.max_attempts),next_attempt_at=null, "

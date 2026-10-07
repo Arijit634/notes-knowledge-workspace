@@ -153,7 +153,8 @@ class IdentityCoreIntegrationTest {
                 "/api/notes/{noteId}/ai-access", "/api/notes/{noteId}/ai-processing", "/api/notes/ai-access-bulk",
                 "/api/notes/{noteId}/versions", "/api/notes/{noteId}/versions/{versionId}",
                 "/api/notes/{noteId}/versions/{versionId}/restore", "/api/notes/{noteId}/attachments",
-                "/api/notes/{noteId}/attachments/{attachmentId}", "/api/notes/{noteId}/attachments/{attachmentId}/content", "/api/ai/processing-policy", "/api/ai/processing-policy/acknowledgements");
+                "/api/notes/{noteId}/attachments/{attachmentId}", "/api/notes/{noteId}/attachments/{attachmentId}/content", "/api/ai/processing-policy", "/api/ai/processing-policy/acknowledgements",
+                "/api/knowledge/query", "/api/knowledge/operations/{operationId}", "/api/notes/{noteId}/related", "/api/notes/{noteId}/organization-suggestions");
     }
 
     @Test

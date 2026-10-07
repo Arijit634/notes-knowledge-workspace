@@ -21,6 +21,8 @@ class PrivateRepresentationRepository {
             +"failure_code='invalid_source',updated_at=clock_timestamp() where state in ('queued','claimed','retry_wait') and "+filter)
             .param("owner",owner).param("note",note);
         if(attachment!=null)work.param("attachment",attachment);work.update();
+        if(attachment==null)clients.getObject().sql("update knowledge.organization_suggestion set state='obsolete',resolved_at=clock_timestamp() where owner_user_id=:owner and source_note_id=:note and state='pending'")
+            .param("owner",owner).param("note",note).update();
     }
     boolean ready(PrivateAiSourceCurrentness.Expected e,EmbeddingLineage lineage) {
         return sourceStatement("select count(*) from knowledge.private_derived_representation where state='ready' and ",e,lineage.id())
