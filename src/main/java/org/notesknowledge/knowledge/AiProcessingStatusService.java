@@ -22,9 +22,11 @@ class AiProcessingStatusService {
     private final ProcessingPolicyService policies;
     private final AiDerivationProperties configuration;
     private final PrivateRepresentationRepository representations;
+    private final ProviderDispatchPolicy dispatchPolicy;
     AiProcessingStatusService(ObjectProvider<AccountEligibilityApi> accounts,PrivateDerivationSource sources,ProcessingPolicyService policies,
-            AiDerivationProperties configuration,PrivateRepresentationRepository representations) {
+            AiDerivationProperties configuration,PrivateRepresentationRepository representations,ProviderDispatchPolicy dispatchPolicy) {
         this.accounts=accounts;this.sources=sources;this.policies=policies;this.configuration=configuration;this.representations=representations;
+        this.dispatchPolicy=dispatchPolicy;
     }
     @Transactional(timeout=3)
     View read(HttpServletRequest browser,UUID note) {
@@ -47,6 +49,7 @@ class AiProcessingStatusService {
         catch(ApiFailureException missing){return new State("blocked","policyUnavailable");}
         if(policy.isEmpty())return new State("blocked","policyAcknowledgementRequired");
         if(!configuration.configured()||!configuration.approvedPolicyFingerprint().equals(policy.get().fingerprint()))return new State("blocked","providerUnavailable");
+        if(!dispatchPolicy.permits(configuration,source.expected(),source.modality()))return new State("blocked","providerPolicyRestricted");
         var lineage=EmbeddingLineage.create(configuration,policy.get(),source.modality());
         if(representations.ready(source.expected(),lineage))return new State("ready",null);
         var kind=source.expected().attachmentId()==null?KnowledgeWork.Kind.NOTE:KnowledgeWork.Kind.ATTACHMENT;

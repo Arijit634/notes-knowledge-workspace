@@ -11,14 +11,16 @@ class DerivationReconciler {
     private final AiDerivationProperties configuration;
     private final PrivateRepresentationRepository representations;
     private final KnowledgeWorkRepository work;
+    private final ProviderDispatchPolicy dispatchPolicy;
     private final org.springframework.beans.factory.ObjectProvider<TextEmbeddingPort> embeddings;
     private final org.springframework.beans.factory.ObjectProvider<MediaUnderstandingPort> media;
     DerivationReconciler(PrivateDerivationSource sources,ProcessingPolicyService policies,AiDerivationProperties configuration,
             PrivateRepresentationRepository representations,KnowledgeWorkRepository work,
             org.springframework.beans.factory.ObjectProvider<TextEmbeddingPort> embeddings,
-            org.springframework.beans.factory.ObjectProvider<MediaUnderstandingPort> media) {
+            org.springframework.beans.factory.ObjectProvider<MediaUnderstandingPort> media,ProviderDispatchPolicy dispatchPolicy) {
         this.sources=sources;this.policies=policies;this.configuration=configuration;this.representations=representations;this.work=work;
         this.embeddings=embeddings;this.media=media;
+        this.dispatchPolicy=dispatchPolicy;
     }
     /** At most 25 metadata records/enqueues per short transaction; scheduler carries a bounded cursor. */
     @Transactional(timeout=3)
@@ -28,6 +30,7 @@ class DerivationReconciler {
         var inventory=sources.inventory(after,25);
         for(var source:inventory.sources()) {
             if(!source.aiEnabled()||!java.util.Set.of("active","archived").contains(source.lifecycle()))continue;
+            if(!dispatchPolicy.permits(configuration,source.expected(),source.modality()))continue;
             if(!java.util.Set.of("note","pdf").contains(source.modality())&&(media.getIfAvailable()==null||!media.getIfAvailable().available()))continue;
             var policy=policies.policyPrerequisite(source.expected().owner());
             if(policy.isEmpty()||!configuration.approvedPolicyFingerprint().equals(policy.get().fingerprint()))continue;
