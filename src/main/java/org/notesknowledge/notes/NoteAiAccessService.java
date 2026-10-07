@@ -29,10 +29,12 @@ class NoteAiAccessService {
     private final RateControlService rates;
     private final RateKeyDeriver keys;
     private final ObjectProvider<PlatformTransactionManager> transactions;
+    private final org.notesknowledge.DispatchCoordinator coordination;
 
     NoteAiAccessService(NotesRepository repository, NotesService notes, StrongCoreEtagCodec etags,
             IfMatchPrecondition preconditions, Clock clock, RateControlService rates,
-            RateKeyDeriver keys, ObjectProvider<PlatformTransactionManager> transactions) {
+            RateKeyDeriver keys, ObjectProvider<PlatformTransactionManager> transactions,
+            org.notesknowledge.DispatchCoordinator coordination) {
         this.repository = repository;
         this.notes = notes;
         this.etags = etags;
@@ -41,9 +43,11 @@ class NoteAiAccessService {
         this.rates = rates;
         this.keys = keys;
         this.transactions = transactions;
+        this.coordination = coordination;
     }
 
     @Transactional
+    @org.notesknowledge.CoordinatedMutation
     NotesService.EtaggedNote set(UUID owner, UUID id, String ifMatch, boolean enabled) {
         var current = repository.lock(owner, id).orElseThrow(() ->
                 ApiFailureException.of(ApiFailureException.Kind.RESOURCE_NOT_FOUND));
@@ -67,14 +71,17 @@ class NoteAiAccessService {
         while (true) {
             UUID continuation = after;
             // No Redis/network operation is made while a Note transaction is open.
-            Batch result = batches.execute(status -> {
+            Batch result;
+            var handle = coordination.ownerMutation(owner);
+            try (handle) { result = batches.execute(status -> {
                 var ids = repository.lockAiAccessBatch(owner, request.aiEnabled(), request.noteIds(),
                         continuation, upper, BATCH_SIZE);
                 if (ids.isEmpty()) return new Batch(null, 0, 0);
                 int changed = repository.setAiAccess(owner, ids, request.aiEnabled(),
                         clock.instant().truncatedTo(ChronoUnit.MILLIS));
                 return new Batch(ids.getLast(), ids.size(), changed);
-            });
+            }); }
+            if (!handle.safelyReleased()) throw ApiFailureException.of(ApiFailureException.Kind.SERVICE_UNAVAILABLE);
             affected += result.changed();
             if (result.selected() < BATCH_SIZE) return affected;
             after = result.last();

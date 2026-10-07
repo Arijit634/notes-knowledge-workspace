@@ -33,6 +33,7 @@ class NoteOrganizationService {
     }
 
     @Transactional
+    @org.notesknowledge.CoordinatedMutation
     NotesService.EtaggedNote execute(UUID owner, UUID id, String ifMatch, Command command) {
         // No-op pin requests also lock and check current authority, rather than
         // accepting a stale validator merely because the requested state matches.

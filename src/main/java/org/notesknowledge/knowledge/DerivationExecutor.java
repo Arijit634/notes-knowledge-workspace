@@ -15,9 +15,12 @@ class DerivationExecutor {
     private final ObjectProvider<TextEmbeddingPort> embeddings;
     private final ObjectProvider<MediaUnderstandingPort> media;
     private final MeterRegistry metrics;
+    private final org.notesknowledge.DispatchCoordinator coordination;
     DerivationExecutor(AiProcessingGate gate,DerivationTransactions transactions,KnowledgeWorkService work,
-            ObjectProvider<TextEmbeddingPort> embeddings,ObjectProvider<MediaUnderstandingPort> media,MeterRegistry metrics) {
+            ObjectProvider<TextEmbeddingPort> embeddings,ObjectProvider<MediaUnderstandingPort> media,MeterRegistry metrics,
+            org.notesknowledge.DispatchCoordinator coordination) {
         this.gate=gate;this.transactions=transactions;this.work=work;this.embeddings=embeddings;this.media=media;this.metrics=metrics;
+        this.coordination=coordination;
     }
     void execute(KnowledgeWork.Claim claim) {
         String outcome="deferred";
@@ -25,7 +28,9 @@ class DerivationExecutor {
             var initial=gate.issue(claim).orElseThrow(()->new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE));
             var embed=embeddings.getIfAvailable();
             if(embed==null||!embed.available())throw new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE);
-            var material=transactions.acquire(claim);
+            var dispatches=new ArrayList<org.notesknowledge.DispatchCoordinator.Handle>();
+            // Acquisition is also serialized; the later provider dispatch still obtains a NEW gate/lock.
+            var material=coordinated(claim,dispatches,permit->transactions.acquire(claim));
             List<DerivedSegment> segments;
             if(initial.source().modality().equals("note"))segments=new MarkdownChunker().chunk(material.markdown());
             else {
@@ -33,14 +38,14 @@ class DerivationExecutor {
                 long size=initial.source().sizeBytes();
                 if(size<=0||size>50L*1024*1024)throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);
                 byte[] bytes;
-                try(var input=material.open()) {
-                    bytes=input.readNBytes((int)size+1);
-                    if(bytes.length!=size)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
-                }
-                catch(java.io.IOException unavailable) {throw new DerivationFailure(KnowledgeWork.Failure.TRANSIENT_DEPENDENCY);}
-                var finalPermit=gate.issue(claim).orElseThrow(()->new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE));
-                finalPermit.requireDispatch();
-                var pages=initial.source().modality().equals("pdf")?material.pdfPages(bytes):List.<org.notesknowledge.knowledge.spi.PrivateDerivationSource.PdfPage>of();
+                bytes=coordinated(claim,dispatches,permit->{
+                    try(var input=material.open()) {
+                        var content=input.readNBytes((int)size+1);
+                        if(content.length!=size)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
+                        return content;
+                    } catch(java.io.IOException unavailable) {throw new DerivationFailure(KnowledgeWork.Failure.TRANSIENT_DEPENDENCY);}
+                });
+                var pages=initial.source().modality().equals("pdf")?coordinated(claim,dispatches,permit->material.pdfPages(bytes)):List.<org.notesknowledge.knowledge.spi.PrivateDerivationSource.PdfPage>of();
                 var extracted=new ArrayList<DerivedSegment>();
                 for(var page:pages)for(var chunk:new MarkdownChunker().chunk(page.text())) {
                     if(extracted.size()>=512)throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);
@@ -48,9 +53,7 @@ class DerivationExecutor {
                 }
                 if(extracted.isEmpty()) {
                     if(understand==null||!understand.available())throw new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE);
-                    finalPermit=gate.issue(claim).orElseThrow(()->new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE));
-                    finalPermit.requireDispatch();
-                    segments=List.copyOf(understand.describe(finalPermit,bytes,initial.source().mediaType()));
+                    segments=coordinated(claim,dispatches,permit->List.copyOf(understand.describe(permit,bytes,initial.source().mediaType())));
                 } else segments=List.copyOf(extracted);
                 validateMedia(initial,segments);
             }
@@ -58,14 +61,12 @@ class DerivationExecutor {
             var vectors=new ArrayList<float[]>();
             for(int start=0;start<segments.size();start+=16) {
                 if(!work.heartbeat(claim))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
-                var permit=gate.issue(claim).orElseThrow(()->new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE));
-                permit.requireDispatch();
                 var batch=segments.subList(start,Math.min(start+16,segments.size()));
-                var output=embed.embed(permit,batch.stream().map(DerivedSegment::text).toList());
+                var output=coordinated(claim,dispatches,permit->embed.embed(permit,batch.stream().map(DerivedSegment::text).toList()));
                 if(output.size()!=batch.size())throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
                 for(float[] vector:output)vectors.add(initial.lineage().prepare(vector));
             }
-            if(!transactions.activate(claim,initial.lineage(),segments,vectors)){work.obsolete(claim);outcome="obsolete";}
+            if(!transactions.activate(claim,initial.lineage(),segments,vectors,List.copyOf(dispatches))){work.obsolete(claim);outcome="obsolete";}
             else outcome="activated";
         } catch(DerivationFailure failure) {
             switch(failure.category) {
@@ -87,6 +88,20 @@ class DerivationExecutor {
             outcome="deferred";
         }
         finally {metrics.counter("knowledge.derivation.outcome","outcome",outcome).increment();}
+    }
+    private <T> T coordinated(KnowledgeWork.Claim claim,List<org.notesknowledge.DispatchCoordinator.Handle> outcomes,
+            java.util.function.Function<AiProcessingGate.SourceAiPermit,T> effect) {
+        var expected=claim.intent().expected();
+        var handle=coordination.dispatch(expected.owner(),expected.noteId());
+        outcomes.add(handle);
+        T result;
+        try(handle) {
+            var permit=gate.issueForDispatch(claim,handle).orElseThrow(()->new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE));
+            permit.requireDispatch();
+            result=effect.apply(permit);
+        }
+        if(!handle.safelyReleased())throw new DerivationFailure(KnowledgeWork.Failure.TRANSIENT_DEPENDENCY);
+        return result;
     }
     static void validateMedia(AiProcessingGate.SourceAiPermit permit,List<DerivedSegment> segments) {
         if(segments.isEmpty()||segments.size()>512)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);

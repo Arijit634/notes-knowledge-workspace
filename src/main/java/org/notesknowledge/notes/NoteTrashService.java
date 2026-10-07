@@ -34,6 +34,7 @@ class NoteTrashService {
     }
 
     @Transactional
+    @org.notesknowledge.CoordinatedMutation
     NotesService.EtaggedNote trash(UUID owner, UUID id, String ifMatch, boolean confirmUnpublish) {
         NoteRecord current = requireCurrent(owner, id, ifMatch);
         if (!"active".equals(current.lifecycle()) && !"archived".equals(current.lifecycle())) throw illegal();
@@ -50,6 +51,7 @@ class NoteTrashService {
     }
 
     @Transactional
+    @org.notesknowledge.CoordinatedMutation
     NotesService.EtaggedNote restore(UUID owner, UUID id, String ifMatch) {
         NoteRecord current = requireCurrent(owner, id, ifMatch);
         if (!"trashed".equals(current.lifecycle())) throw illegal();

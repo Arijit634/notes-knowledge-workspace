@@ -25,16 +25,24 @@ class ProcessingPolicyService {
     private final ProcessingPolicyRepository repository;
     private final KnowledgePolicyProperties configuration;
     private final ObjectProvider<AccountEligibilityApi> accounts;
-    ProcessingPolicyService(ProcessingPolicyRepository repository,KnowledgePolicyProperties configuration,ObjectProvider<AccountEligibilityApi> accounts) {
+    private final org.notesknowledge.DispatchCoordinator coordination;
+    private final ObjectProvider<org.springframework.transaction.PlatformTransactionManager> transactions;
+    ProcessingPolicyService(ProcessingPolicyRepository repository,KnowledgePolicyProperties configuration,ObjectProvider<AccountEligibilityApi> accounts,
+            org.notesknowledge.DispatchCoordinator coordination,ObjectProvider<org.springframework.transaction.PlatformTransactionManager> transactions) {
         this.repository=repository;this.configuration=configuration;this.accounts=accounts;
+        this.coordination=coordination;this.transactions=transactions;
     }
     private UUID owner(HttpServletRequest browser) {
+        UUID user=principal();
+        if(accounts.getIfAvailable()==null) throw unavailable();
+        accounts.getObject().requireCurrentOwner(user,browser);
+        return user;
+    }
+    private UUID principal() {
         var auth=SecurityContextHolder.getContext().getAuthentication();
         if(auth==null||!auth.isAuthenticated()||!(auth.getPrincipal() instanceof IdentitySessionPrincipal principal)
                 ||auth.getAuthorities().stream().noneMatch(a->"ROLE_USER".equals(a.getAuthority())))
             throw ApiFailureException.of(ApiFailureException.Kind.INVALID_CREDENTIALS);
-        if(accounts.getIfAvailable()==null) throw unavailable();
-        accounts.getObject().requireCurrentOwner(principal.userId(),browser);
         return principal.userId();
     }
     private ProcessingPolicyRepository.Policy current() {
@@ -47,14 +55,18 @@ class ProcessingPolicyService {
         UUID user=owner(browser);var policy=current();boolean ack=repository.acknowledged(user,policy);
         return new View(policy.id(),policy.code(),policy.version(),policy.fingerprint(),policy.disclosureRevision(),policy.effectiveAt(),ack,!ack);
     }
-    @Transactional
     void acknowledge(HttpServletRequest browser,PolicyAcknowledgementRequest request) {
-        UUID user=owner(browser);var policy=current();
+        UUID user=principal();
+        var handle=coordination.ownerMutation(user);
+        try(handle) { new org.springframework.transaction.support.TransactionTemplate(transactions.getObject()).executeWithoutResult(status->{
+        owner(browser);var policy=current();
         if(!policy.id().equals(request.processingPolicyId())||!policy.code().equals(request.policyCode())
                 ||policy.version()!=request.policyVersion()||!policy.fingerprint().equals(request.policyFingerprint())
                 ||!policy.disclosureRevision().equals(request.disclosureRevision()))
             throw ApiFailureException.of(ApiFailureException.Kind.PROCESSING_POLICY_CHANGED);
         repository.acknowledge(user,policy);
+        }); }
+        if(!handle.safelyReleased())throw unavailable();
     }
     @Transactional
     Optional<AcknowledgedProcessingPolicy> policyPrerequisite(UUID expectedUser) {

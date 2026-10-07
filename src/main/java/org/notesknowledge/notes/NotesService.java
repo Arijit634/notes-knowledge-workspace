@@ -75,6 +75,7 @@ class NotesService {
     }
 
     @Transactional
+    @org.notesknowledge.CoordinatedMutation
     EtaggedNote save(UUID owner, UUID id, String ifMatch, String title, String markdown) {
         NoteRecord current = repository.lock(owner, id)
                 .orElseThrow(() -> ApiFailureException.of(ApiFailureException.Kind.RESOURCE_NOT_FOUND));
