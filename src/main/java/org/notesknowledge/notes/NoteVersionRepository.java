@@ -37,6 +37,15 @@ class NoteVersionRepository {
                 .param("markdown", saved.markdown()).query(UUID.class).optional();
     }
 
+    Optional<UUID> exactRevision(UUID owner, NoteRecord saved) {
+        return jdbc().sql("""
+                select note_version_id from notes.note_version
+                where owner_user_id=:owner and note_id=:note and source_revision=:revision
+                  and title=:title and markdown=:markdown
+                """).param("owner", owner).param("note", saved.id()).param("revision", saved.revision())
+                .param("title", saved.title()).param("markdown", saved.markdown()).query(UUID.class).optional();
+    }
+
     Optional<Instant> latestTime(UUID owner, UUID note) {
         return jdbc().sql("""
                 select created_at from notes.note_version where owner_user_id=:owner and note_id=:note

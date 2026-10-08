@@ -45,7 +45,7 @@ class IdentitySchemaMigrationTest {
                         "V006__identity__privilege_assignment.sql",
                         "V007__notes__editor_core.sql", "V008__notes__tags.sql", "V009__notes__versions.sql",
                         "V010__profile__private_core.sql", "V011__profile__avatar_management.sql",
-                        "V012__notes__attachment_upload_core.sql", "V013__notes__ordinary_search.sql", "V014__knowledge__processing_foundation.sql", "V015__knowledge__private_derivations.sql", "V016__knowledge__query_operations.sql");
+                        "V012__notes__attachment_upload_core.sql", "V013__notes__ordinary_search.sql", "V014__knowledge__processing_foundation.sql", "V015__knowledge__private_derivations.sql", "V016__knowledge__query_operations.sql", "V017__publishing__public_core.sql");
         byte[] v001 = Files.readAllBytes(Path.of("src/main/resources/db/migration/"
                 + "V001__platform__spring_session.sql"));
         assertThat(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(v001)))
@@ -62,6 +62,7 @@ class IdentitySchemaMigrationTest {
                     'publishing','discovery','moderation') and table_type = 'BASE TABLE'
                 order by table_schema, table_name
                 """, String.class)).containsExactly(
+                        "discovery.publication_projection", "discovery.publication_view_aggregate",
                         "identity.account", "identity.application_session_descriptor",
                         "identity.external_identity_link",
                         "identity.identity_capability", "identity.mfa_configuration",
@@ -69,7 +70,9 @@ class IdentitySchemaMigrationTest {
                         "identity.security_audit_fact", "identity.security_email_delivery",
                         "identity.spring_session", "identity.spring_session_attributes",
                 "knowledge.knowledge_work_intent", "knowledge.organization_suggestion", "knowledge.private_derived_representation", "knowledge.private_derived_segment", "knowledge.processing_policy", "knowledge.processing_policy_acknowledgement",
-                "notes.attachment", "notes.note", "notes.note_preferences", "notes.note_tag", "notes.note_version", "notes.note_version_hold", "profile.avatar_asset", "profile.profile");
+                "notes.attachment", "notes.note", "notes.note_preferences", "notes.note_tag", "notes.note_version", "notes.note_version_hold",
+                "profile.avatar_asset", "profile.profile", "profile.public_profile_projection",
+                "publishing.publication", "publishing.publication_audit_fact", "publishing.publication_public_media", "publishing.publication_snapshot_tag");
         assertThat(jdbc.queryForList("""
                 select indexname from pg_indexes where schemaname = 'identity'
                 """, String.class)).contains("ix_security_email_delivery_ready",

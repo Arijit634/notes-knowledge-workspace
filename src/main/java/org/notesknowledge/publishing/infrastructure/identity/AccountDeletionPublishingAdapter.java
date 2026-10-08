@@ -7,12 +7,14 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Publishing currently has no persisted state; this seam owns later public denial. */
+/** Account deletion cannot commit before all active public generations are denied. */
 @Component
 public class AccountDeletionPublishingAdapter implements AccountDeletionPublishingConsequence {
+    private final org.notesknowledge.publishing.PublicDenialApi publications;
+    public AccountDeletionPublishingAdapter(org.notesknowledge.publishing.PublicDenialApi publications){this.publications=publications;}
     @Override
     @Transactional(propagation = Propagation.MANDATORY)
     public void makeIneligible(UUID userId) {
-        // Publications and their public generations are not yet implemented.
+        publications.retireAccount(userId);
     }
 }

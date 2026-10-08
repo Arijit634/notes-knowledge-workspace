@@ -7,17 +7,19 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Publishing has no persisted Publications yet; there is no active public source to retire. */
+/** Synchronous public denial participates in the source Note's owning transaction. */
 @Component
 @Transactional(propagation = Propagation.MANDATORY)
 public class PublishingSourceRetirementAdapter implements SourceRetirementPublicationConsequence {
+    private final org.notesknowledge.publishing.PublicDenialApi publications;
+    public PublishingSourceRetirementAdapter(org.notesknowledge.publishing.PublicDenialApi publications){this.publications=publications;}
     @Override
     public boolean hasActiveSourcePublication(UUID ownerUserId, UUID noteId) {
-        return false;
+        return publications.hasActiveSource(ownerUserId,noteId);
     }
 
     @Override
     public void makeIneligible(UUID ownerUserId, UUID noteId) {
-        // Publication/public-generation state is not implemented in this phase.
+        publications.retireSource(ownerUserId,noteId);
     }
 }

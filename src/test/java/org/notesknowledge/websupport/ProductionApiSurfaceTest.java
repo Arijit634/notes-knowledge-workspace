@@ -44,7 +44,13 @@ class ProductionApiSurfaceTest {
                 "/api/notes/{noteId}/versions/{versionId}/restore", "/api/me/profile", "/api/me/profile/avatar",
                 "/api/notes/{noteId}/attachments", "/api/notes/{noteId}/attachments/{attachmentId}",
                 "/api/notes/{noteId}/attachments/{attachmentId}/content", "/api/ai/processing-policy", "/api/ai/processing-policy/acknowledgements", "/api/notes/{noteId}/ai-processing",
-                "/api/knowledge/query", "/api/knowledge/operations/{operationId}", "/api/notes/{noteId}/related", "/api/notes/{noteId}/organization-suggestions");
+                "/api/knowledge/query", "/api/knowledge/operations/{operationId}", "/api/notes/{noteId}/related", "/api/notes/{noteId}/organization-suggestions",
+                "/api/me/public-profile", "/api/public/profiles/{handle}", "/api/public/profiles/{handle}/publications",
+                "/api/public/profiles/{handle}/avatar/{publicAvatarId}/content",
+                "/api/notes/{noteId}/publication-preview", "/api/notes/{noteId}/publication",
+                "/api/me/publications", "/api/me/publications/{id}", "/api/me/publications/{id}/source-status",
+                "/api/me/publications/{id}/unpublish", "/api/me/publications/{id}/republish",
+                "/api/public/publications/{id}", "/api/public/publications/{id}/media/{mediaId}/content");
         assertThat(requestMappings.getHandlerMethods().keySet().stream()
                 .filter(mapping -> mapping.getPatternValues().contains("/api/notes/search"))
                 .flatMap(mapping -> mapping.getMethodsCondition().getMethods().stream()))
