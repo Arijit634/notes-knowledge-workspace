@@ -215,7 +215,7 @@ class ProfileIntegrationTest {
 
     @Test void migrationAddsOnlyPrivateRootAndRestrictsIdentityHandleAndBounds() throws Exception {
         assertThat(jdbc.queryForObject("show server_version", String.class)).startsWith("18.");
-        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname in ('identity','profile','notes','knowledge','publishing','discovery','moderation')", Integer.class)).isEqualTo(32);
+        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname in ('identity','profile','notes','knowledge','publishing','discovery','moderation')", Integer.class)).isEqualTo(35);
         assertThat(jdbc.queryForList("select tablename from pg_tables where schemaname='profile'", String.class)).containsExactlyInAnyOrder("profile", "avatar_asset", "public_profile_projection");
         assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_schema='profile' and table_name='profile' order by ordinal_position", String.class))
                 .containsExactly("profile_id", "user_id", "display_name", "biography", "public_handle_original", "public_handle_normalized", "updated_at", "selected_avatar_id");

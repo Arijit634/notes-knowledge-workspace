@@ -19,7 +19,7 @@ class PublishingMigrationTest {
     @BeforeAll void migrate(){
         ds=new DriverManagerDataSource(postgres.getJdbcUrl(),postgres.getUsername(),postgres.getPassword());jdbc=new JdbcTemplate(ds);
         Flyway.configure().dataSource(ds).target("16").load().migrate();before=relations();
-        assertThat(before).hasSize(25);flyway=Flyway.configure().dataSource(ds).load();assertThat(flyway.migrate().migrationsExecuted).isEqualTo(1);
+        assertThat(before).hasSize(25);flyway=Flyway.configure().dataSource(ds).target("17").load();assertThat(flyway.migrate().migrationsExecuted).isEqualTo(1);
     }
     @Test void forwardMigrationAddsOnlySevenAuthorizedRelationsAndSafeIndexes(){
         assertThat(relations()).hasSize(32);assertThat(relations().stream().filter(s->!before.contains(s)).toList()).containsExactlyInAnyOrder(

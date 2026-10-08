@@ -50,7 +50,13 @@ class ProductionApiSurfaceTest {
                 "/api/notes/{noteId}/publication-preview", "/api/notes/{noteId}/publication",
                 "/api/me/publications", "/api/me/publications/{id}", "/api/me/publications/{id}/source-status",
                 "/api/me/publications/{id}/unpublish", "/api/me/publications/{id}/republish",
-                "/api/public/publications/{id}", "/api/public/publications/{id}/media/{mediaId}/content");
+                "/api/public/publications/{id}", "/api/public/publications/{id}/media/{mediaId}/content",
+                "/api/public/explore", "/api/public/search", "/api/public/publications/{id}/like");
+        assertThat(requestMappings.getHandlerMethods().keySet().stream()
+                .filter(mapping -> mapping.getPatternValues().contains("/api/public/publications/{id}/like"))
+                .flatMap(mapping -> mapping.getMethodsCondition().getMethods().stream()))
+                .containsExactlyInAnyOrder(org.springframework.web.bind.annotation.RequestMethod.PUT,
+                        org.springframework.web.bind.annotation.RequestMethod.DELETE);
         assertThat(requestMappings.getHandlerMethods().keySet().stream()
                 .filter(mapping -> mapping.getPatternValues().contains("/api/notes/search"))
                 .flatMap(mapping -> mapping.getMethodsCondition().getMethods().stream()))

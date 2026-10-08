@@ -64,7 +64,10 @@ class PublicationController {
     ResponseEntity<PublicationTransactions.PublicView> publicRead(@PathVariable UUID id,HttpServletRequest request) {
         rate.check(request);var initial=repository.active(id).orElseThrow(PublicationTransactions::missing);
         PublicationTransactions.PublicView result;
-        try(var lease=exposure.readLease(initial.owner())){result=transactions.publicView(id);}
+        var authentication=org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        UUID viewer=authentication!=null&&authentication.getPrincipal() instanceof org.notesknowledge.identity.IdentitySessionPrincipal p
+            &&authentication.getAuthorities().stream().anyMatch(a->a.getAuthority().equals("ROLE_USER"))?p.userId():null;
+        try(var lease=exposure.readLease(initial.owner())){result=transactions.publicView(id,viewer);}
         try{discovery.recordApproximateView(id,initial.generation());}
         catch(RuntimeException failure){org.slf4j.LoggerFactory.getLogger(PublicationController.class).warn("public_view_aggregate_deferred");}
         org.slf4j.LoggerFactory.getLogger(PublicationController.class).debug("public_publication_read outcome=success");

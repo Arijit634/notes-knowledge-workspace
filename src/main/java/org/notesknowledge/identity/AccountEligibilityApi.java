@@ -40,4 +40,9 @@ public class AccountEligibilityApi {
     public boolean isPubliclyEligible(UUID expectedUserId) {
         return identity.isActiveAccount(expectedUserId);
     }
+    @Transactional(propagation=Propagation.MANDATORY,readOnly=true)
+    public java.util.Set<UUID> publiclyEligibleBatch(java.util.List<UUID> ids) {
+        if(ids.size()>100)throw new IllegalArgumentException("Public eligibility batch exceeds bound");
+        return ids.isEmpty()?java.util.Set.of():identity.activePublicSubjects(ids);
+    }
 }

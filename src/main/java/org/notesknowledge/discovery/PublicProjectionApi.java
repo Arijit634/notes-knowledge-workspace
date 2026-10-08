@@ -22,7 +22,13 @@ public class PublicProjectionApi {
     public record Engagement(long likeCount,long approximateViewCount) { }
     private final ObjectProvider<JdbcClient> clients;
     private final Clock clock;
-    PublicProjectionApi(ObjectProvider<JdbcClient> clients,Clock clock){this.clients=clients;this.clock=clock;}
+    private final PublicDiscoveryRepository likes;
+    PublicProjectionApi(ObjectProvider<JdbcClient> clients,Clock clock,PublicDiscoveryRepository likes){this.clients=clients;this.clock=clock;this.likes=likes;}
+    @Transactional(readOnly=true)
+    public boolean viewerLiked(UUID viewer,UUID publication,long generation) {
+        if(!likes.projectionCurrent(publication,generation,false))throw ApiFailureException.of(ApiFailureException.Kind.RESOURCE_NOT_FOUND);
+        return likes.liked(viewer,publication);
+    }
     @Transactional(propagation=Propagation.MANDATORY)
     public void advance(Snapshot s) {
         int changed=clients.getObject().sql("""

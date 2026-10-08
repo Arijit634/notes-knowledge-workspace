@@ -98,8 +98,10 @@ public class SecurityConfiguration {
                                 identityCore != null))
                         .requestMatchers(HttpMethod.GET, "/api/public/profiles/{handle}",
                                 "/api/public/profiles/{handle}/publications", "/api/public/profiles/{handle}/avatar/{avatarId}/content",
-                                "/api/public/publications/{id}", "/api/public/publications/{id}/media/{mediaId}/content")
+                                "/api/public/publications/{id}", "/api/public/publications/{id}/media/{mediaId}/content", "/api/public/explore", "/api/public/search")
                         .permitAll()
+                        .requestMatchers(HttpMethod.PUT, "/api/public/publications/{id}/like").hasAuthority("ROLE_USER")
+                        .requestMatchers(HttpMethod.DELETE, "/api/public/publications/{id}/like").hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.GET, "/api/me/publications", "/api/me/publications/{id}", "/api/me/publications/{id}/source-status")
                         .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.PUT, "/api/me/public-profile", "/api/me/publications/{id}")

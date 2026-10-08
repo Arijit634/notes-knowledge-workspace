@@ -148,6 +148,10 @@ class IdentityPersistence {
         return jdbc.sql("select exists(select 1 from identity.account where user_id=:id and account_state='active' and email_verified_at is not null)")
                 .param("id", userId).query(Boolean.class).single();
     }
+    java.util.Set<UUID> activePublicSubjects(java.util.List<UUID> ids) {
+        return new java.util.HashSet<>(jdbc.sql("select user_id from identity.account where user_id in (:ids) and account_state='active' and email_verified_at is not null")
+                .param("ids",ids).query(UUID.class).list());
+    }
 
     boolean lockActiveAccount(UUID userId) {
         return jdbc.sql("""
