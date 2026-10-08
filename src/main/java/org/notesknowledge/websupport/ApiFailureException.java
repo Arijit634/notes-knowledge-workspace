@@ -19,6 +19,8 @@ public final class ApiFailureException extends RuntimeException {
                 "invalid_lifecycle_transition", "Request conflicts with current state"),
         PROFILE_HANDLE_UNAVAILABLE(HttpStatus.CONFLICT,
                 "profile_handle_unavailable", "Public handle is unavailable"),
+        PUBLIC_PROFILE_REQUIRED(HttpStatus.CONFLICT,
+                "public_profile_required", "Active public profile is required"),
         PUBLICATION_CONSEQUENCE_REQUIRED(HttpStatus.CONFLICT,
                 "publication_consequence_required", "Confirmation required to unpublish the current public copy"),
         OIDC_ACCOUNT_ACTION_REQUIRED(HttpStatus.CONFLICT,

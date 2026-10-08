@@ -144,6 +144,11 @@ class IdentityPersistence {
                 """).param("id", userId).query(UUID.class).optional().isPresent();
     }
 
+    boolean isActiveAccount(UUID userId) {
+        return jdbc.sql("select exists(select 1 from identity.account where user_id=:id and account_state='active' and email_verified_at is not null)")
+                .param("id", userId).query(Boolean.class).single();
+    }
+
     boolean lockActiveAccount(UUID userId) {
         return jdbc.sql("""
                 select user_id from identity.account

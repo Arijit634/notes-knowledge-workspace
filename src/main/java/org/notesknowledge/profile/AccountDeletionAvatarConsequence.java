@@ -12,10 +12,15 @@ import org.springframework.transaction.annotation.Transactional;
 public class AccountDeletionAvatarConsequence {
     private final AvatarAssetRepository assets;
     private final Clock clock;
-    AccountDeletionAvatarConsequence(AvatarAssetRepository assets, Clock clock) { this.assets = assets; this.clock = clock; }
+    private final PublicProfileRepository projection;
+    private final org.notesknowledge.PublicExposureCoordinator exposure;
+    AccountDeletionAvatarConsequence(AvatarAssetRepository assets, Clock clock, PublicProfileRepository projection,
+        org.notesknowledge.PublicExposureCoordinator exposure) { this.assets = assets; this.clock = clock; this.projection=projection;this.exposure=exposure; }
 
     @Transactional(propagation = Propagation.MANDATORY)
     public void makeIneligible(UUID owner) {
+        exposure.denyBoundary(owner);
+        projection.inactivate(owner,clock.instant().truncatedTo(ChronoUnit.MILLIS));
         UUID profile = assets.lock(owner).orElse(null);
         if (profile == null) return;
         AvatarAsset selected = assets.selected(profile);

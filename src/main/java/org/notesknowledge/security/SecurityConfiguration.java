@@ -96,6 +96,17 @@ public class SecurityConfiguration {
                         .requestMatchers(HttpMethod.GET, "/api/auth/csrf", "/api/auth/session")
                         .access((authentication, context) -> new org.springframework.security.authorization.AuthorizationDecision(
                                 identityCore != null))
+                        .requestMatchers(HttpMethod.GET, "/api/public/profiles/{handle}",
+                                "/api/public/profiles/{handle}/publications", "/api/public/profiles/{handle}/avatar/{avatarId}/content",
+                                "/api/public/publications/{id}", "/api/public/publications/{id}/media/{mediaId}/content")
+                        .permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/me/publications", "/api/me/publications/{id}", "/api/me/publications/{id}/source-status")
+                        .hasAuthority("ROLE_USER")
+                        .requestMatchers(HttpMethod.PUT, "/api/me/public-profile", "/api/me/publications/{id}")
+                        .hasAuthority("ROLE_USER")
+                        .requestMatchers(HttpMethod.POST, "/api/notes/{noteId}/publication-preview", "/api/notes/{noteId}/publication",
+                                "/api/me/publications/{id}/unpublish", "/api/me/publications/{id}/republish")
+                        .hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.POST, "/api/auth/registrations",
                                 "/api/auth/email-verification/requests",
                                 "/api/auth/email-verification/confirmations",

@@ -8,6 +8,10 @@ import java.util.List;
  * storage, idempotent deletion, and bounded oldest-first inventory pagination.
  */
 interface AvatarObjectStore {
+    /** Internal bounded canonical-source copy read only; never anonymous authority. */
+    default java.io.InputStream open(String generatedReference, long expectedSize) {
+        throw org.notesknowledge.websupport.ApiFailureException.of(org.notesknowledge.websupport.ApiFailureException.Kind.SERVICE_UNAVAILABLE);
+    }
     void write(String generatedReference, byte[] canonicalBytes);
     void delete(String generatedReference);
     List<StoredObject> inventoryBefore(Instant cutoff, String afterReference, int limit);

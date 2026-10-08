@@ -22,6 +22,7 @@ record NotesRateProperties(@DefaultValue("60") int windowSeconds,
     }
     int ceiling(String control) {
         return switch (control) {
+            case "PUBLIC_READ" -> 120;
             case "NOTE_AI_BULK" -> bulkCeiling;
             case "NOTE_AI_BULK_GLOBAL" -> aggregateCeiling;
             case "ATTACHMENT_UPLOAD" -> 12;

@@ -34,4 +34,10 @@ public class AccountEligibilityApi {
     public boolean isEligible(UUID expectedUserId) {
         return identity.lockActiveAccount(expectedUserId);
     }
+
+    /** Non-locking current fact for anonymous public resolution; no private Account fields leave Identity. */
+    @Transactional(propagation = Propagation.MANDATORY, readOnly = true)
+    public boolean isPubliclyEligible(UUID expectedUserId) {
+        return identity.isActiveAccount(expectedUserId);
+    }
 }

@@ -25,7 +25,8 @@ class KnowledgeMigrationPinsTest {
             Map.entry("V012__notes__attachment_upload_core.sql","cc6c5ecd2f05556203d8f3e578fc682f7b19634309d20c54f8b2119ceba51288"),
             Map.entry("V013__notes__ordinary_search.sql","97c9b730fbb7c2b1d7aa43a092f7c75b5edf476ce6b9425a090747b3ea9a0480"),
             Map.entry("V014__knowledge__processing_foundation.sql","ce364901abf6794e16d7a26c76fb8f829c8747841225672b3d8f367b7b0461b3"),
-            Map.entry("V015__knowledge__private_derivations.sql","0aec4c905d7ae906a38a02b185bcdb301dca3820ccf0ee65339bba6f13dd1655"));
+            Map.entry("V015__knowledge__private_derivations.sql","0aec4c905d7ae906a38a02b185bcdb301dca3820ccf0ee65339bba6f13dd1655"),
+            Map.entry("V016__knowledge__query_operations.sql","a50b059bed079083f174b590d787f094ca1b1be19cecbf44d6474155fc9ac722"));
         for(var e:expected.entrySet())try(var stream=getClass().getResourceAsStream("/db/migration/"+e.getKey())){
             assertThat(stream).as(e.getKey()).isNotNull();assertThat(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(stream.readAllBytes()))).as(e.getKey()).isEqualTo(e.getValue());
         }
