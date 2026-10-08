@@ -29,7 +29,8 @@ class PublicationTransactions {
     record Committed(Etagged result,List<String> retired) { }
     record SourceStatus(boolean sourceExists,boolean sourceUsable,boolean driftedSincePublication,boolean updatePublicCopyReady) { }
     record PublicView(UUID id,String title,String markdown,List<String> tags,PublicProfileApi.View author,
-        List<PublicationRecord.MediaView> media,PublicProjectionApi.Engagement engagement,java.time.Instant publishedAt) {
+        List<PublicationRecord.MediaView> media,PublicProjectionApi.Engagement engagement,java.time.Instant publishedAt,
+        @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL) Boolean viewerLiked) {
         @Override public String toString(){return "PublicPublicationView[REDACTED]";}
     }
     private final PublicationRepository repository;
@@ -48,14 +49,17 @@ class PublicationTransactions {
     private final PublicationPreviewFingerprintCodec fingerprints;
     private final OpaqueCursorCodec cursors;
     private final PublicationTelemetry telemetry;
+    private final org.notesknowledge.knowledge.PublicKnowledgeApi publicKnowledge;
     PublicationTransactions(PublicationRepository repository,PublishableSourceApi notes,AttachmentSourceApi attachments,
         PublicProfileApi profiles,ObjectProvider<AccountEligibilityApi> eligibility,ObjectProvider<RecentAuthenticationApi> recent,
         @Value("${publishing.recent-auth-required:true}") boolean recentRequired,PublicProjectionApi discovery,
         PublicExposureCoordinator exposure,DatabaseUuidV7Generator ids,Clock clock,StrongCoreEtagCodec etags,
-        IfMatchPrecondition preconditions,PublicationPreviewFingerprintCodec fingerprints,OpaqueCursorCodec cursors,PublicationTelemetry telemetry) {
+        IfMatchPrecondition preconditions,PublicationPreviewFingerprintCodec fingerprints,OpaqueCursorCodec cursors,PublicationTelemetry telemetry,
+        org.notesknowledge.knowledge.PublicKnowledgeApi publicKnowledge) {
         this.repository=repository;this.notes=notes;this.attachments=attachments;this.profiles=profiles;this.eligibility=eligibility;
         this.recent=recent;this.recentRequired=recentRequired;this.discovery=discovery;this.exposure=exposure;this.ids=ids;
         this.clock=clock;this.etags=etags;this.preconditions=preconditions;this.fingerprints=fingerprints;this.cursors=cursors;this.telemetry=telemetry;
+        this.publicKnowledge=publicKnowledge;
     }
     @Transactional
     Prepared preview(UUID owner,UUID note,String ifMatch,List<UUID> selection,HttpServletRequest request) {
@@ -100,6 +104,7 @@ class PublicationTransactions {
         repository.children(id,snapshot,generation,source.tags(),media,now);
         var saved=requireOwner(captured.owner(),id,false);
         discovery.advance(new PublicProjectionApi.Snapshot(id,author.projectionId(),generation,saved.title(),saved.markdown(),saved.tags(),saved.publishedAt(),saved.updatedAt()));
+        publicKnowledge.advance(id,generation,snapshot);
         repository.audit(ids.generate(),saved,create?"create":action,create?"owner_publish":action.equals("update")?"owner_update":"owner_republish",now);
         if(old!=null){
             if(!old.checkpoint().equals(checkpoint))notes.releaseHold(old.owner(),old.note(),old.checkpoint(),id);
@@ -133,11 +138,15 @@ class PublicationTransactions {
     }
     @Transactional(readOnly=true)
     PublicView publicView(UUID id) {
+        return publicView(id,null);
+    }
+    @Transactional(readOnly=true)
+    PublicView publicView(UUID id,UUID viewer) {
         var p=repository.active(id).orElseThrow(PublicationTransactions::missing);
         var author=profiles.resolveById(p.author());
         return new PublicView(p.id(),p.title(),p.markdown(),p.tags(),author.view(),repository.media(id).stream()
             .filter(m->m.snapshot()==p.snapshot()&&m.generation()==p.generation()).map(PublicationRecord.Media::view).toList(),
-            discovery.engagement(id,p.generation()),p.publishedAt());
+            discovery.engagement(id,p.generation()),p.publishedAt(),viewer!=null&&eligibility.getObject().isPubliclyEligible(viewer)?discovery.viewerLiked(viewer,id,p.generation()):null);
     }
     @Transactional(propagation=Propagation.MANDATORY)
     boolean hasActiveSource(UUID owner,UUID note){return repository.source(owner,note).filter(p->p.state().equals("active")).isPresent();}
@@ -159,6 +168,7 @@ class PublicationTransactions {
     private void deny(PublicationRecord p,String reason,String action) {
         var now=now();repository.deny(p,reason,now);
         var saved=requireOwner(p.owner(),p.id(),false);discovery.invalidate(p.id(),saved.generation(),now);
+        publicKnowledge.invalidate(p.id());
         repository.audit(ids.generate(),saved,action,reason,now);notes.releaseHold(p.owner(),p.note(),p.checkpoint(),p.id());
         telemetry.denialAfterCommit(switch(reason){case "source_retired"->PublicationTelemetry.Denial.SOURCE_RETIRED;
             case "account_deleted"->PublicationTelemetry.Denial.ACCOUNT_DELETED;default->PublicationTelemetry.Denial.OWNER_UNPUBLISH;});

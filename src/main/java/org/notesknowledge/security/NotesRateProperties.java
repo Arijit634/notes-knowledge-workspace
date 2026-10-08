@@ -23,6 +23,10 @@ record NotesRateProperties(@DefaultValue("60") int windowSeconds,
     int ceiling(String control) {
         return switch (control) {
             case "PUBLIC_READ" -> 120;
+            case "PUBLIC_SEARCH" -> 30;
+            case "PUBLIC_SEARCH_GLOBAL" -> 300;
+            case "PUBLIC_LIKE" -> 60;
+            case "PUBLIC_LIKE_NETWORK" -> 300;
             case "NOTE_AI_BULK" -> bulkCeiling;
             case "NOTE_AI_BULK_GLOBAL" -> aggregateCeiling;
             case "ATTACHMENT_UPLOAD" -> 12;

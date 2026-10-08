@@ -40,6 +40,10 @@ class PublicProfileRepository {
     Optional<Projection> owner(UUID owner){return projection("user_id=:value",owner);}
     Optional<Projection> id(UUID id){return projection("public_profile_projection_id=:value and active",id);}
     Optional<Projection> handle(String handle){return projection("handle=:value and active",handle);}
+    java.util.List<Projection> publicBatch(java.util.List<UUID> ids) {
+        return jdbc().sql("select public_profile_projection_id,user_id,handle,display_name,biography,projection_generation,public_avatar_id from profile.public_profile_projection where active and public_profile_projection_id in (:ids)")
+            .param("ids",ids).query((r,i)->new Projection(r.getObject(1,UUID.class),r.getObject(2,UUID.class),r.getString(3),r.getString(4),r.getString(5),r.getLong(6),true,r.getObject(7,UUID.class),null,null,null,null,null,null)).list();
+    }
     private Optional<Projection> projection(String predicate,Object value) {
         return jdbc().sql("select * from profile.public_profile_projection where "+predicate).param("value",value)
             .query((r,i)->new Projection(r.getObject("public_profile_projection_id",UUID.class),r.getObject("user_id",UUID.class),

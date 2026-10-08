@@ -29,6 +29,15 @@ public class PublicProfileApi {
     public Author resolveByHandle(String handle){return requireEligible(repository.handle(normalize(handle)).orElseThrow(PublicProfileApi::missing),false);}
     @Transactional(readOnly=true)
     public Author resolveById(UUID id){return requireEligible(repository.id(id).orElseThrow(PublicProfileApi::missing),false);}
+    /** Bounded public-projection-only composition, before Discovery scores any content. */
+    @Transactional(readOnly=true)
+    public Map<UUID,View> resolveBatch(java.util.List<UUID> ids) {
+        if(ids.size()>100)throw new IllegalArgumentException("Public author batch exceeds bound");
+        if(ids.isEmpty()||eligibility.getIfAvailable()==null)return Map.of();
+        var rows=repository.publicBatch(ids);
+        var eligible=eligibility.getObject().publiclyEligibleBatch(rows.stream().map(PublicProfileRepository.Projection::owner).distinct().toList());
+        return rows.stream().filter(p->eligible.contains(p.owner())).collect(java.util.stream.Collectors.toUnmodifiableMap(PublicProfileRepository.Projection::id,PublicProfileApi::view));
+    }
     private Author requireEligible(PublicProfileRepository.Projection p,boolean owner) {
         if(eligibility.getIfAvailable()==null||!eligibility.getObject().isPubliclyEligible(p.owner()))
             throw owner?PublicProfileRepository.required():missing();
