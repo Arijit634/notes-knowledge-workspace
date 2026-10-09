@@ -1,12 +1,8 @@
 package org.notesknowledge.knowledge;
 
 import java.util.List;
-import org.springframework.ai.embedding.EmbeddingRequest;
 import org.springframework.ai.google.genai.GoogleGenAiChatModel;
 import org.springframework.ai.google.genai.GoogleGenAiChatOptions;
-import org.springframework.ai.google.genai.text.GoogleGenAiTextEmbeddingModel;
-import org.springframework.ai.google.genai.text.GoogleGenAiTextEmbeddingOptions;
-import org.springframework.ai.google.genai.embedding.GoogleGenAiEmbeddingConnectionDetails;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.content.Media;
@@ -31,24 +27,19 @@ class GoogleDerivationAdapters {
     @Bean
     TextEmbeddingPort googleTextEmbeddingPort(AiDerivationProperties c,org.springframework.beans.factory.ObjectProvider<com.google.genai.Client> client) {
         var sdk=client.getIfAvailable();
-        var options=sdk==null?null:GoogleGenAiTextEmbeddingOptions.builder().model(c.embeddingModel()).dimensions(c.dimension())
-            .taskType(GoogleGenAiTextEmbeddingOptions.TaskType.RETRIEVAL_DOCUMENT).autoTruncate(false).build();
-        var model=sdk==null?null:new GoogleGenAiTextEmbeddingModel(GoogleGenAiEmbeddingConnectionDetails.builder().genAiClient(sdk).build(),options,noHiddenRetry());
+        var model=new GeminiTextEmbeddings(sdk,c,false);
         return new TextEmbeddingPort() {
-            public boolean available(){return model!=null;}
+            public boolean available(){return model.available();}
             public List<float[]> embed(AiProcessingGate.SourceAiPermit permit,List<String> text) {
                 permit.requireGoogleDispatch();
-                if(model==null)throw new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE);
-                if(text.isEmpty()||text.size()>16||text.stream().anyMatch(t->t==null||t.length()>12000))throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);
-                try {return model.call(new EmbeddingRequest(text,options)).getResults().stream().map(r->r.getOutput()).toList();}
-                catch(RuntimeException providerFailure){throw new DerivationFailure(KnowledgeWork.Failure.TRANSIENT_DEPENDENCY);}
+                return model.embed(text,permit::requireGoogleDispatch);
             }
         };
     }
     @Bean
     MediaUnderstandingPort googleMediaUnderstandingPort(AiDerivationProperties c,org.springframework.beans.factory.ObjectProvider<com.google.genai.Client> client,ObjectMapper json) {
         var sdk=client.getIfAvailable();
-        var options=sdk==null?null:GoogleGenAiChatOptions.builder().model(c.mediaModel()).maxOutputTokens(8192).candidateCount(1)
+        var options=sdk==null?null:GoogleGenAiChatOptions.builder().model(c.mediaModel()).maxOutputTokens(8192)
             .responseMimeType("application/json").responseSchema(mediaSchema()).googleSearchRetrieval(false).includeServerSideToolInvocations(false).useCachedContent(false).build();
         var model=sdk==null?null:GoogleGenAiChatModel.builder().genAiClient(sdk).options(options).retryTemplate(noHiddenRetry()).build();
         return new MediaUnderstandingPort() {
@@ -66,7 +57,7 @@ class GoogleDerivationAdapters {
                 String output;
                 try {output=model.call(new Prompt(UserMessage.builder().text(instruction)
                     .media(new Media(MimeTypeUtils.parseMimeType(type),new org.springframework.core.io.ByteArrayResource(bytes))).build(),options)).getResult().getOutput().getText();}
-                catch(RuntimeException providerFailure){throw new DerivationFailure(KnowledgeWork.Failure.TRANSIENT_DEPENDENCY);}
+                catch(RuntimeException providerFailure){throw providerFailure(providerFailure);}
                 if(output==null||output.length()>256000)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
                 try {
                     var segments=json.readValue(output,DerivedSegment[].class);
@@ -76,7 +67,7 @@ class GoogleDerivationAdapters {
             }
         };
     }
-    private static org.springframework.core.retry.RetryTemplate noHiddenRetry() {
+    static org.springframework.core.retry.RetryTemplate noHiddenRetry() {
         // Durable retries obtain fresh permits; SDK/model retries cannot silently
         // resend private content under the authority of an earlier dispatch.
         return new org.springframework.core.retry.RetryTemplate(org.springframework.core.retry.RetryPolicy.builder().maxRetries(0).build());
@@ -84,10 +75,8 @@ class GoogleDerivationAdapters {
     @Bean
     StructuredKnowledgePort googleStructuredKnowledgePort(AiDerivationProperties c,org.springframework.beans.factory.ObjectProvider<com.google.genai.Client> client,ObjectMapper json) {
         var sdk=client.getIfAvailable();
-        var embedOptions=sdk==null?null:GoogleGenAiTextEmbeddingOptions.builder().model(c.embeddingModel()).dimensions(c.dimension())
-            .taskType(GoogleGenAiTextEmbeddingOptions.TaskType.RETRIEVAL_QUERY).autoTruncate(false).build();
-        var embedding=sdk==null?null:new GoogleGenAiTextEmbeddingModel(GoogleGenAiEmbeddingConnectionDetails.builder().genAiClient(sdk).build(),embedOptions,noHiddenRetry());
-        var options=sdk==null?null:GoogleGenAiChatOptions.builder().model(c.mediaModel()).maxOutputTokens(8192).candidateCount(1)
+        var embedding=new GeminiTextEmbeddings(sdk,c,true);
+        var options=sdk==null?null:GoogleGenAiChatOptions.builder().model(c.mediaModel()).maxOutputTokens(8192)
             .responseMimeType("application/json").responseSchema("""
                 {"type":"object","required":["claims","conflicting"],"properties":{
                 "claims":{"type":"array","maxItems":32,"items":{"type":"object","required":["text","evidenceIds"],"properties":{
@@ -95,11 +84,10 @@ class GoogleDerivationAdapters {
                 """).googleSearchRetrieval(false).includeServerSideToolInvocations(false).useCachedContent(false).build();
         var model=sdk==null?null:GoogleGenAiChatModel.builder().genAiClient(sdk).options(options).retryTemplate(noHiddenRetry()).build();
         return new StructuredKnowledgePort() {
-            public boolean available(){return model!=null&&embedding!=null;}
+            public boolean available(){return model!=null&&embedding.available();}
             public float[] embedQuery(KnowledgeQueryGate.QueryPermit permit,String query) {
                 permit.requireGoogle(query);if(!available()||query==null||query.length()>2048)throw new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE);
-                try {var results=embedding.call(new EmbeddingRequest(List.of(query),embedOptions)).getResults();if(results.size()!=1)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);return results.getFirst().getOutput();}
-                catch(DerivationFailure failure){throw failure;}catch(RuntimeException failure){throw new DerivationFailure(KnowledgeWork.Failure.TRANSIENT_DEPENDENCY);}
+                return embedding.embed(List.of(query),()->permit.requireGoogle(query)).getFirst();
             }
             public Output generate(KnowledgeQueryGate.EvidencePermit permit,String query,String task,List<Evidence> evidence) {
                 permit.requireGoogle(query);if(!available()||query==null||query.length()>2048||evidence.isEmpty()||evidence.size()>12||!java.util.Set.of("answer","extract","tags").contains(task))throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);
@@ -109,20 +97,31 @@ class GoogleDerivationAdapters {
                     +"Task tags: each claim is one concise proposed tag. No HTML, actions, browsing or invented locations. At most32 claims,2000characters each.\n";
                 String output;
                 try {output=model.call(new Prompt(UserMessage.builder().text(instruction+json.writeValueAsString(java.util.Map.of("task",task,"query",query,"evidence",evidence))).build(),options)).getResult().getOutput().getText();}
-                catch(RuntimeException failure){throw new DerivationFailure(KnowledgeWork.Failure.TRANSIENT_DEPENDENCY);}
+                catch(RuntimeException failure){throw providerFailure(failure);}
                 if(output==null||output.length()>80000)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
                 try {var parsed=json.readValue(output,Output.class);KnowledgeQueryEngine.validate(parsed,evidence.size());return parsed;}
                 catch(RuntimeException malformed){throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);}
             }
         };
     }
+    static DerivationFailure providerFailure(RuntimeException failure) {
+        // Only allowlisted status categories cross the boundary; never retain provider messages/bodies.
+        for(Throwable cause=failure;cause!=null;cause=cause.getCause()) {
+            if(cause instanceof com.google.genai.errors.ApiException api) {
+                if(api.code()==429)return new DerivationFailure(KnowledgeWork.Failure.QUOTA);
+                if(api.code()==401||api.code()==403||api.code()==404)return new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE);
+                if(api.code()>=400&&api.code()<500)return new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
+            }
+        }
+        return new DerivationFailure(KnowledgeWork.Failure.TRANSIENT_DEPENDENCY);
+    }
     private static String mediaSchema() {
         return """
             {"type":"array","maxItems":128,"items":{"type":"object","required":["text","kind","heading"],"properties":{
             "text":{"type":"string"},"kind":{"type":"string","enum":["pdf_text","whole_image","image_region","transcript","video_scene"]},
-            "heading":{"type":"string"},"start":{"type":"integer","nullable":true},"end":{"type":"integer","nullable":true},
-            "page":{"type":"integer","nullable":true},"timeStart":{"type":"number","nullable":true},"timeEnd":{"type":"number","nullable":true},
-            "x":{"type":"number","nullable":true},"y":{"type":"number","nullable":true},"width":{"type":"number","nullable":true},"height":{"type":"number","nullable":true}}}}
+            "heading":{"type":"string"},"start":{"anyOf":[{"type":"integer"},{"type":"null"}]},"end":{"anyOf":[{"type":"integer"},{"type":"null"}]},
+            "page":{"anyOf":[{"type":"integer"},{"type":"null"}]},"timeStart":{"anyOf":[{"type":"number"},{"type":"null"}]},"timeEnd":{"anyOf":[{"type":"number"},{"type":"null"}]},
+            "x":{"anyOf":[{"type":"number"},{"type":"null"}]},"y":{"anyOf":[{"type":"number"},{"type":"null"}]},"width":{"anyOf":[{"type":"number"},{"type":"null"}]},"height":{"anyOf":[{"type":"number"},{"type":"null"}]}}}}
             """;
     }
 }
