@@ -38,10 +38,12 @@ class KnowledgeOperationRepository {
         if(limit<1||limit>2)throw new IllegalArgumentException("Invalid claim budget");
         return clients.getObject().sql("""
             with picked as (select knowledge_work_intent_id from knowledge.knowledge_work_intent
-                where work_class='private_knowledge_operation' and operation_expires_at>clock_timestamp() and attempt_count<max_attempts
+                where work_class='private_knowledge_operation' and operation_expires_at>clock_timestamp()
+                    and (attempt_count<max_attempts or (state='queued' and checkpoint_version>0))
                     and ((state in ('queued','retry_wait') and next_attempt_at<=clock_timestamp()) or (state='claimed' and lease_until<=clock_timestamp()))
                 order by created_at,knowledge_work_intent_id limit :limit for update skip locked)
-            update knowledge.knowledge_work_intent w set state='claimed',attempt_count=attempt_count+1,next_attempt_at=null,
+            update knowledge.knowledge_work_intent w set state='claimed',
+                attempt_count=case when w.state='queued' and w.checkpoint_version>0 then w.attempt_count else w.attempt_count+1 end,next_attempt_at=null,
                 lease_owner='knowledge-query',lease_token=uuidv7(),lease_until=clock_timestamp()+interval '120 seconds',updated_at=clock_timestamp()
                 from picked where w.knowledge_work_intent_id=picked.knowledge_work_intent_id returning w.*
             """).param("limit",limit).query(KnowledgeOperationRepository::map).list();
@@ -54,6 +56,10 @@ class KnowledgeOperationRepository {
     boolean checkpoint(Row row,String metadata,KnowledgeOperationMaterialCipher.Envelope result) {
         return fenced(row,"update knowledge.knowledge_work_intent set operation_metadata=:metadata::jsonb,result_ciphertext=:cipher,result_nonce=:nonce,result_key_version=:key,checkpoint_version=checkpoint_version+1,lease_until=clock_timestamp()+interval '120 seconds',updated_at=clock_timestamp() where")
             .param("metadata",metadata).param("cipher",result.ciphertext()).param("nonce",result.nonce()).param("key",result.keyVersion()).update()==1;
+    }
+    /** A successful bounded slice is continuation, not a failed attempt. Crash reclaim still consumes an attempt. */
+    boolean yield(Row row) {
+        return fenced(row,"update knowledge.knowledge_work_intent set state='queued',next_attempt_at=clock_timestamp(),lease_owner=null,lease_token=null,lease_until=null,updated_at=clock_timestamp() where checkpoint_version>0 and").update()==1;
     }
     boolean complete(Row row,String metadata,KnowledgeOperationMaterialCipher.Envelope result) {
         return fenced(row,"update knowledge.knowledge_work_intent set state='completed',operation_metadata=:metadata::jsonb,result_ciphertext=:cipher,result_nonce=:nonce,result_key_version=:key,checkpoint_version=checkpoint_version+1,input_ciphertext=null,input_nonce=null,input_key_version=null,lease_owner=null,lease_token=null,lease_until=null,updated_at=clock_timestamp() where")

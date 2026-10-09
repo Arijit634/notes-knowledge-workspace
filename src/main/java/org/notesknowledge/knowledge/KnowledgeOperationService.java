@@ -22,7 +22,12 @@ import tools.jackson.databind.ObjectMapper;
 @Service
 class KnowledgeOperationService {
     record Metadata(int schemaVersion,PrivateQuerySource.Boundary boundary,PrivateQuerySource.Position continuation,
-            long inspected,String fingerprint,int restarts,boolean truncated,boolean includeOccurrences) { }
+            long inspected,String fingerprint,int restarts,boolean truncated,boolean includeOccurrences,int nextSegment) {
+        Metadata(int schemaVersion,PrivateQuerySource.Boundary boundary,PrivateQuerySource.Position continuation,
+                long inspected,String fingerprint,int restarts,boolean truncated,boolean includeOccurrences) {
+            this(schemaVersion,boundary,continuation,inspected,fingerprint,restarts,truncated,includeOccurrences,0);
+        }
+    }
     record View(String operationId,String status,Instant submittedAt,KnowledgeQueryResult result) {
         @Override public String toString(){return "KnowledgeOperationView[REDACTED]";}
     }
@@ -85,7 +90,7 @@ class KnowledgeOperationService {
         var row=original;
         try {
             long deadline=System.nanoTime()+java.time.Duration.ofSeconds(60).toNanos();
-            for(int batch=0;batch<1001;batch++) {
+            for(int batch=0;batch<64;batch++) {
                 var active=row;
                 if(!tx(()->repository.current(active)))return;
                 var request=json.readValue(cipher.open(context(row,KnowledgeOperationMaterialCipher.Kind.INPUT,0),row.input()),KnowledgeQueryRequest.class);
@@ -97,22 +102,25 @@ class KnowledgeOperationService {
                     metadata=new Metadata(1,metadata.boundary(),null,0,sources.fingerprint(row.owner(),metadata.boundary(),semantic),metadata.restarts()+1,false,metadata.includeOccurrences());
                     stored=empty(metadata.fingerprint());
                 }
-                var page=sources.page(row.owner(),metadata.boundary(),metadata.continuation(),1,semantic);
+                var page=sources.page(row.owner(),metadata.boundary(),metadata.continuation(),semantic?1:12,semantic);
                 var items=new ArrayList<>(stored.result().deterministicResults());var claims=new ArrayList<String>();
                 if(stored.result().aiAnswer()!=null)claims.addAll(stored.result().aiAnswer().claims());
                 var citations=new ArrayList<>(stored.result().citations());var provenance=new ArrayList<>(stored.provenance());var lineages=new java.util.LinkedHashMap<>(stored.lineages());
                 boolean conflicting=stored.result().aiAnswer()!=null&&stored.result().aiAnswer().conflicting();
                 String degraded=stored.result().degraded();boolean truncated=metadata.truncated();
+                int nextSegment=0;
                 for(var source:page.sources()) {
                     if(semantic) {
-                        var generated=engine.semanticBatch(row.owner(),request.query(),List.of(source),()->repository.current(active));
+                        var segmentPage=engine.semanticPage(row.owner(),request.query(),source,metadata.nextSegment(),()->repository.current(active));
+                        var generated=segmentPage.generated();nextSegment=segmentPage.nextOrdinal();
                         if(generated.result().degraded()!=null){degraded=generated.result().degraded();truncated=true;}
                         else {
                             if(generated.result().aiAnswer()!=null){claims.addAll(generated.result().aiAnswer().claims());conflicting|=generated.result().aiAnswer().conflicting();}
                             citations.addAll(generated.result().citations());lineages.putAll(generated.lineages());
-                            provenance.add(KnowledgeQueryEngine.referenceOnly(source));
+                            if(!generated.result().citations().isEmpty())provenance.add(KnowledgeQueryEngine.referenceOnly(source));
                         }
                     } else {
+                        int before=items.size();
                         var scanItems=items;
                         for(var text:sources.deterministicText(source)) {
                             boolean unsupported=new UrlRecognizer().scan(text.value(),match->{
@@ -121,11 +129,14 @@ class KnowledgeOperationService {
                                 scanItems.add(new KnowledgeQueryResult.DeterministicItem("url",match.display(),List.of(citation),source.aiEnabled()));
                             });truncated|=unsupported||items.size()>=1024;
                         }
-                        provenance.add(KnowledgeQueryEngine.referenceOnly(source));
+                        // Boundary fingerprint covers negative inspections; retain detailed provenance only for returned material.
+                        if(items.size()>before)provenance.add(KnowledgeQueryEngine.referenceOnly(source));
                     }
                 }
-                boolean done=page.continuation()==null;long inspected=metadata.inspected()+page.sources().size();
-                if(inspected>=1000||claims.size()>256||citations.size()>1024||System.nanoTime()>deadline){truncated=true;done=true;}
+                boolean sourceDone=nextSegment==0;
+                boolean done=sourceDone&&page.continuation()==null;
+                long inspected=metadata.inspected()+(sourceDone?page.sources().size():0);
+                if(claims.size()>256||citations.size()>1024){truncated=true;done=true;}
                 // Never retain a claim after dropping some of its supporting citations.
                 if(claims.size()>256||citations.size()>1024){claims.clear();citations.clear();provenance.clear();lineages.clear();}
                 String currentFingerprint=done?sources.fingerprint(row.owner(),metadata.boundary(),semantic):metadata.fingerprint();
@@ -149,7 +160,7 @@ class KnowledgeOperationService {
                         new KnowledgeQueryResult.Coverage(semantic?"acceptedAiSources":"acceptedNoteAndPdfText",inspected,false,changed,true,changed,semantic),
                         "budgetExceeded",false),List.of(),currentFingerprint,Map.of());
                 }
-                var next=new Metadata(1,metadata.boundary(),page.continuation(),inspected,currentFingerprint,metadata.restarts(),truncated,metadata.includeOccurrences());
+                var next=new Metadata(1,metadata.boundary(),sourceDone?page.continuation():metadata.continuation(),inspected,currentFingerprint,metadata.restarts(),truncated,metadata.includeOccurrences(),nextSegment);
                 var finalCheckpoint=checkpoint;var finalFingerprint=currentFingerprint;
                 var envelope=sealResult(row,checkpoint);boolean finish=done;
                 boolean success=tx(()->{
@@ -160,8 +171,9 @@ class KnowledgeOperationService {
                 });
                 if(!success||done)return;
                 row=tx(()->repository.owner(active.owner(),active.id()).orElseThrow());
+                if(System.nanoTime()>deadline)break;
             }
-            // Yield without keeping a DB transaction or connection; current lease expires for bounded reclaim.
+            var active=row;tx(()->repository.yield(active));
         } catch(DerivationFailure|ApiFailureException invalid) {
             var active=row;tx(()->repository.terminate(active,invalid instanceof DerivationFailure d&&d.category==KnowledgeWork.Failure.INVALID_SOURCE?"obsolete":"failed"));
             metrics.counter("notes.workspace.knowledge.operation","outcome","unavailable").increment();
@@ -178,7 +190,9 @@ class KnowledgeOperationService {
     private boolean provenanceCurrentInTransaction(KnowledgeOperationRepository.Row row,KnowledgeQueryResult.Stored stored) {
         if(!accounts.getObject().isEligible(row.owner()))return false;
         boolean semantic="semantic_corpus".equals(row.purpose());
-        if(stored.provenance().stream().anyMatch(s->!row.owner().equals(s.expected().owner()))||!sources.validate(stored.provenance(),semantic))return false;
+        if(stored.provenance().stream().anyMatch(s->!row.owner().equals(s.expected().owner())))return false;
+        for(int i=0;i<stored.provenance().size();i+=64)
+            if(!sources.validate(stored.provenance().subList(i,Math.min(i+64,stored.provenance().size())),semantic))return false;
         if(semantic&&!stored.lineages().isEmpty())try {var q=gate.query(row.owner());return stored.lineages().entrySet().stream().allMatch(e->q.lineage(e.getKey()).id().equals(e.getValue()));}catch(DerivationFailure blocked){return false;}
         return true;
     }

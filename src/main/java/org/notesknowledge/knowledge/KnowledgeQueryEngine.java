@@ -63,17 +63,20 @@ class KnowledgeQueryEngine {
         var order=ReciprocalRankFusion.fuse(signals,50);
         if(permit!=null&&degraded==null) {
             var qp=permit;
-            // Conservative nearest cohort, not a calibrated confidence score. Do not
-            // fill a context budget with weaker, unrelated chunks just because room remains.
-            double nearest=relevant.values().stream().mapToDouble(ExactPrivateVectorSearch.Candidate::distance).min().orElse(Double.NaN);
+            int characters=0;
+            // Bounded positive-affinity candidates, not an epsilon-equal nearest cohort.
+            // Distance is a rank signal, never a calibrated correctness probability.
             var ranks=new java.util.HashMap<UUID,Integer>();for(int i=0;i<order.size();i++)ranks.put(order.get(i),i);
-            for(var candidate:relevant.values().stream().filter(c->Double.isFinite(c.distance())&&Math.abs(c.distance()-nearest)<=0.000001
+            for(var candidate:relevant.values().stream().filter(c->Double.isFinite(c.distance())
                 &&(!"cosine".equals(qp.lineage("note").operator())||c.distance()<1))
                 .sorted(java.util.Comparator.comparingInt((ExactPrivateVectorSearch.Candidate c)->ranks.getOrDefault(c.expected().noteId(),Integer.MAX_VALUE))
+                    .thenComparingDouble(ExactPrivateVectorSearch.Candidate::distance)
                     .thenComparing(ExactPrivateVectorSearch.Candidate::segmentId)).toList()) {
                 String modality=candidate.expected().attachmentId()==null?"note":sources.source(owner,candidate.expected().noteId(),candidate.expected().attachmentId()).modality();
                 var item=tx(()->evidence.candidate(candidate,qp.lineage(modality)));
-                if(item!=null&&selected.stream().noneMatch(e->overlaps(e,item)))selected.add(item);
+                if(item!=null&&characters+item.segment().text().length()<=48000&&selected.stream().noneMatch(e->overlaps(e,item))) {
+                    selected.add(item);characters+=item.segment().text().length();
+                }
                 if(selected.size()==12)break;
             }
         }
@@ -94,16 +97,17 @@ class KnowledgeQueryEngine {
         }
         return false;
     }
-    Generated semanticBatch(UUID owner,String query,List<PrivateQuerySource.Source> batch,java.util.function.BooleanSupplier currentWork) {
-        var permit=gate.query(owner,query);var selected=new ArrayList<QueryEvidenceRepository.Evidence>();
-        for(var source:batch) {
-            var rows=tx(()->evidence.source(source.expected(),permit.lineage(source.modality())));
-            if(rows.isEmpty()||rows.size()>12)throw new DerivationFailure(rows.isEmpty()?KnowledgeWork.Failure.LINEAGE_OBSOLETE:KnowledgeWork.Failure.BUDGET_EXCEEDED);
-            // The caller processes one source per checkpoint; all segments must fit the explicit context budget.
-            if(selected.size()+rows.size()>12)throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);
-            selected.addAll(rows);
+    record SemanticPage(Generated generated,int nextOrdinal) { }
+    SemanticPage semanticPage(UUID owner,String query,PrivateQuerySource.Source source,int nextOrdinal,java.util.function.BooleanSupplier currentWork) {
+        var permit=gate.query(owner,query);
+        var rows=tx(()->evidence.page(source.expected(),permit.lineage(source.modality()),nextOrdinal));
+        if(rows.isEmpty())throw new DerivationFailure(KnowledgeWork.Failure.LINEAGE_OBSOLETE);
+        int size=0,characters=0;
+        while(size<rows.size()&&size<12&&characters+rows.get(size).segment().text().length()<=48000) {
+            characters+=rows.get(size).segment().text().length();size++;
         }
-        return generate(owner,query,"extract",selected,currentWork);
+        var selected=rows.subList(0,size);
+        return new SemanticPage(generate(owner,query,"extract",selected,currentWork),rows.size()>size?rows.get(size).ordinal():0);
     }
     Generated generate(UUID owner,String query,String task,List<QueryEvidenceRepository.Evidence> selected,java.util.function.BooleanSupplier currentWork) {
         var provider=providers.getIfAvailable();if(provider==null||!provider.available())return empty(List.of(),"providerUnavailable",false);

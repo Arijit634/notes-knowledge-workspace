@@ -200,6 +200,41 @@ class PrivateDerivationIntegrationTest {
         activate();assertThat(search.search(request(),"note",vector(),10)).hasSize(1);
         verify(embeddings).embed(any(),any());verifyNoInteractions(media);
     }
+    @Test void frozenSyntheticWorkerThroughputAndReprocessingRemainBounded() throws Exception {
+        FrozenScaleCorpus.notes(jdbc,owner,99);
+        var segmentCounts=jdbc.queryForList("select markdown from notes.note where owner_user_id=?",String.class,owner).stream()
+            .map(text->new MarkdownChunker().chunk(text).size()).toList();
+        int expectedInitialBatches=segmentCounts.stream().mapToInt(size->(size+15)/16).sum();
+        int expectedSegments=segmentCounts.stream().mapToInt(Integer::intValue).sum()+5;
+        long began=System.nanoTime();reconcileAll();int indexed=drainSyntheticWork();
+        double initialMillis=(System.nanoTime()-began)/1e6;
+        assertThat(indexed).isEqualTo(100);assertThat(readyCount()).isEqualTo(100);
+        jdbc.update("""
+            update notes.note set revision=revision+1,markdown='Synthetic changed deployment section'
+            where note_id in (select note_id from notes.note where owner_user_id=? order by note_id limit 5)
+            """,owner);
+        began=System.nanoTime();reconcileAll();int reprocessed=drainSyntheticWork();
+        double reprocessMillis=(System.nanoTime()-began)/1e6;
+        assertThat(reprocessed).isEqualTo(5);assertThat(readyCount()).isEqualTo(100);
+        assertThat(jdbc.queryForObject("select count(*) from knowledge.private_derived_representation where owner_user_id=? and state='obsolete'",Integer.class,owner)).isEqualTo(5);
+        verify(embeddings,times(expectedInitialBatches+5)).embed(any(),any());verify(media,never()).describe(any(),any(),any());
+        int actualSegments=mockingDetails(embeddings).getInvocations().stream().filter(i->i.getMethod().getName().equals("embed"))
+            .mapToInt(i->((List<?>)i.getArgument(1)).size()).sum();assertThat(actualSegments).isEqualTo(expectedSegments);
+        var directory=java.nio.file.Path.of("target","retrieval-evaluation");java.nio.file.Files.createDirectories(directory);
+        java.nio.file.Files.writeString(directory.resolve("worker-throughput.json"),json.writerWithDefaultPrettyPrinter().writeValueAsString(Map.of(
+            "sources",100,"initialMillis",initialMillis,"sourcesPerSecond",100000.0/initialMillis,
+            "reprocessedSources",5,"reprocessMillis",reprocessMillis,"reprocessedPerSecond",5000.0/reprocessMillis,
+            "claimBatchMaximum",10,"embedding",Map.of("portBatchCalls",expectedInitialBatches+5,"segments",actualSegments,"provider","controlled-double-NOT-Gemini-throughput"),
+            "remainingReadyWork",jdbc.queryForObject("select count(*) from knowledge.knowledge_work_intent where owner_user_id=? and state in ('queued','claimed','retry_wait')",Integer.class,owner))));
+    }
+    private int drainSyntheticWork(){
+        int total=0;
+        while(true){var batch=work.claim(new LeaseOwner("synthetic-throughput"),10);if(batch.isEmpty())return total;
+            assertThat(batch.size()).isBetween(1,10);
+            for(var claim:batch){assertThat(claim.intent().expected().owner()).isEqualTo(owner);executor.execute(claim);assertThat(state(claim)).isEqualTo("completed");total++;}
+            assertThat(total).isLessThanOrEqualTo(100);
+        }
+    }
     @Test void disableBeforeFinalDispatchCapturesNoProviderContent() throws Exception {
         var claim=claim(noteExpected(),"note");
         var calls=new java.util.concurrent.atomic.AtomicInteger();

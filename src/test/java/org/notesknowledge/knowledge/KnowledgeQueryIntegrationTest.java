@@ -58,12 +58,14 @@ class KnowledgeQueryIntegrationTest {
     @Autowired KnowledgeOperationService operations; @MockitoSpyBean KnowledgeOperationRepository operationRows;
     @Autowired PrivateRepresentationRepository representations; @MockitoSpyBean PrivateQuerySource sources;
     @Autowired KnowledgeOperationMaterialCipher cipher; @Autowired org.notesknowledge.DispatchCoordinator coordination;
+    @Autowired ExactPrivateVectorSearch vectors;
+    @MockitoSpyBean PrivateAiSourceCurrentness currentSources;
     @MockitoBean AiDerivationProperties configuration; @MockitoBean ProviderDispatchProperties dispatch;
     @MockitoBean KnowledgePolicyProperties policyConfiguration; @MockitoBean StructuredKnowledgePort provider;
     @MockitoBean RateLimitPort rates;
     UUID owner,note,policy; Browser browser;
     @BeforeEach void prepare() throws Exception {
-        reset(configuration,dispatch,policyConfiguration,provider,rates,operationRows,sources);
+        reset(configuration,dispatch,policyConfiguration,provider,rates,operationRows,sources,currentSources);
         when(configuration.configured()).thenReturn(true);when(configuration.provider()).thenReturn("synthetic");
         when(configuration.embeddingModel()).thenReturn("synthetic-embedding");when(configuration.mediaModel()).thenReturn("synthetic-media");
         when(configuration.modelRevision()).thenReturn("v1");when(configuration.configurationId()).thenReturn("synthetic-v1");
@@ -133,6 +135,266 @@ class KnowledgeQueryIntegrationTest {
         var capture=org.mockito.ArgumentCaptor.forClass(List.class);verify(provider).generate(any(),any(),eq("answer"),capture.capture());return (List<StructuredKnowledgePort.Evidence>)capture.getValue();
     }
     private static float[] orthogonal(){return new float[]{0,1,0,0,0,0,0,0};}
+
+    @Test void controlledZephyrScenarioReportsEachGroundingStageAndUnequalEvidenceSurvives() throws Exception {
+        String fact="The fictional Zephyr observatory is located on the northern ridge of planet Aster. Its telescope dome is silver.";
+        jdbc.update("update notes.note set title='Zephyr observatory',markdown=? where note_id=?",fact,note);
+        derive(note,fact,new float[]{.8f,.6f,0,0,0,0,0,0});
+        UUID second=note(owner,true,"Synthetic telescope log","The Zephyr observatory telescope dome is silver.");
+        derive(second,"The Zephyr observatory telescope dome is silver.",new float[]{.6f,.8f,0,0,0,0,0,0});
+        doAnswer(call->{
+            KnowledgeQueryGate.EvidencePermit permit=call.getArgument(0);permit.requireDispatch();assertOutsideTransaction();
+            List<StructuredKnowledgePort.Evidence> e=call.getArgument(3);
+            assertThat(e).hasSize(2);
+            return new StructuredKnowledgePort.Output(List.of(new StructuredKnowledgePort.Claim("Northern ridge of planet Aster; silver dome",e.stream().map(StructuredKnowledgePort.Evidence::id).toList())),false);
+        }).when(provider).generate(any(),any(),eq("answer"),any());
+        var candidates=vectors.search(owner,"note",vector(),20);
+        assertThat(candidates).hasSize(2);assertThat(candidates.getFirst().expected().noteId()).isEqualTo(note);
+        var result=json.readTree(query("Where is the synthetic Zephyr observatory located?").andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(result.get("degraded").isNull()).isTrue();assertThat(result.get("aiAnswer").toString()).contains("Aster");
+        assertThat(result.get("citations").size()).isEqualTo(2);
+        assertThat(result.get("citations").get(0).get("noteId").asText()).isEqualTo(note.toString());
+        assertThat(result.get("citations").get(0).get("location").get("kind").asText()).isEqualTo("note_text");
+        writeEvaluation("controlled-grounding",Map.of("queryEmbeddingAvailable",true,
+            "compatibleLineage",true,"correctVectorCandidate",true,"correctRank",true,"currentEvidenceSelected",2,
+            "validStructuredGeneration",true,"answerPresent",true,"expectedFactSupported",true,"correctCitationAndLocation",true,
+            "postGenerationAuthorization",true));
+    }
+
+    @Test void longSemanticSourceCheckpointsAllSegmentsWithoutExceedingTwelvePerDispatch() throws Exception {
+        var chunks=new ArrayList<DerivedSegment>();var embeddings=new ArrayList<float[]>();
+        var body=new StringBuilder();
+        for(int i=0;i<29;i++){String text="Frozen film "+i;int offset=body.length();body.append(text).append('\n');chunks.add(DerivedSegment.note(text,"",offset,offset+text.length()));embeddings.add(vector());}
+        jdbc.update("update notes.note set markdown=? where note_id=?",body.toString(),note);
+        deriveChunks(chunks,embeddings);
+        var visited=new HashSet<String>();
+        doAnswer(call->{
+            KnowledgeQueryGate.EvidencePermit permit=call.getArgument(0);permit.requireDispatch();assertOutsideTransaction();
+            List<StructuredKnowledgePort.Evidence> e=call.getArgument(3);assertThat(e.size()).isBetween(1,12);
+            e.forEach(item->assertThat(visited.add(item.text())).isTrue());
+            return new StructuredKnowledgePort.Output(e.stream().map(item->new StructuredKnowledgePort.Claim(item.text(),List.of(item.id()))).toList(),false);
+        }).when(provider).generate(any(),any(),eq("extract"),any());
+        String handle=accept("list all films");operations.execute(claim());var r=poll(handle).get("result");
+        assertThat(visited).hasSize(29);assertThat(r.get("aiAnswer").get("claims").size()).isEqualTo(29);
+        assertThat(r.get("citations").size()).isEqualTo(29);assertThat(r.get("coverage").get("completed").asBoolean()).isTrue();
+        assertThat(r.get("coverage").get("inspectedSources").asLong()).isEqualTo(1);
+        verify(provider,times(3)).generate(any(),any(),eq("extract"),any());
+        var actual=new HashSet<String>();r.get("aiAnswer").get("claims").forEach(value->actual.add(value.asText()));
+        assertFrozenSetQuality(actual,new HashSet<>(chunks.stream().map(DerivedSegment::text).toList()));
+        writeEvaluation("long-semantic-source",Map.of("segments",29,"dispatches",3,"maximumSegmentsPerDispatch",12,
+            "extractionPrecision",1.0,"extractionRecall",1.0,"correctLocationCitations",29,"inspectedSources",1,
+            "coverageComplete",true,"provider","controlled-double-NOT-Gemini-quality"));
+    }
+
+    @Test void thousandAndFirstSameModalityRootIsRankedRatherThanRejectedOrSilentlyOmitted() {
+        FrozenScaleCorpus.text(jdbc,owner,1000,configuration,policy);
+        UUID last=jdbc.queryForObject("select note_id from notes.note where owner_user_id=? order by note_id desc limit 1",UUID.class,owner);
+        derive(last,"Frozen target beyond one thousand roots");
+        assertThat(jdbc.queryForObject("select count(*) from knowledge.private_derived_representation where owner_user_id=? and state='ready'",Integer.class,owner)).isEqualTo(1001);
+        var ranked=vectors.search(owner,"note",vector(),20);assertThat(ranked).hasSize(20);
+        assertThat(ranked.getFirst().expected().noteId()).isEqualTo(last);assertThat(ranked.getFirst().distance()).isZero();
+    }
+
+    @Test void semanticContinuationHonorsCharacterBudgetWithoutSkippingRemainingSegments() throws Exception {
+        var chunks=new ArrayList<DerivedSegment>();var embeddings=new ArrayList<float[]>();
+        var body=new StringBuilder();
+        for(int i=0;i<13;i++){String text="Frozen section "+i+" "+"x".repeat(5980);int offset=body.length();body.append(text).append('\n');chunks.add(DerivedSegment.note(text,"",offset,offset+text.length()));embeddings.add(vector());}
+        jdbc.update("update notes.note set markdown=? where note_id=?",body.toString(),note);
+        deriveChunks(chunks,embeddings);var visited=new HashSet<String>();
+        doAnswer(call->{
+            KnowledgeQueryGate.EvidencePermit permit=call.getArgument(0);permit.requireDispatch();assertOutsideTransaction();
+            List<StructuredKnowledgePort.Evidence> e=call.getArgument(3);
+            assertThat(e.size()).isBetween(1,12);assertThat(e.stream().mapToInt(item->item.text().length()).sum()).isLessThanOrEqualTo(48000);
+            e.forEach(item->assertThat(visited.add(item.text())).isTrue());
+            return new StructuredKnowledgePort.Output(e.stream().map(item->new StructuredKnowledgePort.Claim("Section "+visited.size()+" "+item.id(),List.of(item.id()))).toList(),false);
+        }).when(provider).generate(any(),any(),eq("extract"),any());
+        String handle=accept("list all films");operations.execute(claim());var result=poll(handle).get("result");
+        assertThat(visited).hasSize(13);assertThat(result.get("coverage").get("completed").asBoolean()).isTrue();
+        assertThat(result.get("citations").size()).isEqualTo(13);verify(provider,times(2)).generate(any(),any(),eq("extract"),any());
+    }
+
+    @Test void rankedEvidencePacksCharacterBudgetInsteadOfLosingEveryUsefulMediaResult() throws Exception {
+        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,"a".repeat(64)),"image");
+        for(int i=0;i<5;i++){
+            UUID attachment=upload("image");var source=sources.source(owner,note,attachment);
+            var segment=new DerivedSegment("Frozen image "+i+" "+"x".repeat(11970),"whole_image","",null,null,null,null,null,null,null,null,null);
+            tx(()->{representations.activate(source.expected(),lineage,List.of(segment),List.of(vector()));return null;});
+        }
+        doAnswer(call->{
+            KnowledgeQueryGate.EvidencePermit permit=call.getArgument(0);permit.requireDispatch();assertOutsideTransaction();
+            List<StructuredKnowledgePort.Evidence> e=call.getArgument(3);assertThat(e).hasSize(4);
+            assertThat(e.stream().mapToInt(item->item.text().length()).sum()).isLessThanOrEqualTo(48000);
+            return new StructuredKnowledgePort.Output(List.of(new StructuredKnowledgePort.Claim("Supported synthetic image fact",e.stream().map(StructuredKnowledgePort.Evidence::id).toList())),false);
+        }).when(provider).generate(any(),any(),eq("answer"),any());
+        var result=json.readTree(query("Find the synthetic image fact").andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(result.get("degraded").isNull()).isTrue();assertThat(result.get("aiAnswer").isNull()).isFalse();
+        assertThat(result.get("citations").size()).isEqualTo(4);assertThat(result.get("coverage").get("completed").asBoolean()).isFalse();
+    }
+
+    @ParameterizedTest @ValueSource(ints={1001,5000,10000})
+    void exhaustiveSparseUrlCorpusMakesDurableProgressBeyondOneThousand(int count) throws Exception {
+        jdbc.update("update notes.note set markdown='https://example.test/frozen-first' where note_id=?",note);
+        FrozenScaleCorpus.notes(jdbc,owner,count-1);
+        UUID last=jdbc.queryForObject("select note_id from notes.note where owner_user_id=? order by note_id desc limit 1",UUID.class,owner);
+        jdbc.update("update notes.note set markdown='https://example.test/frozen-last',ai_enabled=false where note_id=?",last);
+        String handle=accept("list every URL");int slices=0;long previous=0;var versions=new ArrayList<Long>();
+        while(true) {
+            var row=claim();assertThat(row.version()).isGreaterThanOrEqualTo(previous);operations.execute(row);
+            var after=tx(()->operationRows.owner(owner,row.id()).orElseThrow());versions.add(after.version());
+            assertThat(after.version()).isGreaterThan(previous);previous=after.version();
+            assertThat(jdbc.queryForObject("select attempt_count from knowledge.knowledge_work_intent where knowledge_work_intent_id=?",Integer.class,row.id())).isEqualTo(1);
+            if("completed".equals(after.state()))break;
+            assertThat(after.state()).isEqualTo("queued");assertThat(after.lease()).isNull();assertThat(++slices).isLessThan(100);
+            assertThat(tx(()->operationRows.current(row))).isFalse();
+        }
+        var r=poll(handle).get("result");assertThat(r.get("coverage").get("completed").asBoolean()).isTrue();
+        assertThat(r.get("coverage").get("inspectedSources").asLong()).isEqualTo(count);
+        assertThat(r.get("coverage").get("truncated").asBoolean()).isFalse();assertThat(r.get("deterministicResults").size()).isEqualTo(2);
+        verifyNoInteractions(provider);
+        writeEvaluation("durable-"+count,Map.of("sources",count,"slices",slices+1,"checkpointVersions",versions,"coverageComplete",true,"supportedUrlPrecision",1.0,"supportedUrlRecall",1.0,"providerRequests",0));
+    }
+
+    @ParameterizedTest @ValueSource(ints={100,1001,5000,10000})
+    void frozenMixedScaleCorpusRanksHeldOutSourcesWithBoundedCurrentBatches(int count) throws Exception {
+        var osBean=java.lang.management.ManagementFactory.getOperatingSystemMXBean();
+        long cpuBefore=osBean instanceof com.sun.management.OperatingSystemMXBean os?os.getProcessCpuTime():-1;
+        long start=System.nanoTime();FrozenScaleCorpus.mixed(jdbc,owner,count-1,configuration,policy);
+        UUID other=account();ack(other);FrozenScaleCorpus.mixed(jdbc,other,40,configuration,policy);
+        double fixtureMillis=(System.nanoTime()-start)/1e6;
+        writeScalePlan(count);
+        var measurements=new ArrayList<Map<String,Object>>();
+        for(String modality:List.of("note","image","audio","video","pdf")) {
+            var targets=jdbc.queryForList("""
+                select r.source_note_id,r.source_attachment_id from knowledge.private_derived_representation r
+                join notes.note n on n.note_id=r.source_note_id and n.owner_user_id=r.owner_user_id
+                where r.owner_user_id=? and r.modality=? and r.state='ready' and n.ai_enabled
+                    and n.lifecycle_state in ('active','archived') and n.ai_generation=r.processing_generation
+                    and (r.source_attachment_id is not null or n.revision=r.source_revision)
+                order by r.derived_representation_id desc limit 4
+                """,owner,modality);
+            for(int i=0;i<targets.size();i++) {
+                var target=targets.get(i);UUID n=(UUID)target.get("source_note_id"),a=(UUID)target.get("source_attachment_id");
+                var source=sources.source(owner,n,a);var l=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,"a".repeat(64)),modality);
+                float[] v=new float[8];var seed=new Random(20261009L+List.of("note","image","audio","video","pdf").indexOf(modality)*17L+i);
+                for(int component=0;component<7;component++)v[component]=2*seed.nextFloat()-1;
+                var s=switch(modality) {
+                    case "note"->DerivedSegment.note("Frozen Kyoto lodging judgment "+i,"Travel",1400,1400+("Frozen Kyoto lodging judgment "+i).length());
+                    case "pdf"->new DerivedSegment("Frozen scanned diagram judgment "+i,"pdf_text","",null,null,17,null,null,null,null,null,null);
+                    case "image"->new DerivedSegment("Frozen silver telescope visible label "+i,"whole_image","",null,null,null,null,null,null,null,null,null);
+                    case "audio"->new DerivedSegment("Frozen spoken delayed deployment "+i,"transcript","",null,null,null,2.0,4.0,null,null,null,null);
+                    default->new DerivedSegment("Frozen sampled red bicycle scene "+i,"video_scene","",null,null,null,2.0,4.0,null,null,null,null);
+                };
+                if(a==null)jdbc.update("update notes.note set markdown=? where note_id=?"," ".repeat(1400)+s.text(),n);
+                tx(()->{representations.activate(source.expected(),l,List.of(s),List.of(v));return null;});
+                // A different owner's exact same vector/text must never compete in this owner's ranking.
+                var foreignTarget=jdbc.queryForMap("select source_note_id,source_attachment_id from knowledge.private_derived_representation where owner_user_id=? and modality=? and state='ready' order by derived_representation_id limit 1",other,modality);
+                var foreignSource=sources.source(other,(UUID)foreignTarget.get("source_note_id"),(UUID)foreignTarget.get("source_attachment_id"));
+                tx(()->{representations.activate(foreignSource.expected(),l,List.of(s),List.of(v));return null;});
+                var latencies=new ArrayList<Double>();List<ExactPrivateVectorSearch.Candidate> ranked=List.of();
+                for(int run=0;run<5;run++){
+                    var batches=new ArrayList<Map<String,Object>>();
+                    doAnswer(call->{long began=System.nanoTime();try{return call.callRealMethod();}finally{
+                        batches.add(Map.of("sources",((List<?>)call.getArgument(0)).size(),"millis",(System.nanoTime()-began)/1e6));
+                    }}).when(org.springframework.test.util.AopTestUtils.<PrivateAiSourceCurrentness>getUltimateTargetObject(currentSources)).matching(anyList());
+                    long before=System.nanoTime();
+                    try {ranked=vectors.search(owner,modality,v,20);}
+                    catch(org.springframework.dao.QueryTimeoutException bounded) {
+                        writeEvaluation("timeout-"+count,Map.of("modality",modality,"case",i,"run",run,
+                            "elapsedMillis",(System.nanoTime()-before)/1e6,"sourceValidationBatches",batches));
+                        if(count!=10000)throw bounded;
+                        writeEvaluation("scale-10000",Map.of("seed",FrozenScaleCorpus.SEED,"sources",count,"outcome","BOUNDED_TIMEOUT",
+                            "transactionBudgetSeconds",3,"failedModality",modality,"completedMeasurements",measurements,"partialRankingReturned",false,"qualityNotQualified",true));
+                        return;
+                    }
+                    latencies.add((System.nanoTime()-before)/1e6);
+                }
+                assertThat(ranked.getFirst().expected()).isEqualTo(source.expected());assertThat(ranked.getFirst().segment()).isEqualTo(s);
+                assertThat(ranked).allSatisfy(c->assertThat(c.expected().owner()).isEqualTo(owner));
+                // Gold is the independently installed target, not whichever result the search returned first.
+                UUID gold=jdbc.queryForObject("select s.derived_segment_id from knowledge.private_derived_segment s join knowledge.private_derived_representation r on r.derived_representation_id=s.parent_id where r.owner_user_id=? and r.source_note_id=? and r.source_attachment_id is not distinct from ?::uuid and r.state='ready'",UUID.class,owner,n,a);
+                var metrics=FrozenRetrievalMetrics.score(ranked.stream().map(c->c.segmentId().toString()).toList(),Map.of(gold.toString(),1));
+                var sourceMetrics=FrozenRetrievalMetrics.score(ranked.stream().map(c->c.expected().noteId()+":"+c.expected().attachmentId()).distinct().toList(),Map.of(n+":"+a,1));
+                assertThat(metrics.recall1()).isEqualTo(1);latencies.sort(Double::compare);
+                String question=KnowledgeQueryRequest.normalize(frozenQuestion(modality,i));
+                doAnswer(call->{KnowledgeQueryGate.QueryPermit p=call.getArgument(0);p.requireDispatch();assertOutsideTransaction();return v;}).when(provider).embedQuery(any(),eq(question));
+                doAnswer(call->{KnowledgeQueryGate.EvidencePermit p=call.getArgument(0);p.requireDispatch();assertOutsideTransaction();
+                    List<StructuredKnowledgePort.Evidence> e=call.getArgument(3);assertThat(e.size()).isBetween(1,12);
+                    var supported=e.stream().filter(item->item.text().equals(s.text())).findFirst().orElseThrow(()->new AssertionError("Gold segment missing from bounded evidence"));
+                    return new StructuredKnowledgePort.Output(List.of(new StructuredKnowledgePort.Claim(s.text(),List.of(supported.id()))),false);
+                }).when(provider).generate(any(),eq(question),eq("answer"),any());
+                var response=json.readTree(query(question).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+                assertThat(response.get("degraded").isNull()).isTrue();assertThat(response.get("aiAnswer").isNull()).isFalse();
+                assertThat(response.get("citations").size()).isEqualTo(1);var citation=response.get("citations").get(0);
+                assertThat(citation.get("noteId").asText()).isEqualTo(n.toString());
+                if(a==null)assertThat(citation.get("attachmentId").isNull()).isTrue();else assertThat(citation.get("attachmentId").asText()).isEqualTo(a.toString());
+                assertThat(citation.get("location").get("kind").asText()).isEqualTo(s.kind());
+                if(s.page()!=null)assertThat(citation.get("location").get("page").asInt()).isEqualTo(s.page());
+                if(s.timeStart()!=null)assertThat(citation.get("location").get("timeStart").asDouble()).isEqualTo(s.timeStart());
+                measurements.add(Map.of("modality",modality,"case",i,"split",i<2?"development":"held-out","sourceMetrics",sourceMetrics,"segmentMetrics",metrics,"segmentRecall20",metrics.recall20(),"correctCitationAndLocation",true,"p50Millis",latencies.get(2),"p95Millis",latencies.get(4),"latencySamplesMillis",List.copyOf(latencies)));
+            }
+        }
+        long sourcesCount=jdbc.queryForObject("select count(*) from knowledge.private_derived_representation where owner_user_id=? and state='ready'",Long.class,owner);
+        assertThat(sourcesCount).isEqualTo(count);
+        var runtime=java.lang.management.ManagementFactory.getMemoryMXBean();
+        var performance=Map.of("heapUsedBytes",runtime.getHeapMemoryUsage().getUsed(),"heapCommittedBytes",runtime.getHeapMemoryUsage().getCommitted(),
+            "jvmCpuNanos",java.lang.management.ManagementFactory.getOperatingSystemMXBean() instanceof com.sun.management.OperatingSystemMXBean os?os.getProcessCpuTime():-1,
+            "databaseConnections",jdbc.queryForObject("select count(*) from pg_stat_activity where datname=current_database()",Integer.class),"searchTransactionTimeoutSeconds",3,
+            "segmentCount",jdbc.queryForObject("select count(*) from knowledge.private_derived_segment where owner_user_id=?",Long.class,owner),
+            "fixtureAndEvaluationCpuNanos",osBean instanceof com.sun.management.OperatingSystemMXBean os?os.getProcessCpuTime()-cpuBefore:-1,
+            "fixtureAndEvaluationWallMillis",(System.nanoTime()-start)/1e6,
+            "tagCount",jdbc.queryForObject("select count(*) from notes.note_tag where owner_user_id=?",Long.class,owner));
+        writeEvaluation("scale-"+count,Map.of("seed",FrozenScaleCorpus.SEED,"sources",sourcesCount,"fixtureMillis",fixtureMillis,"embeddingKind","controlled-8d-seeded-NOT-Gemini-quality","measurements",measurements,"resources",performance,
+            "modalityCounts",jdbc.queryForList("select modality,count(*) sources from knowledge.private_derived_representation where owner_user_id=? and state='ready' group by modality order by modality",owner),
+            "sourceStates",jdbc.queryForList("select lifecycle_state,ai_enabled,count(*) sources from notes.note where owner_user_id=? group by lifecycle_state,ai_enabled order by lifecycle_state,ai_enabled",owner),
+            "crossUserDistractorSources",40,
+            "eligibilityByModality",jdbc.queryForList("""
+                select r.modality,count(*) ingested,count(*) filter(where n.ai_enabled and n.lifecycle_state in ('active','archived')
+                    and n.ai_generation=r.processing_generation and (r.source_attachment_id is not null or n.revision=r.source_revision)) eligible
+                from knowledge.private_derived_representation r join notes.note n on n.note_id=r.source_note_id and n.owner_user_id=r.owner_user_id
+                where r.owner_user_id=? and r.state='ready' group by r.modality order by r.modality
+                """,owner)));
+        writeScalePlan(count);
+    }
+
+    private void writeScalePlan(int count)throws Exception {
+        var l=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,"a".repeat(64)),"note");
+        var named=new org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate(jdbc);
+        var roots=jdbc.query("select derived_representation_id,source_note_id,source_revision,processing_generation from knowledge.private_derived_representation where owner_user_id=? and state='ready' and modality='note' order by derived_representation_id limit 256",
+            (r,i)->new ExactPrivateVectorSearch.Root(r.getObject(1,UUID.class),new PrivateAiSourceCurrentness.Expected(owner,r.getObject(2,UUID.class),null,r.getLong(3),r.getLong(4),null)),owner);
+        var current=tx(()->currentSources.matching(roots.stream().map(ExactPrivateVectorSearch.Root::expected).toList()));
+        var parents=roots.stream().filter(r->current.contains(r.expected())).map(ExactPrivateVectorSearch.Root::id).toList();
+        var parameters=Map.<String,Object>of("owner",owner,"lineage",l.id(),"dimension",8,"policy",policy,"parents",parents,"vector","[1,0,0,0,0,0,0,0]","limit",20);
+        var plan=named.queryForList("explain (analyze,buffers,format json) "+ExactPrivateVectorSearch.candidateSql("<=>"),parameters,String.class);
+        assertRepresentationScannedOnce(json.readTree(plan.getFirst()).get(0).get("Plan"));
+        var rootPlan=named.queryForList("""
+            explain (analyze,buffers,format json) select derived_representation_id from knowledge.private_derived_representation
+            where owner_user_id=:owner and state='ready' and lineage_id=:lineage and processing_policy_id=:policy
+                and embedding_dimension=:dimension and modality='note' and derived_representation_id>'00000000-0000-0000-0000-000000000000'::uuid
+            order by derived_representation_id limit 256
+            """,parameters,String.class);
+        writeEvaluation("plan-"+count,Map.of("postgresql",jdbc.queryForObject("show server_version",String.class),"authorizedParentBatch",parents.size(),"exactCandidatePlan",json.readTree(plan.getFirst()),"rootKeysetPlan",json.readTree(rootPlan.getFirst())));
+    }
+
+    private static void assertRepresentationScannedOnce(tools.jackson.databind.JsonNode node) {
+        if(node.has("Relation Name")&&"private_derived_representation".equals(node.get("Relation Name").asText()))
+            assertThat(node.get("Actual Loops").asInt()).isEqualTo(1);
+        if(node.has("Plans"))for(var child:node.get("Plans"))assertRepresentationScannedOnce(child);
+    }
+
+    private static String frozenQuestion(String modality,int index) {
+        return switch(modality) {
+            case "note"->List.of("Find Kyoto lodging judgment 0","Find Koyto lodgng","Find the place to stay in Japan","Find Kyoto থাকার জায়গা").get(index);
+            case "image"->List.of("Find the silver telescope photo","Find the label visible on the observatory picture","Find the metallic viewing instrument","Find the image with writing, not its filename").get(index);
+            case "audio"->List.of("Find the spoken delayed deployment","Find the recording about shipping late","Find the speaker discussing postponed release","Find the audio mentioning the delayed software launch").get(index);
+            case "video"->List.of("Find the red bicycle scene","Find the clip showing a crimson bike","Find the sampled scene with a bicycle","Find the visible bike, not the recording filename").get(index);
+            default->List.of("Find the scanned diagram on page seventeen","Find the fact on the later PDF page","Find the diagram text in the long document","Find the OCR represented page, not an unprocessed page").get(index);
+        };
+    }
+
+    private void writeEvaluation(String name,Object report)throws Exception {
+        var directory=java.nio.file.Path.of("target","retrieval-evaluation");java.nio.file.Files.createDirectories(directory);
+        java.nio.file.Files.writeString(directory.resolve(name+".json"),json.writerWithDefaultPrettyPrinter().writeValueAsString(report));
+    }
     private void deriveChunks(List<DerivedSegment> segments,List<float[]> embeddings){var source=sources.note(owner,note);var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,"a".repeat(64)),"note");
         tx(()->{representations.activate(source.expected(),lineage,segments,embeddings);return null;});}
 
@@ -277,6 +539,7 @@ class KnowledgeQueryIntegrationTest {
     }
     @Test void checkpointSurvivesWorkerLossAndReclaimDoesNotLosePriorAggregate() throws Exception {
         jdbc.update("update notes.note set markdown='https://example.test/first' where note_id=?",note);note(owner,false,"Second","https://example.test/second");
+        for(int i=0;i<11;i++)note(owner,false,"Synthetic continuation filler","No supported link here");
         String handle=accept("all links");var first=claim();
         // Simulate process loss after a checkpoint has committed, not a rolled-back checkpoint transaction.
         doAnswer(call->{var value=call.callRealMethod();if(operationVersion(first.id())>0)throw new SyntheticWorkerLoss();return value;}).when(operationRows).owner(eq(owner),eq(first.id()));
