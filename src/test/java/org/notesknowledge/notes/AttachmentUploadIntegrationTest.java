@@ -289,7 +289,7 @@ class AttachmentUploadIntegrationTest {
                     to_jsonb(a) || jsonb_build_object('attachment_id',uuidv7()))).* from notes.attachment a where attachment_id=?
                 """, id)).isInstanceOf(DataIntegrityViolationException.class);
         assertThat(jdbc.queryForList("select confdeltype::text from pg_constraint where conrelid='notes.attachment'::regclass and contype='f'", String.class)).containsExactly("r");
-        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname in ('identity','profile','notes','knowledge','publishing','discovery','moderation')", Integer.class)).isEqualTo(35);
+        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname in ('identity','profile','notes','knowledge','publishing','discovery','moderation')", Integer.class)).isEqualTo(38);
         assertThat(jdbc.queryForObject("show server_version_num", Integer.class)).isGreaterThanOrEqualTo(180000);
         jdbc.execute("create role attachment_runtime login password 'synthetic-attachment-runtime-password'");
         jdbc.execute("grant usage on schema notes to attachment_runtime");

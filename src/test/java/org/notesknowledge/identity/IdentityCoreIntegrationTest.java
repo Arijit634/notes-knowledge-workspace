@@ -161,10 +161,13 @@ class IdentityCoreIntegrationTest {
                 "/api/me/publications", "/api/me/publications/{id}", "/api/me/publications/{id}/source-status",
                 "/api/me/publications/{id}/unpublish", "/api/me/publications/{id}/republish",
                 "/api/public/publications/{id}", "/api/public/publications/{id}/media/{mediaId}/content",
-                "/api/public/explore", "/api/public/search", "/api/public/publications/{id}/like");
+                "/api/public/explore", "/api/public/search", "/api/public/publications/{id}/like",
+                "/api/public/publications/{publicationId}/reports", "/api/moderation/reports",
+                "/api/moderation/reports/{reportId}", "/api/moderation/reports/{reportId}/begin-review",
+                "/api/moderation/reports/{reportId}/decisions");
         assertThat(mappings.getHandlerMethods().keySet().stream()
                 .filter(mapping->mapping.getPatternValues().stream().anyMatch(path->path.startsWith("/api/")))
-                .mapToInt(mapping->mapping.getMethodsCondition().getMethods().size()).sum()).isEqualTo(85);
+                .mapToInt(mapping->mapping.getMethodsCondition().getMethods().size()).sum()).isEqualTo(90);
     }
 
     @Test

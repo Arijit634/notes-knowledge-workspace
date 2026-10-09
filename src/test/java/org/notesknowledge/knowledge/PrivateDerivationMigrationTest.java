@@ -23,12 +23,12 @@ class PrivateDerivationMigrationTest {
         note=jdbc.queryForObject("insert into notes.note(note_id,owner_user_id,title,markdown,lifecycle_state,revision,ai_enabled,ai_generation,created_at,updated_at) values(uuidv7(),?,'Synthetic','body','active',1,true,1,now(),now()) returning note_id",UUID.class,owner);
         policy=jdbc.queryForObject("insert into knowledge.processing_policy(policy_code,policy_version,policy_fingerprint,disclosure_revision,effective_at) values('synthetic',1,?,'synthetic',now()) returning processing_policy_id",UUID.class,"a".repeat(64));
         jdbc.update("insert into knowledge.knowledge_work_intent(owner_user_id,work_class,source_kind,source_note_id,expected_revision,expected_ai_generation,max_attempts,next_attempt_at,dedupe_key) values(?,'private_note_derivation','note',?,1,1,5,now(),?)",owner,note,"b".repeat(64));
-        flyway=Flyway.configure().dataSource(ds).load();assertThat(flyway.migrate().migrationsExecuted).isEqualTo(4);
+        flyway=Flyway.configure().dataSource(ds).load();assertThat(flyway.migrate().migrationsExecuted).isEqualTo(5);
     }
     @Test void upgradePreservesOldWorkAsUnexecutableHistoryAndAddsExactlyThreeRelations() {
         assertThat(jdbc.queryForObject("select state from knowledge.knowledge_work_intent where dedupe_key=?",String.class,"b".repeat(64))).isEqualTo("obsolete");
         assertThat(jdbc.queryForObject("select target_lineage_id from knowledge.knowledge_work_intent where dedupe_key=?",String.class,"b".repeat(64))).isEqualTo("legacy_unassigned");
-        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname in ('identity','notes','profile','knowledge','publishing','discovery','moderation')",Integer.class)).isEqualTo(35);
+        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname in ('identity','notes','profile','knowledge','publishing','discovery','moderation')",Integer.class)).isEqualTo(38);
         assertThat(jdbc.queryForObject("select extversion from pg_extension where extname='vector'",String.class)).isEqualTo("0.8.6");
         assertThat(flyway.validateWithResult().validationSuccessful).isTrue();assertThat(flyway.migrate().migrationsExecuted).isZero();
         assertThat(jdbc.queryForList("select indexdef from pg_indexes where schemaname='knowledge'",String.class)).noneMatch(s->s.toLowerCase().contains("hnsw")||s.toLowerCase().contains("ivfflat"));

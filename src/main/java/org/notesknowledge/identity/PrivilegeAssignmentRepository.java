@@ -41,4 +41,13 @@ class PrivilegeAssignmentRepository {
                                 : rs.getTimestamp("revoked_at").toInstant()))
                 .optional();
     }
+    java.util.List<ModerationScope> lockScopes(UUID userId,ModerationCapability capability) {
+        return jdbc.sql("""
+            select scope_id from identity.privilege_assignment
+            where user_id=:user and capability_code=:capability and scope_kind='public_report'
+                and revoked_at is null and granted_at<=current_timestamp
+            order by privilege_assignment_id limit 101 for share
+            """).param("user",userId).param("capability",capability.code())
+            .query((r,i)->new ModerationScope(r.getObject("scope_id",UUID.class))).list();
+    }
 }
