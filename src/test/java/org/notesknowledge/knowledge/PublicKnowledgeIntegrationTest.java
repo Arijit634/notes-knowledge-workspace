@@ -93,5 +93,13 @@ class PublicKnowledgeIntegrationTest {
         assertThat(transactions.reconcile(next)).isNull();
         assertThat(transactions.claim(new LeaseOwner("synthetic-backfill"),10,false)).hasSize(1);
     }
+    @Test void burstPublicationFixturesHaveDistinctValidHandlesAndOwnerProvenance() {
+        for(int i=0;i<64;i++) {
+            PublicDiscoveryFixtures.publication(jdbc,"Public","Synthetic public text","public",clock.instant().minusSeconds(3600));
+        }
+        var handles=jdbc.queryForList("select a.handle from publishing.publication p join profile.public_profile_projection a on a.public_profile_projection_id=p.public_profile_projection_id join profile.profile f on f.profile_id=a.profile_id where p.availability='active' and a.active and a.user_id=p.owner_user_id and f.user_id=p.owner_user_id",String.class);
+        assertThat(handles).hasSize(64).doesNotHaveDuplicates()
+            .allSatisfy(handle->assertThat(handle).hasSize(27).matches("^[a-z][a-z0-9_]{2,29}$"));
+    }
     private static void await(CountDownLatch latch){try{if(!latch.await(15,TimeUnit.SECONDS))throw new AssertionError("Synthetic barrier timed out");}catch(InterruptedException failure){Thread.currentThread().interrupt();throw new AssertionError(failure);}}
 }
