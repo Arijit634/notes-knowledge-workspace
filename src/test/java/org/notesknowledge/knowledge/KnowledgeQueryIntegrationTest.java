@@ -254,6 +254,27 @@ class KnowledgeQueryIntegrationTest {
         writeEvaluation("durable-"+count,Map.of("sources",count,"slices",slices+1,"checkpointVersions",versions,"coverageComplete",true,"supportedUrlPrecision",1.0,"supportedUrlRecall",1.0,"providerRequests",0));
     }
 
+    @Test void realWidthSyntheticVectorsMeasureExactOwnerScopedLoad() throws Exception {
+        when(configuration.dimension()).thenReturn(768);
+        float[] query=new float[768];var seeded=new Random(20261010L);
+        for(int i=0;i<query.length;i++)query[i]=seeded.nextFloat()*2-1;
+        // Dense seeded vectors exercise real storage/distance width, not real-model relevance.
+        FrozenScaleCorpus.text(jdbc,owner,4999,configuration,policy,query);
+        UUID foreign=account();ack(foreign);FrozenScaleCorpus.text(jdbc,foreign,40,configuration,policy,query);
+        assertThat(jdbc.queryForObject("select count(*) from knowledge.private_derived_segment where owner_user_id=? and vector_dims(embedding)=768",Integer.class,owner)).isEqualTo(5000);
+        var millis=new ArrayList<Double>();
+        for(int run=0;run<5;run++) {
+            long started=System.nanoTime();var found=vectors.search(owner,"note",query,20);millis.add((System.nanoTime()-started)/1e6);
+            assertThat(found).hasSize(20).allSatisfy(candidate->assertThat(candidate.expected().owner()).isEqualTo(owner));
+            assertThat(found.stream().map(c->c.expected().noteId()).distinct().count()).isEqualTo(20);
+        }
+        millis.sort(Double::compareTo);
+        writeEvaluation("real-width-768",Map.of("seed","real-width-v1-20261010","dimension",768,"ownerSources",5000,"foreignSources",40,
+            "samplesMillis",millis,"p50Millis",millis.get(2),"p95Millis",millis.get(4),"vectorKind","dense-seeded-synthetic-NOT-Gemini-semantic-quality",
+            "crossOwnerCandidates",0,"providerRequests",0));
+        verifyNoInteractions(provider);
+    }
+
     @ParameterizedTest @ValueSource(ints={100,1001,5000,10000})
     void frozenMixedScaleCorpusRanksHeldOutSourcesWithBoundedCurrentBatches(int count) throws Exception {
         var osBean=java.lang.management.ManagementFactory.getOperatingSystemMXBean();

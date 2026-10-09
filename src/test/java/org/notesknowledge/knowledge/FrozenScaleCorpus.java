@@ -23,12 +23,16 @@ final class FrozenScaleCorpus {
             """,owner,count);
     }
     static void mixed(JdbcTemplate jdbc,UUID owner,int total,AiDerivationProperties configuration,UUID policy) {
-        populate(jdbc,owner,total,configuration,policy,true);
+        populate(jdbc,owner,total,configuration,policy,true,null);
     }
     static void text(JdbcTemplate jdbc,UUID owner,int total,AiDerivationProperties configuration,UUID policy) {
-        populate(jdbc,owner,total,configuration,policy,false);
+        populate(jdbc,owner,total,configuration,policy,false,null);
     }
-    private static void populate(JdbcTemplate jdbc,UUID owner,int total,AiDerivationProperties configuration,UUID policy,boolean mixed) {
+    static void text(JdbcTemplate jdbc,UUID owner,int total,AiDerivationProperties configuration,UUID policy,float[] vector) {
+        if(vector.length!=configuration.dimension())throw new IllegalArgumentException("Synthetic vector width mismatch");
+        populate(jdbc,owner,total,configuration,policy,false,vector);
+    }
+    private static void populate(JdbcTemplate jdbc,UUID owner,int total,AiDerivationProperties configuration,UUID policy,boolean mixed,float[] vector) {
         int perMedia=mixed?total/10:0;
         notes(jdbc,owner,total-4*perMedia);
         for(String modality:List.of("image","audio","video","pdf"))jdbc.update("""
@@ -47,8 +51,8 @@ final class FrozenScaleCorpus {
             jdbc.update("""
                 insert into knowledge.private_derived_representation(owner_user_id,source_kind,source_note_id,source_attachment_id,source_revision,
                     processing_generation,attachment_generation,derivation_class,processing_policy_id,lineage_id,lineage_configuration,modality,embedding_dimension,distance_operator)
-                select owner_user_id,?,note_id,attachment_id,1,1,?,'text_surrogate',?,?,?,?,8,'cosine' from (
-                """+from+") fixtures",modality.equals("note")?"note":"attachment",modality.equals("note")?null:1,policy,l.id(),l.configuration(),modality,owner);
+                select owner_user_id,?,note_id,attachment_id,1,1,?,'text_surrogate',?,?,?,?,?,'cosine' from (
+                """+from+") fixtures",modality.equals("note")?"note":"attachment",modality.equals("note")?null:1,policy,l.id(),l.configuration(),modality,configuration.dimension(),owner);
         }
         jdbc.update("""
             insert into knowledge.private_derived_segment(parent_id,owner_user_id,ordinal,surrogate_text,segment_kind,heading_ancestry,
@@ -62,10 +66,10 @@ final class FrozenScaleCorpus {
                 case modality when 'note' then 'note_text' when 'pdf' then 'pdf_text' when 'image' then 'whole_image' when 'audio' then 'transcript' else 'video_scene' end,'',
                 case when modality='note' then 0 end,case when modality='note' then least(length(n.markdown),12000) end,case when modality='pdf' then 17 end,
                 case when modality in ('audio','video') then 2 end,case when modality in ('audio','video') then 4 end,
-                lineage_id,8,'[0,0,0,0,0,0,0,1]'::vector
+                lineage_id,?,?::vector
             from knowledge.private_derived_representation r join notes.note n on n.note_id=r.source_note_id and n.owner_user_id=r.owner_user_id
             where r.owner_user_id=? and r.state='ready'
-            """,owner);
+            """,configuration.dimension(),vector==null?basisVector(configuration.dimension()):wireVector(vector),owner);
         if(mixed) {
             jdbc.update("""
                 insert into notes.note_tag(note_id,owner_user_id,normalized_label,display_label,created_at)
@@ -90,6 +94,12 @@ final class FrozenScaleCorpus {
                 from numbered f where n.note_id=f.note_id and f.position%43=0
                 """,owner);
         }
+    }
+    private static String basisVector(int dimension) {
+        return "["+"0,".repeat(dimension-1)+"1]";
+    }
+    private static String wireVector(float[] vector) {
+        return "["+java.util.stream.IntStream.range(0,vector.length).mapToObj(i->Float.toString(vector[i])).collect(java.util.stream.Collectors.joining(","))+"]";
     }
     private FrozenScaleCorpus(){ }
 }

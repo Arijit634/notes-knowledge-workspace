@@ -54,16 +54,16 @@ class GoogleDerivationAdapters {
                     +"Image: whole_image caption or image_region only with actual coordinates. Audio: transcript with actual times. "
                     +"Video: transcript and video_scene with actual sampled timestamps; do not claim exhaustive coverage. PDF: pdf_text with real page. "
                     +"Do not fabricate locations. At most 128 segments, at most 12000 characters per text, no URLs/tools or actions.";
-                String output;
+                String output;long started=System.nanoTime();
                 try {output=model.call(new Prompt(UserMessage.builder().text(instruction)
                     .media(new Media(MimeTypeUtils.parseMimeType(type),new org.springframework.core.io.ByteArrayResource(bytes))).build(),options)).getResult().getOutput().getText();}
-                catch(RuntimeException providerFailure){throw providerFailure(providerFailure);}
-                if(output==null||output.length()>256000)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
+                catch(RuntimeException providerFailure){throw providerFailure(providerFailure,ProviderFailureDiagnostic.Stage.MEDIA,started);}
+                if(output==null||output.length()>256000)throw invalidOutput(ProviderFailureDiagnostic.Stage.MEDIA,started);
                 try {
                     var segments=json.readValue(output,DerivedSegment[].class);
                     if(segments.length>128)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
                     return List.of(segments);
-                } catch(RuntimeException malformed){throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);}
+                } catch(RuntimeException malformed){throw invalidOutput(ProviderFailureDiagnostic.Stage.MEDIA,started);}
             }
         };
     }
@@ -95,25 +95,32 @@ class GoogleDerivationAdapters {
                     +"Use only supplied evidence. Each material claim/item must cite supplied evidenceIds. If unsupported, claims must be empty. Preserve conflicting supported facts separately and set conflicting true; never choose silently. "
                     +"Task answer: grounded focused answer, no generic knowledge. Task extract: identify every item matching the arbitrary user-requested category inside supplied evidence, not a hardcoded movie category. "
                     +"Task tags: each claim is one concise proposed tag. No HTML, actions, browsing or invented locations. At most32 claims,2000characters each.\n";
-                String output;
+                String output;long started=System.nanoTime();
                 try {output=model.call(new Prompt(UserMessage.builder().text(instruction+json.writeValueAsString(java.util.Map.of("task",task,"query",query,"evidence",evidence))).build(),options)).getResult().getOutput().getText();}
-                catch(RuntimeException failure){throw providerFailure(failure);}
-                if(output==null||output.length()>80000)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
+                catch(RuntimeException failure){throw providerFailure(failure,ProviderFailureDiagnostic.Stage.GENERATION,started);}
+                if(output==null||output.length()>80000)throw invalidOutput(ProviderFailureDiagnostic.Stage.GENERATION,started);
                 try {var parsed=json.readValue(output,Output.class);KnowledgeQueryEngine.validate(parsed,evidence.size());return parsed;}
-                catch(RuntimeException malformed){throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);}
+                catch(RuntimeException malformed){throw invalidOutput(ProviderFailureDiagnostic.Stage.GENERATION,started);}
             }
         };
     }
     static DerivationFailure providerFailure(RuntimeException failure) {
+        return providerFailure(failure,ProviderFailureDiagnostic.Stage.EMBEDDING,0);
+    }
+    private static DerivationFailure invalidOutput(ProviderFailureDiagnostic.Stage stage,long started) {
+        return new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT,new ProviderFailureDiagnostic(stage,
+            ProviderFailureDiagnostic.Kind.PARSING,null,ProviderFailureDiagnostic.band(started),
+            ProviderFailureDiagnostic.Reach.HTTP_RESPONSE_RECEIVED,false));
+    }
+    static DerivationFailure providerFailure(RuntimeException failure,ProviderFailureDiagnostic.Stage stage,long started) {
         // Only allowlisted status categories cross the boundary; never retain provider messages/bodies.
-        for(Throwable cause=failure;cause!=null;cause=cause.getCause()) {
-            if(cause instanceof com.google.genai.errors.ApiException api) {
-                if(api.code()==429)return new DerivationFailure(KnowledgeWork.Failure.QUOTA);
-                if(api.code()==401||api.code()==403||api.code()==404)return new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE);
-                if(api.code()>=400&&api.code()<500)return new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
-            }
-        }
-        return new DerivationFailure(KnowledgeWork.Failure.TRANSIENT_DEPENDENCY);
+        var diagnostic=ProviderFailureDiagnostic.capture(stage,failure,started);
+        Integer status=diagnostic.httpStatus();
+        var category=status!=null&&status==429?KnowledgeWork.Failure.QUOTA:
+            status!=null&&(status==401||status==403||status==404)?KnowledgeWork.Failure.PROVIDER_UNAVAILABLE:
+            status!=null&&status>=400&&status<500||diagnostic.kind()==ProviderFailureDiagnostic.Kind.CLIENT_CONFIGURATION
+                ?KnowledgeWork.Failure.INVALID_OUTPUT:KnowledgeWork.Failure.TRANSIENT_DEPENDENCY;
+        return new DerivationFailure(category,diagnostic);
     }
     private static String mediaSchema() {
         return """

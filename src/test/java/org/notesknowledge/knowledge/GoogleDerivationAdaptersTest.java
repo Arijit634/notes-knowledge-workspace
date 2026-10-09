@@ -167,6 +167,45 @@ class GoogleDerivationAdaptersTest {
         assertThat(adapters.derivationGoogleClient(config("gemini-embedding-2"),new MockEnvironment())).isNull();
         assertThat(requests).isEmpty();
     }
+    @Test void diagnosticsDiscardMessagesAndClassifyTransportWithoutClaimingProviderReceipt() {
+        var failure=new com.google.genai.errors.GenAiIOException("synthetic-private-message",
+            new java.net.SocketTimeoutException("synthetic-provider-body"));
+        var safe=GoogleDerivationAdapters.providerFailure(failure,ProviderFailureDiagnostic.Stage.GENERATION,System.nanoTime()-11_000_000_000L);
+        assertThat(safe.category).isEqualTo(KnowledgeWork.Failure.TRANSIENT_DEPENDENCY);
+        assertThat(safe.diagnostic.kind()).isEqualTo(ProviderFailureDiagnostic.Kind.SOCKET_TIMEOUT);
+        assertThat(safe.diagnostic.elapsed()).isEqualTo(ProviderFailureDiagnostic.Elapsed.TEN_TO_THIRTY_SECONDS);
+        assertThat(safe.diagnostic.providerReached()).isEqualTo(ProviderFailureDiagnostic.Reach.UNKNOWN);
+        assertThat(safe.diagnostic.httpStatus()).isNull();
+        assertThat(safe.diagnostic.structurallyValidResponse()).isFalse();
+        assertThat(safe).hasCause(null).hasMessage("Derivation unavailable");
+        assertThat(json.writeValueAsString(safe.diagnostic)).doesNotContain("synthetic-private-message","synthetic-provider-body");
+    }
+    @Test void parsingDiagnosticsDistinguishAReceivedResponseFromTransportFailure() {
+        generated("not json");
+        var port=adapters.googleStructuredKnowledgePort(config("gemini-embedding-2"),clients,json);
+        assertThatThrownBy(()->port.generate(evidence(),query,"answer",List.of(new StructuredKnowledgePort.Evidence("e0","Synthetic","note"))))
+            .isInstanceOfSatisfying(DerivationFailure.class,f->{
+                assertThat(f.category).isEqualTo(KnowledgeWork.Failure.INVALID_OUTPUT);
+                assertThat(f.diagnostic.kind()).isEqualTo(ProviderFailureDiagnostic.Kind.PARSING);
+                assertThat(f.diagnostic.providerReached()).isEqualTo(ProviderFailureDiagnostic.Reach.HTTP_RESPONSE_RECEIVED);
+                assertThat(f.diagnostic.structurallyValidResponse()).isFalse();
+            }).hasCause(null);
+        assertThat(requests).hasSize(1);
+    }
+    @Test void configurationAndHttp400FailuresAreNotRetryableTransientFailures() {
+        var configurationFailure=GoogleDerivationAdapters.providerFailure(new IllegalArgumentException("synthetic-private-message"));
+        assertThat(configurationFailure.category).isEqualTo(KnowledgeWork.Failure.INVALID_OUTPUT);
+        status=400;response="{\"error\":{\"code\":400,\"message\":\"synthetic-provider-body\",\"status\":\"INVALID_ARGUMENT\"}}";
+        var port=adapters.googleStructuredKnowledgePort(config("gemini-embedding-2"),clients,json);
+        assertThatThrownBy(()->port.generate(evidence(),query,"answer",List.of(new StructuredKnowledgePort.Evidence("e0","Synthetic","note"))))
+            .isInstanceOfSatisfying(DerivationFailure.class,f->{
+                assertThat(f.category).isEqualTo(KnowledgeWork.Failure.INVALID_OUTPUT);
+                assertThat(f.diagnostic.httpStatus()).isEqualTo(400);
+                assertThat(f.diagnostic.kind()).isEqualTo(ProviderFailureDiagnostic.Kind.HTTP);
+                assertThat(f.diagnostic.providerReached()).isEqualTo(ProviderFailureDiagnostic.Reach.HTTP_RESPONSE_RECEIVED);
+            }).hasCause(null).hasMessageNotContaining("synthetic-provider-body");
+        assertThat(requests).hasSize(1);
+    }
     @Test void embedding2TaskFormatCreatesANewLineageWithoutChangingLegacyFormat() {
         var policy=new ProcessingPolicyService.AcknowledgedProcessingPolicy(new UUID(0,3),1,"a".repeat(64));
         var lineage=EmbeddingLineage.create(config("gemini-embedding-2"),policy,"note");
