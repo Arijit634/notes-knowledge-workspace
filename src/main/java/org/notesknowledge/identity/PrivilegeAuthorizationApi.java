@@ -31,4 +31,14 @@ public class PrivilegeAuthorizationApi {
             throw new AccessDeniedException("Active moderation capability required");
         }
     }
+    public record ReportScope(boolean all,java.util.List<UUID> reportIds) { }
+    /** Called after current Account/session locks; held grants serialize operational revocation. */
+    @org.springframework.transaction.annotation.Transactional(propagation=org.springframework.transaction.annotation.Propagation.MANDATORY)
+    public ReportScope lockCurrentScope(UUID userId,ModerationCapability capability) {
+        var grants=assignments.lockScopes(userId,capability);
+        if(grants.isEmpty())throw new AccessDeniedException("Active moderation capability required");
+        if(grants.size()>100)throw org.notesknowledge.websupport.ApiFailureException.of(org.notesknowledge.websupport.ApiFailureException.Kind.SERVICE_UNAVAILABLE);
+        boolean all=grants.stream().anyMatch(s->s.reportId()==null);
+        return new ReportScope(all,grants.stream().map(ModerationScope::reportId).filter(Objects::nonNull).distinct().sorted().toList());
+    }
 }

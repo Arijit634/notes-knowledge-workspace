@@ -28,7 +28,8 @@ class KnowledgeMigrationPinsTest {
             Map.entry("V015__knowledge__private_derivations.sql","0aec4c905d7ae906a38a02b185bcdb301dca3820ccf0ee65339bba6f13dd1655"),
             Map.entry("V016__knowledge__query_operations.sql","a50b059bed079083f174b590d787f094ca1b1be19cecbf44d6474155fc9ac722"),
             Map.entry("V017__publishing__public_core.sql","7e3d922f41457c12c9ebf89c7d6ef8845f95db7289da3d4e62fe5e1413e537cd"),
-            Map.entry("V018__discovery__public_search_and_engagement.sql","6cefe6951bdeb239bf7e2c2f98292d286927dd95e0ddf0d685615aad2a8bc0c0"));
+            Map.entry("V018__discovery__public_search_and_engagement.sql","6cefe6951bdeb239bf7e2c2f98292d286927dd95e0ddf0d685615aad2a8bc0c0"),
+            Map.entry("V019__moderation__reports_and_decisions.sql","ca5784f5f865b2f0b809ce183ed78cbc6c75da477d5808e42464b31a76164982"));
         for(var e:expected.entrySet())try(var stream=getClass().getResourceAsStream("/db/migration/"+e.getKey())){
             assertThat(stream).as(e.getKey()).isNotNull();assertThat(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(stream.readAllBytes()))).as(e.getKey()).isEqualTo(e.getValue());
         }

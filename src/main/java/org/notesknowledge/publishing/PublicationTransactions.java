@@ -177,6 +177,26 @@ class PublicationTransactions {
         eligibility.getObject().requireCurrentOwner(owner,request);
         if(publicationMutation&&recentRequired)recent.getObject().requireRecent(owner,request);
     }
+    PublicationModerationApi.Evidence moderationEvidence(UUID id,boolean lock) {
+        var owner=repository.responsible(id).orElseThrow(PublicationTransactions::missing);
+        if(lock)exposure.denyBoundary(owner);
+        var p=repository.owner(owner,id,lock).orElseThrow(PublicationTransactions::missing);
+        if(!p.state().equals("active"))return null;
+        try {profiles.resolveById(p.author());}
+        catch(ApiFailureException missing){if(missing.kind()==ApiFailureException.Kind.RESOURCE_NOT_FOUND)return null;throw missing;}
+        return new PublicationModerationApi.Evidence(id,p.generation(),p.title(),p.markdown());
+    }
+    void moderationRemove(UUID id,long generation,UUID actor) {
+        var owner=repository.responsible(id).orElseThrow(PublicationTransactions::missing);
+        var evidence=moderationEvidence(id,true);
+        if(evidence==null||evidence.generation()!=generation)throw ApiFailureException.of(ApiFailureException.Kind.INVALID_LIFECYCLE_TRANSITION);
+        var p=requireOwner(owner,id,true);var now=now();repository.remove(p,now);
+        var saved=requireOwner(owner,id,false);
+        discovery.invalidate(id,saved.generation(),now);publicKnowledge.invalidate(id);
+        notes.releaseHold(owner,p.note(),p.checkpoint(),id);
+        repository.auditRemoval(ids.generate(),saved,actor,now);
+        telemetry.denialAfterCommit(PublicationTelemetry.Denial.MODERATION);
+    }
     private PublicationRecord requireOwner(UUID owner,UUID id,boolean lock){return repository.owner(owner,id,lock).orElseThrow(PublicationTransactions::missing);}
     private Etagged etagged(PublicationRecord p){return new Etagged(view(p),etag(p));}
     private PublicationRecord.OwnerView view(PublicationRecord p){return new PublicationRecord.OwnerView(p.id(),p.title(),p.markdown(),p.tags(),p.state(),"/p/"+p.id(),

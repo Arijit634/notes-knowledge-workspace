@@ -737,7 +737,7 @@ class NotesEditorIntegrationTest {
                 select count(*) from information_schema.tables
                 where table_schema in ('identity','profile','notes','knowledge',
                     'publishing','discovery','moderation') and table_type = 'BASE TABLE'
-                """, Integer.class)).isEqualTo(35);
+                """, Integer.class)).isEqualTo(38);
         assertThat(jdbc.queryForList("""
                 select table_name from information_schema.tables
                 where table_schema = 'notes' and table_type = 'BASE TABLE'

@@ -9,7 +9,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 @Component
 class PublicationTelemetry {
     enum Command { CREATE,UPDATE,UNPUBLISH,REPUBLISH }
-    enum Denial { OWNER_UNPUBLISH,SOURCE_RETIRED,ACCOUNT_DELETED,SUPERSEDED }
+    enum Denial { OWNER_UNPUBLISH,SOURCE_RETIRED,ACCOUNT_DELETED,SUPERSEDED,MODERATION }
     private final MeterRegistry registry;
     PublicationTelemetry(MeterRegistry registry){this.registry=registry;}
     void command(Command command){counter(command,"committed");}

@@ -29,6 +29,21 @@ class PublicationRepository {
     }
     Optional<PublicationRecord> active(UUID id){return jdbc().sql(CORE+" where publication_id=:id and availability='active'")
         .param("id",id).query(PublicationRepository::map).optional();}
+    Optional<UUID> responsible(UUID id){return jdbc().sql("select owner_user_id from publishing.publication where publication_id=:id")
+        .param("id",id).query(UUID.class).optional();}
+    void remove(PublicationRecord p,java.time.Instant now) {
+        jdbc().sql("""
+            update publishing.publication set availability='removed',publication_generation=publication_generation+1,
+                reason_code='policy_removed',removed_at=greatest(updated_at,:now),updated_at=greatest(updated_at,:now)
+            where publication_id=:id
+            """).param("id",p.id()).param("now",Timestamp.from(now)).update();
+    }
+    void auditRemoval(UUID id,PublicationRecord p,UUID actor,Instant now) {
+        jdbc().sql("""
+            insert into publishing.publication_audit_fact(audit_fact_id,publication_id,actor_user_id,action_code,outcome_code,reason_code,snapshot_revision,publication_generation,occurred_at)
+            values(:id,:publication,:actor,'remove','committed','policy_removed',:revision,:generation,:now)
+            """).param("id",id).param("publication",p.id()).param("actor",actor).param("revision",p.snapshot()).param("generation",p.generation()).param("now",Timestamp.from(now)).update();
+    }
     Optional<PublicationRecord> source(UUID owner,UUID note){return jdbc().sql(CORE+" where owner_user_id=:owner and source_note_id=:note")
         .param("owner",owner).param("note",note).query(PublicationRepository::map).optional();}
     List<UUID> activeOwner(UUID owner){return jdbc().sql("select publication_id from publishing.publication where owner_user_id=:owner and availability='active' order by publication_id limit 100")

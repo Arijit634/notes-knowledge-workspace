@@ -101,6 +101,9 @@ public class SecurityConfiguration {
                                 "/api/public/publications/{id}", "/api/public/publications/{id}/media/{mediaId}/content", "/api/public/explore", "/api/public/search")
                         .permitAll()
                         .requestMatchers(HttpMethod.PUT, "/api/public/publications/{id}/like").hasAuthority("ROLE_USER")
+                        .requestMatchers(HttpMethod.POST,"/api/public/publications/{publicationId}/reports",
+                                "/api/moderation/reports/{reportId}/begin-review","/api/moderation/reports/{reportId}/decisions").hasAuthority("ROLE_USER")
+                        .requestMatchers(HttpMethod.GET,"/api/moderation/reports","/api/moderation/reports/{reportId}").hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.DELETE, "/api/public/publications/{id}/like").hasAuthority("ROLE_USER")
                         .requestMatchers(HttpMethod.GET, "/api/me/publications", "/api/me/publications/{id}", "/api/me/publications/{id}/source-status")
                         .hasAuthority("ROLE_USER")

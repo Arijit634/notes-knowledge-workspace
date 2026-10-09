@@ -17,7 +17,7 @@ class PublicDiscoveryMigrationTest {
     @Test void forwardMigrationAddsExactlyThreeRelationsWithRestrictiveScopeIntegrity()throws Exception {
         var ds=new DriverManagerDataSource(postgres.getJdbcUrl(),postgres.getUsername(),postgres.getPassword());var jdbc=new JdbcTemplate(ds);
         Flyway.configure().dataSource(ds).target("17").load().migrate();var before=relations(jdbc);assertThat(before).hasSize(32);
-        var flyway=Flyway.configure().dataSource(ds).load();assertThat(flyway.migrate().migrationsExecuted).isEqualTo(1);assertThat(flyway.validateWithResult().validationSuccessful).isTrue();assertThat(flyway.migrate().migrationsExecuted).isZero();
+        var flyway=Flyway.configure().dataSource(ds).target("18").load();assertThat(flyway.migrate().migrationsExecuted).isEqualTo(1);assertThat(flyway.validateWithResult().validationSuccessful).isTrue();assertThat(flyway.migrate().migrationsExecuted).isZero();
         var after=relations(jdbc);assertThat(after).hasSize(35);assertThat(after.stream().filter(s->!before.contains(s))).containsExactlyInAnyOrder("knowledge.public_derived_representation","knowledge.public_derived_segment","discovery.publication_like");
         var a=PublicDiscoveryFixtures.publication(jdbc,"Public","Copied public","films",Instant.now().minusSeconds(3600));var b=PublicDiscoveryFixtures.publication(jdbc,"Other","Other copied public","films",Instant.now().minusSeconds(3600));String lineage="c".repeat(64);
         UUID root=jdbc.queryForObject("insert into knowledge.public_derived_representation(publication_id,snapshot_revision,publication_generation,derivation_class,lineage_id,state) values(?,1,1,'text_surrogate',?,'current') returning derived_representation_id",UUID.class,a.id(),lineage);

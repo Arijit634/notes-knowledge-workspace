@@ -22,6 +22,12 @@ record NotesRateProperties(@DefaultValue("60") int windowSeconds,
     }
     int ceiling(String control) {
         return switch (control) {
+            case "REPORT" -> 5;
+            case "REPORT_NETWORK" -> 20;
+            case "REPORT_GLOBAL" -> 100;
+            case "MODERATION_READ" -> 60;
+            case "MODERATION_ACTION" -> 10;
+            case "MODERATION_GLOBAL" -> 100;
             case "PUBLIC_READ" -> 120;
             case "PUBLIC_SEARCH" -> 30;
             case "PUBLIC_SEARCH_GLOBAL" -> 300;
