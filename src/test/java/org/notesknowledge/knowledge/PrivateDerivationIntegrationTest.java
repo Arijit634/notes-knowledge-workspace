@@ -101,6 +101,72 @@ class PrivateDerivationIntegrationTest {
         owner=account();note=note(owner,true);browser=browser(owner);policy=policy(1,"a");ack(owner,policy);
     }
     @AfterEach void clear(){SecurityContextHolder.clearContext();}
+    @Test void frozenCorpusCompletesAndInterruptedLongNoteResumesFromDurableSyntheticResults(@org.junit.jupiter.api.io.TempDir java.nio.file.Path checkpoint)throws Exception {
+        unpaidGemini();when(configuration.embeddingModel()).thenReturn("gemini-embedding-2");when(configuration.dimension()).thenReturn(768);
+        var journal=new java.util.concurrent.atomic.AtomicReference<>(new QualificationJournal(checkpoint,"offline-recovery-v1"));
+        var now=new java.util.concurrent.atomic.AtomicReference<>(java.time.Instant.now());
+        var interrupt=new java.util.concurrent.atomic.AtomicBoolean(true);var current=new java.util.concurrent.atomic.AtomicReference<String>();
+        var sourceIds=new LinkedHashMap<String,UUID>();int expectedSegments=0;
+        try {
+            doAnswer(call->{
+                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                AiProcessingGate.SourceAiPermit permit=call.getArgument(0);permit.requireGoogleDispatch();
+                List<String> texts=call.getArgument(1);assertThat(texts).hasSize(1);
+                String key=QualificationJournal.hash(ProviderDispatchPolicy.fingerprint(permit.source().expected())+permit.lineage().id()+texts.getFirst());
+                float[] cached=journal.get().completed(key,float[].class);if(cached!=null)return List.of(cached);
+                var reservation=journal.get().reserve(key,current.get(),"embedding");float[] value=new float[768];value[0]=1;
+                journal.get().complete(reservation,value);now.set(now.get().plusSeconds(6));
+                if(current.get().equals("n76")&&interrupt.getAndSet(false))throw new SyntheticProcessInterruption();
+                return List.of(value);
+            }).when(embeddings).embed(any(),any());
+            try(var clock=mockStatic(java.time.Instant.class,CALLS_REAL_METHODS)) {
+                clock.when(java.time.Instant::now).thenAnswer(call->now.get());
+                for(var fixture:FrozenQualityCorpus.notes())if(fixture.aiEnabled()) {
+                    current.set(fixture.id());UUID id=note(owner,true);sourceIds.put(fixture.id(),id);
+                    jdbc.update("update notes.note set title=?,markdown=? where note_id=?",fixture.title(),fixture.body(),id);
+                    var expected=new PrivateAiSourceCurrentness.Expected(owner,id,null,1,1,null);approve(expected);
+                    expectedSegments+=new MarkdownChunker().chunk(fixture.body()).size();var attempt=claim(expected,"note");
+                    if(fixture.id().equals("n76")) {
+                        var interruptedAttempt=attempt;
+                        assertThatThrownBy(()->executor.execute(interruptedAttempt)).isInstanceOf(SyntheticProcessInterruption.class);
+                        assertThat(representations.ready(expected,lineageForPolicy(policy,1,"note"))).isFalse();
+                        int spent=journal.get().reservations("embedding");journal.get().close();
+                        // A separate process opens the SAME forced journal, not an in-memory marker.
+                        var probe=new ProcessBuilder(java.nio.file.Path.of(System.getProperty("java.home"),"bin","java").toString(),"-Duser.timezone=UTC","-cp",System.getProperty("java.class.path"),
+                            QualificationRecoveryProbe.class.getName(),checkpoint.toString(),Integer.toString(spent))
+                            .redirectOutput(ProcessBuilder.Redirect.DISCARD).redirectError(ProcessBuilder.Redirect.DISCARD).start();
+                        assertThat(probe.waitFor(30,TimeUnit.SECONDS)).isTrue();assertThat(probe.exitValue()).isZero();
+                        journal.set(new QualificationJournal(checkpoint,"offline-recovery-v1"));
+                        jdbc.update("update knowledge.knowledge_work_intent set lease_until=clock_timestamp()-interval '1 second' where knowledge_work_intent_id=?",attempt.intent().id());
+                        attempt=work.reclaim(new LeaseOwner("synthetic-recovery-worker"),10).stream().filter(c->c.intent().expected().equals(expected)).findFirst().orElseThrow();
+                    }
+                    executor.execute(attempt);assertThat(state(attempt)).as(fixture.id()).isEqualTo("completed");
+                    assertThat(representations.ready(expected,lineageForPolicy(policy,1,"note"))).isTrue();
+                }
+            }
+            assertThat(readyCount()).isEqualTo(80);assertThat(journal.get().reservations("embedding")).isEqualTo(expectedSegments);
+            int spent=journal.get().reservations("embedding");journal.get().close();
+            var probeEvidence=checkpoint.resolve("probe-safe.txt");
+            var probe=new ProcessBuilder(java.nio.file.Path.of(System.getProperty("java.home"),"bin","java").toString(),"-Duser.timezone=UTC","-cp",System.getProperty("java.class.path"),
+                QualificationRecoveryProbe.class.getName(),checkpoint.toString(),Integer.toString(spent),postgres.getJdbcUrl(),owner.toString())
+                .redirectOutput(probeEvidence.toFile()).redirectError(ProcessBuilder.Redirect.DISCARD).start();
+            assertThat(probe.waitFor(30,TimeUnit.SECONDS)).isTrue();assertThat(probe.exitValue()).as(java.nio.file.Files.readString(probeEvidence)).isZero();
+            journal.set(new QualificationJournal(checkpoint,"offline-recovery-v1"));
+            when(dispatchConfiguration.approvedSourceFingerprints()).thenReturn(sourceIds.values().stream().map(id->ProviderDispatchPolicy.fingerprint(new PrivateAiSourceCurrentness.Expected(owner,id,null,1,1,null))).toList());
+            clearInvocations(embeddings);reconcileAll();assertThat(work.claim(new LeaseOwner("synthetic-ready-worker"),10)).isEmpty();verify(embeddings,never()).embed(any(),any());
+            UUID changed=sourceIds.get("n01");jdbc.update("update notes.note set revision=revision+1 where note_id=?",changed);
+            assertThat(representations.ready(new PrivateAiSourceCurrentness.Expected(owner,changed,null,2,1,null),lineageForPolicy(policy,1,"note"))).isFalse();
+            float[] queryVector=new float[768];queryVector[0]=1;
+            assertThat(search.search(owner,"note",queryVector,100)).noneMatch(candidate->candidate.expected().noteId().equals(changed));
+            when(configuration.configurationId()).thenReturn("synthetic-changed-lineage");
+            assertThat(representations.ready(new PrivateAiSourceCurrentness.Expected(owner,sourceIds.get("n02"),null,1,1,null),lineageForPolicy(policy,1,"note"))).isFalse();
+            assertThat(search.search(owner,"note",queryVector,100)).isEmpty();
+            java.nio.file.Path report=java.nio.file.Path.of("target/retrieval-evaluation/resume-recovery-offline.json");java.nio.file.Files.createDirectories(report.getParent());
+            java.nio.file.Files.writeString(report,json.writeValueAsString(Map.of("readyRoots",80,"segments",expectedSegments,"liveCalls",0,"childJvmReadback",true,
+                "multiChunkInterruptedAndResumed",true,"cachedChunkNotReembedded",true,"controlledClockSecondsPerCall",6,"persistedVectorScoring",true,"changedRevisionAndLineageRejected",true)));
+        } finally {journal.get().close();}
+    }
+    private static final class SyntheticProcessInterruption extends Error { }
     @Test void embeddingTwoChunksAcquireFreshPermitsWithoutExtendingAnOldPermit() {
         unpaidGemini();when(configuration.embeddingModel()).thenReturn("gemini-embedding-2");
         String body=FrozenQualityCorpus.notes().stream().filter(n->n.id().equals("n76")).findFirst().orElseThrow().body();
