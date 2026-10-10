@@ -101,6 +101,34 @@ class PrivateDerivationIntegrationTest {
         owner=account();note=note(owner,true);browser=browser(owner);policy=policy(1,"a");ack(owner,policy);
     }
     @AfterEach void clear(){SecurityContextHolder.clearContext();}
+    @Test void embeddingTwoChunksAcquireFreshPermitsWithoutExtendingAnOldPermit() {
+        unpaidGemini();when(configuration.embeddingModel()).thenReturn("gemini-embedding-2");
+        String body=FrozenQualityCorpus.notes().stream().filter(n->n.id().equals("n76")).findFirst().orElseThrow().body();
+        jdbc.update("update notes.note set markdown=? where note_id=?",body,note);approve(noteExpected());
+        var claim=claim(noteExpected(),"note");var chunks=new MarkdownChunker().chunk(body);
+        assertThat(chunks.size()).isGreaterThan(3);
+        var now=new java.util.concurrent.atomic.AtomicReference<>(java.time.Instant.now());
+        var permits=new ArrayList<AiProcessingGate.SourceAiPermit>();
+        // Advance only this thread's Instant.now, never sleep or change the database/host clock.
+        try(var clock=mockStatic(java.time.Instant.class,CALLS_REAL_METHODS)) {
+            clock.when(java.time.Instant::now).thenAnswer(call->now.get());
+            doAnswer(call->{
+                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                AiProcessingGate.SourceAiPermit permit=call.getArgument(0);permits.add(permit);
+                List<String> texts=call.getArgument(1);var result=new ArrayList<float[]>();
+                for(String text:texts) {
+                    permit.requireGoogleDispatch();result.add(vector());
+                    now.set(now.get().plusSeconds(6)); // Sequential SDK latency, not a retry.
+                }
+                return result;
+            }).when(embeddings).embed(any(),any());
+            executor.execute(claim);
+        }
+        assertThat(state(claim)).isEqualTo("completed");assertThat(readyCount()).isEqualTo(1);
+        assertThat(permits).hasSize(chunks.size()).doesNotHaveDuplicates();
+        assertThat(jdbc.queryForObject("select count(*) from knowledge.private_derived_segment where owner_user_id=?",Integer.class,owner)).isEqualTo(chunks.size());
+        verifyNoInteractions(media);
+    }
     @Test void legacyUnassignedWorkCannotDispatchButExplicitCurrentLineageCan() {
         unpaidGemini();approve(noteExpected());
         work.enqueueIfAbsent(KnowledgeWork.Kind.NOTE,noteExpected());

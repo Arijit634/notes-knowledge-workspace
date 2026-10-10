@@ -1,0 +1,50 @@
+# Frozen relevance BEFORE any live result. Odd rows development, even rows held-out. No tuning on held-out.
+# id<TAB>split<TAB>category<TAB>query<TAB>gold Note IDs, graded 2 unless :1<TAB>expected supported facts
+q01	development	exact	Where is the Sakura Garden Hotel booking?	n01	Kyoto; four nights
+q02	held-out	paraphrase	Where am I staying during my Japan trip?	n01	Sakura Garden Hotel; Kyoto
+q03	development	vague	That trip where the hotel reservation got cancelled	n02	Osaka; Riverside Inn; cancelled
+q04	held-out	hard-negative	Find the confirmed cancellation rather than places I only considered	n02	Osaka cancellation
+q05	development	exact	What time does the Kyoto to Tokyo train leave?	n04	09:14
+q06	held-out	paraphrase	What should I put in my bag for the holiday in Japan?	n05	umbrella; adapter; walking shoes
+q07	development	conflict	What is the revised Japan lodging total and what did it replace?	n07,n06:1	560 replaces 420
+q08	held-out	body-only	Where did I hide the spare key?	n08	blue tin; kitchen shelf
+q09	development	vague	Find that note about the gaming accessory I ordered	n09,n71:1	PlayStation controller
+q10	held-out	hard-negative	Which new game controller did I buy rather than repair?	n09,n71:1	PlayStation; autumn sale
+q11	development	exact	Where is the kettle receipt?	n11	orange envelope
+q12	held-out	paraphrase	What groceries were missing from the pantry on Monday?	n12	oats; lentils; tomatoes; dish soap
+q13	development	conflict	How much should the workshop reserve for equipment now?	n13	740; not 470
+q14	held-out	paraphrase	Find my monthly water and electricity allowance	n14	95
+q15	development	multi-source	Which movies did I write down to watch later?	n17,n18	Arrival; Spirited Away; The Iron Giant
+q16	held-out	hard-negative	Find the books I am waiting to collect rather than already reading	n20	A Wizard of Earthsea; Saturday
+q17	development	body-only	Find notes about data taking time to synchronize between services	n25	replicas; older values; propagation delay
+q18	held-out	conceptual	Where did I explain why readers can briefly see stale copies after a write?	n25	asynchronous replica propagation
+q19	development	paraphrase	How do I avoid overwriting someone else's newer saved representation?	n28	ETag; If-Match
+q20	held-out	conceptual	Why might the same external message be submitted twice by a worker?	n32	lost acknowledgement; idempotency
+q21	development	conflict	What will Harbor ship first, and what was postponed?	n33,n34:1	offline checklist; calendar deferred
+q22	held-out	multi-source	Who is preparing and reviewing the accessibility work?	n35	Mira prepares; Sol reviews
+q23	development	paraphrase	Where is Saturday's community workshop?	n38	Cedar Hall; room 12
+q24	held-out	paraphrase	Which reusable material won the exhibition display decision?	n40	wooden stands
+q25	development	exact	When should I add lemon to lentil soup?	n41	after heat is off
+q26	held-out	paraphrase	How should I dry the delicate wool item?	n43	flat; no tumble dryer
+q27	development	vague	Which plant wants shade instead of direct sunshine?	n44	fern; indirect light
+q28	held-out	body-only	Where did I put smoked paprika?	n47	red jar behind cumin
+q29	development	exact	Which day is the longer easy run?	n49	Saturday
+q30	held-out	hard-negative	Which walking circuit is flat rather than steep?	n51	canal loop; five kilometers
+q31	development	paraphrase	What extra headgear is required at the swimming pool?	n52	swim cap
+q32	held-out	multi-source	Find the cycle ride departure and the repair needed before hill riding	n55,n16	south bridge 08:30; rear brake cable
+q33	development	typos	Find the googel docs bookmark reminder	n70	Google Docs; goohle
+q34	held-out	shorthand	Find my ps controller order	n71,n09:1	FICTIONAL-55
+q35	development	long	What reserve color is listed at the end of the inventory?	n76	amber
+q36	held-out	conflict	Which evening is the ceramics class actually on now?	n73,n74:1	Thursday; Tuesday obsolete
+q37	development	unanswerable	What is the bike lock combination?	-	not recorded; insufficient evidence
+q38	held-out	unanswerable	What is my flight confirmation number for Kyoto?	-	no flight confirmation recorded
+q39	development	mixed-language	Find the Kyoto 京都 hotel reservation	n01	Sakura Garden Hotel; Japanese proper noun only, not broad language qualification
+q40	held-out	ai-off	Where is the secret garden meetup?	n81	Violet Pier; lexical only; no AI processing
+q41	development	image	Find the picture with a blue square and a red circle	n77	image; ASTER; left blue square
+q42	held-out	audio	Where is the silver domed observatory mentioned in the recording?	n78	planet Aster; audio provenance
+q43	development	video	Which clip shows colored geometric shapes and a label?	n79	blue square; red circle; ASTER
+q44	held-out	pdf	What amount did the report recommend setting aside for equipment?	n80,n13:1	740; PDF page 18
+q45	development	multi-source	Find all my saved URLs	n57,n58,n59	exhaustive deterministic route, never top-K completeness
+q46	held-out	long	Find the inventory note containing the final reserve color	n76	amber
+q47	development	hard-negative	What color bulb should replace the hallway light?	n75	warm-white; not cool-white
+q48	held-out	vague	What was the thing I needed to pick up after four on Wednesday?	n68	repaired glasses; Cedar Optics

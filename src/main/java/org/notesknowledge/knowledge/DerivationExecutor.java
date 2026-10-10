@@ -16,11 +16,13 @@ class DerivationExecutor {
     private final ObjectProvider<MediaUnderstandingPort> media;
     private final MeterRegistry metrics;
     private final org.notesknowledge.DispatchCoordinator coordination;
+    private final AiDerivationProperties configuration;
     DerivationExecutor(AiProcessingGate gate,DerivationTransactions transactions,KnowledgeWorkService work,
             ObjectProvider<TextEmbeddingPort> embeddings,ObjectProvider<MediaUnderstandingPort> media,MeterRegistry metrics,
-            org.notesknowledge.DispatchCoordinator coordination) {
+            org.notesknowledge.DispatchCoordinator coordination,AiDerivationProperties configuration) {
         this.gate=gate;this.transactions=transactions;this.work=work;this.embeddings=embeddings;this.media=media;this.metrics=metrics;
         this.coordination=coordination;
+        this.configuration=configuration;
     }
     void execute(KnowledgeWork.Claim claim) {
         String outcome="deferred";
@@ -59,9 +61,12 @@ class DerivationExecutor {
             }
             if(segments.isEmpty()||segments.size()>512)throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);
             var vectors=new ArrayList<float[]>();
-            for(int start=0;start<segments.size();start+=16) {
+            // Embedding 2 sends one SDK request per chunk. Do not carry a short-lived
+            // permit across sequential network calls; each obtains fresh coordinated authority.
+            int batchSize=GeminiTextEmbeddings.embedding2(configuration)?1:16;
+            for(int start=0;start<segments.size();start+=batchSize) {
                 if(!work.heartbeat(claim))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
-                var batch=segments.subList(start,Math.min(start+16,segments.size()));
+                var batch=segments.subList(start,Math.min(start+batchSize,segments.size()));
                 var output=coordinated(claim,dispatches,permit->embed.embed(permit,batch.stream().map(DerivedSegment::text).toList()));
                 if(output.size()!=batch.size())throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
                 for(float[] vector:output)vectors.add(initial.lineage().prepare(vector));

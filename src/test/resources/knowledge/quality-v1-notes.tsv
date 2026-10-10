@@ -1,0 +1,83 @@
+# Frozen fictional corpus v1. Seed 20261010 controls ordering only; no real personal data.
+# id<TAB>title<TAB>body<TAB>aiEnabled
+n01	Japan accommodation	Aster booked Sakura Garden Hotel in Kyoto for the November Japan trip. The reservation is confirmed for four nights.	true
+n02	Osaka update	The Osaka Riverside Inn reservation was cancelled after the conference moved. Do not travel to the old hotel.	true
+n03	Osaka options	Consider Osaka Riverside Inn next spring. This is only an idea, not a reservation or cancellation.	true
+n04	Train details	The Kyoto to Tokyo train leaves at 09:14 on November 12. Seat 8B is by the window.	true
+n05	Bag checklist	Pack a folding umbrella, passport photocopy, plug adapter and comfortable walking shoes for Japan.	true
+n06	Old costs	The initial Japan lodging estimate was 420 fictional credits. This estimate was superseded by the confirmed booking.	true
+n07	Confirmed costs	The revised Japan lodging total is 560 fictional credits including breakfast. This replaces the earlier 420 estimate.	true
+n08	Small things	The spare apartment key is inside the blue tin on the kitchen shelf. This reminder is fictional.	true
+n09	Autumn purchase	Ordered a PlayStation controller in the autumn sale for 55 fictional credits. Delivery is due Friday.	true
+n10	Shopping comparison	A PlayStation console costs much more than the controller. No console was ordered.	true
+n11	Receipt drawer	The electric kettle receipt is in the orange envelope. The kettle warranty lasts two years.	true
+n12	Monday list	Buy oats, lentils, tomatoes and dish soap. The pantry already has rice.	true
+n13	Equipment reserve	The workshop recommended setting aside 740 fictional credits for equipment, not the earlier informal estimate of 470.	true
+n14	Utilities plan	Allow 95 fictional credits each month for electricity and water. Rent is tracked separately.	true
+n15	Gift idea	Aster might enjoy a watercolor sketchbook. This has not been purchased.	true
+n16	Bike repair	The rear brake cable needs replacing before the next hill ride. Ask for a written estimate.	true
+n17	Watch later	Movies to watch later: Arrival and Spirited Away. Both were recommended during the book club break.	true
+n18	Weekend screen	Add The Iron Giant to the watch-later movie list. Already watched Arrival last winter but would watch it again.	true
+n19	Finished films	Watched Moon last Tuesday. This is a viewing log, not a watch-later recommendation.	true
+n20	Library holds	The library has reserved A Wizard of Earthsea. Collect it before Saturday afternoon.	true
+n21	Game night	The cooperative board game starts at 19:00 on Thursday. Bring the blue dice bag.	true
+n22	Controller repair	The old controller has a sticky left trigger. It was repaired, not newly ordered.	true
+n23	Reading plan	Read one chapter of The Dispossessed each evening. Make notes about mutual aid and ownership.	true
+n24	Music practice	Practice the D minor scale slowly before attempting the new piano piece.	true
+n25	Loose thoughts	After a write, replicas may briefly return older values until updates propagate. Clients should tolerate this delay rather than assume every reader is immediately synchronized.	true
+n26	Database seminar	Serializable transactions prevent certain conflicting concurrent outcomes. They are not a promise about asynchronous replica propagation.	true
+n27	Java reminders	Records provide concise immutable data carriers. Mutable objects inside a record still require careful ownership.	true
+n28	HTTP cache	An ETag identifies a representation. A stale If-Match must fail rather than overwrite newer content.	true
+n29	Study checklist	Revise binary search, graph traversal and heap operations before the practice interview.	true
+n30	DNS lesson	DNS resolves names to records. It does not encrypt application traffic.	true
+n31	Network notes	TCP retransmits lost segments and preserves byte ordering. Applications still need message framing.	true
+n32	Delivery semantics	A worker may submit twice after losing an acknowledgement. Use idempotency where possible; do not claim exactly-once external delivery.	true
+n33	Planning meeting	The fictional Harbor project will ship the offline checklist first. Calendar integration was explicitly deferred.	true
+n34	Previous planning	An early proposal suggested calendar integration first. The Harbor planning meeting replaced this proposal.	true
+n35	Tuesday review	Mira will prepare the synthetic accessibility checklist by Friday. Sol will review keyboard navigation.	true
+n36	Retrospective	Small review batches reduced waiting time. Keep work in progress limited to two tasks per person.	true
+n37	Design review	Use labels next to destructive actions. Color alone must not communicate deletion risk.	true
+n38	Workshop location	The fictional community workshop meets in Cedar Hall, room 12, on Saturday morning.	true
+n39	Follow-up	Ask the group whether the morning workshop needs a projector. No projector booking is confirmed.	true
+n40	Decision log	The mock exhibition will use reusable wooden display stands instead of disposable foam boards.	true
+n41	Lentil soup	Simmer red lentils with tomatoes and cumin for twenty minutes. Add lemon after turning off the heat.	true
+n42	Rice method	Rinse rice before cooking. For this recipe use one cup of rice and one and a half cups of water.	true
+n43	Laundry	Wash the wool scarf cold by hand and dry it flat. Do not put it in the tumble dryer.	true
+n44	Plant care	The fictional fern prefers indirect light. Water when the top layer of soil feels dry, not on a fixed daily schedule.	true
+n45	Bread notes	Let the dough rise until roughly doubled. A cold kitchen makes the rise slower.	true
+n46	Cleaning	Use mild soap on the wooden table. Avoid soaking the surface or leaving standing water.	true
+n47	Spice shelf	Smoked paprika is in the small red jar behind the cumin. The blue jar contains dried mint.	true
+n48	Freezer inventory	Two portions of lentil soup are in the freezer. The vegetable stock is in the refrigerator, not frozen.	true
+n49	Easy running	The fictional training plan alternates easy running with rest days. Saturday is the longer relaxed run.	true
+n50	Strength plan	Practice goblet squats and rows twice weekly. Increase resistance only when form remains consistent.	true
+n51	Walking route	The canal loop is five kilometers and mostly flat. The hill route is shorter but steep.	true
+n52	Swim bag	Pack goggles, a towel and a spare swim cap. The pool requires a cap for lane swimming.	true
+n53	Climbing session	Warm up on easy routes before trying overhangs. Stop if finger discomfort appears.	true
+n54	Stretch reminder	Take short movement breaks during study sessions. This fictional reminder is not medical advice.	true
+n55	Ride plan	The riverside cycle ride starts at the south bridge at 08:30. Bring lights for the return.	true
+n56	Rest week	Reduce training volume during the recovery week. Do not add the missed sessions to the following weekend.	true
+n57	Saved reading	Saved links: https://example.com/woodworking and https://example.org/astronomy . These are stored text and must never be fetched by a benchmark.	true
+n58	Recipes online	Keep https://example.com/lentils for later. A second occurrence of https://example.com/woodworking belongs here too.	true
+n59	Reference links	The Markdown destination [diagram](https://example.net/diagram) is a saved URL, not an instruction to open a network connection.	true
+n60	Travel archive	The old Lisbon hotel was confirmed, not cancelled. Its address was copied into the paper itinerary.	true
+n61	Spring journey	The Bergen guesthouse booking is tentative. There has been no cancellation.	true
+n62	Mountain break	For the Alpine weekend compare two hostels before reserving. No hotel is booked yet.	true
+n63	Beach holiday	The Nacre Bay cottage reservation was moved to August, not cancelled.	true
+n64	City weekend	The museum tickets for Tallinn are booked for Sunday. Accommodation is still undecided.	true
+n65	Packing for rain	For the Bergen trip pack waterproof gloves and a rain cover. These are not the Japan packing notes.	true
+n66	Travel accounts	The Lisbon lodging total was 560 fictional credits. It is not the revised Japan total even though the number matches.	true
+n67	Station snack	Buy sandwiches at Kyoto station before boarding. The departure time is recorded in Train details.	true
+n68	Quick reminder	Collect the repaired glasses from Cedar Optics on Wednesday after 16:00.	true
+n69	Tiny reminder	The fictional bike-lock combination is not recorded anywhere in this corpus. Do not infer it from other numbers.	true
+n70	Research scraps	The goohle docs shortcut on the old machine was misspelled. Replace the label with Google Docs when organizing bookmarks.	true
+n71	ps order	ps controller order reference is FICTIONAL-55. This refers to the autumn PlayStation accessory purchase, not a password.	true
+n72	Granola ratio	Use three cups of oats to one cup of mixed seeds. Stir the tray halfway through baking.	true
+n73	Evening class	The beginner ceramics class moved from Tuesday to Thursday. The old Tuesday listing is obsolete.	true
+n74	Old class flyer	The original ceramics flyer lists Tuesday evenings. See Evening class for the corrected day.	true
+n75	Weekend jobs	Replace the hallway bulb and tighten the cupboard hinge. Buy a warm-white bulb, not cool-white.	true
+n76	Daybook	LONG_INVENTORY	true
+n77	Photo collection	A fictional picture attachment belongs here. The text does not describe its shapes or colors.	true
+n78	Voice memo	A fictional spoken recording belongs here. The fact to retrieve is only in the audio attachment.	true
+n79	Short clip	A fictional video attachment belongs here. Its visible information is not stated in the title.	true
+n80	Report folder	A fictional PDF attachment belongs here. The report filename intentionally gives no clue about its equipment recommendation.	true
+n81	Private reminder	The fictional secret garden meetup is at Violet Pier. AI processing is disabled for this source.	false

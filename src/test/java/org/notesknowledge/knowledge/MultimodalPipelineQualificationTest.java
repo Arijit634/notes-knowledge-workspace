@@ -136,6 +136,26 @@ class MultimodalPipelineQualificationTest {
         assertThat(state(claim)).isEqualTo("failed");assertThat(jdbc.queryForObject("select count(*) from knowledge.private_derived_segment where owner_user_id=?",Integer.class,owner)).isZero();
         assertInsufficient(query("What did the photographed page show?"));
     }
+    @Test void pageEighteenFactSurvivesRealExtractionAndCitesOnlyItsActualPage()throws Exception {
+        var response=mvc.perform(multipart("/api/notes/"+note+"/attachments")
+            .file(org.notesknowledge.notes.QualityMediaFixtures.pdf(18,false,false)).cookie(cookie).header("X-CSRF-TOKEN",csrf))
+            .andExpect(status().isCreated()).andReturn().getResponse();
+        UUID attachment=UUID.fromString(json.readTree(response.getContentAsString()).get("id").asText());
+        String question="What amount did the report recommend setting aside for equipment?";
+        doAnswer(call->{outside();AiProcessingGate.SourceAiPermit p=call.getArgument(0);p.requireDispatch();
+            List<String> texts=call.getArgument(1);return texts.stream().map(t->axis(t.contains("740 fictional credits")?0:7)).toList();}).when(embeddings).embed(any(),any());
+        doAnswer(call->{outside();KnowledgeQueryGate.QueryPermit p=call.getArgument(0);p.requireDispatch();return axis(0);}).when(answer).embedQuery(any(),any());
+        doAnswer(call->{outside();KnowledgeQueryGate.EvidencePermit p=call.getArgument(0);p.requireDispatch();
+            selected=List.copyOf(call.getArgument(3));var claims=selected.stream().filter(e->e.text().contains("740 fictional credits"))
+                .map(e->new StructuredKnowledgePort.Claim("740 fictional credits",List.of(e.id()))).toList();return new StructuredKnowledgePort.Output(claims,false);}).when(answer).generate(any(),any(),any(),any());
+        assertThat(state(derive(attachment,"pdf"))).isEqualTo("completed");verifyNoInteractions(media);
+        assertThat(jdbc.queryForObject("select count(*) from knowledge.private_derived_segment where owner_user_id=?",Integer.class,owner)).isEqualTo(18);
+        var result=query(question);assertThat(selected).hasSize(1);assertThat(result.get("aiAnswer").get("claims").get(0).asText()).isEqualTo("740 fictional credits");
+        var citation=result.get("citations").get(0);assertThat(citation.get("attachmentId").asText()).isEqualTo(attachment.toString());
+        assertThat(citation.get("location").get("page").asInt()).isEqualTo(18);assertThat(result.get("coverage").get("completed").asBoolean()).isFalse();
+        evidence("page-eighteen-pipeline",Map.of("provider","controlled doubles, not Gemini relevance","pages",18,"segments",18,
+            "correctAttachment",true,"correctPage",18,"generationEvidenceSegments",1,"coverage","bounded, not exhaustive"));
+    }
     @Test void partialTranscriptAndSampledFramesCannotFabricateMissingFactsOrCompleteCoverage()throws Exception {
         for(String kind:List.of("audio","video")) {
             UUID id=upload(kind);when(media.describe(any(),any(),any())).thenReturn(List.of(segment(kind,"A limited fictional excerpt without the requested destination.")));

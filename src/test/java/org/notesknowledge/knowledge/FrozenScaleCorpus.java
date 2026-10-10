@@ -6,7 +6,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 /** Frozen metadata/surrogate load corpus. No claim of OCR/transcription or Gemini semantic quality. */
 final class FrozenScaleCorpus {
-    static final String SEED="retrieval-scale-v1-20261009";
+    static final String SEED="retrieval-scale-v2-20261010";
     static void notes(JdbcTemplate jdbc,UUID owner,int count) {
         jdbc.update("""
             insert into notes.note(note_id,owner_user_id,title,markdown,lifecycle_state,ai_enabled,revision,ai_generation,created_at,updated_at)
@@ -35,6 +35,18 @@ final class FrozenScaleCorpus {
     private static void populate(JdbcTemplate jdbc,UUID owner,int total,AiDerivationProperties configuration,UUID policy,boolean mixed,float[] vector) {
         int perMedia=mixed?total/10:0;
         notes(jdbc,owner,total-4*perMedia);
+        // Scale repeats the frozen everyday corpus, not 10,000 independently judged real-model Notes.
+        // Keep notes() itself unchanged: its separate exhaustive-URL tests deliberately have two occurrences.
+        String corpus=new tools.jackson.databind.ObjectMapper().writeValueAsString(FrozenQualityCorpus.notes().stream()
+            .filter(FrozenQualityCorpus.Note::aiEnabled).toList());
+        jdbc.update("""
+            with corpus as materialized(select ?::jsonb value),
+            numbered as(select note_id,row_number() over(order by note_id)-1 position
+                from notes.note where owner_user_id=?)
+            update notes.note n set title=(c.value->((f.position%80)::int)->>'title')||' / copy '||f.position,
+                markdown=c.value->((f.position%80)::int)->>'body'
+            from numbered f cross join corpus c where n.note_id=f.note_id
+            """,corpus,owner);
         for(String modality:List.of("image","audio","video","pdf"))jdbc.update("""
             insert into notes.attachment(attachment_id,note_id,owner_user_id,media_kind,object_reference,display_filename,media_type,
                 size_bytes,width,height,duration_seconds,page_count,storage_state,validation_state,cleanup_state,revision,processing_generation,created_at,updated_at)
