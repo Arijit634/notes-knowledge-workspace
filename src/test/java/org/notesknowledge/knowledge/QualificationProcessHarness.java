@@ -37,7 +37,8 @@ public final class QualificationProcessHarness {
             properties.put("knowledge.derivation.dimension","768");properties.put("knowledge.derivation.operator","cosine");properties.put("knowledge.derivation.normalization","unit");properties.put("knowledge.derivation.approved-policy-fingerprint","a".repeat(64));
             BeanPostProcessor fake=new BeanPostProcessor(){public Object postProcessAfterInitialization(Object bean,String name){
                 if(bean instanceof ProviderDispatchProperties) {
-                    var p=mock(ProviderDispatchProperties.class);when(p.dispatchPolicy()).thenReturn("unpaid-synthetic-demo");when(p.approvedSourceFingerprints()).thenAnswer(c->List.copyOf(approvals));return p;
+                    var p=mock(ProviderDispatchProperties.class);when(p.dispatchPolicy()).thenReturn("unpaid-synthetic-demo");when(p.approvedSourceFingerprints()).thenAnswer(c->List.copyOf(approvals));
+                    when(p.approvedQueryFingerprints()).thenReturn(FrozenQualityCorpus.queries().stream().filter(q->q.id().equals("q35")).map(q->ProviderDispatchPolicy.queryFingerprint(q.text())).toList());return p;
                 }
                 if(bean instanceof TextEmbeddingPort)return new TextEmbeddingPort(){public boolean available(){return true;}
                     public List<float[]> embed(AiProcessingGate.SourceAiPermit permit,List<String> texts) {
@@ -97,6 +98,24 @@ public final class QualificationProcessHarness {
                     if(candidates.isEmpty())throw new AssertionError("Persisted vector scoring failed");
                     int expected=FrozenQualityCorpus.notes().stream().filter(FrozenQualityCorpus.Note::aiEnabled).mapToInt(n->new MarkdownChunker().chunk(n.body()).size()).sum();
                     if(state.reservations("embedding")!=expected)throw new AssertionError("Lost or duplicated request accounting");
+                    // Separate offline query journal: completed query survives the NEXT actual JVM
+                    // restart and scores the same durable PostgreSQL index without another call.
+                    var q=FrozenQualityCorpus.queries().stream().filter(value->value.id().equals("q35")).findFirst().orElseThrow();
+                    try(var queryState=new QualificationJournal(directory.resolve("query-journal"),"offline-query/"+policy+"/"+lineage.id())) {
+                        var failed=queryState.reservations("generation")==0?queryState.reserve(QualificationJournal.hash("offline-failed-image"),"media-image","generation"):queryState.uncertainEvents().getFirst();
+                        var session=new QualificationTextEvaluation(queryState,failed,Set.of(ProviderDispatchPolicy.queryFingerprint(q.text())),args[2].equals("verify"));
+                        var queryCalls=new AtomicInteger();var permit=context.getBean(KnowledgeQueryGate.class).query(owner,q.text());
+                        float[] cached=session.query(q.text(),QualificationJournal.hash("offline-q35/"+lineage.id()),"q35",()->{
+                            permit.requireGoogle(q.text());
+                            if(!Boolean.TRUE.equals(tx.execute(s->context.getBean(org.notesknowledge.knowledge.spi.PrivateAiSourceCurrentness.class).matches(new Expected(owner,ids.get("n76"),null,1,1,null)))))throw new AssertionError("Stale source");
+                        },lineage::validate,()->{queryCalls.incrementAndGet();return query;});
+                        var scored=context.getBean(ExactPrivateVectorSearch.class).search(owner,"note",cached,100);
+                        if(scored.size()!=expected||scored.stream().anyMatch(c->c.expected().noteId().equals(ids.get("n81"))||!c.expected().owner().equals(owner)))throw new AssertionError("Query candidate isolation failure");
+                        var reverse=new HashMap<UUID,String>();ids.forEach((id,uuid)->reverse.put(uuid,id));
+                        var ranked=scored.stream().map(c->reverse.get(c.expected().noteId())).distinct().toList();
+                        var metrics=FrozenRetrievalMetrics.score(ranked,q.gold());
+                        Files.writeString(directory.resolve(args[2]+"-query.json"),JSON.writeValueAsString(Map.of("newFakeQueryCalls",queryCalls.get(),"queryReservations",queryState.reservations("embedding"),"failedMediaReservations",queryState.reservations("generation"),"uncertainReservations",queryState.uncertainReservations(),"persistedVectorCandidates",scored.size(),"rankedSources",ranked.size(),"metrics",metrics,"liveCalls",0)));
+                    }
                     Files.writeString(directory.resolve(args[2]+".json"),JSON.writeValueAsString(Map.of("readyRoots",80,"segments",expected,"newFakeCalls",calls.get(),"reusedReadyRoots",reused,"reservations",state.reservations("embedding"),"liveCalls",0,"persistedVectorCandidates",candidates.size())));
                 }
             }

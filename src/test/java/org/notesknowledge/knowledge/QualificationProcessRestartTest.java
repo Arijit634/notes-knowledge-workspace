@@ -26,8 +26,13 @@ class QualificationProcessRestartTest {
         var json=new ObjectMapper();var resumed=json.readTree(Files.readAllBytes(directory.resolve("resume.json")));var verified=json.readTree(Files.readAllBytes(directory.resolve("verify.json")));
         assertThat(resumed.get("reusedReadyRoots").asInt()).isEqualTo(75);assertThat(verified.get("reusedReadyRoots").asInt()).isEqualTo(80);
         assertThat(verified.get("newFakeCalls").asInt()).isZero();assertThat(verified.get("liveCalls").asInt()).isZero();
+        var firstQuery=json.readTree(Files.readAllBytes(directory.resolve("resume-query.json")));var cachedQuery=json.readTree(Files.readAllBytes(directory.resolve("verify-query.json")));
+        assertThat(firstQuery.get("newFakeQueryCalls").asInt()).isEqualTo(1);assertThat(cachedQuery.get("newFakeQueryCalls").asInt()).isZero();
+        assertThat(cachedQuery.get("queryReservations").asInt()).isEqualTo(1);assertThat(cachedQuery.get("failedMediaReservations").asInt()).isEqualTo(1);
+        assertThat(cachedQuery.get("uncertainReservations").asInt()).isEqualTo(1);assertThat(cachedQuery.get("persistedVectorCandidates").asInt()).isEqualTo(83);
+        assertThat(cachedQuery.get("rankedSources").asInt()).isEqualTo(80);assertThat(cachedQuery.get("liveCalls").asInt()).isZero();
         Path report=Path.of("target/retrieval-evaluation/actual-process-recovery.json");Files.createDirectories(report.getParent());
-        Files.writeString(report,json.writeValueAsString(java.util.Map.of("abruptExit",77,"resumed",resumed,"restartedAgain",verified,"fixtureLeaseExpiry",true)));
+        Files.writeString(report,json.writeValueAsString(java.util.Map.of("abruptExit",77,"resumed",resumed,"restartedAgain",verified,"fixtureLeaseExpiry",true,"firstQuery",firstQuery,"cachedQueryAfterRestart",cachedQuery)));
     }
     private int run(String mode)throws Exception {
         var builder=new ProcessBuilder(Path.of(System.getProperty("java.home"),"bin","java").toString(),"-Duser.timezone=UTC","-cp",System.getProperty("java.class.path"),

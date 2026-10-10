@@ -10,7 +10,9 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import tools.jackson.databind.ObjectMapper;
 
-/** All mutations run in short caller transactions. A lease is opaque, not source authority. */
+/** All mutations run in short caller transactions. A lease is opaque, not source authority.
+ * Progress timestamps are nondecreasing even across application/database clock skew or a
+ * wall-clock correction. This watermark never replaces database-time lease/expiry checks. */
 @Repository
 class KnowledgeOperationRepository {
     record Row(UUID id,UUID owner,String purpose,String state,Instant created,Instant expires,long version,
@@ -44,7 +46,7 @@ class KnowledgeOperationRepository {
                 order by created_at,knowledge_work_intent_id limit :limit for update skip locked)
             update knowledge.knowledge_work_intent w set state='claimed',
                 attempt_count=case when w.state='queued' and w.checkpoint_version>0 then w.attempt_count else w.attempt_count+1 end,next_attempt_at=null,
-                lease_owner='knowledge-query',lease_token=uuidv7(),lease_until=clock_timestamp()+interval '120 seconds',updated_at=clock_timestamp()
+                lease_owner='knowledge-query',lease_token=uuidv7(),lease_until=clock_timestamp()+interval '120 seconds',updated_at=greatest(w.updated_at,clock_timestamp())
                 from picked where w.knowledge_work_intent_id=picked.knowledge_work_intent_id returning w.*
             """).param("limit",limit).query(KnowledgeOperationRepository::map).list();
     }
@@ -54,29 +56,29 @@ class KnowledgeOperationRepository {
     }
     boolean current(Row row){return fenced(row,"select count(*) from knowledge.knowledge_work_intent where").query(Integer.class).single()==1;}
     boolean checkpoint(Row row,String metadata,KnowledgeOperationMaterialCipher.Envelope result) {
-        return fenced(row,"update knowledge.knowledge_work_intent set operation_metadata=:metadata::jsonb,result_ciphertext=:cipher,result_nonce=:nonce,result_key_version=:key,checkpoint_version=checkpoint_version+1,lease_until=clock_timestamp()+interval '120 seconds',updated_at=clock_timestamp() where")
+        return fenced(row,"update knowledge.knowledge_work_intent set operation_metadata=:metadata::jsonb,result_ciphertext=:cipher,result_nonce=:nonce,result_key_version=:key,checkpoint_version=checkpoint_version+1,lease_until=clock_timestamp()+interval '120 seconds',updated_at=greatest(updated_at,clock_timestamp()) where")
             .param("metadata",metadata).param("cipher",result.ciphertext()).param("nonce",result.nonce()).param("key",result.keyVersion()).update()==1;
     }
     /** A successful bounded slice is continuation, not a failed attempt. Crash reclaim still consumes an attempt. */
     boolean yield(Row row) {
-        return fenced(row,"update knowledge.knowledge_work_intent set state='queued',next_attempt_at=clock_timestamp(),lease_owner=null,lease_token=null,lease_until=null,updated_at=clock_timestamp() where checkpoint_version>0 and").update()==1;
+        return fenced(row,"update knowledge.knowledge_work_intent set state='queued',next_attempt_at=clock_timestamp(),lease_owner=null,lease_token=null,lease_until=null,updated_at=greatest(updated_at,clock_timestamp()) where checkpoint_version>0 and").update()==1;
     }
     boolean complete(Row row,String metadata,KnowledgeOperationMaterialCipher.Envelope result) {
-        return fenced(row,"update knowledge.knowledge_work_intent set state='completed',operation_metadata=:metadata::jsonb,result_ciphertext=:cipher,result_nonce=:nonce,result_key_version=:key,checkpoint_version=checkpoint_version+1,input_ciphertext=null,input_nonce=null,input_key_version=null,lease_owner=null,lease_token=null,lease_until=null,updated_at=clock_timestamp() where")
+        return fenced(row,"update knowledge.knowledge_work_intent set state='completed',operation_metadata=:metadata::jsonb,result_ciphertext=:cipher,result_nonce=:nonce,result_key_version=:key,checkpoint_version=checkpoint_version+1,input_ciphertext=null,input_nonce=null,input_key_version=null,lease_owner=null,lease_token=null,lease_until=null,updated_at=greatest(updated_at,clock_timestamp()) where")
             .param("metadata",metadata).param("cipher",result.ciphertext()).param("nonce",result.nonce()).param("key",result.keyVersion()).update()==1;
     }
     boolean terminate(Row row,String state) {
         if(!java.util.Set.of("failed","obsolete").contains(state))throw new IllegalArgumentException("Invalid worker terminal state");
-        return fenced(row,"update knowledge.knowledge_work_intent set state=:state,input_ciphertext=null,input_nonce=null,input_key_version=null,result_ciphertext=null,result_nonce=null,result_key_version=null,lease_owner=null,lease_token=null,lease_until=null,updated_at=clock_timestamp() where")
+        return fenced(row,"update knowledge.knowledge_work_intent set state=:state,input_ciphertext=null,input_nonce=null,input_key_version=null,result_ciphertext=null,result_nonce=null,result_key_version=null,lease_owner=null,lease_token=null,lease_until=null,updated_at=greatest(updated_at,clock_timestamp()) where")
             .param("state",state).update()==1;
     }
     void cancel(UUID owner,UUID id){clients.getObject().sql("""
         update knowledge.knowledge_work_intent set state='cancelled',input_ciphertext=null,input_nonce=null,input_key_version=null,
-            result_ciphertext=null,result_nonce=null,result_key_version=null,lease_owner=null,lease_token=null,lease_until=null,next_attempt_at=null,updated_at=clock_timestamp()
+            result_ciphertext=null,result_nonce=null,result_key_version=null,lease_owner=null,lease_token=null,lease_until=null,next_attempt_at=null,updated_at=greatest(updated_at,clock_timestamp())
         where owner_user_id=:owner and knowledge_work_intent_id=:id and work_class='private_knowledge_operation' and state in ('queued','retry_wait','claimed')
         """).param("owner",owner).param("id",id).update();}
     void obsolete(UUID owner,UUID id){clients.getObject().sql("""
-        update knowledge.knowledge_work_intent set state='obsolete',result_ciphertext=null,result_nonce=null,result_key_version=null,updated_at=clock_timestamp()
+        update knowledge.knowledge_work_intent set state='obsolete',result_ciphertext=null,result_nonce=null,result_key_version=null,updated_at=greatest(updated_at,clock_timestamp())
         where owner_user_id=:owner and knowledge_work_intent_id=:id and work_class='private_knowledge_operation' and state='completed'
         """).param("owner",owner).param("id",id).update();}
     void expire(){clients.getObject().sql("""
@@ -86,7 +88,7 @@ class KnowledgeOperationRepository {
             order by operation_expires_at limit 100 for update skip locked)
         update knowledge.knowledge_work_intent w set state=case when w.state in ('queued','claimed','retry_wait') then 'obsolete' else w.state end,
             input_ciphertext=null,input_nonce=null,input_key_version=null,result_ciphertext=null,result_nonce=null,result_key_version=null,
-            lease_owner=null,lease_token=null,lease_until=null,next_attempt_at=null,updated_at=clock_timestamp()
+            lease_owner=null,lease_token=null,lease_until=null,next_attempt_at=null,updated_at=greatest(w.updated_at,clock_timestamp())
             from picked where w.knowledge_work_intent_id=picked.knowledge_work_intent_id
         """).update();}
     private static Row map(java.sql.ResultSet r,int ignored)throws java.sql.SQLException {

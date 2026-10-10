@@ -73,7 +73,6 @@ class KnowledgeQueryIntegrationTest {
         when(configuration.dimension()).thenReturn(8);when(configuration.operator()).thenReturn("cosine");when(configuration.normalization()).thenReturn("none");
         when(configuration.approvedPolicyFingerprint()).thenReturn("a".repeat(64));
         when(provider.available()).thenReturn(true);when(rates.evaluate(any())).thenReturn(new RateLimitPort.Allowed());
-        jdbc.update("update knowledge.knowledge_work_intent set state='cancelled',input_ciphertext=null,input_nonce=null,input_key_version=null,result_ciphertext=null,result_nonce=null,result_key_version=null,lease_owner=null,lease_token=null,lease_until=null,next_attempt_at=null,updated_at=clock_timestamp() where work_class='private_knowledge_operation' and state in ('queued','claimed','retry_wait')");
         String code="synthetic-"+UUID.randomUUID();when(policyConfiguration.code()).thenReturn(code);
         policy=jdbc.queryForObject("insert into knowledge.processing_policy(policy_code,policy_version,policy_fingerprint,disclosure_revision,effective_at) values(?,1,?,'synthetic-1',clock_timestamp()-interval '1 minute') returning processing_policy_id",UUID.class,code,"a".repeat(64));
         owner=account();ack(owner);note=note(owner,true,"Synthetic ordinary note","Synthetic ordinary body");browser=browser(owner);
@@ -82,7 +81,25 @@ class KnowledgeQueryIntegrationTest {
             List<StructuredKnowledgePort.Evidence> evidence=call.getArgument(3);
             return new StructuredKnowledgePort.Output(List.of(new StructuredKnowledgePort.Claim("Supported synthetic result",List.of(evidence.getFirst().id()))),false);});
     }
-    @AfterEach void clear(){SecurityContextHolder.clearContext();}
+    @AfterEach void clear(){
+        try {if(owner!=null)cancelFixtureOperations(owner);}
+        finally {SecurityContextHolder.clearContext();}
+    }
+    private void cancelFixtureOperations(UUID fixtureOwner){
+        jdbc.update("update knowledge.knowledge_work_intent set state='cancelled',input_ciphertext=null,input_nonce=null,input_key_version=null,result_ciphertext=null,result_nonce=null,result_key_version=null,lease_owner=null,lease_token=null,lease_until=null,next_attempt_at=null,updated_at=greatest(updated_at,clock_timestamp()) where owner_user_id=? and work_class='private_knowledge_operation' and state in ('queued','claimed','retry_wait')",fixtureOwner);
+    }
+
+    @Test void fixtureCleanupNeverCancelsAnotherOwnersOperation() throws Exception {
+        UUID other=account(),id=jdbc.queryForObject("select uuidv7()",UUID.class);
+        Instant created=jdbc.queryForObject("select clock_timestamp()",java.sql.Timestamp.class).toInstant();
+        var input=cipher.seal(new KnowledgeOperationMaterialCipher.Context(id,other,"deterministic_corpus",KnowledgeOperationMaterialCipher.Kind.INPUT,0),new byte[]{1});
+        tx(()->{operationRows.insert(id,other,"deterministic_corpus",created,created.plusSeconds(3600),"{}",input);return null;});
+        try {
+            String handle=accept("all links");cancelFixtureOperations(owner);
+            assertThat(poll(handle).get("status").asText()).isEqualTo("cancelled");
+            assertThat(jdbc.queryForObject("select state from knowledge.knowledge_work_intent where knowledge_work_intent_id=?",String.class,id)).isEqualTo("queued");
+        } finally {cancelFixtureOperations(other);}
+    }
 
     @ParameterizedTest @ValueSource(strings={"neither","source-only","query-only","both"})
     void unpaidGoogleQueryAndSourceApprovalAreIndependentAtTheProviderBoundary(String approval) throws Exception {
@@ -752,7 +769,13 @@ class KnowledgeQueryIntegrationTest {
     private org.springframework.test.web.servlet.ResultActions query(String q)throws Exception{return mvc.perform(post("/api/knowledge/query").cookie(browser.cookie).header("X-CSRF-TOKEN",browser.csrf).contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(Map.of("query",q))));}
     private String accept(String q)throws Exception{var response=query(q).andExpect(status().isAccepted()).andReturn().getResponse();String handle=json.readTree(response.getContentAsString()).get("operationId").asText();assertThat(response.getHeader("Location")).isEqualTo("/api/knowledge/operations/"+handle);return handle;}
     private tools.jackson.databind.JsonNode poll(String handle)throws Exception{return json.readTree(mvc.perform(get("/api/knowledge/operations/"+handle).cookie(browser.cookie)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());}
-    private KnowledgeOperationRepository.Row claim(){return operations.claim(2).stream().filter(r->r.owner().equals(owner)).findFirst().orElseThrow();}
+    private KnowledgeOperationRepository.Row claim(){
+        var claimed=operations.claim(2);
+        // Never hide accidental claims of work left by another fixture behind a post-claim filter.
+        assertThat(claimed.isEmpty()).isFalse();
+        for(var row:claimed)assertThat(row.owner()).isEqualTo(owner);
+        return claimed.getFirst();
+    }
     private long operationVersion(UUID id){return jdbc.queryForObject("select checkpoint_version from knowledge.knowledge_work_intent where knowledge_work_intent_id=?",Long.class,id);}
     private KnowledgeOperationMaterialCipher.Envelope resultFrame(KnowledgeOperationRepository.Row r){return cipher.seal(new KnowledgeOperationMaterialCipher.Context(r.id(),r.owner(),r.purpose(),KnowledgeOperationMaterialCipher.Kind.RESULT,r.version()+1),new byte[]{1});}
     private UUID account(){UUID id=jdbc.queryForObject("select uuidv7()",UUID.class);String email="synthetic-"+id+"@example.test";jdbc.update("insert into identity.account(user_id,canonical_email,display_email,email_verified_at,account_state,created_at,updated_at) values(?,?,?,now(),'active',now(),now())",id,email,email);return id;}

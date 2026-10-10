@@ -64,6 +64,7 @@ final class QualificationJournal implements AutoCloseable {
     }
     synchronized int reservations(String kind){return (int)events.stream().filter(e->e.kind().equals(kind)&&e.state().equals("reserved")).count();}
     synchronized int uncertainReservations(){return (int)events.stream().filter(e->e.state().equals("reserved")&&latest(e.key()).state().equals("reserved")).count();}
+    synchronized List<Event> uncertainEvents(){return events.stream().filter(e->e.state().equals("reserved")&&latest(e.key()).state().equals("reserved")).toList();}
     synchronized List<Map<String,Object>> sanitizedLedger() {
         return events.stream().map(e->Map.<String,Object>of("sequence",e.sequence(),"source",e.source(),"kind",e.kind(),"state",e.state())).toList();
     }
