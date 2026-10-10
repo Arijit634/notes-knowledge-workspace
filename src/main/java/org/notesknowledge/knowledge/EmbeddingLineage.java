@@ -11,7 +11,7 @@ record EmbeddingLineage(String id,String configuration,String modality,int dimen
                 ||!java.util.Set.of("note","image","audio","video","pdf").contains(modality))
             throw new IllegalArgumentException("Unavailable lineage");
         String normalized=String.join("\n",c.provider(),c.adapterVersion(),c.embeddingModel(),c.mediaModel(),c.modelRevision(),
-            "document/text-surrogate/float32",c.dimension().toString(),c.operator(),c.normalization(),modality,
+            GeminiTextEmbeddings.embedding2(c)?GeminiTextEmbeddings.EMBEDDING_2_FORMAT:"document/text-surrogate/float32",c.dimension().toString(),c.operator(),c.normalization(),modality,
             "markdown-weighted-600-900-overlap80-v2", "media-typed-bounded-v1",c.configurationId(),c.region(),c.tier(),
             p.policyId().toString(),Long.toString(p.version()),p.fingerprint());
         try { return new EmbeddingLineage(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
