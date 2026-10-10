@@ -123,6 +123,54 @@ class GoogleDerivationAdaptersTest {
         assertThat(wire.get("generationConfig").has("responseJsonSchema")).isTrue();
         assertThat(wire.has("tools")).isFalse();assertThat(wire.has("cachedContent")).isFalse();
     }
+    @Test void ordinaryGenerationUsesThePinnedModelWithoutStructuredOrToolOptions() {
+        generated("Synthetic service available.");
+        var options=org.springframework.ai.google.genai.GoogleGenAiChatOptions.builder().model("gemini-3.8-flash")
+            .maxOutputTokens(128).googleSearchRetrieval(false).includeServerSideToolInvocations(false).useCachedContent(false).build();
+        var model=org.springframework.ai.google.genai.GoogleGenAiChatModel.builder().genAiClient(sdk).options(options)
+            .retryTemplate(GoogleDerivationAdapters.noHiddenRetry()).build();
+        var result=model.call(new org.springframework.ai.chat.prompt.Prompt("Synthetic availability probe",options));
+        assertThat(result.getResult().getOutput().getText()).isEqualTo("Synthetic service available.");
+        assertThat(requests).hasSize(1);
+        assertThat(requestPaths.getFirst()).contains("gemini-3.8-flash");
+        assertThat(requests.getFirst()).doesNotContain("responseJsonSchema","tools","cachedContent","candidateCount");
+    }
+    @ParameterizedTest @ValueSource(ints={400,401,403,404,429,500,502,503,504})
+    void generationHttpFailuresAreSanitizedAndAnIndependentOperationCanRecover(int code) {
+        var port=adapters.googleStructuredKnowledgePort(config("gemini-embedding-2"),clients,json);
+        status=code;response="{\"error\":{\"code\":"+code+",\"message\":\"synthetic-sensitive-provider-body\",\"status\":\"UNKNOWN\"}}";
+        var category=code==400?KnowledgeWork.Failure.INVALID_OUTPUT:code==429?KnowledgeWork.Failure.QUOTA:
+            code<500?KnowledgeWork.Failure.PROVIDER_UNAVAILABLE:KnowledgeWork.Failure.TRANSIENT_DEPENDENCY;
+        assertThatThrownBy(()->port.generate(evidence(),query,"answer",List.of(new StructuredKnowledgePort.Evidence("e0","Synthetic","note"))))
+            .isInstanceOfSatisfying(DerivationFailure.class,f->{
+                assertThat(f.category).isEqualTo(category);
+                assertThat(f.diagnostic.httpStatus()).isEqualTo(code);
+                assertThat(f.diagnostic.providerReached()).isEqualTo(ProviderFailureDiagnostic.Reach.HTTP_RESPONSE_RECEIVED);
+                assertThat(f.diagnostic.structurallyValidResponse()).isFalse();
+                assertThat(json.writeValueAsString(f.diagnostic)).doesNotContain("synthetic-sensitive-provider-body",query);
+            }).hasCause(null).hasMessage("Derivation unavailable");
+        assertThat(requests).hasSize(1); // No retry inside either pinned client layer.
+        status=200;generated("{\"claims\":[{\"text\":\"Synthetic\",\"evidenceIds\":[\"e0\"]}],\"conflicting\":false}");
+        var recovered=port.generate(evidence(),query,"answer",List.of(new StructuredKnowledgePort.Evidence("e0","Synthetic","note")));
+        assertThat(recovered.claims().getFirst().text()).isEqualTo("Synthetic");
+        assertThat(requests).hasSize(2); // Fresh permit and independent operation, not cached failure.
+    }
+    @ParameterizedTest @ValueSource(strings={"{}","{\"candidates\":[]}","{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[]},\"finishReason\":\"STOP\"}]}"})
+    void absentGenerationCandidatesNeverBecomeAnAnswer(String body) {
+        response=body;
+        var port=adapters.googleStructuredKnowledgePort(config("gemini-embedding-2"),clients,json);
+        assertThatThrownBy(()->port.generate(evidence(),query,"answer",List.of(new StructuredKnowledgePort.Evidence("e0","Synthetic","note"))))
+            .isInstanceOf(DerivationFailure.class).hasCause(null).hasMessage("Derivation unavailable");
+        assertThat(requests).hasSize(1);
+    }
+    @Test void interruptedTransportHasNoProviderReceiptClaimOrRetainedException() {
+        var safe=GoogleDerivationAdapters.providerFailure(new com.google.genai.errors.GenAiIOException("synthetic-sensitive",
+            new java.io.InterruptedIOException("synthetic-sensitive")),ProviderFailureDiagnostic.Stage.GENERATION,System.nanoTime());
+        assertThat(safe.category).isEqualTo(KnowledgeWork.Failure.TRANSIENT_DEPENDENCY);
+        assertThat(safe.diagnostic.kind()).isEqualTo(ProviderFailureDiagnostic.Kind.INTERRUPTED_IO);
+        assertThat(safe.diagnostic.providerReached()).isEqualTo(ProviderFailureDiagnostic.Reach.UNKNOWN);
+        assertThat(safe).hasCause(null).hasMessage("Derivation unavailable");
+    }
     @Test void malformedAndUnreferencedStructuredOutputIsRejected() {
         var port=adapters.googleStructuredKnowledgePort(config("gemini-embedding-2"),clients,json);
         for(String output:List.of("not json","{\"claims\":[{\"text\":\"Unsupported\",\"evidenceIds\":[\"e9\"]}],\"conflicting\":false}")) {

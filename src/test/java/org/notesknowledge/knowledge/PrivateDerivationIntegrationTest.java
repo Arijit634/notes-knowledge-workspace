@@ -101,6 +101,21 @@ class PrivateDerivationIntegrationTest {
         owner=account();note=note(owner,true);browser=browser(owner);policy=policy(1,"a");ack(owner,policy);
     }
     @AfterEach void clear(){SecurityContextHolder.clearContext();}
+    @Test void legacyUnassignedWorkCannotDispatchButExplicitCurrentLineageCan() {
+        unpaidGemini();approve(noteExpected());
+        work.enqueueIfAbsent(KnowledgeWork.Kind.NOTE,noteExpected());
+        var legacy=work.claim(new LeaseOwner("synthetic-legacy-worker"),10).stream()
+            .filter(c->c.intent().expected().equals(noteExpected())).findFirst().orElseThrow();
+        assertThat(legacy.intent().targetLineageId()).isEqualTo("legacy_unassigned");
+        executor.execute(legacy);
+        assertThat(state(legacy)).isEqualTo("obsolete");assertThat(readyCount()).isZero();
+        verifyNoInteractions(embeddings,media);
+        var current=claim(noteExpected(),"note");
+        assertThat(current.intent().targetLineageId()).isEqualTo(lineageForPolicy(policy,1,"note").id());
+        executor.execute(current);
+        assertThat(state(current)).isEqualTo("completed");assertThat(readyCount()).isEqualTo(1);
+        verify(embeddings,times(1)).embed(any(),any());verifyNoInteractions(media);
+    }
     @Test void unpaidUnapprovedAcknowledgedAiOnSourceCreatesNoWorkAndCannotUseAnOldClaim() throws Exception {
         unpaidGemini();reconcileAll();
         assertThat(ownerWorkCount()).isZero();
