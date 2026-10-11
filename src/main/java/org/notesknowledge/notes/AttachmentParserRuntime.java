@@ -163,7 +163,7 @@ final class AttachmentParserRuntime implements AutoCloseable {
         return output;
     }
 
-    private static String childClasspath(Path directory) throws IOException {
+    static String childClasspath(Path directory) throws IOException {
         String classpath = System.getProperty("java.class.path");
         // A Boot nested-JAR URL is not a java launcher classpath. Materialize only
         // trusted parser dependencies from the immutable application artifact.
@@ -191,7 +191,9 @@ final class AttachmentParserRuntime implements AutoCloseable {
                 // Trusted, fixed class resource only: no input-selected class extraction.
                 Path trustedClasses=Files.createDirectory(directory.resolve("classes"));
                 for(String evidenceClass:List.of("org/notesknowledge/notes/PdfEvidenceParser.class",
-                        "org/notesknowledge/notes/PdfEvidenceParser$1.class")) {
+                        "org/notesknowledge/notes/PdfEvidenceParser$1.class",
+                        "org/notesknowledge/notes/PdfPageRasterWorker.class",
+                        "org/notesknowledge/notes/PdfPageRasterWorker$BoundedPng.class")) {
                     Path destination=trustedClasses.resolve(evidenceClass);
                     Files.createDirectories(destination.getParent());
                     try(var input=AttachmentParserRuntime.class.getResourceAsStream("/"+evidenceClass)) {

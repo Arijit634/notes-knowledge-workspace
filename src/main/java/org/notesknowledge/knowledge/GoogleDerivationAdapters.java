@@ -45,11 +45,26 @@ class GoogleDerivationAdapters {
         return new MediaUnderstandingPort() {
             public boolean available(){return model!=null;}
             public List<DerivedSegment> describe(AiProcessingGate.SourceAiPermit permit,byte[] bytes,MediaUnderstandingRequest request) {
-                permit.requireGoogleDispatch();
+                if(request.pdfScope()&&!request.mediaType().equals("application/pdf"))
+                    throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
+                return call(bytes,request,permit::requireGoogleDispatch);
+            }
+            public List<DerivedSegment> describeChild(AiProcessingGate.SourceAiPermit permit,TransformedMediaIdentity child,
+                    byte[] original,byte[] bytes,MediaUnderstandingRequest request) {
+                if(child==null||!request.mediaType().equals(child.childType())||!request.pdfScope()
+                        ||!"pdf_pages".equals(child.scope().kind())||child.scope().first()!=request.firstPage()
+                        ||child.scope().last()!=request.lastPage())throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
+                return call(bytes,request,()->permit.requireGoogleChildDispatch(child,original,bytes));
+            }
+            private List<DerivedSegment> call(byte[] bytes,MediaUnderstandingRequest request,Runnable authorize) {
+                authorize.run();
                 if(model==null)throw new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE);
                 String instruction=mediaInstruction(request);
                 request.requireInlineBudget(bytes.length,instruction,mediaSchema());
                 org.springframework.ai.chat.model.ChatResponse response;long started=System.nanoTime();
+                // Recompute identity at the final adapter boundary. Authority failures are
+                // NOT provider transport failures and must not be reclassified/retried.
+                authorize.run();
                 try {response=model.call(new Prompt(UserMessage.builder().text(instruction)
                     .media(new Media(MimeTypeUtils.parseMimeType(request.mediaType()),new org.springframework.core.io.ByteArrayResource(bytes))).build(),options));}
                 catch(RuntimeException providerFailure){throw providerFailure(providerFailure,ProviderFailureDiagnostic.Stage.MEDIA,started);}
@@ -140,19 +155,25 @@ class GoogleDerivationAdapters {
         if(segments==null||segments.size()>128)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
         int characters=0;
         for(var s:segments) {
-            boolean kind=s!=null&&switch(request.mediaType()) {
+            boolean kind=s!=null&&(request.pdfScope()
+                ?s.kind().equals("pdf_text")&&s.start()==null&&s.page()!=null&&s.page()>=request.firstPage()&&s.page()<=request.lastPage()
+                :switch(request.mediaType()) {
                 case "application/pdf" -> s.kind().equals("pdf_text")&&s.start()==null&&s.page()>=request.firstPage()&&s.page()<=request.lastPage();
                 case "audio/wav" -> s.kind().equals("transcript")&&s.timeEnd()<=request.durationSeconds();
                 case "video/mp4" -> s.kind().equals("video_scene")&&s.timeEnd()<=request.durationSeconds();
                 default -> s.kind().equals("whole_image")||s.kind().equals("image_region");
-            };
+            });
             if(!kind)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
             characters+=s.text().length();
             if(characters>48000)throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);
         }
     }
     static String mediaInstruction(MediaUnderstandingRequest request) {
-        String scope=switch(request.mediaType()) {
+        String scope=request.pdfScope()&&request.mediaType().equals("image/png")
+            ?"This RGB PNG contains ONLY original PDF page "+request.firstPage()+". Inspect the full page image, including readable text, diagrams and tables. "
+                +"checkedPages must contain exactly that original page ordinal. Use pdf_text, that page ordinal, null start/end, and no image_region coordinates. "
+                +"Never infer other pages or invisible/too-small text; complete=false if the page cannot be processed."
+            :switch(request.mediaType()) {
             case "application/pdf" -> "Inspect EVERY requested page "+request.firstPage()+" through "+request.lastPage()+" of the original PDF. checkedPages must list those original page numbers in order. "
                 +"Read scanned/image-only text and meaningful diagrams/tables/page images. Preserve factual context. Native text is extracted separately: avoid merely repeating it. "
                 +"Use pdf_text, actual original page, and null start/end; never guess private parser character offsets. Other pages are outside this request.";

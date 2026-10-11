@@ -218,6 +218,34 @@ class GoogleDerivationAdaptersTest {
             .isInstanceOfSatisfying(DerivationFailure.class,f->assertThat(f.category).isEqualTo(KnowledgeWork.Failure.QUOTA));
         assertThat(requests).hasSize(6);
     }
+    @Test void realPdfPageChildWireContainsOnlyTheApprovedPngAndOriginalPageOrdinal()throws Exception {
+        var original=org.notesknowledge.notes.MeaningfulMediaFixtures.media("mixed").getBytes();
+        try(var rendered=org.notesknowledge.notes.PdfPageRuntimeFixtures.render(original,3)) {
+            byte[] png=rendered.bytes();
+            var e=new Expected(owner,note,new UUID(0,4),1,1,1L);
+            var child=new TransformedMediaIdentity(e,TransformedMediaIdentity.digest(original),original.length,"application/pdf",
+                rendered.profile(),rendered.implementationVersion(),rendered.artifactSha256(),rendered.configurationSha256(),
+                TransformedMediaIdentity.digest(png),png.length,"image/png",new TransformedMediaIdentity.Scope("pdf_pages",3,3,0,0,0),
+                "a".repeat(64),"gemini","gemini-3.8-flash","media-understanding","a".repeat(64));
+            generated("{\"complete\":true,\"checkedPages\":[3],\"noSpeech\":false,\"segments\":[{\"text\":\"A blue square on ASTER\",\"kind\":\"pdf_text\",\"heading\":\"\",\"page\":3}]}");
+            var permit=sourcePermit();var port=adapters.googleMediaUnderstandingPort(config("gemini-embedding-2"),clients,json);
+            var request=new MediaUnderstandingRequest("image/png",3,3,null);
+            assertThatThrownBy(()->port.describe(permit,png,request)).isInstanceOf(DerivationFailure.class);
+            assertThat(requests).isEmpty();
+            assertThat(port.describeChild(permit,child,original,png,request).getFirst().page()).isEqualTo(3);
+            verify(permit,times(2)).requireGoogleChildDispatch(child,original,png);
+            var parts=json.readTree(requests.getFirst()).get("contents").get(0).get("parts");
+            assertThat(parts.size()).isEqualTo(2);assertThat(parts.get(0).get("text").asText()).contains("ONLY original PDF page 3");
+            assertThat(parts.get(1).get("inlineData").get("mimeType").asText()).isEqualTo("image/png");
+            assertThat(Base64.getDecoder().decode(parts.get(1).get("inlineData").get("data").asText())).isEqualTo(png).isNotEqualTo(original);
+            assertThat(requests.getFirst()).doesNotContain(Base64.getEncoder().encodeToString(original),"fileUri");
+            assertThatThrownBy(()->port.describeChild(permit,child,original,png,new MediaUnderstandingRequest("image/png",2,2,null))).isInstanceOf(DerivationFailure.class);
+            doThrow(new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE)).when(permit).requireGoogleChildDispatch(child,original,png);
+            assertThatThrownBy(()->port.describeChild(permit,child,original,png,request)).isInstanceOfSatisfying(DerivationFailure.class,
+                failure->assertThat(failure.category).isEqualTo(KnowledgeWork.Failure.INVALID_SOURCE));
+            assertThat(requests).hasSize(1);
+        }
+    }
     @Test void partialTruncatedMissingCoverageAndUnknownTimingNeverReturnSuccessfulMedia() {
         var port=adapters.googleMediaUnderstandingPort(config("gemini-embedding-2"),clients,json);
         var pdf=new MediaUnderstandingRequest("application/pdf",1,2,null);

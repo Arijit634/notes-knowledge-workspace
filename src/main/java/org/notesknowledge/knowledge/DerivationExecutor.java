@@ -45,10 +45,11 @@ class DerivationExecutor {
                 bytes=coordinated(claim,dispatches,permit->{
                     try(var input=material.open()) {
                         var content=input.readNBytes((int)size+1);
-                        if(content.length!=size)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
+                        if(content.length!=size){java.util.Arrays.fill(content,(byte)0);throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);}
                         return content;
                     } catch(java.io.IOException unavailable) {throw new DerivationFailure(KnowledgeWork.Failure.TRANSIENT_DEPENDENCY);}
                 });
+                try {
                 if(understand==null||!understand.available())throw new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE);
                 if(initial.source().modality().equals("pdf")) {
                     if(!work.heartbeat(claim))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
@@ -67,7 +68,33 @@ class DerivationExecutor {
                     }
                     // Text-readable pages can still contain meaningful diagrams or scanned
                     // regions. Inspect every page in bounded scopes, never just a top-K subset.
-                    for(int first=1;first<=count;first+=MediaUnderstandingRequest.PDF_BATCH_PAGES) {
+                    if(configuration.pdfPageChildren()) {
+                        for(var page:pages) {
+                            if(page.provenEmpty())continue;
+                            if(!work.heartbeat(claim))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
+                            // Transformation and network dispatch use DIFFERENT fresh permits.
+                            // A missing qualified runtime fails closed; no original-byte fallback.
+                            try(var child=coordinated(claim,dispatches,permit->material.pdfChild(bytes,page.page()))) {
+                                budget.check();
+                                if(child.page()!=page.page()||!child.transformFingerprint().equals(configuration.pdfTransformFingerprint()))
+                                    throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
+                                var payload=child.bytes();
+                                try {
+                                    var identity=new TransformedMediaIdentity(initial.source().expected(),TransformedMediaIdentity.digest(bytes),
+                                        bytes.length,initial.source().mediaType(),child.profile(),child.implementationVersion(),
+                                        child.artifactSha256(),child.configurationSha256(),TransformedMediaIdentity.digest(payload),payload.length,
+                                        "image/png",new TransformedMediaIdentity.Scope("pdf_pages",page.page(),page.page(),0,0,0),
+                                        initial.lineage().id(),configuration.provider(),configuration.mediaModel(),"media-understanding",configuration.approvedPolicyFingerprint());
+                                    var request=new MediaUnderstandingRequest("image/png",page.page(),page.page(),null);
+                                    for(var segment:understandChild(claim,dispatches,understand,identity,bytes,payload,request,budget)) {
+                                        String nativeText=page.text().strip().replaceAll("\\s+"," ");
+                                        if(!nativeText.contains(segment.text().strip().replaceAll("\\s+"," ")))extracted.add(segment);
+                                    }
+                                } finally {java.util.Arrays.fill(payload,(byte)0);}
+                            }
+                            if(extracted.size()>512)throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);
+                        }
+                    } else for(int first=1;first<=count;first+=MediaUnderstandingRequest.PDF_BATCH_PAGES) {
                         int last=Math.min(count,first+MediaUnderstandingRequest.PDF_BATCH_PAGES-1);
                         if(pages.subList(first-1,last).stream().allMatch(org.notesknowledge.knowledge.spi.PrivateDerivationSource.PdfPage::provenEmpty))continue;
                         var request=new MediaUnderstandingRequest("application/pdf",first,last,null);
@@ -89,6 +116,7 @@ class DerivationExecutor {
                     segments=understand(claim,dispatches,understand,bytes,request,budget);
                 }
                 validateMedia(initial,segments);
+                } finally {java.util.Arrays.fill(bytes,(byte)0);}
             }
             if(segments.isEmpty()||segments.size()>512)throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);
             var vectors=new ArrayList<float[]>();
@@ -135,6 +163,21 @@ class DerivationExecutor {
         }
         finally {metrics.counter("knowledge.derivation.outcome","outcome",outcome).increment();}
     }
+    private List<DerivedSegment> understandChild(KnowledgeWork.Claim claim,List<org.notesknowledge.DispatchCoordinator.Handle> dispatches,
+            MediaUnderstandingPort provider,TransformedMediaIdentity child,byte[] original,byte[] bytes,
+            MediaUnderstandingRequest request,DerivationAttemptBudget budget) {
+        request.requireInlineBudget(bytes.length,GoogleDerivationAdapters.mediaInstruction(request),GoogleDerivationAdapters.mediaSchema());
+        long estimate=4L*((bytes.length+2L)/3)+MediaUnderstandingRequest.ENVELOPE_RESERVE_BYTES
+            +GoogleDerivationAdapters.mediaInstruction(request).getBytes(java.nio.charset.StandardCharsets.UTF_8).length
+            +GoogleDerivationAdapters.mediaSchema().getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+        budget.providerRequest(true,estimate);
+        if(!work.heartbeat(claim))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
+        var result=coordinated(claim,dispatches,permit->{
+            budget.check();permit.requireGoogleChildDispatch(child,original,bytes);
+            return provider.describeChild(permit,child,original,bytes,request);
+        });
+        budget.check();GoogleDerivationAdapters.validateScope(request,result);return List.copyOf(result);
+    }
     private List<DerivedSegment> understand(KnowledgeWork.Claim claim,List<org.notesknowledge.DispatchCoordinator.Handle> dispatches,
             MediaUnderstandingPort provider,byte[] bytes,MediaUnderstandingRequest request,DerivationAttemptBudget budget) {
         // Whole-file inline budget also applies to controlled adapters, not only Google.
@@ -164,7 +207,11 @@ class DerivationExecutor {
             permit.requireDispatch();
             result=effect.apply(permit);
         }
-        if(!handle.safelyReleased())throw new DerivationFailure(KnowledgeWork.Failure.TRANSIENT_DEPENDENCY);
+        if(!handle.safelyReleased()) {
+            if(result instanceof org.notesknowledge.knowledge.spi.PrivateDerivationSource.PdfChild child)child.close();
+            if(result instanceof byte[] bytes)java.util.Arrays.fill(bytes,(byte)0);
+            throw new DerivationFailure(KnowledgeWork.Failure.TRANSIENT_DEPENDENCY);
+        }
         return result;
     }
     static void validateMedia(AiProcessingGate.SourceAiPermit permit,List<DerivedSegment> segments) {

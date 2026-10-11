@@ -7,9 +7,18 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 record AiDerivationProperties(boolean enabled, boolean schedulingEnabled, String provider, String embeddingModel,
         String mediaModel, String modelRevision, String region, String tier, String configurationId,
         String adapterVersion, Integer dimension, String operator, String normalization,
-        String approvedPolicyFingerprint) {
+        String approvedPolicyFingerprint, boolean pdfPageChildren, String pdfTransformFingerprint) {
+    @org.springframework.boot.context.properties.bind.ConstructorBinding
+    AiDerivationProperties { }
+    AiDerivationProperties(boolean enabled,boolean schedulingEnabled,String provider,String embeddingModel,
+            String mediaModel,String modelRevision,String region,String tier,String configurationId,
+            String adapterVersion,Integer dimension,String operator,String normalization,String approvedPolicyFingerprint) {
+        this(enabled,schedulingEnabled,provider,embeddingModel,mediaModel,modelRevision,region,tier,configurationId,
+            adapterVersion,dimension,operator,normalization,approvedPolicyFingerprint,false,null);
+    }
     boolean configured() {
-        return enabled && bounded(provider) && bounded(embeddingModel) && bounded(mediaModel)
+        return enabled && (!pdfPageChildren||pdfTransformFingerprint!=null&&pdfTransformFingerprint.matches("[0-9a-f]{64}"))
+            && bounded(provider) && bounded(embeddingModel) && bounded(mediaModel)
             && bounded(modelRevision) && bounded(region) && bounded(tier) && bounded(configurationId)
             && bounded(adapterVersion) && dimension!=null && dimension>0 && dimension<=16000
             && java.util.Set.of("cosine","l2","inner_product").contains(operator==null?"":operator)
@@ -17,4 +26,5 @@ record AiDerivationProperties(boolean enabled, boolean schedulingEnabled, String
             && approvedPolicyFingerprint!=null && approvedPolicyFingerprint.matches("[0-9a-f]{64}");
     }
     private static boolean bounded(String value) { return value!=null && value.matches("[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}"); }
+    @Override public String toString(){return "AiDerivationProperties[REDACTED]";}
 }

@@ -22,9 +22,11 @@ class NotesPrivateDerivationSourceAdapter implements PrivateDerivationSource {
     private final NotesPrivateAiSourceCurrentnessAdapter current;
     private final AttachmentRepository attachments;
     private final ObjectProvider<PrivateAttachmentObjectStore> stores;
+    private final ObjectProvider<PdfPageRuntime> pdfRuntimes;
     NotesPrivateDerivationSourceAdapter(ObjectProvider<JdbcClient> clients,NotesPrivateAiSourceCurrentnessAdapter current,
-            AttachmentRepository attachments,ObjectProvider<PrivateAttachmentObjectStore> stores) {
+            AttachmentRepository attachments,ObjectProvider<PrivateAttachmentObjectStore> stores,ObjectProvider<PdfPageRuntime> pdfRuntimes) {
         this.clients=clients;this.current=current;this.attachments=attachments;this.stores=stores;
+        this.pdfRuntimes=pdfRuntimes;
     }
     private static final String SOURCES="""
         select n.owner_user_id,n.note_id,null::uuid attachment_id,n.revision,n.ai_generation,
@@ -69,6 +71,13 @@ class NotesPrivateDerivationSourceAdapter implements PrivateDerivationSource {
         return new Material() {
             public String markdown(){return null;}
             public List<PdfPage> pdfPages(byte[] bytes){return PrivatePdfTextExtractor.extract(bytes);}
+            public PdfChild pdfChild(byte[] original,int page) {
+                if(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
+                    throw new IllegalStateException("Media processing outside transaction required");
+                var runtime=pdfRuntimes.getIfAvailable();
+                if(runtime==null)throw ApiFailureException.of(ApiFailureException.Kind.SERVICE_UNAVAILABLE);
+                return runtime.render(original,page);
+            }
             public InputStream open() {
                 if(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()
                     ||!used.compareAndSet(false,true))throw new IllegalStateException("One-shot media outside transaction required");

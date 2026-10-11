@@ -44,7 +44,8 @@ import tools.jackson.databind.ObjectMapper;
 
 @Tag("DATABASE") @Tag("API") @Tag("SECURITY") @Tag("RETRIEVAL") @Tag("EVALUATION")
 @Testcontainers @SpringBootTest @AutoConfigureMockMvc
-@org.springframework.context.annotation.Import(org.notesknowledge.notes.DerivationMediaFixtures.class)
+@org.springframework.context.annotation.Import({org.notesknowledge.notes.DerivationMediaFixtures.class,
+    org.notesknowledge.notes.PdfPageRuntimeFixtures.class})
 class PrivateDerivationIntegrationTest {
     @Container static final PostgreSQLContainer postgres=new PostgreSQLContainer("pgvector/pgvector:0.8.6-pg18-trixie")
         .withDatabaseName("private_derivation").withUsername("synthetic_migrator").withPassword("synthetic-derivation-password");
@@ -356,6 +357,90 @@ class PrivateDerivationIntegrationTest {
         return new TransformedMediaIdentity(permit.source().expected(),TransformedMediaIdentity.digest(original),permit.source().sizeBytes(),"application/pdf",
             "pdf-page-v1","synthetic-v1","a".repeat(64),"a".repeat(64),TransformedMediaIdentity.digest(bytes),bytes.length,"image/png",
             new TransformedMediaIdentity.Scope("pdf_pages",1,1,0,0,0),permit.lineage().id(),"gemini",configuration.mediaModel(),"media-understanding","a".repeat(64));
+    }
+    @Test void realPageChildrenReachAuthorizedAdapterPersistAndRetrieveWithOriginalOrdinals()throws Exception {
+        byte[] original=org.notesknowledge.notes.MeaningfulMediaFixtures.media("mixed").getBytes();
+        var attempt=pageChildAttempt(original,true);
+        var permits=Collections.newSetFromMap(new IdentityHashMap<AiProcessingGate.SourceAiPermit,Boolean>());
+        var pages=new ArrayList<Integer>();
+        doAnswer(call->{
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            AiProcessingGate.SourceAiPermit p=call.getArgument(0);TransformedMediaIdentity child=call.getArgument(1);
+            byte[] source=call.getArgument(2),png=call.getArgument(3);MediaUnderstandingRequest request=call.getArgument(4);
+            p.requireGoogleChildDispatch(child,source,png);permits.add(p);pages.add(request.firstPage());
+            assertThat(source).isEqualTo(original);assertThat(request.mediaType()).isEqualTo("image/png");
+            assertThat(request.firstPage()).isEqualTo(request.lastPage());
+            try(var independent=org.notesknowledge.notes.PdfPageRuntimeFixtures.render(original,request.firstPage())) {
+                assertThat(png).isEqualTo(independent.bytes());
+            }
+            if(request.firstPage()!=3)return List.of();
+            var image=javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(png));
+            assertThat(image.getRGB(128,296)&0xffffff).isEqualTo(0x0000ff);
+            return List.of(new DerivedSegment("The scanned page contains a blue square and ASTER.","pdf_text","",null,null,3,null,null,null,null,null,null));
+        }).when(media).describeChild(any(),any(),any(),any(),any());
+        executor.execute(attempt);
+        assertThat(state(attempt)).isEqualTo("completed");assertThat(pages).containsExactly(1,2,3);assertThat(permits).hasSize(3);
+        verify(media,never()).describe(any(),any(),any());assertThat(readyCount()).isEqualTo(1);
+        assertThat(jdbc.queryForList("select page_number from knowledge.private_derived_segment where owner_user_id=? order by ordinal",Integer.class,owner)).containsExactly(1,2,3);
+        assertThat(search.search(owner,"pdf",vector(),10)).anySatisfy(row->{assertThat(row.segment().page()).isEqualTo(3);});
+        disable();assertThat(search.search(owner,"pdf",vector(),10)).isEmpty();assertThat(readyCount()).isZero();
+    }
+    @Test void pageChildModeWithoutExactChildApprovalCannotDispatchOrActivate()throws Exception {
+        var attempt=pageChildAttempt(org.notesknowledge.notes.MeaningfulMediaFixtures.media("mixed").getBytes(),false);
+        executor.execute(attempt);
+        assertThat(state(attempt)).isEqualTo("obsolete");assertThat(readyCount()).isZero();
+        verify(media,never()).describeChild(any(),any(),any(),any(),any());verify(media,never()).describe(any(),any(),any());
+        verify(embeddings,never()).embed(any(),any());
+    }
+    @ParameterizedTest @ValueSource(strings={"wrong-page","second-call-failure"})
+    void pageChildFailuresCannotActivateAPartialPdf(String failure)throws Exception {
+        var attempt=pageChildAttempt(org.notesknowledge.notes.MeaningfulMediaFixtures.media("mixed").getBytes(),true);
+        var calls=new java.util.concurrent.atomic.AtomicInteger();
+        doAnswer(call->{
+            AiProcessingGate.SourceAiPermit p=call.getArgument(0);p.requireGoogleChildDispatch(call.getArgument(1),call.getArgument(2),call.getArgument(3));
+            int number=calls.incrementAndGet();
+            if(failure.equals("wrong-page"))return List.of(new DerivedSegment("Invented page","pdf_text","",null,null,99,null,null,null,null,null,null));
+            if(number==2)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
+            return List.of(new DerivedSegment("A bounded first-page fact","pdf_text","",null,null,1,null,null,null,null,null,null));
+        }).when(media).describeChild(any(),any(),any(),any(),any());
+        executor.execute(attempt);assertThat(state(attempt)).isEqualTo("failed");assertThat(readyCount()).isZero();
+        assertThat(calls).hasValue(failure.equals("wrong-page")?1:2);verify(embeddings,never()).embed(any(),any());
+        verify(media,never()).describe(any(),any(),any());
+    }
+    @Test void invalidationBetweenRealPageChildrenDeniesLaterCallsAndActivation()throws Exception {
+        var attempt=pageChildAttempt(org.notesknowledge.notes.MeaningfulMediaFixtures.media("mixed").getBytes(),true);
+        var captured=new CountDownLatch(1);var release=new CountDownLatch(1);var committed=new CountDownLatch(1);
+        doAnswer(call->{
+            AiProcessingGate.SourceAiPermit p=call.getArgument(0);p.requireGoogleChildDispatch(call.getArgument(1),call.getArgument(2),call.getArgument(3));
+            captured.countDown();assertThat(release.await(15,TimeUnit.SECONDS)).isTrue();return List.of();
+        }).when(media).describeChild(any(),any(),any(),any(),any());
+        try(var pool=Executors.newFixedThreadPool(2)) {
+            var worker=pool.submit(()->executor.execute(attempt));assertThat(captured.await(15,TimeUnit.SECONDS)).isTrue();
+            doAnswer(call->{assertThat(committed.await(15,TimeUnit.SECONDS)).isTrue();return call.callRealMethod();}).when(coordination).dispatch(any(),any());
+            var mutation=pool.submit(()->{disable();committed.countDown();return null;});
+            awaitAdvisoryWaiter();assertThat(mutation.isDone()).isFalse();release.countDown();
+            mutation.get(20,TimeUnit.SECONDS);worker.get(20,TimeUnit.SECONDS);
+        } finally {release.countDown();committed.countDown();}
+        verify(media,times(1)).describeChild(any(),any(),any(),any(),any());verify(embeddings,never()).embed(any(),any());
+        assertThat(state(attempt)).isEqualTo("obsolete");assertThat(readyCount()).isZero();
+    }
+    private KnowledgeWork.Claim pageChildAttempt(byte[] original,boolean approveChildren)throws Exception {
+        var file=new org.springframework.mock.web.MockMultipartFile("file","synthetic.pdf","application/pdf",original);
+        var response=mvc.perform(multipart("/api/notes/"+note+"/attachments").file(file).cookie(browser.cookie).header("X-CSRF-TOKEN",browser.csrf))
+            .andExpect(status().isCreated()).andReturn().getResponse();
+        UUID id=UUID.fromString(json.readTree(response.getContentAsString()).get("id").asText());
+        var expected=new PrivateAiSourceCurrentness.Expected(owner,note,id,1,1,1L);
+        unpaidGemini();approve(expected);when(configuration.pdfPageChildren()).thenReturn(true);
+        when(configuration.pdfTransformFingerprint()).thenReturn(org.notesknowledge.notes.PdfPageRuntimeFixtures.transformFingerprint());
+        var lineage=lineageForPolicy(policy,1,"pdf");var approvals=new ArrayList<String>();
+        for(int page=1;page<=3;page++)try(var child=org.notesknowledge.notes.PdfPageRuntimeFixtures.render(original,page)) {
+            byte[] payload=child.bytes();
+            approvals.add(new TransformedMediaIdentity(expected,TransformedMediaIdentity.digest(original),original.length,"application/pdf",child.profile(),child.implementationVersion(),
+                child.artifactSha256(),child.configurationSha256(),TransformedMediaIdentity.digest(payload),payload.length,"image/png",
+                new TransformedMediaIdentity.Scope("pdf_pages",page,page,0,0,0),lineage.id(),"gemini",configuration.mediaModel(),"media-understanding","a".repeat(64)).approvalFingerprint());
+        }
+        when(dispatchConfiguration.approvedChildFingerprints()).thenReturn(approveChildren?approvals:List.of());
+        return claimWithLineage(expected,lineage);
     }
     @ParameterizedTest @ValueSource(strings={"expired","poisoned"})
     void childPermitExpirationAndPoisonVetoApprovedExactBytes(String mode) throws Exception {

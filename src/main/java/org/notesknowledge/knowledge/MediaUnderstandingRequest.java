@@ -10,12 +10,14 @@ record MediaUnderstandingRequest(String mediaType,Integer firstPage,Integer last
     MediaUnderstandingRequest {
         if(mediaType==null||!java.util.Set.of("image/png","image/jpeg","audio/wav","video/mp4","application/pdf").contains(mediaType)
                 ||(firstPage==null)!=(lastPage==null)
-                ||mediaType.equals("application/pdf")!=(firstPage!=null)
+                ||mediaType.equals("application/pdf")&&firstPage==null
+                ||firstPage!=null&&!mediaType.equals("application/pdf")&&!(mediaType.equals("image/png")&&firstPage.equals(lastPage))
                 ||firstPage!=null&&(firstPage<1||lastPage<firstPage||lastPage>100||lastPage-firstPage>=PDF_BATCH_PAGES)
                 ||java.util.Set.of("audio/wav","video/mp4").contains(mediaType)!=(durationSeconds!=null)
                 ||durationSeconds!=null&&(!Double.isFinite(durationSeconds)||durationSeconds<=0||durationSeconds>300))
             throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
     }
+    boolean pdfScope(){return firstPage!=null;}
     void requireInlineBudget(int bytes,String instruction,String schema) {
         // Fixed options/model/MIME/scope keys are bounded well below 64 KiB. Count
         // Base64, not raw bytes; leave another 2 MB below the 20 MB guidance.
