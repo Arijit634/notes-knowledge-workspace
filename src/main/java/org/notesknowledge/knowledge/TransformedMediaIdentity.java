@@ -45,6 +45,9 @@ record TransformedMediaIdentity(PrivateAiSourceCurrentness.Expected original, St
     void requireBytes(byte[] child) {
         if(child==null||child.length!=childBytes||!digest(child).equals(childSha256))invalid();
     }
+    void requireOriginalBytes(byte[] bytes) {
+        if(bytes==null||bytes.length!=originalBytes||!digest(bytes).equals(originalSha256))invalid();
+    }
     String approvalFingerprint() {
         // Every field is length-delimited UTF-8; fixed order, no implicit normalization.
         var fields=List.of("nkw-transformed-child-v1",original.owner().toString(),original.noteId().toString(),

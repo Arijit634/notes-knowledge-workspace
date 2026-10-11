@@ -23,8 +23,9 @@ public interface PrivateDerivationSource {
         /** One-shot bounded private stream, opened/consumed/closed outside database transactions. */
         InputStream open();
     }
-    record PdfPage(int page,String text) {
-        public PdfPage {if(page<1||page>100||text==null||text.length()>65536)throw new IllegalArgumentException("Invalid PDF page");}
+    record PdfPage(int page,String text,boolean provenEmpty) {
+        public PdfPage {if(page<1||page>100||text==null||text.length()>65536||provenEmpty&&!text.isBlank())throw new IllegalArgumentException("Invalid PDF page");}
+        public PdfPage(int page,String text){this(page,text,false);}
         @Override public String toString(){return "PdfPage[private text omitted]";}
     }
 }

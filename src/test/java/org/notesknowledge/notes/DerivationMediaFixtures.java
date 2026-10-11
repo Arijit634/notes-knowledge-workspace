@@ -37,12 +37,20 @@ public class DerivationMediaFixtures {
             case "image" -> {javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(16,12,java.awt.image.BufferedImage.TYPE_INT_RGB),"png",bytes);type="image/png";extension="png";}
             case "audio" -> {bytes.write(AttachmentMediaValidatorTest.wav(16000,1,16000));type="audio/wav";extension="wav";}
             case "video" -> {bytes.write(AttachmentParserPreflightTest.supportedMp4());type="video/mp4";extension="mp4";}
-            case "pdf","pdf-text" -> {
+            case "pdf","pdf-text","pdf-empty","pdf-mixed-empty" -> {
                 try(var pdf=new org.apache.pdfbox.pdmodel.PDDocument()) {
                     var page=new org.apache.pdfbox.pdmodel.PDPage();pdf.addPage(page);
-                    if(kind.equals("pdf-text"))try(var content=new org.apache.pdfbox.pdmodel.PDPageContentStream(pdf,page)) {
+                    if(kind.equals("pdf-text")||kind.equals("pdf-mixed-empty"))try(var content=new org.apache.pdfbox.pdmodel.PDPageContentStream(pdf,page)) {
                         content.beginText();content.setFont(new org.apache.pdfbox.pdmodel.font.PDType1Font(org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA),12);
                         content.newLineAtOffset(40,700);content.showText("Synthetic PDF page evidence");content.endText();
+                    }
+                    if(kind.equals("pdf"))try(var content=new org.apache.pdfbox.pdmodel.PDPageContentStream(pdf,page)) {
+                        content.addRect(10,10,20,20);content.fill();
+                    }
+                    if(kind.equals("pdf-mixed-empty")) {
+                        pdf.addPage(new org.apache.pdfbox.pdmodel.PDPage());
+                        var painted=new org.apache.pdfbox.pdmodel.PDPage();pdf.addPage(painted);
+                        try(var content=new org.apache.pdfbox.pdmodel.PDPageContentStream(pdf,painted)){content.addRect(10,10,20,20);content.fill();}
                     }
                     pdf.save(bytes);
                 }

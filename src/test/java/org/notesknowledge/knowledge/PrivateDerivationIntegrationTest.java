@@ -296,36 +296,38 @@ class PrivateDerivationIntegrationTest {
     @Test void exactChildPermitRequiresBothApprovalsBytesLineageAndAnActiveOutsideTransactionScope() throws Exception {
         UUID attachment=upload("pdf");var expected=new PrivateAiSourceCurrentness.Expected(owner,note,attachment,1,1,1L);
         unpaidGemini();approve(expected);var attempt=claim(expected,"pdf");
-        AiProcessingGate.SourceAiPermit issued;var bytes=new byte[]{1,2};
+        AiProcessingGate.SourceAiPermit issued;var bytes=new byte[]{1,2};var original=originalBytes(attempt);
         TransformedMediaIdentity child;
         try(var handle=coordination.dispatch(owner,note)) {
             issued=gate.issueForDispatch(attempt,handle).orElseThrow();
-            child=approvedTestChild(issued,bytes);
+            child=approvedTestChild(issued,original,bytes);
             var permit=issued;var identity=child;
-            assertThatThrownBy(()->permit.requireGoogleChildDispatch(identity,bytes)).isInstanceOf(DerivationFailure.class);
+            assertThatThrownBy(()->permit.requireGoogleChildDispatch(identity,original,bytes)).isInstanceOf(DerivationFailure.class);
             when(dispatchConfiguration.approvedChildFingerprints()).thenReturn(List.of(child.approvalFingerprint()));
-            issued.requireGoogleChildDispatch(child,bytes);
+            issued.requireGoogleChildDispatch(child,original,bytes);
             assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-            assertThatThrownBy(()->permit.requireGoogleChildDispatch(identity,new byte[]{1,3})).isInstanceOf(DerivationFailure.class);
-            assertThatThrownBy(()->new TransactionTemplate(transactions).execute(s->{permit.requireGoogleChildDispatch(identity,bytes);return true;}))
+            assertThatThrownBy(()->permit.requireGoogleChildDispatch(identity,original,new byte[]{1,3})).isInstanceOf(DerivationFailure.class);
+            var tampered=original.clone();tampered[tampered.length-1]^=1;
+            assertThatThrownBy(()->permit.requireGoogleChildDispatch(identity,tampered,bytes)).isInstanceOf(DerivationFailure.class);
+            assertThatThrownBy(()->new TransactionTemplate(transactions).execute(s->{permit.requireGoogleChildDispatch(identity,original,bytes);return true;}))
                 .isInstanceOf(DerivationFailure.class);
             // Independent current original approval remains mandatory even with exact child approval.
             when(dispatchConfiguration.approvedSourceFingerprints()).thenReturn(List.of());
-            assertThatThrownBy(()->permit.requireGoogleChildDispatch(identity,bytes)).isInstanceOf(DerivationFailure.class);
-            approve(expected);issued.requireGoogleChildDispatch(child,bytes);
+            assertThatThrownBy(()->permit.requireGoogleChildDispatch(identity,original,bytes)).isInstanceOf(DerivationFailure.class);
+            approve(expected);issued.requireGoogleChildDispatch(child,original,bytes);
         }
         var permit=issued;var identity=child;
-        assertThatThrownBy(()->permit.requireGoogleChildDispatch(identity,bytes)).isInstanceOf(org.notesknowledge.websupport.ApiFailureException.class);
+        assertThatThrownBy(()->permit.requireGoogleChildDispatch(identity,original,bytes)).isInstanceOf(org.notesknowledge.websupport.ApiFailureException.class);
         verifyNoInteractions(embeddings,media);
     }
     @ParameterizedTest @ValueSource(strings={"disable","save","trash","suspend","policy","lineage","child-revoke","lease-expire"})
     void nextChildDispatchRechecksCurrentAuthorityInsteadOfReusingItsPreviousPermit(String mutation) throws Exception {
         UUID attachment=upload("pdf");var expected=new PrivateAiSourceCurrentness.Expected(owner,note,attachment,1,1,1L);
-        unpaidGemini();approve(expected);var attempt=claim(expected,"pdf");var bytes=new byte[]{1,2};
+        unpaidGemini();approve(expected);var attempt=claim(expected,"pdf");var bytes=new byte[]{1,2};var original=originalBytes(attempt);
         try(var handle=coordination.dispatch(owner,note)) {
-            var permit=gate.issueForDispatch(attempt,handle).orElseThrow();var child=approvedTestChild(permit,bytes);
+            var permit=gate.issueForDispatch(attempt,handle).orElseThrow();var child=approvedTestChild(permit,original,bytes);
             when(dispatchConfiguration.approvedChildFingerprints()).thenReturn(List.of(child.approvalFingerprint()));
-            permit.requireGoogleChildDispatch(child,bytes);
+            permit.requireGoogleChildDispatch(child,original,bytes);
         }
         if(mutation.equals("child-revoke")) {
             // Same global coordination used for a quiesced cross-instance configuration rollout.
@@ -336,17 +338,45 @@ class PrivateDerivationIntegrationTest {
         try(var handle=coordination.dispatch(owner,note)) {
             var next=gate.issueForDispatch(attempt,handle);
             if(mutation.equals("child-revoke")) {
-                assertThat(next).isPresent();var permit=next.orElseThrow();var child=approvedTestChild(permit,bytes);
-                assertThatThrownBy(()->permit.requireGoogleChildDispatch(child,bytes)).isInstanceOf(DerivationFailure.class);
+                assertThat(next).isPresent();var permit=next.orElseThrow();var child=approvedTestChild(permit,original,bytes);
+                assertThatThrownBy(()->permit.requireGoogleChildDispatch(child,original,bytes)).isInstanceOf(DerivationFailure.class);
             } else assertThat(next).isEmpty();
         }
         assertThat(readyCount()).isZero();verifyNoInteractions(embeddings,media);
     }
-    private TransformedMediaIdentity approvedTestChild(AiProcessingGate.SourceAiPermit permit,byte[] bytes) {
+    private byte[] originalBytes(KnowledgeWork.Claim attempt) throws Exception {
+        var expected=attempt.intent().expected();
+        try(var handle=coordination.dispatch(expected.owner(),expected.noteId())) {
+            gate.issueForDispatch(attempt,handle).orElseThrow().requireDispatch();
+            try(var input=derivationTransactions.acquire(attempt).open()){return input.readAllBytes();}
+        }
+    }
+    private TransformedMediaIdentity approvedTestChild(AiProcessingGate.SourceAiPermit permit,byte[] original,byte[] bytes) {
         // Deliberately no media transform/provider call: this proves only the authorization seam.
-        return new TransformedMediaIdentity(permit.source().expected(),"a".repeat(64),permit.source().sizeBytes(),"application/pdf",
+        return new TransformedMediaIdentity(permit.source().expected(),TransformedMediaIdentity.digest(original),permit.source().sizeBytes(),"application/pdf",
             "pdf-page-v1","synthetic-v1","a".repeat(64),"a".repeat(64),TransformedMediaIdentity.digest(bytes),bytes.length,"image/png",
             new TransformedMediaIdentity.Scope("pdf_pages",1,1,0,0,0),permit.lineage().id(),"gemini",configuration.mediaModel(),"media-understanding","a".repeat(64));
+    }
+    @ParameterizedTest @ValueSource(strings={"expired","poisoned"})
+    void childPermitExpirationAndPoisonVetoApprovedExactBytes(String mode) throws Exception {
+        UUID attachment=upload("pdf");var expected=new PrivateAiSourceCurrentness.Expected(owner,note,attachment,1,1,1L);
+        unpaidGemini();approve(expected);var attempt=claim(expected,"pdf");var original=originalBytes(attempt);var bytes=new byte[]{1,2};
+        try(var handle=coordination.dispatch(owner,note)) {
+            var permit=gate.issueForDispatch(attempt,handle).orElseThrow();var child=approvedTestChild(permit,original,bytes);
+            when(dispatchConfiguration.approvedChildFingerprints()).thenReturn(List.of(child.approvalFingerprint()));
+            if(mode.equals("expired")) {
+                var future=java.time.Instant.now().plusSeconds(16);
+                try(var time=mockStatic(java.time.Instant.class,CALLS_REAL_METHODS)) {
+                    time.when(java.time.Instant::now).thenReturn(future);
+                    assertThatThrownBy(()->permit.requireGoogleChildDispatch(child,original,bytes)).isInstanceOf(DerivationFailure.class);
+                }
+            } else {
+                terminateDispatchSession();
+                assertThatThrownBy(()->permit.requireGoogleChildDispatch(child,original,bytes)).isInstanceOf(org.notesknowledge.websupport.ApiFailureException.class);
+                assertThat(handle.state()).isEqualTo(org.notesknowledge.DispatchCoordinator.Handle.State.POISONED);
+            }
+        }
+        verifyNoInteractions(embeddings,media);assertThat(readyCount()).isZero();
     }
     @Test void wholeAttemptBudgetVetoAfterEmbeddingDoesNotActivateAnyPartialGeneration() {
         var returned=new java.util.concurrent.atomic.AtomicBoolean();
@@ -627,6 +657,24 @@ class PrivateDerivationIntegrationTest {
         verify(embeddings,never()).embed(any(),any());verify(media,never()).describe(any(),any(),any());assertThat(readyCount()).isZero();
         mvc.perform(get("/api/notes/"+note+"/attachments/"+attachment+"/content").cookie(browser.cookie)).andExpect(status().isOk());
         assertProjection("excluded");
+    }
+    @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(booleans={false,true})
+    void deterministicEmptyPageMayBeOmittedButCannotReceiveInventedProviderEvidence(boolean hallucinated) throws Exception {
+        UUID attachment=upload("pdf-mixed-empty");
+        when(media.describe(any(),any(),any())).thenReturn(List.of(new DerivedSegment("Synthetic vector rectangle","pdf_text","",null,null,
+            hallucinated?2:3,null,null,null,null,null,null)));
+        var attempt=claim(new PrivateAiSourceCurrentness.Expected(owner,note,attachment,1,1,1L),"pdf");executor.execute(attempt);
+        assertThat(state(attempt)).isEqualTo(hallucinated?"failed":"completed");
+        assertThat(readyCount()).isEqualTo(hallucinated?0:1);
+        if(!hallucinated)assertThat(jdbc.queryForList("select page_number from knowledge.private_derived_segment where owner_user_id=?",Integer.class,owner))
+            .containsExactlyInAnyOrder(1,3);
+    }
+    @Test void allProvenEmptyPdfMakesNoProviderCallAndDoesNotFabricateRepresentation() throws Exception {
+        UUID attachment=upload("pdf-empty");var attempt=claim(new PrivateAiSourceCurrentness.Expected(owner,note,attachment,1,1,1L),"pdf");
+        executor.execute(attempt);
+        // Local availability checks are not provider dispatches.
+        verify(media,never()).describe(any(),any(),any());verify(embeddings,never()).embed(any(),any());assertThat(readyCount()).isZero();
+        assertThat(state(attempt)).isEqualTo("failed");
     }
     @Test void attachmentDeletionWhileProviderCapturedCannotActivateOrResurrectMetadata() throws Exception {
         UUID attachment=upload("image");var expected=new PrivateAiSourceCurrentness.Expected(owner,note,attachment,1,1,1L);

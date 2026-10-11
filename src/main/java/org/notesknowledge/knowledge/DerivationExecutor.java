@@ -69,15 +69,17 @@ class DerivationExecutor {
                     // regions. Inspect every page in bounded scopes, never just a top-K subset.
                     for(int first=1;first<=count;first+=MediaUnderstandingRequest.PDF_BATCH_PAGES) {
                         int last=Math.min(count,first+MediaUnderstandingRequest.PDF_BATCH_PAGES-1);
+                        if(pages.subList(first-1,last).stream().allMatch(org.notesknowledge.knowledge.spi.PrivateDerivationSource.PdfPage::provenEmpty))continue;
                         var request=new MediaUnderstandingRequest("application/pdf",first,last,null);
                         for(var segment:understand(claim,dispatches,understand,bytes,request,budget)) {
+                            if(pages.get(segment.page()-1).provenEmpty())throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
                             String nativeText=pages.get(segment.page()-1).text().strip().replaceAll("\\s+"," ");
                             if(!nativeText.contains(segment.text().strip().replaceAll("\\s+"," ")))extracted.add(segment);
                         }
                         if(extracted.size()>512)throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);
                     }
                     // No silent mixed/scan-only completion if a textless page was omitted.
-                    for(var page:pages)if(page.text().isBlank()&&extracted.stream().noneMatch(s->s.page()==page.page()))
+                    for(var page:pages)if(!page.provenEmpty()&&page.text().isBlank()&&extracted.stream().noneMatch(s->s.page()==page.page()))
                         throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
                     segments=List.copyOf(extracted);
                 } else {

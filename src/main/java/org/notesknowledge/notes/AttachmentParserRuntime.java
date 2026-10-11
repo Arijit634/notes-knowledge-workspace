@@ -71,14 +71,18 @@ final class AttachmentParserRuntime implements AutoCloseable {
         }
     }
 
-    synchronized String extractPdfXhtml(Path ownedInput) {
+    record PdfExtraction(String xhtml,String emptyPages) { }
+    synchronized PdfExtraction extractPdfXhtml(Path ownedInput) {
         try {
             var result=parser.parse(ownedInput);requireSuccess(result);
             if(result.getMetadataList().size()!=1||!"application/pdf".equals(result.getMetadata().get("Content-Type")))throw invalid();
             if("true".equalsIgnoreCase(result.getMetadata().get(TikaCoreProperties.WRITE_LIMIT_REACHED)))throw invalid();
             String content=result.getContent();
             if(content==null||content.length()>65536)throw invalid();
-            return content;
+            String emptyPages=result.getMetadata().get("nkw:pdf-empty-v1");
+            Integer count=result.getMetadata().getInt(PagedText.N_PAGES);
+            if(count==null||emptyPages==null||count<1||count>100||emptyPages.length()!=count||!emptyPages.matches("[EU]+"))throw invalid();
+            return new PdfExtraction(content,emptyPages);
         } catch(ApiFailureException failure){throw failure;}
         catch(InterruptedException failure){Thread.currentThread().interrupt();throw unavailable();}
         catch(Exception failure){throw unavailable();}
@@ -184,10 +188,36 @@ final class AttachmentParserRuntime implements AutoCloseable {
                     try (var input = jar.getInputStream(candidate)) { Files.copy(input, destination); }
                 }
                 if (count == 0) throw new IOException("Parser libraries unavailable");
-                return libraries + File.separator + "*";
+                // Trusted, fixed class resource only: no input-selected class extraction.
+                Path trustedClasses=Files.createDirectory(directory.resolve("classes"));
+                for(String evidenceClass:List.of("org/notesknowledge/notes/PdfEvidenceParser.class",
+                        "org/notesknowledge/notes/PdfEvidenceParser$1.class")) {
+                    Path destination=trustedClasses.resolve(evidenceClass);
+                    Files.createDirectories(destination.getParent());
+                    try(var input=AttachmentParserRuntime.class.getResourceAsStream("/"+evidenceClass)) {
+                        if(input==null)throw new IOException("Parser implementation unavailable");
+                        Files.copy(input,destination);
+                    }
+                }
+                copyParserRegistry(jar,trustedClasses);
+                return trustedClasses+File.pathSeparator+libraries+File.separator+"*";
             }
         }
         return classpath;
+    }
+
+    static void copyParserRegistry(JarFile jar,Path trustedClasses) throws IOException {
+        String registry="META-INF/tika/parsers.idx";
+        // Boot repackaging retains META-INF registries at the archive root.
+        // Also accept the ordinary classes layout; neither path is input-selected.
+        var entry=jar.getJarEntry(registry);
+        if(entry==null)entry=jar.getJarEntry("BOOT-INF/classes/"+registry);
+        if(entry==null||entry.isDirectory()||entry.getSize()<0||entry.getSize()>4096) {
+            throw new IOException("Parser registry unavailable");
+        }
+        Path destination=trustedClasses.resolve(registry);
+        Files.createDirectories(destination.getParent());
+        try(var input=jar.getInputStream(entry)){Files.copy(input,destination);}
     }
 
     static Path parserLibraryDestination(Path libraries, JarEntry entry) throws IOException {

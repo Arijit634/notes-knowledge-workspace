@@ -13,12 +13,12 @@ final class PrivatePdfTextExtractor {
         try {
             if(bytes.length>AttachmentMediaValidator.PDF_BYTES)throw unavailable();
             directory=AttachmentParserRuntime.privateDirectory();var input=directory.resolve("source.pdf");Files.write(input,bytes);
-            String content;
-            try(var parser=new AttachmentParserRuntime(true)){content=parser.extractPdfXhtml(input);}
+            AttachmentParserRuntime.PdfExtraction extraction;
+            try(var parser=new AttachmentParserRuntime(true)){extraction=parser.extractPdfXhtml(input);}
             var factory=javax.xml.stream.XMLInputFactory.newFactory();
             factory.setProperty(javax.xml.stream.XMLInputFactory.SUPPORT_DTD,false);
             factory.setProperty("javax.xml.stream.isSupportingExternalEntities",false);
-            var reader=factory.createXMLStreamReader(new java.io.StringReader(content));
+            var reader=factory.createXMLStreamReader(new java.io.StringReader(extraction.xhtml()));
             var pages=new ArrayList<PrivateDerivationSource.PdfPage>();StringBuilder text=null;int depth=0,pageDepth=0,page=0;
             while(reader.hasNext()) {
                 int event=reader.next();
@@ -30,11 +30,11 @@ final class PrivatePdfTextExtractor {
                 } else if(event==javax.xml.stream.XMLStreamConstants.CHARACTERS&&text!=null) {
                     text.append(reader.getText());if(text.length()>65536)throw unavailable();
                 } else if(event==javax.xml.stream.XMLStreamConstants.END_ELEMENT) {
-                    if(text!=null&&depth==pageDepth){pages.add(new PrivateDerivationSource.PdfPage(page,text.toString()));text=null;}
+                    if(text!=null&&depth==pageDepth){pages.add(new PrivateDerivationSource.PdfPage(page,text.toString(),extraction.emptyPages().charAt(page-1)=='E'));text=null;}
                     else if(text!=null)text.append('\n');depth--;
                 }
             }
-            reader.close();return List.copyOf(pages);
+            reader.close();if(pages.size()!=extraction.emptyPages().length())throw unavailable();return List.copyOf(pages);
         } catch(ApiFailureException failure){throw failure;}
         catch(Exception failure){throw unavailable();}
         finally {if(directory!=null)AttachmentParserRuntime.removeDirectory(directory);}

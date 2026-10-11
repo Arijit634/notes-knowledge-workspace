@@ -81,6 +81,38 @@ class TransformedMediaIdentityTest {
             assertThatThrownBy(()->child().requireBytes(wrong)).isInstanceOf(DerivationFailure.class);
         assertThatThrownBy(()->child().requireBytes(null)).isInstanceOf(DerivationFailure.class);
     }
+    @Test void originalBytesAreRecomputedAndNotInferredFromRevisionApproval() {
+        byte[] original={9,8,7};var c=child();
+        var exact=new TransformedMediaIdentity(source,TransformedMediaIdentity.digest(original),original.length,c.originalType(),
+            c.profile(),c.implementationVersion(),c.binarySha256(),c.configurationSha256(),c.childSha256(),c.childBytes(),c.childType(),
+            c.scope(),c.lineage(),c.provider(),c.model(),c.task(),c.policySha256());
+        exact.requireOriginalBytes(original);
+        for(byte[] changed:new byte[][]{{9,8,6},{9,8},{}})
+            assertThatThrownBy(()->exact.requireOriginalBytes(changed)).isInstanceOf(DerivationFailure.class);
+        assertThatThrownBy(()->exact.requireOriginalBytes(null)).isInstanceOf(DerivationFailure.class);
+    }
+    @Test void fieldBoundariesPreventConcatenationAliasesAndNonCanonicalNamesFailClosed() {
+        var c=child();
+        var split=new TransformedMediaIdentity(source,c.originalSha256(),c.originalBytes(),c.originalType(),"a","bc",
+            c.binarySha256(),c.configurationSha256(),c.childSha256(),c.childBytes(),c.childType(),c.scope(),c.lineage(),c.provider(),c.model(),c.task(),c.policySha256());
+        var other=new TransformedMediaIdentity(source,c.originalSha256(),c.originalBytes(),c.originalType(),"ab","c",
+            c.binarySha256(),c.configurationSha256(),c.childSha256(),c.childBytes(),c.childType(),c.scope(),c.lineage(),c.provider(),c.model(),c.task(),c.policySha256());
+        assertThat(split.approvalFingerprint()).isNotEqualTo(other.approvalFingerprint());
+        for(String invalid:List.of(" space","line\nbreak","nonascii-\u00e9","x".repeat(129)))
+            assertThatThrownBy(()->identity(invalid,c.scope(),new byte[]{1,2})).isInstanceOf(DerivationFailure.class);
+    }
+    @Test void immutableDeploymentSnapshotDoesNotPretendToDistributeRevocation() {
+        var keys=new java.util.ArrayList<>(List.of(child().approvalFingerprint()));
+        var deployment=new ProviderDispatchProperties("unpaid-synthetic-demo",List.of(ProviderDispatchPolicy.fingerprint(source)),List.of(),keys);
+        var first=new ProviderDispatchPolicy(deployment);var second=new ProviderDispatchPolicy(deployment);
+        keys.clear();
+        assertThat(first.permitsUnpaidGeminiChild(config(),child())).isTrue();
+        assertThat(second.permitsUnpaidGeminiChild(config(),child())).isTrue();
+        assertThatThrownBy(()->deployment.approvedChildFingerprints().clear()).isInstanceOf(UnsupportedOperationException.class);
+        // A replacement must be consistently rolled out under global coordination/quiescence.
+        var replaced=new ProviderDispatchPolicy(new ProviderDispatchProperties("unpaid-synthetic-demo",deployment.approvedSourceFingerprints()));
+        assertThat(replaced.permitsUnpaidGeminiChild(config(),child())).isFalse();
+    }
     @Test void originalApprovalDoesNotApproveTheChild() {
         var policy=new ProviderDispatchPolicy(new ProviderDispatchProperties("unpaid-synthetic-demo",List.of(ProviderDispatchPolicy.fingerprint(source))));
         assertThat(policy.permitsUnpaidGemini(config(),source)).isTrue();
