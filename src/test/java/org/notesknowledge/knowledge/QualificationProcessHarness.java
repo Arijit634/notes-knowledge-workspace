@@ -56,7 +56,7 @@ public final class QualificationProcessHarness {
                     public float[] embedQuery(KnowledgeQueryGate.QueryPermit p,String q){throw new AssertionError("No network");}
                     public Output generate(KnowledgeQueryGate.EvidencePermit p,String q,String t,List<Evidence> e){throw new AssertionError("No network");}};
                 if(bean instanceof MediaUnderstandingPort)return new MediaUnderstandingPort(){public boolean available(){return false;}
-                    public List<DerivedSegment> describe(AiProcessingGate.SourceAiPermit p,byte[] b,String t){throw new AssertionError("No network");}};
+                    public List<DerivedSegment> describe(AiProcessingGate.SourceAiPermit p,byte[] b,MediaUnderstandingRequest t){throw new AssertionError("No network");}};
                 return bean;
             }};
             try(var context=new SpringApplicationBuilder(Application.class).properties(properties).initializers(c->c.getBeanFactory().addBeanPostProcessor(fake)).run()) {

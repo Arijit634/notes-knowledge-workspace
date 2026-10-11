@@ -47,16 +47,43 @@ class DerivationExecutor {
                         return content;
                     } catch(java.io.IOException unavailable) {throw new DerivationFailure(KnowledgeWork.Failure.TRANSIENT_DEPENDENCY);}
                 });
-                var pages=initial.source().modality().equals("pdf")?coordinated(claim,dispatches,permit->material.pdfPages(bytes)):List.<org.notesknowledge.knowledge.spi.PrivateDerivationSource.PdfPage>of();
-                var extracted=new ArrayList<DerivedSegment>();
-                for(var page:pages)for(var chunk:new MarkdownChunker().chunk(page.text())) {
-                    if(extracted.size()>=512)throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);
-                    extracted.add(new DerivedSegment(chunk.text(),"pdf_text","",chunk.start(),chunk.end(),page.page(),null,null,null,null,null,null));
+                if(understand==null||!understand.available())throw new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE);
+                var budget=new MediaBudget();
+                if(initial.source().modality().equals("pdf")) {
+                    if(!work.heartbeat(claim))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
+                    var pages=coordinated(claim,dispatches,permit->material.pdfPages(bytes));
+                    Integer count=initial.source().pages();
+                    if(count==null||pages.size()!=count)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
+                    var extracted=new ArrayList<DerivedSegment>();
+                    for(int i=0;i<count;i++) {
+                        var page=pages.get(i);
+                        if(page.page()!=i+1)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
+                        for(var chunk:new MarkdownChunker().chunk(page.text())) {
+                            if(extracted.size()>=512)throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);
+                            extracted.add(new DerivedSegment(chunk.text(),"pdf_text","",chunk.start(),chunk.end(),page.page(),null,null,null,null,null,null));
+                        }
+                    }
+                    // Text-readable pages can still contain meaningful diagrams or scanned
+                    // regions. Inspect every page in bounded scopes, never just a top-K subset.
+                    for(int first=1;first<=count;first+=MediaUnderstandingRequest.PDF_BATCH_PAGES) {
+                        int last=Math.min(count,first+MediaUnderstandingRequest.PDF_BATCH_PAGES-1);
+                        var request=new MediaUnderstandingRequest("application/pdf",first,last,null);
+                        for(var segment:understand(claim,dispatches,understand,bytes,request,budget)) {
+                            String nativeText=pages.get(segment.page()-1).text().strip().replaceAll("\\s+"," ");
+                            if(!nativeText.contains(segment.text().strip().replaceAll("\\s+"," ")))extracted.add(segment);
+                        }
+                        if(extracted.size()>512)throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);
+                    }
+                    // No silent mixed/scan-only completion if a textless page was omitted.
+                    for(var page:pages)if(page.text().isBlank()&&extracted.stream().noneMatch(s->s.page()==page.page()))
+                        throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
+                    segments=List.copyOf(extracted);
+                } else {
+                    // The full accepted WAV (<=10 MiB) fits the encoded budget. Keep its
+                    // original bytes and time base; no transformed-source approval is inferred.
+                    var request=new MediaUnderstandingRequest(initial.source().mediaType(),null,null,initial.source().durationSeconds());
+                    segments=understand(claim,dispatches,understand,bytes,request,budget);
                 }
-                if(extracted.isEmpty()) {
-                    if(understand==null||!understand.available())throw new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE);
-                    segments=coordinated(claim,dispatches,permit->List.copyOf(understand.describe(permit,bytes,initial.source().mediaType())));
-                } else segments=List.copyOf(extracted);
                 validateMedia(initial,segments);
             }
             if(segments.isEmpty()||segments.size()>512)throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);
@@ -94,6 +121,26 @@ class DerivationExecutor {
         }
         finally {metrics.counter("knowledge.derivation.outcome","outcome",outcome).increment();}
     }
+    private List<DerivedSegment> understand(KnowledgeWork.Claim claim,List<org.notesknowledge.DispatchCoordinator.Handle> dispatches,
+            MediaUnderstandingPort provider,byte[] bytes,MediaUnderstandingRequest request,MediaBudget budget) {
+        // Whole-file inline budget also applies to controlled adapters, not only Google.
+        request.requireInlineBudget(bytes.length,GoogleDerivationAdapters.mediaInstruction(request),GoogleDerivationAdapters.mediaSchema());
+        budget.take(bytes.length);
+        if(!work.heartbeat(claim))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
+        var segments=coordinated(claim,dispatches,permit->provider.describe(permit,bytes,request));
+        GoogleDerivationAdapters.validateScope(request,segments);
+        if(segments.isEmpty()&&!request.mediaType().equals("application/pdf"))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
+        return List.copyOf(segments);
+    }
+    private static final class MediaBudget {
+        private final long started=System.nanoTime();
+        private int calls;private long bytes;
+        void take(int size) {
+            bytes+=size;
+            if(++calls>16||bytes>160L*1024*1024||System.nanoTime()-started>180_000_000_000L)
+                throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);
+        }
+    }
     private <T> T coordinated(KnowledgeWork.Claim claim,List<org.notesknowledge.DispatchCoordinator.Handle> outcomes,
             java.util.function.Function<AiProcessingGate.SourceAiPermit,T> effect) {
         var expected=claim.intent().expected();
@@ -114,7 +161,7 @@ class DerivationExecutor {
             boolean valid=switch(permit.source().modality()) {
                 case "image" -> segment.kind().equals("whole_image")||segment.kind().equals("image_region");
                 case "audio" -> segment.kind().equals("transcript");
-                case "video" -> segment.kind().equals("transcript")||segment.kind().equals("video_scene");
+                case "video" -> segment.kind().equals("video_scene");
                 case "pdf" -> segment.kind().equals("pdf_text");
                 default -> false;
             };

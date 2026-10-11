@@ -26,6 +26,14 @@ public final class MeaningfulMediaFixtures {
         };
     }
     private static MockMultipartFile file(String name,String type,byte[] bytes) {return new MockMultipartFile("file",name,type,bytes);}
+    /** Legal inert top-level free box pads a real video without changing samples/timing. */
+    public static byte[] paddedVideo(int length)throws Exception {
+        byte[] original=video();
+        if(length<original.length+8)throw new IllegalArgumentException("Synthetic padding bound");
+        byte[] padded=java.util.Arrays.copyOf(original,length);
+        ByteBuffer.wrap(padded).position(original.length).putInt(length-original.length).put("free".getBytes(StandardCharsets.US_ASCII));
+        return padded;
+    }
     public static BufferedImage scene() {
         var image=new BufferedImage(160,96,BufferedImage.TYPE_INT_RGB);var g=image.createGraphics();
         try {g.setColor(Color.WHITE);g.fillRect(0,0,160,96);g.setColor(Color.BLUE);g.fillRect(8,8,48,48);

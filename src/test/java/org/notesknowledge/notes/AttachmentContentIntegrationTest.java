@@ -97,6 +97,15 @@ class AttachmentContentIntegrationTest {
     @BeforeEach void reset() { store.clear();clearInvocations(validators);org.mockito.Mockito.when(rates.evaluate(any())).thenReturn(new RateLimitPort.Allowed()); }
     @AfterEach void noParsingOrTransactionalStoreIo() { verifyNoInteractions(validators);assertThat(store.sawTransaction).isFalse(); }
 
+    @Test void legacyVideoAboveNewAdmissionLimitRetainsAuthorizedRangeAccess() throws Exception {
+        Fixture f=fixture("video","video/mp4",MeaningfulMediaFixtures.paddedVideo(25*1024*1024),"legacy.mp4");
+        var response=getContent(f,"bytes=0-31").getResponse();
+        assertThat(response.getStatus()).isEqualTo(206);
+        assertThat(response.getContentAsByteArray()).isEqualTo(Arrays.copyOf(f.bytes(),32));
+        assertThat(response.getHeader("Content-Range")).isEqualTo("bytes 0-31/26214400");
+        assertThat(store.maxReadRequest).isLessThanOrEqualTo(16*1024);verifyNoInteractions(validators);
+    }
+
     @ParameterizedTest @CsvSource({"image,image/png","image,image/jpeg","audio,audio/wav","video,video/mp4","pdf,application/pdf"})
     void fullRepresentationIsExactTrustedNoStoreAndCannotExposeCustody(String kind,String type) throws Exception {
         Fixture f=fixture(kind,type,media(type),"synthetic file."+kind);

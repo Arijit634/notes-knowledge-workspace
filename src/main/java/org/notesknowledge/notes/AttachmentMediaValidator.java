@@ -28,7 +28,7 @@ import org.notesknowledge.websupport.ApiFailureException;
 /** Bounded validation only. No media extraction, provider dispatch or content indexing. */
 final class AttachmentMediaValidator implements AutoCloseable {
     static final int IMAGE_BYTES = 5 * 1024 * 1024, AUDIO_BYTES = 10 * 1024 * 1024;
-    static final int PDF_BYTES = 10 * 1024 * 1024, VIDEO_BYTES = 25 * 1024 * 1024;
+    static final int PDF_BYTES = 10 * 1024 * 1024, VIDEO_BYTES = 20_000_000;
     static final int DIMENSION = 4096, PAGES = 100, SECONDS = 300;
     static final long PIXELS = 8_294_400;
     private AttachmentParserRuntime runtime;

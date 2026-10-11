@@ -272,7 +272,7 @@ class PrivateDerivationIntegrationTest {
         var fake=gate.issueForDispatch(syntheticClaim,handle).orElseThrow();
         assertThatThrownBy(()->adapters.googleTextEmbeddingPort(configuration,sdk).embed(fake,List.of("Synthetic")))
             .isInstanceOfSatisfying(DerivationFailure.class,failure->assertThat(failure.category).isEqualTo(KnowledgeWork.Failure.INVALID_SOURCE));
-        assertThatThrownBy(()->adapters.googleMediaUnderstandingPort(configuration,sdk,json).describe(fake,new byte[0],"image/png"))
+        assertThatThrownBy(()->adapters.googleMediaUnderstandingPort(configuration,sdk,json).describe(fake,new byte[0],new MediaUnderstandingRequest("image/png",null,null,null)))
             .isInstanceOfSatisfying(DerivationFailure.class,failure->assertThat(failure.category).isEqualTo(KnowledgeWork.Failure.INVALID_SOURCE));
         unpaidGemini();approve(noteExpected());
         assertThatThrownBy(fake::requireGoogleDispatch).isInstanceOf(DerivationFailure.class);
@@ -546,9 +546,9 @@ class PrivateDerivationIntegrationTest {
         var projection=json.readTree(mvc.perform(get("/api/notes/"+note+"/ai-processing").cookie(browser.cookie)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
         assertThat(projection.get("attachments").get(0).get("status").asText()).isEqualTo("ready");
     }
-    @Test void pdfTextUsesBoundedDeterministicForkWithActualPageInsteadOfMediaProvider() throws Exception {
+    @Test void pdfTextPreservesNativePageOffsetsAlongsideVisualInspection() throws Exception {
         UUID attachment=upload("pdf-text");executor.execute(claim(new PrivateAiSourceCurrentness.Expected(owner,note,attachment,1,1,1L),"pdf"));
-        assertThat(readyCount()).isEqualTo(1);verify(media,never()).describe(any(),any(),any());
+        assertThat(readyCount()).isEqualTo(1);verify(media).describe(any(),any(),any());
         assertThat(jdbc.queryForList("select page_number from knowledge.private_derived_segment where owner_user_id=?",Integer.class,owner)).containsOnly(1);
         assertThat(jdbc.queryForObject("select surrogate_text from knowledge.private_derived_segment where owner_user_id=?",String.class,owner)).contains("Synthetic PDF page evidence");
     }
@@ -584,6 +584,36 @@ class PrivateDerivationIntegrationTest {
         UUID attachment=upload("audio");var claim=claim(new PrivateAiSourceCurrentness.Expected(owner,note,attachment,1,1,1L),"audio");
         doReturn(List.of(new DerivedSegment("synthetic","transcript","",null,null,null,0.0,900.0,null,null,null,null))).when(media).describe(any(),any(),any());
         executor.execute(claim);assertThat(state(claim)).isEqualTo("failed");assertThat(readyCount()).isZero();verify(embeddings,never()).embed(any(),any());
+    }
+    @ParameterizedTest @ValueSource(strings={"ai-off","attachment-delete"})
+    void pdfInvalidationBetweenBatchesForbidsEveryLaterDispatchAndActivation(String mutation)throws Exception {
+        var response=mvc.perform(multipart("/api/notes/"+note+"/attachments")
+            .file(org.notesknowledge.notes.QualityMediaFixtures.pdf(18,false,false)).cookie(browser.cookie).header("X-CSRF-TOKEN",browser.csrf))
+            .andExpect(status().isCreated()).andReturn().getResponse();
+        UUID id=UUID.fromString(json.readTree(response.getContentAsString()).get("id").asText());
+        var claim=claim(new PrivateAiSourceCurrentness.Expected(owner,note,id,1,1,1L),"pdf");
+        var captured=new CountDownLatch(1);var release=new CountDownLatch(1);var committed=new CountDownLatch(1);
+        doAnswer(call->{
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            var p=(AiProcessingGate.SourceAiPermit)call.getArgument(0);p.requireDispatch();
+            assertThat(((MediaUnderstandingRequest)call.getArgument(2)).firstPage()).isEqualTo(1);
+            captured.countDown();assertThat(release.await(15,TimeUnit.SECONDS)).isTrue();return List.of();
+        }).when(media).describe(any(),any(),any());
+        try(var pool=Executors.newFixedThreadPool(2)) {
+            var worker=pool.submit(()->executor.execute(claim));assertThat(captured.await(15,TimeUnit.SECONDS)).isTrue();
+            doAnswer(call->{assertThat(committed.await(15,TimeUnit.SECONDS)).isTrue();return call.callRealMethod();}).when(coordination).dispatch(any(),any());
+            String path="/api/notes/"+note+"/attachments/"+id;
+            String etag=mvc.perform(get(path).cookie(browser.cookie)).andExpect(status().isOk()).andReturn().getResponse().getHeader("ETag");
+            var invalidation=pool.submit(()->{
+                if(mutation.equals("ai-off"))disable();
+                else mvc.perform(delete(path).cookie(browser.cookie).header("X-CSRF-TOKEN",browser.csrf).header("If-Match",etag)).andExpect(status().isNoContent());
+                committed.countDown();return null;
+            });
+            awaitAdvisoryWaiter();assertThat(invalidation.isDone()).isFalse();release.countDown();
+            invalidation.get(20,TimeUnit.SECONDS);worker.get(20,TimeUnit.SECONDS);
+        }finally{release.countDown();committed.countDown();}
+        verify(media,times(1)).describe(any(),any(),any());verify(embeddings,never()).embed(any(),any());
+        assertThat(readyCount()).isZero();assertThat(state(claim)).isEqualTo("obsolete");
     }
     @ParameterizedTest @ValueSource(strings={"note-disable","note-save","image-disable","image-save"})
     void invalidationWinsBeforeCrossSessionDispatch(String scenario) throws Exception {
@@ -721,8 +751,7 @@ class PrivateDerivationIntegrationTest {
         return switch(kind) {
             case "image" -> List.of(new DerivedSegment("Synthetic whole image caption","whole_image","",null,null,null,null,null,null,null,null,null));
             case "audio" -> List.of(new DerivedSegment("Synthetic transcript","transcript","",null,null,null,0.0,0.5,null,null,null,null));
-            case "video" -> List.of(new DerivedSegment("Synthetic transcript","transcript","",null,null,null,0.0,0.5,null,null,null,null),
-                new DerivedSegment("Synthetic sampled scene","video_scene","",null,null,null,0.5,0.5,null,null,null,null));
+            case "video" -> List.of(new DerivedSegment("Synthetic sampled scene","video_scene","",null,null,null,0.0,0.5,null,null,null,null));
             case "pdf" -> List.of(new DerivedSegment("Synthetic PDF text","pdf_text","",null,null,1,null,null,null,null,null,null));
             default -> throw new IllegalArgumentException("Unknown modality");
         };

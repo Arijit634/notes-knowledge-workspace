@@ -181,17 +181,26 @@ class GoogleDerivationAdaptersTest {
     }
     @ParameterizedTest @ValueSource(strings={"image/png","audio/wav","video/mp4","application/pdf"})
     void fourMediaModalitiesUseInlineBytesAndStructuredSchema(String type) throws Exception {
-        generated("[{\"text\":\"Synthetic description\",\"kind\":\"whole_image\",\"heading\":\"\"}]");
+        String segment=switch(type) {
+            case "application/pdf" -> "{\"text\":\"Synthetic scanned fact\",\"kind\":\"pdf_text\",\"heading\":\"\",\"page\":1}";
+            case "audio/wav","video/mp4" -> "{\"text\":\"Synthetic timed fact\",\"kind\":\""+(type.equals("audio/wav")?"transcript":"video_scene")+"\",\"heading\":\"\",\"timeStart\":0,\"timeEnd\":0.5}";
+            default -> "{\"text\":\"Synthetic description\",\"kind\":\"whole_image\",\"heading\":\"\"}";
+        };
+        generated("{\"complete\":true,\"checkedPages\":"+(type.equals("application/pdf")?"[1]":"[]")+",\"noSpeech\":false,\"segments\":["+segment+"]}");
         String kind=switch(type){case "image/png"->"image";case "audio/wav"->"audio";case "video/mp4"->"video";default->"pdf";};
         byte[] bytes=org.notesknowledge.notes.DerivationMediaFixtures.media(kind).getBytes();
-        var result=adapters.googleMediaUnderstandingPort(config("gemini-embedding-2"),clients,json).describe(sourcePermit(),bytes,type);
+        var scope=new MediaUnderstandingRequest(type,type.equals("application/pdf")?1:null,type.equals("application/pdf")?1:null,
+            type.equals("audio/wav")||type.equals("video/mp4")?.5:null);
+        var result=adapters.googleMediaUnderstandingPort(config("gemini-embedding-2"),clients,json).describe(sourcePermit(),bytes,scope);
         assertThat(result).hasSize(1);
         var wire=json.readTree(requests.getFirst());
         var inline=wire.get("contents").get(0).get("parts").get(1).get("inlineData");
         assertThat(inline.get("mimeType").asText()).isEqualTo(type);
         assertThat(Base64.getDecoder().decode(inline.get("data").asText())).isEqualTo(bytes);
-        assertThat(wire.get("generationConfig").get("responseJsonSchema").get("items").get("properties").get("page").has("anyOf")).isTrue();
+        assertThat(wire.get("generationConfig").get("responseJsonSchema").get("properties").get("segments").get("items").get("properties").get("page").has("anyOf")).isTrue();
         assertThat(requests.getFirst()).contains("responseJsonSchema").doesNotContain("fileUri","candidateCount","googleSearch","cachedContent","nullable");
+        assertThat(requestPaths).hasSize(1).allSatisfy(path->assertThat(path).endsWith(":generateContent").doesNotContain("files","upload"));
+        assertThat(requests.getFirst().getBytes(StandardCharsets.UTF_8).length).isLessThan(MediaUnderstandingRequest.MAX_INLINE_REQUEST_BYTES);
         // Actual synthetic upload fixtures, but no claim of live media understanding or native embeddings.
     }
     @Test void quotaAndUnavailableStatusesAreSanitizedAndNeverRetried() {
@@ -208,6 +217,36 @@ class GoogleDerivationAdaptersTest {
         assertThatThrownBy(()->port.generate(evidence(),query,"answer",List.of(new StructuredKnowledgePort.Evidence("e0","Synthetic","note"))))
             .isInstanceOfSatisfying(DerivationFailure.class,f->assertThat(f.category).isEqualTo(KnowledgeWork.Failure.QUOTA));
         assertThat(requests).hasSize(6);
+    }
+    @Test void partialTruncatedMissingCoverageAndUnknownTimingNeverReturnSuccessfulMedia() {
+        var port=adapters.googleMediaUnderstandingPort(config("gemini-embedding-2"),clients,json);
+        var pdf=new MediaUnderstandingRequest("application/pdf",1,2,null);
+        for(String output:List.of("{\"complete\":false,\"checkedPages\":[1,2],\"noSpeech\":false,\"segments\":[]}",
+                "{\"complete\":true,\"checkedPages\":[1],\"noSpeech\":false,\"segments\":[]}")) {
+            generated(output);
+            assertThatThrownBy(()->port.describe(sourcePermit(),new byte[]{1},pdf)).isInstanceOf(DerivationFailure.class);
+        }
+        generated("{\"complete\":true,\"checkedPages\":[1,2],\"noSpeech\":false,\"segments\":[]}");response=response.replace("STOP","MAX_TOKENS");
+        assertThatThrownBy(()->port.describe(sourcePermit(),new byte[]{1},pdf)).isInstanceOf(DerivationFailure.class);
+        generated("{\"complete\":true,\"checkedPages\":[],\"noSpeech\":false,\"segments\":[{\"text\":\"uncertain\",\"kind\":\"transcript\",\"heading\":\"\"}]}");
+        assertThatThrownBy(()->port.describe(sourcePermit(),new byte[]{1},new MediaUnderstandingRequest("audio/wav",null,null,3.))).isInstanceOf(DerivationFailure.class);
+        assertThat(requests).hasSize(4);assertThat(requestPaths).allSatisfy(p->assertThat(p).endsWith(":generateContent"));
+    }
+    @Test void inlineByteAndVideoDurationBudgetRejectBeforeAnyHttpRequest() {
+        var port=adapters.googleMediaUnderstandingPort(config("gemini-embedding-2"),clients,json);
+        assertThatThrownBy(()->port.describe(sourcePermit(),new byte[20_000_000],new MediaUnderstandingRequest("video/mp4",null,null,2.))).isInstanceOf(DerivationFailure.class);
+        assertThatThrownBy(()->port.describe(sourcePermit(),new byte[]{1},new MediaUnderstandingRequest("video/mp4",null,null,300.))).isInstanceOf(DerivationFailure.class);
+        assertThat(requests).isEmpty();assertThat(requestPaths).isEmpty();
+    }
+    @Test void onlyMediaExtractorLineagesChangeAndTextLineageKeepsItsExactHash() throws Exception {
+        var policy=new ProcessingPolicyService.AcknowledgedProcessingPolicy(new UUID(0,3),1,"a".repeat(64));
+        for(String modality:List.of("note","image","audio","video","pdf")) {
+            var lineage=EmbeddingLineage.create(config("gemini-embedding-2"),policy,modality);
+            String legacy=lineage.configuration().replace("media-scoped-coverage-surrogate-v2","media-typed-bounded-v1");
+            String hash=java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(legacy.getBytes(StandardCharsets.UTF_8)));
+            if(modality.equals("note"))assertThat(lineage.id()).isEqualTo(hash);
+            else assertThat(lineage.id()).isNotEqualTo(hash);
+        }
     }
     @Test void wrongQueryAndMissingKeyFailBeforeNetwork() {
         var port=adapters.googleStructuredKnowledgePort(config("gemini-embedding-2"),clients,json);

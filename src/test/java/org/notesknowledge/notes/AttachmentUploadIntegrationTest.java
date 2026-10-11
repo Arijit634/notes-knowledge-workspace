@@ -80,6 +80,18 @@ class AttachmentUploadIntegrationTest {
         store.clear();
     }
 
+    @Test void newMp4DecimalBoundaryIsEnforcedAcrossUploadAndStoredAccess() throws Exception {
+        UUID owner=account(),note=note(owner);Browser browser=browser(owner,"ROLE_USER");
+        byte[] bytes=MeaningfulMediaFixtures.paddedVideo(20_000_000);
+        var accepted=upload(browser,note,new MockMultipartFile("file","bounded.mp4","video/mp4",bytes)).andExpect(status().isCreated()).andReturn();
+        var core=json.readTree(accepted.getResponse().getContentAsString());assertThat(core.get("sizeBytes").asLong()).isEqualTo(20_000_000);
+        mvc.perform(get(path(note)+"/"+core.get("id").asText()+"/content").cookie(browser.cookie()).header("Range","bytes=0-31"))
+            .andExpect(status().isPartialContent());
+        upload(browser,note,new MockMultipartFile("file","oversized.mp4","video/mp4",MeaningfulMediaFixtures.paddedVideo(20_000_001)))
+            .andExpect(status().isContentTooLarge());
+        assertThat(count(note)).isEqualTo(1);assertThat(store.bytes).hasSize(1);assertThat(store.sawTransaction).isFalse();
+    }
+
     @ParameterizedTest @ValueSource(strings = {"image", "audio", "video", "pdf"})
     void acceptedKindsCommitSafeCoreWithoutChangingNoteRevision(String kind) throws Exception {
         UUID owner = account(), note = note(owner); Browser browser = browser(owner, "ROLE_USER");
@@ -255,7 +267,7 @@ class AttachmentUploadIntegrationTest {
     @Test void realServletFileAndRequestBoundsRejectBeforeStorage() throws Exception {
         UUID owner = account(), note = note(owner); Browser browser = browser(owner, "ROLE_USER");
         try (var client = java.net.http.HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(5)).build()) {
-            for (int length : new int[]{25 * 1024 * 1024 + 1, 26 * 1024 * 1024 + 1}) {
+            for (int length : new int[]{20_000_001, 25 * 1024 * 1024 + 1, 26 * 1024 * 1024 + 1}) {
                 var payload = new java.io.ByteArrayOutputStream();
                 payload.write("--synthetic-boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"synthetic.mp4\"\r\nContent-Type: video/mp4\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
                 payload.write(new byte[length]); payload.write("\r\n--synthetic-boundary--\r\n".getBytes(StandardCharsets.US_ASCII));
