@@ -293,6 +293,74 @@ class PrivateDerivationIntegrationTest {
         assertThat(response).doesNotContain(owner.toString(),note.toString(),fingerprint,"approvedSourceFingerprints","revision","generation");
         assertThat(output.getAll()).doesNotContain(owner.toString(),note.toString(),fingerprint,ProviderDispatchPolicy.fingerprint(new PrivateAiSourceCurrentness.Expected(owner,note,null,2,1,null)));
     }
+    @Test void exactChildPermitRequiresBothApprovalsBytesLineageAndAnActiveOutsideTransactionScope() throws Exception {
+        UUID attachment=upload("pdf");var expected=new PrivateAiSourceCurrentness.Expected(owner,note,attachment,1,1,1L);
+        unpaidGemini();approve(expected);var attempt=claim(expected,"pdf");
+        AiProcessingGate.SourceAiPermit issued;var bytes=new byte[]{1,2};
+        TransformedMediaIdentity child;
+        try(var handle=coordination.dispatch(owner,note)) {
+            issued=gate.issueForDispatch(attempt,handle).orElseThrow();
+            child=approvedTestChild(issued,bytes);
+            var permit=issued;var identity=child;
+            assertThatThrownBy(()->permit.requireGoogleChildDispatch(identity,bytes)).isInstanceOf(DerivationFailure.class);
+            when(dispatchConfiguration.approvedChildFingerprints()).thenReturn(List.of(child.approvalFingerprint()));
+            issued.requireGoogleChildDispatch(child,bytes);
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            assertThatThrownBy(()->permit.requireGoogleChildDispatch(identity,new byte[]{1,3})).isInstanceOf(DerivationFailure.class);
+            assertThatThrownBy(()->new TransactionTemplate(transactions).execute(s->{permit.requireGoogleChildDispatch(identity,bytes);return true;}))
+                .isInstanceOf(DerivationFailure.class);
+            // Independent current original approval remains mandatory even with exact child approval.
+            when(dispatchConfiguration.approvedSourceFingerprints()).thenReturn(List.of());
+            assertThatThrownBy(()->permit.requireGoogleChildDispatch(identity,bytes)).isInstanceOf(DerivationFailure.class);
+            approve(expected);issued.requireGoogleChildDispatch(child,bytes);
+        }
+        var permit=issued;var identity=child;
+        assertThatThrownBy(()->permit.requireGoogleChildDispatch(identity,bytes)).isInstanceOf(org.notesknowledge.websupport.ApiFailureException.class);
+        verifyNoInteractions(embeddings,media);
+    }
+    @ParameterizedTest @ValueSource(strings={"disable","save","trash","suspend","policy","lineage","child-revoke","lease-expire"})
+    void nextChildDispatchRechecksCurrentAuthorityInsteadOfReusingItsPreviousPermit(String mutation) throws Exception {
+        UUID attachment=upload("pdf");var expected=new PrivateAiSourceCurrentness.Expected(owner,note,attachment,1,1,1L);
+        unpaidGemini();approve(expected);var attempt=claim(expected,"pdf");var bytes=new byte[]{1,2};
+        try(var handle=coordination.dispatch(owner,note)) {
+            var permit=gate.issueForDispatch(attempt,handle).orElseThrow();var child=approvedTestChild(permit,bytes);
+            when(dispatchConfiguration.approvedChildFingerprints()).thenReturn(List.of(child.approvalFingerprint()));
+            permit.requireGoogleChildDispatch(child,bytes);
+        }
+        if(mutation.equals("child-revoke")) {
+            // Same global coordination used for a quiesced cross-instance configuration rollout.
+            try(var ignored=coordination.globalMutation()){when(dispatchConfiguration.approvedChildFingerprints()).thenReturn(List.of());}
+        } else if(mutation.equals("lease-expire"))
+            jdbc.update("update knowledge.knowledge_work_intent set lease_until=clock_timestamp()-interval '1 second' where knowledge_work_intent_id=?",attempt.intent().id());
+        else authorityMutation(mutation);
+        try(var handle=coordination.dispatch(owner,note)) {
+            var next=gate.issueForDispatch(attempt,handle);
+            if(mutation.equals("child-revoke")) {
+                assertThat(next).isPresent();var permit=next.orElseThrow();var child=approvedTestChild(permit,bytes);
+                assertThatThrownBy(()->permit.requireGoogleChildDispatch(child,bytes)).isInstanceOf(DerivationFailure.class);
+            } else assertThat(next).isEmpty();
+        }
+        assertThat(readyCount()).isZero();verifyNoInteractions(embeddings,media);
+    }
+    private TransformedMediaIdentity approvedTestChild(AiProcessingGate.SourceAiPermit permit,byte[] bytes) {
+        // Deliberately no media transform/provider call: this proves only the authorization seam.
+        return new TransformedMediaIdentity(permit.source().expected(),"a".repeat(64),permit.source().sizeBytes(),"application/pdf",
+            "pdf-page-v1","synthetic-v1","a".repeat(64),"a".repeat(64),TransformedMediaIdentity.digest(bytes),bytes.length,"image/png",
+            new TransformedMediaIdentity.Scope("pdf_pages",1,1,0,0,0),permit.lineage().id(),"gemini",configuration.mediaModel(),"media-understanding","a".repeat(64));
+    }
+    @Test void wholeAttemptBudgetVetoAfterEmbeddingDoesNotActivateAnyPartialGeneration() {
+        var returned=new java.util.concurrent.atomic.AtomicBoolean();
+        doAnswer(call->{returned.set(true);return List.of(vector());}).when(embeddings).embed(any(),any());
+        try(var budgets=mockConstruction(DerivationAttemptBudget.class,(budget,context)->{
+            doAnswer(call->{if(returned.get())throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);return null;}).when(budget).check();
+        })) {
+            var attempt=claim(noteExpected(),"note");executor.execute(attempt);
+            assertThat(budgets.constructed()).hasSize(1);
+            verify(budgets.constructed().getFirst()).providerRequest(eq(false),anyLong());
+            assertThat(state(attempt)).isEqualTo("failed");assertThat(readyCount()).isZero();
+            verify(representations,never()).activate(any(),any(),any(),any());
+        }
+    }
     private void unpaidGemini(){when(configuration.provider()).thenReturn("gemini");when(configuration.tier()).thenReturn("unpaid");when(configuration.region()).thenReturn("global");}
     private void approve(PrivateAiSourceCurrentness.Expected e){when(dispatchConfiguration.dispatchPolicy()).thenReturn("unpaid-synthetic-demo");when(dispatchConfiguration.approvedSourceFingerprints()).thenReturn(List.of(ProviderDispatchPolicy.fingerprint(e)));}
     private int ownerWorkCount(){return jdbc.queryForObject("select count(*) from knowledge.knowledge_work_intent where owner_user_id=?",Integer.class,owner);}

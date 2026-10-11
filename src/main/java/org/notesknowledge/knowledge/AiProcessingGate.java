@@ -51,6 +51,14 @@ class AiProcessingGate {
             if(!unpaidGeminiApproved||!dispatchPolicy.permitsUnpaidGemini(configuration,source.expected()))
                 throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
         }
+        void requireGoogleChildDispatch(TransformedMediaIdentity child,byte[] bytes) {
+            requireGoogleDispatch();
+            if(child==null||!source.expected().equals(child.original())||source.sizeBytes()!=child.originalBytes()
+                    ||!source.mediaType().equals(child.originalType())||!lineage.id().equals(child.lineage())
+                    ||!dispatchPolicy.permitsUnpaidGeminiChild(configuration,child))
+                throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
+            child.requireBytes(bytes);
+        }
         @Override public String toString(){return "SourceAiPermit[REDACTED]";}
     }
     @Transactional(timeout=3)

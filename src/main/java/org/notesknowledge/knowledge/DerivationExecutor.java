@@ -26,6 +26,7 @@ class DerivationExecutor {
     }
     void execute(KnowledgeWork.Claim claim) {
         String outcome="deferred";
+        var budget=new DerivationAttemptBudget();
         try {
             var initial=gate.issue(claim).orElseThrow(()->new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE));
             var embed=embeddings.getIfAvailable();
@@ -33,6 +34,7 @@ class DerivationExecutor {
             var dispatches=new ArrayList<org.notesknowledge.DispatchCoordinator.Handle>();
             // Acquisition is also serialized; the later provider dispatch still obtains a NEW gate/lock.
             var material=coordinated(claim,dispatches,permit->transactions.acquire(claim));
+            budget.check();
             List<DerivedSegment> segments;
             if(initial.source().modality().equals("note"))segments=new MarkdownChunker().chunk(material.markdown());
             else {
@@ -48,10 +50,10 @@ class DerivationExecutor {
                     } catch(java.io.IOException unavailable) {throw new DerivationFailure(KnowledgeWork.Failure.TRANSIENT_DEPENDENCY);}
                 });
                 if(understand==null||!understand.available())throw new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE);
-                var budget=new MediaBudget();
                 if(initial.source().modality().equals("pdf")) {
                     if(!work.heartbeat(claim))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
                     var pages=coordinated(claim,dispatches,permit->material.pdfPages(bytes));
+                    budget.check();
                     Integer count=initial.source().pages();
                     if(count==null||pages.size()!=count)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
                     var extracted=new ArrayList<DerivedSegment>();
@@ -94,10 +96,20 @@ class DerivationExecutor {
             for(int start=0;start<segments.size();start+=batchSize) {
                 if(!work.heartbeat(claim))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
                 var batch=segments.subList(start,Math.min(start+batchSize,segments.size()));
-                var output=coordinated(claim,dispatches,permit->embed.embed(permit,batch.stream().map(DerivedSegment::text).toList()));
+                // JSON escaping can expand control characters sixfold. Account conservatively
+                // for the request envelope without retaining content in budget/telemetry state.
+                long encodedEstimate=MediaUnderstandingRequest.ENVELOPE_RESERVE_BYTES;
+                for(var segment:batch)encodedEstimate+=6L*segment.text().getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+                budget.providerRequest(false,encodedEstimate);
+                var output=coordinated(claim,dispatches,permit->{
+                    budget.check();
+                    return embed.embed(permit,batch.stream().map(DerivedSegment::text).toList());
+                });
+                budget.check();
                 if(output.size()!=batch.size())throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
                 for(float[] vector:output)vectors.add(initial.lineage().prepare(vector));
             }
+            budget.check();
             if(!transactions.activate(claim,initial.lineage(),segments,vectors,List.copyOf(dispatches))){work.obsolete(claim);outcome="obsolete";}
             else outcome="activated";
         } catch(DerivationFailure failure) {
@@ -122,24 +134,22 @@ class DerivationExecutor {
         finally {metrics.counter("knowledge.derivation.outcome","outcome",outcome).increment();}
     }
     private List<DerivedSegment> understand(KnowledgeWork.Claim claim,List<org.notesknowledge.DispatchCoordinator.Handle> dispatches,
-            MediaUnderstandingPort provider,byte[] bytes,MediaUnderstandingRequest request,MediaBudget budget) {
+            MediaUnderstandingPort provider,byte[] bytes,MediaUnderstandingRequest request,DerivationAttemptBudget budget) {
         // Whole-file inline budget also applies to controlled adapters, not only Google.
         request.requireInlineBudget(bytes.length,GoogleDerivationAdapters.mediaInstruction(request),GoogleDerivationAdapters.mediaSchema());
-        budget.take(bytes.length);
+        long encodedEstimate=4L*((bytes.length+2L)/3)+MediaUnderstandingRequest.ENVELOPE_RESERVE_BYTES
+            +GoogleDerivationAdapters.mediaInstruction(request).getBytes(java.nio.charset.StandardCharsets.UTF_8).length
+            +GoogleDerivationAdapters.mediaSchema().getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+        budget.providerRequest(true,encodedEstimate);
         if(!work.heartbeat(claim))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
-        var segments=coordinated(claim,dispatches,permit->provider.describe(permit,bytes,request));
+        var segments=coordinated(claim,dispatches,permit->{
+            budget.check();
+            return provider.describe(permit,bytes,request);
+        });
+        budget.check();
         GoogleDerivationAdapters.validateScope(request,segments);
         if(segments.isEmpty()&&!request.mediaType().equals("application/pdf"))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
         return List.copyOf(segments);
-    }
-    private static final class MediaBudget {
-        private final long started=System.nanoTime();
-        private int calls;private long bytes;
-        void take(int size) {
-            bytes+=size;
-            if(++calls>16||bytes>160L*1024*1024||System.nanoTime()-started>180_000_000_000L)
-                throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);
-        }
     }
     private <T> T coordinated(KnowledgeWork.Claim claim,List<org.notesknowledge.DispatchCoordinator.Handle> outcomes,
             java.util.function.Function<AiProcessingGate.SourceAiPermit,T> effect) {
