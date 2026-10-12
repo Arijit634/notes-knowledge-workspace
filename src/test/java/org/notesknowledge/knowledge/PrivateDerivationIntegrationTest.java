@@ -102,6 +102,7 @@ class PrivateDerivationIntegrationTest {
         owner=account();note=note(owner,true);browser=browser(owner);policy=policy(1,"a");ack(owner,policy);
     }
     @AfterEach void clear(){SecurityContextHolder.clearContext();}
+    @AfterAll static void closeNativePdfQualification(){org.notesknowledge.notes.PdfPageRuntimeFixtures.closeNativeQualification();}
     @Test void frozenCorpusCompletesAndInterruptedLongNoteResumesFromDurableSyntheticResults(@org.junit.jupiter.api.io.TempDir java.nio.file.Path checkpoint)throws Exception {
         unpaidGemini();when(configuration.embeddingModel()).thenReturn("gemini-embedding-2");when(configuration.dimension()).thenReturn(768);
         var journal=new java.util.concurrent.atomic.AtomicReference<>(new QualificationJournal(checkpoint,"offline-recovery-v1"));
