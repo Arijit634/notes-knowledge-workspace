@@ -24,6 +24,13 @@ public final class PdfPageRasterWorker {
     public static void main(String[] arguments) {
         // No input-selected path, argument, class or environment configuration. Diagnostics
         // go nowhere: an error is only a nonzero exit, never a PDF-controlled stack/message.
+        var protocolOutput=System.out;
+        // Libraries can initialize a console logger lazily while opening the PDF. Keep
+        // their output off both the private protocol and stderr even without an external
+        // logging configuration (including a minimal jlink deployment).
+        var discard=new java.io.PrintStream(java.io.OutputStream.nullOutputStream());
+        System.setOut(discard);
+        System.setErr(discard);
         byte[] original=null;
         try {
             if(arguments.length!=0)throw new IOException("Invalid worker protocol");
@@ -35,7 +42,7 @@ public final class PdfPageRasterWorker {
             if(original.length!=length||input.read()!=-1)throw new IOException("Invalid worker framing");
             byte[] png=render(original,page);
             try {
-                var output=new DataOutputStream(System.out);
+                var output=new DataOutputStream(protocolOutput);
                 output.writeInt(0x4e4b5731);output.writeInt(page);output.writeInt(png.length);output.write(png);output.flush();
             } finally {java.util.Arrays.fill(png,(byte)0);}
         } catch(Exception failure) {System.exit(2);}

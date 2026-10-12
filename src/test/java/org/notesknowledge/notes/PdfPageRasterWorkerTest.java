@@ -7,6 +7,15 @@ import org.junit.jupiter.api.*;
 
 @Tag("FAST") @Tag("SECURITY") @Tag("RETRIEVAL")
 class PdfPageRasterWorkerTest {
+    @Test void protocolRemainsBinaryWithoutExternalLoggingConfiguration()throws Exception {
+        // PDFBox's Java-25 unmapper warning uses the default console logger in this
+        // subprocess. A deployment must not depend on a separate log configuration
+        // file to keep library diagnostics out of the page-byte protocol.
+        try(var child=PdfPageRuntimeFixtures.renderWithoutLoggingConfiguration(DerivationMediaFixtures.media("pdf").getBytes(),1)) {
+            assertThat(child.page()).isEqualTo(1);
+            PdfPageWorkerProtocol.requireRgbPng(child.bytes());
+        }
+    }
     @Test void actualWorkerExcludesOtherPagesActionsAttachmentsAndMetadata()throws Exception {
         byte[] original;
         try(var pdf=new PDDocument();var out=new ByteArrayOutputStream()) {
