@@ -19,7 +19,8 @@ public final class NativePdfStartupDiagnostic {
         var builder=new ProcessBuilder(helper.toString(),root.resolve("runtime").toString(),root.resolve("artifacts").toString());
         builder.environment().clear();builder.directory(root.resolve("artifacts").toFile());
         Process child=builder.start();byte[] output=null,error=null,pdf=null;
-        try(var tasks=java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+        var tasks=java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
+        try {
             var stdout=tasks.submit(()->child.getInputStream().readNBytes(4_194_369));
             var stderr=tasks.submit(()->child.getErrorStream().readNBytes(8193));
             try(var document=new org.apache.pdfbox.pdmodel.PDDocument();var bytes=new java.io.ByteArrayOutputStream()) {
@@ -38,12 +39,23 @@ public final class NativePdfStartupDiagnostic {
                     messages.contains("Operation not permitted")?"BOOTSTRAP_OPERATION_DENIED":"NO_VALID_PROTOCOL";
             var boundary=java.util.regex.Pattern.compile("pdf_sandbox_boundary_([0-9]{1,4})_errno_([0-9]{1,4})").matcher(messages);
             String facts=boundary.find()?",\"boundaryLine\":"+boundary.group(1)+",\"errno\":"+boundary.group(2):"";
+            var stack=java.util.regex.Pattern.compile("Specify at least ([0-9]{1,5})k").matcher(messages);
+            facts+=",\"stackTooSmall\":"+messages.contains("stack size specified is too small")
+                    +(stack.find()?",\"requiredStackKiB\":"+stack.group(1):"")
+                    +",\"sveMention\":"+(messages.contains("SVE")||messages.contains("sve")||messages.contains("vector length"))
+                    +",\"threadMention\":"+messages.contains("thread")
+                    +",\"archiveMention\":"+(messages.contains("archive")||messages.contains("CDS"));
             System.out.println("{\"syntheticStartup\":\""+kind+"\",\"exit\":"+child.exitValue()+",\"stdoutBytes\":"+output.length+",\"stderrBytes\":"+error.length+facts+"}");
             return valid;
         }finally {
-            child.destroyForcibly();if(!child.waitFor(5,TimeUnit.SECONDS))throw new IllegalStateException("Native diagnostic termination uncertain");
-            for(byte[] bytes:new byte[][]{output,error,pdf})if(bytes!=null)java.util.Arrays.fill(bytes,(byte)0);
-            child.getInputStream().close();child.getOutputStream().close();child.getErrorStream().close();
+            try {
+                child.destroyForcibly();if(!child.waitFor(5,TimeUnit.SECONDS))throw new IllegalStateException("Native diagnostic termination uncertain");
+                child.getInputStream().close();child.getOutputStream().close();child.getErrorStream().close();
+            }finally {
+                tasks.shutdownNow();
+                for(byte[] bytes:new byte[][]{output,error,pdf})if(bytes!=null)java.util.Arrays.fill(bytes,(byte)0);
+                if(!tasks.awaitTermination(5,TimeUnit.SECONDS))throw new IllegalStateException("Native diagnostic pipe cleanup uncertain");
+            }
         }
     }
 }
