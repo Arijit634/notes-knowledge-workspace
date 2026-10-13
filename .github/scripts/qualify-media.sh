@@ -13,7 +13,8 @@ cp target/notes-knowledge-workspace-0.0.1-SNAPSHOT.jar "$context/application.jar
 cp -a "$context/BOOT-INF/classes/org" "$context/artifacts/classes/"
 cp "$context"/BOOT-INF/lib/{pdfbox-*,fontbox-*,commons-logging-*,spring-web-*}.jar "$context/artifacts/libraries/"
 cp -a target/test-classes/org "$context/controller/"
-cp target/test-classes/sandbox/PdfPageRasterWorker.java "$context/controller/"
+mkdir "$context/controller/sandbox"
+cp target/test-classes/sandbox/PdfPageRasterWorker.java "$context/controller/sandbox/"
 curl --fail --location --retry 2 --proto '=https' --tlsv1.2 https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz --output "$context/ffmpeg-9.0.2.tar.xz"
 printf '8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e  %s/ffmpeg-9.0.2.tar.xz\n' "$context" | sha256sum --check --strict -
 docker build --file src/main/native/media-runtime.Dockerfile --target qualification --tag nkw-media-qualification "$context"
@@ -24,6 +25,9 @@ printf 'Native architecture: %s\nCandidate image: %s\n' "$(uname -m)" "$image"
 common=(run --rm --init --network none --user 65533:65533 --cap-drop ALL --security-opt no-new-privileges --read-only --memory=1g --cpus=2 --pids-limit=300 --tmpfs /tmp:rw,noexec,nosuid,nodev,size=192m)
 cp='/qualification:/opt/pdf/artifacts/classes:/opt/pdf/artifacts/libraries/*'
 docker "${common[@]}" "$image" -Xmx192m -cp "$cp" org.notesknowledge.notes.NativePdfStartupDiagnostic /opt/pdf
+helper_hash="$(docker "${common[@]}" --entrypoint sha256sum "$image" /opt/pdf/helper | cut -d ' ' -f 1)"
+case "$expected" in amd64) java_arch=amd64 ;; arm64) java_arch=aarch64 ;; esac
+docker "${common[@]}" "$image" -Xmx192m -cp "$cp" org.notesknowledge.notes.PdfSandboxQualification /opt/pdf/helper /opt/pdf/runtime "$java_arch" "$helper_hash"
 docker "${common[@]}" "$image" -Xmx192m -cp "$cp" org.notesknowledge.notes.SupervisedPdfRuntimeQualification /opt/pdf/helper /opt/pdf/runtime /opt/pdf/artifacts
 mkdir "$RUNNER_TEMP/media-clips"
 chmod 0777 "$RUNNER_TEMP/media-clips"
@@ -51,6 +55,11 @@ test -f "$maven/bin/mvn"
 cp -a "$maven" "$testspace/maven"
 cp -a "$HOME/.m2/repository" "$testspace/repository"
 chmod -R a+rwX "$testspace"
+# Only the disposable, explicitly copied test workspace/cache is reassigned.
+# Production roots stay administrator-owned/read-only; the application and
+# native workers still start non-root with ALL capabilities dropped.
+docker run --rm --network none --user 0:0 --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges --read-only \
+  -v "$testspace:/harness" --entrypoint /bin/chown "$image" --no-dereference --recursive 65533:65533 /harness
 result=0
 docker run --rm --init --user 65533:65533 --group-add 0 --cap-drop ALL --security-opt no-new-privileges --read-only \
   --memory=2g --cpus=2 --pids-limit=512 --tmpfs /tmp:rw,nosuid,nodev,size=512m \
@@ -63,9 +72,11 @@ docker run --rm --init --user 65533:65533 --group-add 0 --cap-drop ALL --securit
   -Dnkw.test.pdf.nativeRoot=/opt/pdf -Dnkw.test.video.nativeRoot=/opt/video \
   -Dnkw.test.media.pdfRoot=/opt/pdf -Dnkw.test.media.videoRoot=/opt/video \
   -Dnkw.test.media.videoFixture=/fixtures/vfr.mp4 test -q || result=$?
-python3 - "$testspace/source/target/surefire-reports/TEST-org.notesknowledge.knowledge.ConfiguredMultimodalApplicationTest.xml" <<'PY'
-import json,sys,xml.etree.ElementTree as ET
-root=ET.parse(sys.argv[1]).getroot()
-print(json.dumps({"configuredNativeApplication":True,**{key:int(root.attrib[key]) for key in ("tests","failures","errors","skipped")}}))
+python3 - "$testspace/source/target/surefire-reports" <<'PY'
+import json,pathlib,sys,xml.etree.ElementTree as ET
+for name in ('ConfiguredMultimodalApplicationTest','PrivateDerivationIntegrationTest'):
+    path=pathlib.Path(sys.argv[1])/('TEST-org.notesknowledge.knowledge.'+name+'.xml')
+    root=ET.parse(path).getroot()
+    print(json.dumps({"nativeMedia":True,"testClass":name,**{key:int(root.attrib[key]) for key in ("tests","failures","errors","skipped")}}))
 PY
 exit "$result"

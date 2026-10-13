@@ -121,6 +121,26 @@ static void syscall_boundary(void) {
         BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 3, 0, 1),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM),
+#if defined(__aarch64__)
+        /* HotSpot queries/configures THIS thread's SVE vector length. Do not
+         * disable CPU features or allow general prctl: dumpability, tracing,
+         * seccomp, capabilities and parent-death settings remain inaccessible.
+         * SET accepts only unflagged 16..256-byte multiples of 16. */
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_prctl, 0, 12),
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[0])),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, PR_SVE_GET_VL, 9, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, PR_SVE_SET_VL, 0, 7),
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[1])+4),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 0, 0, 5),
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[1])),
+        BPF_JUMP(BPF_JMP | BPF_JGE | BPF_K, 16, 0, 3),
+        BPF_JUMP(BPF_JMP | BPF_JGT | BPF_K, 256, 2, 0),
+        BPF_STMT(BPF_ALU | BPF_AND | BPF_K, 15),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 0, 1, 0),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
+#endif
         ALLOW(SYS_read), ALLOW(SYS_write), ALLOW(SYS_readv), ALLOW(SYS_writev),
         ALLOW(SYS_pread64), ALLOW(SYS_lseek), ALLOW(SYS_close), ALLOW(SYS_close_range),
         ALLOW(SYS_openat), ALLOW(SYS_newfstatat), ALLOW(SYS_fstat), ALLOW(SYS_statx),

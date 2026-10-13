@@ -39,6 +39,27 @@ jobs:
       - name: Qualify packaged native runtimes
         shell: bash
         run: bash .github/scripts/qualify-media.sh
+      - name: Verify complete backend on final native-qualified source
+        id: full-backend
+        if: matrix.runner == 'ubuntu-24.04'
+        shell: bash
+        run: ./mvnw --batch-mode --no-transfer-progress clean verify -q
+      - name: Summarize complete backend evidence
+        if: always() && matrix.runner == 'ubuntu-24.04'
+        shell: bash
+        env:
+          FULL_BACKEND_OUTCOME: ${{ steps.full-backend.outcome }}
+        run: |
+          python3 - <<'PY'
+          import glob,json,os,xml.etree.ElementTree as ET
+          totals=dict(tests=0,failures=0,errors=0,skipped=0)
+          files=glob.glob('target/surefire-reports/TEST-*.xml')
+          for path in files:
+              root=ET.parse(path).getroot()
+              for key in totals: totals[key]+=int(root.attrib[key])
+          outcome=os.environ.get('FULL_BACKEND_OUTCOME','')
+          print(json.dumps(dict(fullBackendExecuted=outcome in ('success','failure'),commandOutcome=outcome,classes=len(files),**totals)))
+          PY
   windows:
     name: Native media / Windows development
     runs-on: windows-2025

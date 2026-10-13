@@ -84,6 +84,23 @@ public final class PdfPageRasterWorker {
                     catch(Throwable failure){throw new IllegalStateException("Synthetic process probe unavailable",failure);}
                 }
             }
+            case "linux-prctl" -> {
+                var linker=java.lang.foreign.Linker.nativeLinker();
+                var layout=java.lang.foreign.Linker.Option.captureStateLayout();
+                var error=layout.varHandle(java.lang.foreign.MemoryLayout.PathElement.groupElement("errno"));
+                var i=java.lang.foreign.ValueLayout.JAVA_INT;var l=java.lang.foreign.ValueLayout.JAVA_LONG;
+                var prctl=linker.downcallHandle(linker.defaultLookup().find("prctl").orElseThrow(),
+                        java.lang.foreign.FunctionDescriptor.of(i,i,l,l,l,l),java.lang.foreign.Linker.Option.captureCallState("errno"));
+                try(var arena=java.lang.foreign.Arena.ofConfined()) {
+                    var state=arena.allocate(layout);
+                    for(long[] call:new long[][]{{1,0},{4,1},{22,0},{50,0},{50,512},{50,0x20010},{50,0x100000010L}}) {
+                        try {
+                            int result=(int)prctl.invokeExact(state,(int)call[0],call[1],0L,0L,0L);
+                            out.writeBoolean(result==-1&&(int)error.get(state,0L)==1);
+                        }catch(Throwable failure){throw new IllegalStateException("Synthetic CPU-state boundary probe unavailable",failure);}
+                    }
+                }
+            }
             case "windows-handle" -> {
                 long handle=input.readLong();
                 var linker=java.lang.foreign.Linker.nativeLinker();var p=java.lang.foreign.ValueLayout.ADDRESS;var i=java.lang.foreign.ValueLayout.JAVA_INT;
