@@ -13,6 +13,7 @@ import java.nio.file.Path;
 final class PdfLinuxServiceBudget {
     private PdfLinuxServiceBudget(){ }
     static void require()throws IOException {
+        MediaContainerBudget.require();
         long uid=((Number)Files.getAttribute(Path.of("/proc/self"),"unix:uid")).longValue();
         if(uid==0)throw unavailable();
         int threads=0;

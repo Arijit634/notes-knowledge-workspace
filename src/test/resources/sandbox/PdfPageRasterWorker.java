@@ -111,7 +111,8 @@ public final class PdfPageRasterWorker {
                 var change=linker.downcallHandle(linker.defaultLookup().find("prlimit64").orElseThrow(),java.lang.foreign.FunctionDescriptor.of(i,i,i,p,p),java.lang.foreign.Linker.Option.captureCallState("errno"));
                 try(var arena=java.lang.foreign.Arena.ofConfined()) {
                     var state=arena.allocate(layout);var limits=arena.allocate(16,8);
-                    for(long[] entry:new long[][]{{0,10},{9,1024L*1024*1024},{4,0}})try {
+                    long address=(System.getProperty("os.arch").equals("aarch64")?2L:1L)*1024*1024*1024;
+                    for(long[] entry:new long[][]{{0,10},{9,address},{2,512L*1024*1024},{4,0}})try {
                         int result=(int)get.invokeExact((int)entry[0],limits);
                         out.writeBoolean(result==0&&limits.get(l,0)==entry[1]&&limits.get(l,8)==entry[1]);
                     }catch(Throwable failure){throw new IllegalStateException("Synthetic limit query unavailable",failure);}

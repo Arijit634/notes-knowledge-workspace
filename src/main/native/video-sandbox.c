@@ -32,7 +32,12 @@ int main(int argc,char **argv) {
     snprintf(input,sizeof(input),"%s/input.mp4",argv[4]);snprintf(output,sizeof(output),"%s/output.mp4",argv[4]);
     int fd=open(executable,O_PATH|O_NOFOLLOW|O_CLOEXEC);struct stat facts;
     if(fd!=3||fstat(fd,&facts)||!S_ISREG(facts.st_mode)||chdir(argv[4]))unavailable();
-    limit(RLIMIT_AS,1024ULL*1024*1024);limit(RLIMIT_CPU,25);limit(RLIMIT_CORE,0);
+#if defined(__aarch64__)
+    limit(RLIMIT_AS,2ULL*1024*1024*1024);
+#else
+    limit(RLIMIT_AS,1024ULL*1024*1024);
+#endif
+    limit(RLIMIT_DATA,512ULL*1024*1024);limit(RLIMIT_CPU,25);limit(RLIMIT_CORE,0);
     limit(RLIMIT_FSIZE,4194304);limit(RLIMIT_NOFILE,64);limit(RLIMIT_NPROC,256);
     if(prctl(PR_SET_NO_NEW_PRIVS,1,0,0,0))unavailable();
     int abi=syscall(SYS_landlock_create_ruleset,NULL,0,LANDLOCK_CREATE_RULESET_VERSION);if(abi<3)unavailable();

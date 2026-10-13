@@ -17,7 +17,7 @@ import org.notesknowledge.websupport.ApiFailureException;
  */
 final class SupervisedVideoClipRuntime implements VideoClipRuntime,AutoCloseable {
     static final String PROFILE="video-avc-baseline-preserve-ticks-v1";
-    static final String CONFIGURATION="frame-trim;preserve-vfr-ticks;max1280x720;avc-constrained-baseline;600k;gop25;no-audio;no-metadata;unspecified-sar;no-btrt;20s-target;4MiB-child;30s-wall;25s-cpu;1GiB-as;single-child;v1";
+    static final String CONFIGURATION="frame-trim;preserve-vfr-ticks;max1280x720;avc-constrained-baseline;600k;gop25;no-audio;no-metadata;unspecified-sar;no-btrt;20s-target;4MiB-child;30s-wall;25s-cpu;x64-as1GiB-arm64-as2GiB;data512MiB;container-ram2GiB-cpu2-pids512;single-child;v1";
     private final Path helper,runtime,artifacts,tools,scratch;
     private final String identity,version;
     private final PdfWorkerAttemptStore journal;

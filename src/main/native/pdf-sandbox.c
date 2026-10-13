@@ -211,7 +211,15 @@ int main(int argc, char **argv) {
     int executable_fd = open(executable, O_PATH | O_NOFOLLOW | O_CLOEXEC);
     struct stat executable_facts;
     if (executable_fd != 3 || fstat(executable_fd, &executable_facts) || !S_ISREG(executable_facts.st_mode)) unavailable();
+    /* ARM HotSpot reserves more virtual space than x64; measured startup hit
+     * the old 1-GiB AS ceiling. Keep real allocation bounded independently,
+     * in addition to the mandatory parent-container RAM/CPU/PID ceilings. */
+#if defined(__aarch64__)
+    limit(RLIMIT_AS, 2ULL * 1024 * 1024 * 1024);
+#else
     limit(RLIMIT_AS, 1024ULL * 1024 * 1024);
+#endif
+    limit(RLIMIT_DATA, 512ULL * 1024 * 1024);
     limit(RLIMIT_CPU, 10); limit(RLIMIT_CORE, 0); limit(RLIMIT_FSIZE, 0);
     limit(RLIMIT_NOFILE, 64); limit(RLIMIT_NPROC, 256);
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)) unavailable();

@@ -71,7 +71,7 @@ public final class PdfSandboxQualification {
                         request.writeUTF(probe.resolve("forbidden.bin").toString());request.writeUTF(owned.resolve("forbidden.bin").toString());
                     }
                     request.close();
-                    int count=mode.equals("linux-network")?6:mode.equals("linux-files")?5:mode.equals("linux-prctl")?7:mode.equals("linux-limits")?5:1;
+                    int count=mode.equals("linux-network")?6:mode.equals("linux-files")?5:mode.equals("linux-prctl")?7:mode.equals("linux-limits")?6:1;
                     var response=new DataInputStream(process.getInputStream());
                     for(int n=0;n<count;n++)if(response.readUnsignedByte()!=1)throw failed();
                     if(response.read()!=-1||!process.waitFor(5,TimeUnit.SECONDS)||process.exitValue()!=0)throw failed();
