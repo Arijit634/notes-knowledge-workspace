@@ -20,7 +20,21 @@ public final class NativePdfStartupDiagnostic {
         builder.environment().clear();builder.directory(root.resolve("artifacts").toFile());
         Process child=builder.start();byte[] output=null,error=null,pdf=null;
         var tasks=java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
+        var peak=new java.util.concurrent.atomic.AtomicLong();
         try {
+            tasks.submit(()->{
+                while(child.isAlive()) {
+                    try {
+                        for(String line:java.nio.file.Files.readAllLines(Path.of("/proc/"+child.pid()+"/status")))
+                            if(line.startsWith("VmPeak:")) {
+                                var value=java.util.regex.Pattern.compile("VmPeak:\\s+([0-9]+)\\s+kB").matcher(line);
+                                if(value.matches())peak.accumulateAndGet(Long.parseLong(value.group(1)),Math::max);
+                            }
+                        Thread.sleep(5);
+                    }catch(java.io.IOException ended){return null;}
+                }
+                return null;
+            });
             var stdout=tasks.submit(()->child.getInputStream().readNBytes(4_194_369));
             var stderr=tasks.submit(()->child.getErrorStream().readNBytes(8193));
             try(var document=new org.apache.pdfbox.pdmodel.PDDocument();var bytes=new java.io.ByteArrayOutputStream()) {
@@ -39,6 +53,11 @@ public final class NativePdfStartupDiagnostic {
                     messages.contains("Operation not permitted")?"BOOTSTRAP_OPERATION_DENIED":"NO_VALID_PROTOCOL";
             var boundary=java.util.regex.Pattern.compile("pdf_sandbox_boundary_([0-9]{1,4})_errno_([0-9]{1,4})").matcher(messages);
             String facts=boundary.find()?",\"boundaryLine\":"+boundary.group(1)+",\"errno\":"+boundary.group(2):"";
+            facts+=",\"observedVirtualPeakKiB\":"+peak.get();
+            for(String name:java.util.List.of("stack","maps","pthread")) {
+                var metadata=java.util.regex.Pattern.compile("pdf_metadata_"+name+"_rc_(-?[0-9]{1,4})_errno_([0-9]{1,4})").matcher(messages);
+                if(metadata.find())facts+=",\"metadata_"+name+"_result\":"+metadata.group(1)+",\"metadata_"+name+"_errno\":"+metadata.group(2);
+            }
             var stack=java.util.regex.Pattern.compile("Specify at least ([0-9]{1,5})k").matcher(messages);
             facts+=",\"stackTooSmall\":"+messages.contains("stack size specified is too small")
                     +(stack.find()?",\"requiredStackKiB\":"+stack.group(1):"")

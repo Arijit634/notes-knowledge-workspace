@@ -11,6 +11,7 @@
 #include <stddef.h>
 #ifdef PDF_SANDBOX_DIAGNOSTIC
 #include <stdio.h>
+#include <pthread.h>
 #endif
 #include <stdint.h>
 #include <stdlib.h>
@@ -256,6 +257,17 @@ int main(int argc, char **argv) {
     if (syscall(SYS_landlock_restrict_self, rules, 0)) unavailable();
     close(rules);
     syscall_boundary();
+#ifdef PDF_SANDBOX_DIAGNOSTIC
+    /* Fixed own-process metadata only, before any synthetic input is read. */
+    struct rlimit stack_limit; errno=0;
+    int metadata_result=getrlimit(RLIMIT_STACK,&stack_limit),metadata_errno=errno;
+    dprintf(2,"pdf_metadata_stack_rc_%d_errno_%d\n",metadata_result,metadata_errno);
+    errno=0;int maps=open("/proc/self/maps",O_RDONLY|O_CLOEXEC);metadata_errno=errno;
+    dprintf(2,"pdf_metadata_maps_rc_%d_errno_%d\n",maps<0?-1:0,metadata_errno);if(maps>=0)close(maps);
+    pthread_attr_t attributes;errno=0;metadata_result=pthread_getattr_np(pthread_self(),&attributes);metadata_errno=errno;
+    if(metadata_result==0)pthread_attr_destroy(&attributes);
+    dprintf(2,"pdf_metadata_pthread_rc_%d_errno_%d\n",metadata_result,metadata_errno);
+#endif
     char *const arguments[] = { executable, "-Xmx192m", "-Xss256k", "-XX:+UseSerialGC",
         "-XX:MaxDirectMemorySize=32m", "-XX:ReservedCodeCacheSize=32m",
         "-XX:CompressedClassSpaceSize=32m", "-XX:MaxMetaspaceSize=96m",
