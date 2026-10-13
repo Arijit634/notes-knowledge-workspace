@@ -48,7 +48,9 @@ public final class NativePdfStartupDiagnostic {
             // Only a JVM initialization/exception headline from this fixed,
             // blank synthetic startup may be classified. Never print stacks,
             // native text wholesale, paths, addresses or environment values.
-            String reason=messages.lines().filter(line->line.startsWith("java.lang.")||line.startsWith("Error occurred during initialization of VM"))
+            String reason=valid?"":messages.lines().map(String::strip)
+                    .filter(line->line.startsWith("java.lang.")||line.startsWith("Error occurred during initialization of VM")
+                            ||line.startsWith("[")&&(line.contains("[os,thread]")||line.contains("[os]")))
                     .limit(2).map(line->line.replaceAll("(?:[A-Za-z]:[\\\\/]|/)[^\\s]+","[path]")
                         .replaceAll("0x[0-9a-fA-F]+","[address]").replaceAll("[^ -~]","")
                         .replaceAll("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+","[redacted]"))

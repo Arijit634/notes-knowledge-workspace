@@ -62,7 +62,9 @@ chmod -R a+rwX "$testspace"
 docker run --rm --network none --user 0:0 --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges --read-only \
   -v "$testspace:/harness" --entrypoint /bin/chown "$image" --no-dereference --recursive 65533:65533 /harness
 result=0
-docker run --rm --init --user 65533:65533 --group-add 0 --cap-drop ALL --security-opt no-new-privileges --read-only \
+docker_group="$(stat -c '%g' /var/run/docker.sock)"
+[[ "$docker_group" =~ ^[0-9]+$ ]]
+docker run --rm --init --user 65533:65533 --group-add "$docker_group" --cap-drop ALL --security-opt no-new-privileges --read-only \
   --memory=2g --cpus=2 --pids-limit=512 --tmpfs /tmp:rw,nosuid,nodev,size=512m \
   --add-host host.docker.internal:host-gateway -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$testspace/source:/workspace" -v "$testspace/maven:/maven:ro" \
