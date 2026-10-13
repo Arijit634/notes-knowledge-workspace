@@ -71,6 +71,7 @@ docker run --rm --init --user 65533:65533 --group-add "$docker_group" --cap-drop
   -v "$testspace/repository:/repository" -v "$testspace/home:/home/test" -w /workspace \
   -e JAVA_HOME=/jdk -e HOME=/home/test -e TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal \
   --entrypoint /maven/bin/mvn "$image" -o -Dmaven.repo.local=/repository \
+  -DreuseForks=false \
   -Dtest=ConfiguredMultimodalApplicationTest,PrivateDerivationIntegrationTest \
   -Dnkw.test.pdf.nativeRoot=/opt/pdf -Dnkw.test.video.nativeRoot=/opt/video \
   -Dnkw.test.media.pdfRoot=/opt/pdf -Dnkw.test.media.videoRoot=/opt/video \
