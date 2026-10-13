@@ -23,6 +23,7 @@ test "$(docker image inspect --format '{{.Architecture}}' "$image")" = "$expecte
 printf 'Native architecture: %s\nCandidate image: %s\n' "$(uname -m)" "$image"
 common=(run --rm --init --network none --user 65533:65533 --cap-drop ALL --security-opt no-new-privileges --read-only --memory=1g --cpus=2 --pids-limit=300 --tmpfs /tmp:rw,noexec,nosuid,nodev,size=192m)
 cp='/qualification:/opt/pdf/artifacts/classes:/opt/pdf/artifacts/libraries/*'
+docker "${common[@]}" "$image" -Xmx192m -cp "$cp" org.notesknowledge.notes.NativePdfStartupDiagnostic /opt/pdf
 docker "${common[@]}" "$image" -Xmx192m -cp "$cp" org.notesknowledge.notes.SupervisedPdfRuntimeQualification /opt/pdf/helper /opt/pdf/runtime /opt/pdf/artifacts
 mkdir "$RUNNER_TEMP/media-clips"
 chmod 0777 "$RUNNER_TEMP/media-clips"
@@ -31,8 +32,7 @@ docker "${common[@]}" -v "$RUNNER_TEMP/media-clips:/output" "$image" -Xmx192m -c
 # evidence that clip bytes decode successfully.
 decoded=0
 for file in "$RUNNER_TEMP"/media-clips/*.mp4; do
-  docker "${common[@]}" -v "$file:/clip.mp4:ro" --entrypoint /opt/video/tools/bin/ffmpeg "$image" -v error -xerror -err_detect explode -i /clip.mp4 -f null -
-  frames="$(docker "${common[@]}" -v "$file:/clip.mp4:ro" --entrypoint /opt/video/tools/bin/ffprobe "$image" -v error -count_frames -select_streams v:0 -show_entries stream=nb_read_frames -of csv=p=0 /clip.mp4)"
+  frames="$(docker "${common[@]}" -v "$file:/clip.mp4:ro" --entrypoint /opt/video/tools/bin/ffprobe "$image" -v error -err_detect explode -count_frames -select_streams v:0 -show_entries stream=nb_read_frames -of csv=p=0 /clip.mp4)"
   [[ "$frames" =~ ^[0-9]+$ ]]
   decoded=$((decoded+frames))
 done

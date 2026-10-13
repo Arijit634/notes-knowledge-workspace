@@ -19,9 +19,10 @@ RUN echo '8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e  /sou
        --enable-parser=h264 --enable-encoder=libopenh264 --enable-bsf=h264_mp4toannexb \
        --enable-filter=format,null,scale,setsar,setpts,trim,testsrc,color --enable-indev=lavfi \
     && make -j2 && make install
-RUN mkdir -p /opt/pdf /opt/video /fixtures /provenance \
+RUN mkdir -p /opt/pdf /opt/video /fixtures /provenance /native-diagnostics \
     && gcc -std=c11 -O2 -Wall -Wextra -Werror=implicit-function-declaration -o /opt/pdf/helper /native/pdf-sandbox.c \
     && gcc -std=c11 -O2 -Wall -Wextra -Werror=implicit-function-declaration -o /opt/video/helper /native/video-sandbox.c \
+    && gcc -std=c11 -O2 -Wall -Wextra -DPDF_SANDBOX_DIAGNOSTIC -o /native-diagnostics/pdf-diagnostic-helper /native/pdf-sandbox.c \
     && /jdk/bin/jlink --add-modules java.base,java.desktop,java.logging,java.xml \
        --strip-debug --no-header-files --no-man-pages --compress=zip-6 --output /tmp/pdf-linked-runtime \
     && cp -rL /tmp/pdf-linked-runtime /opt/pdf/runtime \
@@ -78,5 +79,6 @@ ENTRYPOINT ["/jdk/bin/java", "-jar", "/application.jar"]
 FROM deployment AS qualification
 COPY --from=build /qualification /qualification
 COPY --from=build /fixtures /fixtures
+COPY --from=build /native-diagnostics/pdf-diagnostic-helper /qualification/pdf-diagnostic-helper
 USER 65533:65533
 ENTRYPOINT ["/jdk/bin/java"]
