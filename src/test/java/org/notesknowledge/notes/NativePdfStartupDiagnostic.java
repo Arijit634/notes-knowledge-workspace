@@ -56,6 +56,17 @@ public final class NativePdfStartupDiagnostic {
                         .replaceAll("0x[0-9a-fA-F]+","[address]").replaceAll("[^ -~]","")
                         .replaceAll("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+","[redacted]"))
                     .map(line->line.substring(0,Math.min(200,line.length()))).collect(java.util.stream.Collectors.joining("; "));
+            // A pre-protocol exit-1 from this fixed blank-input launch may use
+            // another HotSpot headline prefix. Accept only small ASCII text,
+            // exclude stack lines, and redact paths/addresses before reporting.
+            // This is NOT available for arbitrary/user input or native byte data.
+            String startup=messages.replaceAll("\\x1B\\[[0-?]*[ -/]*[@-~]","");
+            if(!valid&&child.exitValue()==1&&output.length<=1024&&startup.matches("[\\x09\\x0A\\x0D\\x20-\\x7E]*")) {
+                reason=startup.lines().map(String::strip).filter(line->!line.startsWith("at ")&&!line.matches(".*\\([^)]*\\.java:[0-9]+\\).*"))
+                        .limit(3).map(line->line.replaceAll("(?:[A-Za-z]:[\\\\/]|/)[^\\s]+","[path]")
+                            .replaceAll("0x[0-9a-fA-F]+","[address]").replaceAll("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+","[redacted]"))
+                        .map(line->line.substring(0,Math.min(200,line.length()))).collect(java.util.stream.Collectors.joining("; "));
+            }
             facts+=",\"startupReason\":\""+reason.replace("\\","\\\\").replace("\"","\\\"")+"\"";
             System.out.println("{\"syntheticStartup\":\""+kind+"\",\"exit\":"+child.exitValue()+",\"stdoutBytes\":"+output.length+",\"stderrBytes\":"+error.length+facts+"}");
             return valid;
