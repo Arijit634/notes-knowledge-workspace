@@ -36,17 +36,34 @@ docker run --rm --network none --user 65533:65533 --cap-drop ALL --security-opt 
 docker run --rm --network none --user 65533:65533 --cap-drop ALL --security-opt no-new-privileges --read-only \
   --entrypoint sha256sum "$deployment" /provenance/runtime-files.sha256 > "$RUNNER_TEMP/media-runtime-manifest.sha256"
 python3 - "$deployment" "$context/application.jar" "$RUNNER_TEMP/media-deployment-packages.txt" "$RUNNER_TEMP/media-runtime-manifest.sha256" <<'PY'
-import hashlib,json,pathlib,sys,zipfile
+import hashlib,json,pathlib,sys,zipfile,subprocess
 image,jar,packages,manifest=sys.argv[1:]
 with zipfile.ZipFile(jar) as z:
     libraries=[dict(file=n.removeprefix('BOOT-INF/lib/'),sha256=hashlib.sha256(z.read(n)).hexdigest())
                for n in sorted(z.namelist()) if n.startswith('BOOT-INF/lib/') and n.endswith('.jar')]
-    assert not any('ConfiguredMediaStorageFixtures' in n or 'ControlledObjectStorageTransport' in n for n in z.namelist())
+    assert not any(marker in n for n in z.namelist() for marker in
+        ('ConfiguredMediaStorageFixtures','ControlledObjectStorageTransport','ControlledS3Transport',
+         'ConfiguredAvatarStorageFixtures','ConfiguredPublicMediaStorageFixtures','ControlledRegistrationDelivery','ConfiguredObjectCustodyJourney'))
 os_packages=[dict(zip(('name','version'),line.split('\t'))) for line in pathlib.Path(packages).read_text().splitlines()]
+package_versions={p['name'].split(':')[0]:p['version'] for p in os_packages}
+assert package_versions['perl-base']=='5.36.0-7+deb12u4'
+assert package_versions['libpcre2-8-0']=='10.42-1+deb12u2'
+assert not any(p.startswith(('nodejs','npm')) for p in package_versions)
+# Preserve the raw scanner finding. This independently inspects the shipped
+# binary for the specific contrib/minizip entry point described by Debian.
+zlib_symbols=subprocess.check_output(['docker','run','--rm','--network','none','--user','65533:65533',
+    '--cap-drop','ALL','--security-opt','no-new-privileges','--read-only','--entrypoint','/bin/sh',image,
+    '-c',"test -e /lib/*/libz.so.1; if grep -aq 'zipOpenNewFileInZip4_64' /lib/*/libz.so.1; then printf present; else printf absent; fi"],text=True).strip()
+assert zlib_symbols in ('present','absent')
+print(json.dumps(dict(zlibApplicability=True,deploymentImage=image,cve='CVE-2023-45853',
+    packageVersion=package_versions['zlib1g'],minizipPackagePresent=any('minizip' in p for p in package_versions),
+    vulnerableEntryPointPresent=zlib_symbols=='present',scannerFindingSuppressed=False,
+    distroAdvisory='https://security-tracker.debian.org/tracker/CVE-2023-45853',
+    scope='Bookworm zlib binary only; not a general zlib security clearance')))
 print(json.dumps(dict(releaseInventory=True,deploymentImage=image,user='65533:65533',
     applicationSha256=hashlib.sha256(pathlib.Path(jar).read_bytes()).hexdigest(),libraries=libraries,osPackages=os_packages,
     runtimeManifestSha256=pathlib.Path(manifest).read_text().split()[0],
-    baseImage='node:24.21.0-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6',
+    baseImage='debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587',
     qualificationPayloadAbsent=True,registryPublished=False,vulnerabilityScanPerformed=False,
     codecLegalClearance=False)))
 PY

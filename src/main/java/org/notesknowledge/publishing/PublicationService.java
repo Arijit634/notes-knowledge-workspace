@@ -102,16 +102,23 @@ class PublicationService {
         catch(RuntimeException failure){org.slf4j.LoggerFactory.getLogger(PublicationService.class).warn("public_media_cleanup_deferred");}
     }
     String reconcile(String after) {
+        return reconcile(after,100);
+    }
+    String reconcile(String after,int limit) {
+        if(limit<1||limit>100)throw unavailable();
         staging.writeLock().lock();
         try {
-            var cutoff=clock.instant().minus(Duration.ofHours(24));var rows=objects.inventoryBefore(cutoff,after,100);
-            if(rows.size()>100)throw unavailable();String next=after;
+            var cutoff=clock.instant().minus(Duration.ofHours(24));var page=objects.scanBefore(cutoff,after,limit);var rows=page.objects();
+            if(rows.size()>limit)throw unavailable();String next=after;
             for(var row:rows) {
                 if(row.reference()==null||!row.reference().matches("public-publication-media/[0-9a-f]{64}")||row.createdAt()==null
                     ||!row.createdAt().isBefore(cutoff)||next!=null&&row.reference().compareTo(next)<=0)throw unavailable();
                 clean(row.reference());next=row.reference();
             }
-            return rows.size()==100?next:null;
+            var continuation=page.continueAfter();
+            if(continuation!=null&&(!continuation.matches("public-publication-media/[0-9a-f]{64}")
+                ||after!=null&&continuation.compareTo(after)<=0||next!=null&&continuation.compareTo(next)<0))throw unavailable();
+            return continuation;
         }finally{staging.writeLock().unlock();}
     }
     private static final class ExactInput extends FilterInputStream {

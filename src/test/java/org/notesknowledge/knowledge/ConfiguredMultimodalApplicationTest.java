@@ -53,11 +53,17 @@ class ConfiguredMultimodalApplicationTest {
         settings.put("server.port", "0"); settings.put("spring.main.banner-mode", "off");
         settings.put("identity.rate.key-base64", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=");
         settings.put("synthetic.media-store", store.toString()); settings.put("knowledge.processing-policy.code", "configured-synthetic");
+        settings.put("synthetic.avatar-store",store.resolve("profile-objects").toString());
+        settings.put("synthetic.publication-store",store.resolve("publication-objects").toString());
+        settings.put("identity.delivery.key-base64","AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
+        settings.put("identity.delivery.public-origin","https://example.test");
+        settings.put("publishing.preview.key-base64","AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=");
         settings.put("knowledge.derivation.enabled", "false");
         settings.put("knowledge.derivation.scheduling-enabled", "false");
         var sources = new ArrayList<Source>();
         var approvals = new ArrayList<String>();
         UUID owner, note, policy;
+        org.notesknowledge.ConfiguredObjectCustodyJourney.State custody;
         String pdfTransform = null, videoTransform = null;
         boolean nativeMedia = System.getProperty("nkw.test.media.pdfRoot") != null;
         if (nativeMedia) {
@@ -66,7 +72,8 @@ class ConfiguredMultimodalApplicationTest {
         }
         try (var application = start(settings)) {
             var jdbc = application.getBean(JdbcTemplate.class); var mvc = mvc(application);
-            owner = account(jdbc); var browser = browser(application, mvc, owner);
+            owner = org.notesknowledge.ConfiguredObjectCustodyJourney.registerAndLogin(application,mvc);
+            var browser = browser(application, mvc, owner);
             var created = mvc.perform(post("/api/notes").cookie(browser.cookie()).header("X-CSRF-TOKEN", browser.csrf())
                     .contentType("application/json").content("{\"title\":\"Synthetic application journey\",\"markdown\":\"Fictional content only\",\"aiEnabled\":true}"))
                     .andExpect(status().isCreated()).andReturn().getResponse();
@@ -147,6 +154,7 @@ class ConfiguredMultimodalApplicationTest {
                     }
                 }
             }
+            custody=org.notesknowledge.ConfiguredObjectCustodyJourney.prepare(application,mvc,owner,browser.cookie(),browser.csrf(),note,sources.getFirst().attachment());
             jdbc.execute("create role synthetic_media_runtime login password 'synthetic-runtime-password' nosuperuser nocreatedb nocreaterole noreplication");
             jdbc.execute("grant connect on database configured_multimodal to synthetic_media_runtime");
             jdbc.execute("grant usage on schema public,identity,profile,notes,publishing,discovery,knowledge,moderation to synthetic_media_runtime");
@@ -161,6 +169,7 @@ class ConfiguredMultimodalApplicationTest {
         settings.put("knowledge.derivation.approved-child-fingerprints",String.join(",",approvals));
         try(var application=start(settings)) {
             var jdbc=application.getBean(JdbcTemplate.class);var mvc=mvc(application);var browser=browser(application,mvc,owner);
+            org.notesknowledge.ConfiguredObjectCustodyJourney.afterRestart(application,mvc,custody,browser.cookie(),browser.csrf());
             assertThat(jdbc.queryForObject("select rolsuper or rolcreatedb or rolcreaterole or rolreplication from pg_roles where rolname=current_user",Boolean.class)).isFalse();
             org.assertj.core.api.Assertions.assertThatThrownBy(()->jdbc.execute("create table notes.forbidden_runtime_ddl(value integer)"))
                     .isInstanceOf(org.springframework.dao.DataAccessException.class);
@@ -213,10 +222,14 @@ class ConfiguredMultimodalApplicationTest {
             assertThat(jdbc.queryForObject("select cleanup_state from notes.attachment where attachment_id=?",String.class,deleting.attachment())).isEqualTo("pending");
             ConfiguredMediaStorageFixtures.failDeletion(application,false);ConfiguredMediaStorageFixtures.reconcile(application);
             assertThat(jdbc.queryForObject("select cleanup_state from notes.attachment where attachment_id=?",String.class,deleting.attachment())).isEqualTo("deleted");
+            org.notesknowledge.ConfiguredObjectCustodyJourney.finish(application,mvc,custody,owner,browser.cookie(),browser.csrf());
         } finally { SecurityContextHolder.clearContext(); }
     }
     private ConfigurableApplicationContext start(Map<String,String> settings) {
-        return new SpringApplicationBuilder(org.notesknowledge.Application.class,ConfiguredMediaStorageFixtures.class,ControlledProviders.class)
+        return new SpringApplicationBuilder(org.notesknowledge.Application.class,ConfiguredMediaStorageFixtures.class,ControlledProviders.class,
+                org.notesknowledge.profile.ConfiguredAvatarStorageFixtures.class,
+                org.notesknowledge.publishing.ConfiguredPublicMediaStorageFixtures.class,
+                org.notesknowledge.identity.ControlledRegistrationDelivery.class)
                 .profiles("test").run(settings.entrySet().stream().map(e->"--"+e.getKey()+"="+e.getValue()).toArray(String[]::new));
     }
     private void select(Map<String,String> settings,String kind,Path root)throws Exception {

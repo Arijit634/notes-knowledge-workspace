@@ -85,6 +85,16 @@ class AvatarAssetRepository {
                 """).param("id", asset.id()).param("now", Timestamp.from(now)).update();
     }
 
+    List<AvatarAsset> pendingAfter(UUID after,int limit) {
+        return jdbc.getObject().sql("""
+                select avatar_asset_id,object_reference from profile.avatar_asset
+                where state='removed' and cleaned_at is null
+                  and (:after::uuid is null or avatar_asset_id>:after::uuid)
+                order by avatar_asset_id limit :limit
+                """).param("after",after).param("limit",limit).query((row,index)->
+                    new AvatarAsset(row.getObject(1,UUID.class),row.getString(2))).list();
+    }
+
     boolean referenced(String reference) {
         return jdbc.getObject().sql("select exists(select 1 from profile.avatar_asset where object_reference=:reference)")
                 .param("reference", reference).query(Boolean.class).single();

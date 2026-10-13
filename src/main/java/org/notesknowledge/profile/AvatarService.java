@@ -78,17 +78,32 @@ class AvatarService {
         catch (RuntimeException failure) { LOG.warn("avatar_cleanup_deferred"); return false; }
     }
 
-    /** Bounded internal operational entry point, not an HTTP endpoint or scheduler.
+    /** Bounded internal operational entry point, not an HTTP endpoint.
      * Caller carries the last reference into the next bounded inventory page.
      */
     @Transactional(propagation = Propagation.NEVER)
     String reconcile(String afterReference) {
+        for(var asset:assets.pending(RECONCILE_BATCH))clean(asset);
+        return reconcile(afterReference,RECONCILE_BATCH);
+    }
+
+    @Transactional(propagation=Propagation.NEVER)
+    UUID reconcilePendingPage(UUID after,int limit) {
+        if(limit<1||limit>100)throw unavailable();
+        var pending=assets.pendingAfter(after,limit);
+        for(var asset:pending)clean(asset);
+        return pending.size()==limit?pending.getLast().id():null;
+    }
+
+    @Transactional(propagation=Propagation.NEVER)
+    String reconcile(String afterReference,int limit) {
+        if(limit<1||limit>100)throw unavailable();
         staging.writeLock().lock();
         try {
-            for (var asset : assets.pending(RECONCILE_BATCH)) clean(asset);
             var cutoff = clock.instant().minus(ORPHAN_AGE);
-            var inventory = store.inventoryBefore(cutoff, afterReference, RECONCILE_BATCH);
-            if (inventory.size() > RECONCILE_BATCH) throw unavailable();
+            var page=store.scanBefore(cutoff,afterReference,limit);
+            var inventory=page.objects();
+            if (inventory.size() > limit) throw unavailable();
             String cursor = afterReference;
             for (var object : inventory) {
                 String reference = object.reference();
@@ -98,7 +113,11 @@ class AvatarService {
                 if (!assets.referenced(reference)) deleteBestEffort(reference);
                 cursor = reference;
             }
-            return inventory.size() == RECONCILE_BATCH ? cursor : null;
+            var next=page.continueAfter();
+            if(next!=null&&(!next.matches("private-avatar/[0-9a-f]{64}")
+                ||afterReference!=null&&next.compareTo(afterReference)<=0
+                ||cursor!=null&&next.compareTo(cursor)<0))throw unavailable();
+            return next;
         } finally { staging.writeLock().unlock(); }
     }
     private static ApiFailureException unavailable() { return ApiFailureException.of(ApiFailureException.Kind.SERVICE_UNAVAILABLE); }

@@ -1,9 +1,9 @@
 # Build on the actual target architecture. This builds a qualification/deployment
 # candidate; neither construction nor an OCI digest grants codec patent rights.
-FROM node:24.21.0-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS build
+FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 AS build
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential pkg-config nasm xz-utils patch \
+    build-essential pkg-config nasm xz-utils patch perl-base=5.36.0-7+deb12u4 \
     libopenh264-dev=2.3.1+dfsg-3+deb12u2 \
     libfreetype6=2.12.1+dfsg-5+deb12u4 libfontconfig1=2.14.1-4 fonts-dejavu-core=2.37-6
 COPY jdk/ /jdk/
@@ -60,9 +60,10 @@ RUN /jdk/bin/java -cp '/qualification:/opt/pdf/artifacts/classes:/opt/pdf/artifa
     org.notesknowledge.notes.MediaRuntimeImageDescriptor /provenance/runtime-selection.properties
 # A separate runtime image omits the compiler/build tree. Qualification adds
 # only synthetic fixtures/controllers to this same runtime filesystem profile.
-FROM node:24.21.0-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS deployment
+FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 AS deployment
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    perl-base=5.36.0-7+deb12u4 libpcre2-8-0=10.42-1+deb12u2 \
     libopenh264-7=2.3.1+dfsg-3+deb12u2 libfreetype6=2.12.1+dfsg-5+deb12u4 \
     libfontconfig1=2.14.1-4 fonts-dejavu-core=2.37-6 && rm -rf /var/lib/apt/lists/*
 COPY --from=build /jdk /jdk
