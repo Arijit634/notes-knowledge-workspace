@@ -168,13 +168,16 @@ static void syscall_boundary(void) {
         BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, (unsigned)getpid(), 1, 0),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
-        ALLOW(SYS_getrandom), ALLOW(SYS_uname),
+        /* pthread_getattr_np queries the current thread's stack limit on ARM64.
+         * This is read-only, current-process metadata, already required on x64.
+         * Resource setters and foreign-pid prlimit remain restricted. */
+        ALLOW(SYS_getrlimit), ALLOW(SYS_getrandom), ALLOW(SYS_uname),
         ALLOW(SYS_rt_sigaction), ALLOW(SYS_rt_sigprocmask), ALLOW(SYS_rt_sigreturn),
         ALLOW(SYS_sigaltstack), ALLOW(SYS_restart_syscall),
         ALLOW(SYS_exit), ALLOW(SYS_exit_group),
 #if defined(__x86_64__)
         ALLOW(SYS_arch_prctl), ALLOW(SYS_access), ALLOW(SYS_readlink), ALLOW(SYS_stat),
-        ALLOW(SYS_getrlimit), ALLOW(SYS_poll),
+        ALLOW(SYS_poll),
 #endif
         ALLOW(SYS_ppoll), ALLOW(SYS_pselect6),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM)

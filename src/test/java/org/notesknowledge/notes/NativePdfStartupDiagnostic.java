@@ -3,7 +3,7 @@ package org.notesknowledge.notes;
 import java.nio.file.Path;
 import java.util.concurrent.TimeUnit;
 
-/** Hosted synthetic-only diagnostic. Never emits native text, paths, arguments,
+/** Hosted synthetic-only diagnostic. Never emits raw native text, paths, arguments,
  * media or environment. Not used by a production factory or packaged in its JAR. */
 public final class NativePdfStartupDiagnostic {
     public static void main(String[] args) throws Exception {

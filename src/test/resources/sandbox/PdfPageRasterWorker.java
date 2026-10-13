@@ -101,6 +101,29 @@ public final class PdfPageRasterWorker {
                     }
                 }
             }
+            case "linux-limits" -> {
+                int parent=input.readInt();
+                var linker=java.lang.foreign.Linker.nativeLinker();
+                var layout=java.lang.foreign.Linker.Option.captureStateLayout();
+                var error=layout.varHandle(java.lang.foreign.MemoryLayout.PathElement.groupElement("errno"));
+                var i=java.lang.foreign.ValueLayout.JAVA_INT;var p=java.lang.foreign.ValueLayout.ADDRESS;var l=java.lang.foreign.ValueLayout.JAVA_LONG;
+                var get=linker.downcallHandle(linker.defaultLookup().find("getrlimit").orElseThrow(),java.lang.foreign.FunctionDescriptor.of(i,i,p));
+                var change=linker.downcallHandle(linker.defaultLookup().find("prlimit64").orElseThrow(),java.lang.foreign.FunctionDescriptor.of(i,i,i,p,p),java.lang.foreign.Linker.Option.captureCallState("errno"));
+                try(var arena=java.lang.foreign.Arena.ofConfined()) {
+                    var state=arena.allocate(layout);var limits=arena.allocate(16,8);
+                    for(long[] entry:new long[][]{{0,10},{9,1024L*1024*1024},{4,0}})try {
+                        int result=(int)get.invokeExact((int)entry[0],limits);
+                        out.writeBoolean(result==0&&limits.get(l,0)==entry[1]&&limits.get(l,8)==entry[1]);
+                    }catch(Throwable failure){throw new IllegalStateException("Synthetic limit query unavailable",failure);}
+                    limits.set(l,0,20);limits.set(l,8,20);
+                    try {
+                        int result=(int)change.invokeExact(state,0,0,limits,java.lang.foreign.MemorySegment.NULL);
+                        out.writeBoolean(result==-1&&(int)error.get(state,0L)==1);
+                        result=(int)change.invokeExact(state,parent,0,java.lang.foreign.MemorySegment.NULL,limits);
+                        out.writeBoolean(result==-1&&(int)error.get(state,0L)==1);
+                    }catch(Throwable failure){throw new IllegalStateException("Synthetic limit authority probe unavailable",failure);}
+                }
+            }
             case "windows-handle" -> {
                 long handle=input.readLong();
                 var linker=java.lang.foreign.Linker.nativeLinker();var p=java.lang.foreign.ValueLayout.ADDRESS;var i=java.lang.foreign.ValueLayout.JAVA_INT;

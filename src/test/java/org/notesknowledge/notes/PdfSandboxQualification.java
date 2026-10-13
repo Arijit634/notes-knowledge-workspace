@@ -61,20 +61,32 @@ public final class PdfSandboxQualification {
             Path privateFixture=Files.writeString(owned.resolve("private-synthetic.txt"),"synthetic-not-a-secret");
             if(!Files.isReadable(privateFixture)||!Files.isWritable(probe))throw failed();
             int assertions=5; // page, dimensions and exact selected-page pixels.
-            for(String mode:List.of("linux-network","linux-files","linux-process","linux-prctl","linux-environment","memory")){
+            for(String mode:List.of("linux-network","linux-files","linux-process","linux-prctl","linux-limits","linux-environment","memory")){
                 process=LinuxPdfProcess.start(helper,runtime,probe,probeIdentity);
                 try {
                     var request=new DataOutputStream(process.getOutputStream());request.writeUTF(mode);
+                    if(mode.equals("linux-limits"))request.writeInt(Math.toIntExact(ProcessHandle.current().pid()));
                     if(mode.equals("linux-files")){
                         request.writeUTF(privateFixture.toString());request.writeUTF("/proc/"+ProcessHandle.current().pid()+"/environ");
                         request.writeUTF(probe.resolve("forbidden.bin").toString());request.writeUTF(owned.resolve("forbidden.bin").toString());
                     }
                     request.close();
-                    int count=mode.equals("linux-network")?6:mode.equals("linux-files")?5:mode.equals("linux-prctl")?7:1;
+                    int count=mode.equals("linux-network")?6:mode.equals("linux-files")?5:mode.equals("linux-prctl")?7:mode.equals("linux-limits")?5:1;
                     var response=new DataInputStream(process.getInputStream());
                     for(int n=0;n<count;n++)if(response.readUnsignedByte()!=1)throw failed();
                     if(response.read()!=-1||!process.waitFor(5,TimeUnit.SECONDS)||process.exitValue()!=0)throw failed();
                     assertions+=count;
+                }finally{process.destroyForcibly();if(!process.waitFor(5,TimeUnit.SECONDS))throw failed();}
+            }
+            for(String mode:List.of("cpu","wait")) {
+                process=LinuxPdfProcess.start(helper,runtime,probe,probeIdentity);
+                try {
+                    var request=new DataOutputStream(process.getOutputStream());request.writeUTF(mode);request.close();
+                    if(!new DataInputStream(process.getInputStream()).readBoolean())throw failed();
+                    // CPU must die before the 30-second wall watchdog. A stalled
+                    // worker must die by that watchdog even with no protocol caller.
+                    if(!process.waitFor(mode.equals("cpu")?25:35,TimeUnit.SECONDS)||process.exitValue()!=137||process.isAlive())throw failed();
+                    assertions+=2;
                 }finally{process.destroyForcibly();if(!process.waitFor(5,TimeUnit.SECONDS))throw failed();}
             }
             for(byte[] invalid:List.of(new byte[]{1,2,3},java.util.Arrays.copyOf(pdf,20))){
