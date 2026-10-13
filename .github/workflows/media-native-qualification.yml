@@ -40,6 +40,18 @@ jobs:
       - name: Qualify packaged native runtimes
         shell: bash
         run: bash .github/scripts/qualify-media.sh
+      - name: Retain sanitized deployment scan and SBOM evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: media-security-${{ matrix.runner }}
+          path: |
+            ${{ runner.temp }}/media-security-readiness/security-readiness.json
+            ${{ runner.temp }}/media-security-readiness/deployment.cdx.json
+            ${{ runner.temp }}/media-security-readiness/sbom-receipt.json
+          if-no-files-found: warn
+          retention-days: 3
+          include-hidden-files: false
       - name: Verify complete backend on final native-qualified source
         id: full-backend
         if: matrix.runner == 'ubuntu-24.04'

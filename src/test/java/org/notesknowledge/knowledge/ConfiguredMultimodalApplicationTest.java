@@ -73,6 +73,16 @@ class ConfiguredMultimodalApplicationTest {
             note = UUID.fromString(application.getBean(ObjectMapper.class).readTree(created.getContentAsString()).get("id").asText());
             policy = jdbc.queryForObject("insert into knowledge.processing_policy(policy_code,policy_version,policy_fingerprint,disclosure_revision,effective_at) values('configured-synthetic',1,?,'synthetic-1',clock_timestamp()-interval '1 minute') returning processing_policy_id", UUID.class, POLICY);
             jdbc.update("insert into knowledge.processing_policy_acknowledgement(user_id,processing_policy_id,disclosure_revision) values(?,?,'synthetic-1')",owner,policy);
+            // The server may have stored a write before its response was lost.
+            // No Attachment is accepted, and DB-aware orphan reconciliation
+            // recovers custody after transient delete failure, without retries.
+            ConfiguredMediaStorageFixtures.ambiguousUpload(application);ConfiguredMediaStorageFixtures.failDeletion(application,true);
+            mvc.perform(multipart("/api/notes/"+note+"/attachments").file(MeaningfulMediaFixtures.media("audio"))
+                    .cookie(browser.cookie()).header("X-CSRF-TOKEN",browser.csrf())).andExpect(status().isServiceUnavailable());
+            assertThat(jdbc.queryForObject("select count(*) from notes.attachment where note_id=?",Integer.class,note)).isZero();
+            assertThat(ConfiguredMediaStorageFixtures.ageObjects(application)).isEqualTo(1);
+            ConfiguredMediaStorageFixtures.failDeletion(application,false);ConfiguredMediaStorageFixtures.reconcile(application);
+            assertThat(ConfiguredMediaStorageFixtures.ageObjects(application)).isZero();
             for (String kind : nativeMedia ? List.of("image","audio","pdf","video") : List.of("image","audio")) {
                 var file = MeaningfulMediaFixtures.media(kind.equals("pdf") ? "mixed" : kind);
                 byte[] bytes = file.getBytes();
@@ -186,6 +196,23 @@ class ConfiguredMultimodalApplicationTest {
             for(var source:sources)assertThat(Arrays.equals(mvc.perform(get("/api/notes/"+note+"/attachments/"+source.attachment()+"/content").cookie(browser.cookie()))
                     .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray(),source.bytes())).as("AI off preserves owner byte access").isTrue();
             assertThat(application.getBean(ControlledProviders.class).childCalls).isEqualTo(nativeMedia?6:0);
+            for(var source:sources){
+                String path="/api/notes/"+note+"/attachments/"+source.attachment();
+                var range=mvc.perform(get(path+"/content").cookie(browser.cookie()).header("Range","bytes=3-19"))
+                        .andExpect(status().isPartialContent()).andReturn().getResponse();
+                assertThat(range.getContentAsByteArray()).isEqualTo(Arrays.copyOfRange(source.bytes(),3,20));
+                mvc.perform(get(path+"/content").cookie(otherBrowser.cookie())).andExpect(status().isNotFound());
+                mvc.perform(get(path+"/content")).andExpect(status().isUnauthorized());
+            }
+            var deleting=sources.getFirst();String deletingPath="/api/notes/"+note+"/attachments/"+deleting.attachment();
+            var attachmentTag=mvc.perform(get(deletingPath).cookie(browser.cookie())).andExpect(status().isOk()).andReturn().getResponse().getHeader("ETag");
+            ConfiguredMediaStorageFixtures.failDeletion(application,true);
+            mvc.perform(delete(deletingPath).cookie(browser.cookie()).header("X-CSRF-TOKEN",browser.csrf()).header("If-Match",attachmentTag))
+                    .andExpect(status().isNoContent());
+            mvc.perform(get(deletingPath+"/content").cookie(browser.cookie())).andExpect(status().isNotFound());
+            assertThat(jdbc.queryForObject("select cleanup_state from notes.attachment where attachment_id=?",String.class,deleting.attachment())).isEqualTo("pending");
+            ConfiguredMediaStorageFixtures.failDeletion(application,false);ConfiguredMediaStorageFixtures.reconcile(application);
+            assertThat(jdbc.queryForObject("select cleanup_state from notes.attachment where attachment_id=?",String.class,deleting.attachment())).isEqualTo("deleted");
         } finally { SecurityContextHolder.clearContext(); }
     }
     private ConfigurableApplicationContext start(Map<String,String> settings) {

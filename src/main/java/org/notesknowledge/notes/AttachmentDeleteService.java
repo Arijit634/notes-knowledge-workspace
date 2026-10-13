@@ -30,6 +30,16 @@ class AttachmentDeleteService {
         for (var target : attachments.pendingCleanup()) cleanup(target);
     }
 
+    @Transactional(propagation = Propagation.NEVER)
+    UUID reconcilePendingPage(UUID after, int limit) {
+        if (limit < 1 || limit > 5) throw new IllegalArgumentException("Invalid cleanup batch");
+        var page = attachments.pendingCleanupAfter(after, limit);
+        for (var target : page) cleanup(target);
+        // Advance even past temporarily unavailable objects; a later sweep retries
+        // them. One bad remote object must not starve every subsequent deletion.
+        return page.size() == limit ? page.getLast().id() : null;
+    }
+
     private void cleanup(AttachmentCleanupTarget target) {
         if (target.reference() == null || !target.reference().matches("private-attachment/[0-9a-f]{64}")) {
             LOG.warn("attachment_cleanup_deferred");

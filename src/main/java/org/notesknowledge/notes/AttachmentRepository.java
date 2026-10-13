@@ -72,6 +72,15 @@ class AttachmentRepository {
                 """).query(AttachmentRepository::cleanupTarget).list();
     }
 
+    List<AttachmentCleanupTarget> pendingCleanupAfter(UUID after, int limit) {
+        if (limit < 1 || limit > 5) throw new IllegalArgumentException("Invalid cleanup batch");
+        return clients.getObject().sql("""
+                select attachment_id, object_reference, revision from notes.attachment
+                where cleanup_state = 'pending' and (cast(:after as uuid) is null or attachment_id > :after)
+                order by attachment_id asc limit :limit
+                """).param("after", after).param("limit", limit).query(AttachmentRepository::cleanupTarget).list();
+    }
+
     Optional<AttachmentCleanupTarget> lockPending(AttachmentCleanupTarget target) {
         return clients.getObject().sql("""
                 select attachment_id, object_reference, revision from notes.attachment

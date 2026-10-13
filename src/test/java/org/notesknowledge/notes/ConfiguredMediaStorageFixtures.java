@@ -1,62 +1,39 @@
 package org.notesknowledge.notes;
 
-import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.time.Instant;
-import java.util.List;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 
-/** Durable synthetic filesystem custody across application restarts, test only. */
+/** Production OCI/S3 adapter with a controlled external HTTP transport. Only
+ * the external service is simulated; SDK serialization and custody are real. */
 @TestConfiguration(proxyBeanMethods = false)
 public class ConfiguredMediaStorageFixtures {
-    @Bean @Primary PrivateAttachmentObjectStore configuredSyntheticStore(org.springframework.core.env.Environment environment) {
-        Path directory = Path.of(environment.getRequiredProperty("synthetic.media-store"));
-        return new PrivateAttachmentObjectStore() {
-            private Path path(String reference) {
-                if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
-                    throw new AssertionError("Synthetic object I/O inside database transaction");
-                // References remain opaque. Hashing here is only the test store's
-                // safe filename encoding; it never grants owner authority.
-                try {
-                    byte[] hash = java.security.MessageDigest.getInstance("SHA-256")
-                            .digest(reference.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                    return directory.resolve(java.util.HexFormat.of().formatHex(hash));
-                } catch (java.security.NoSuchAlgorithmException impossible) { throw new AssertionError(impossible); }
-            }
-            public InputStream openRange(String reference, long offset, long length) {
-                try {
-                    var input = Files.newInputStream(path(reference)); input.skipNBytes(offset);
-                    return new InputStream() {
-                        long remaining = length;
-                        public int read() throws java.io.IOException {
-                            if (remaining == 0) return -1;
-                            int value = input.read(); if (value >= 0) remaining--; return value;
-                        }
-                        public int read(byte[] bytes, int start, int count) throws java.io.IOException {
-                            if (remaining == 0) return -1;
-                            int read = input.read(bytes, start, (int)Math.min(count, remaining));
-                            if (read > 0) remaining -= read; return read;
-                        }
-                        public void close() throws java.io.IOException { input.close(); }
-                    };
-                } catch (java.io.IOException failed) { throw new AssertionError("Synthetic stored bytes unavailable", failed); }
-            }
-            public void write(String reference, InputStream input, long size) {
-                try (var output = Files.newOutputStream(path(reference), StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
-                    long copied = input.transferTo(output);
-                    if (copied != size) throw new AssertionError("Synthetic stored byte count mismatch");
-                } catch (java.io.IOException failed) { throw new AssertionError("Synthetic storage write failed", failed); }
-            }
-            public void delete(String reference) {
-                try { Files.deleteIfExists(path(reference)); }
-                catch (java.io.IOException failed) { throw new AssertionError("Synthetic storage delete failed", failed); }
-            }
-            public List<StoredObject> inventoryBefore(Instant cutoff, String after, int limit) { return List.of(); }
-        };
+    @Bean ControlledObjectStorageTransport configuredStorageTransport(org.springframework.core.env.Environment environment) {
+        return new ControlledObjectStorageTransport(Path.of(environment.getRequiredProperty("synthetic.media-store")));
+    }
+    @Bean @Primary OciPrivateAttachmentObjectStore configuredSyntheticStore(ControlledObjectStorageTransport transport) {
+        return ControlledObjectStorageTransport.store(transport);
+    }
+    public static void failDeletion(org.springframework.context.ApplicationContext app,boolean fail) {
+        app.getBean(ControlledObjectStorageTransport.class).failDelete=fail;
+    }
+    public static void ambiguousUpload(org.springframework.context.ApplicationContext app) {
+        app.getBean(ControlledObjectStorageTransport.class).ambiguousPut=true;
+    }
+    public static long ageObjects(org.springframework.context.ApplicationContext app)throws java.io.IOException {
+        var transport=app.getBean(ControlledObjectStorageTransport.class);
+        try(var files=Files.list(transport.directory)){
+            var objects=files.filter(p->p.getFileName().toString().matches("[0-9a-f]{64}")).toList();
+            for(var file:objects)Files.setLastModifiedTime(file,java.nio.file.attribute.FileTime.from(Instant.now().minusSeconds(90_000)));
+            return objects.size();
+        }
+    }
+    public static void reconcile(org.springframework.context.ApplicationContext app) {
+        app.getBean(AttachmentDeleteService.class).reconcilePendingPage(null,5);
+        app.getBean(AttachmentUploadService.class).reconcile(null,5);
     }
     public static String pdfIdentity(Path root) throws Exception {
         return PdfRuntimeIdentity.fingerprint(root.resolve("runtime"), root.resolve("artifacts"), root.resolve("helper"));

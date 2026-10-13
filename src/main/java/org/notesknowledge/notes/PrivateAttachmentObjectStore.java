@@ -19,6 +19,17 @@ interface PrivateAttachmentObjectStore {
     void delete(String generatedReference);
     List<StoredObject> inventoryBefore(Instant cutoff, String afterReference, int limit);
 
+    /** A bounded provider page can contain only too-new objects. Its scanned
+     * cursor must still advance; matching-count alone cannot prove end-of-sweep. */
+    default InventoryPage scanBefore(Instant cutoff,String afterReference,int limit) {
+        var objects=inventoryBefore(cutoff,afterReference,limit);
+        return new InventoryPage(objects,objects.size()==limit?objects.getLast().reference():null);
+    }
+    record InventoryPage(List<StoredObject> objects,String continueAfter) {
+        public InventoryPage { objects=List.copyOf(objects); }
+        @Override public String toString(){return "AttachmentInventoryPage[REDACTED]";}
+    }
+
     record StoredObject(String reference, Instant createdAt) {
         @Override public String toString() { return "StoredAttachment[REDACTED]"; }
     }

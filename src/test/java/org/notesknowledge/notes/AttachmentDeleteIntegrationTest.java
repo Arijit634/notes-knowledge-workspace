@@ -187,6 +187,20 @@ class AttachmentDeleteIntegrationTest {
         candidates.forEach(f->assertThat(noteRevision(f.note())).isEqualTo(1L));
     }
 
+    @Test void scheduledCleanupPagesAdvancePastFailuresAndRestartCanResumeDurablePendingRows() {
+        var candidates=new ArrayList<Fixture>();
+        for(int i=0;i<7;i++){var f=fixture();pending(f,false);candidates.add(f);}
+        var first=attachments.pendingCleanupAfter(null,5);assertThat(first).hasSize(5);
+        store.failures.add(first.getFirst().reference());
+        UUID cursor=deletes.reconcilePendingPage(null,5);assertThat(cursor).isEqualTo(first.getLast().id());
+        assertThat(deletes.reconcilePendingPage(cursor,5)).isNull();
+        assertThat(jdbc.queryForObject("select count(*) from notes.attachment where cleanup_state='pending'",Integer.class)).isEqualTo(1);
+        assertThat(store.attempts).hasSize(7);store.failures.clear();
+        assertThat(deletes.reconcilePendingPage(null,5)).isNull();
+        assertThat(jdbc.queryForObject("select count(*) from notes.attachment where cleanup_state='pending'",Integer.class)).isZero();
+        assertThatThrownBy(()->deletes.reconcilePendingPage(null,6)).isInstanceOf(IllegalArgumentException.class);
+    }
+
     @Test void invalidInternalTargetIsRedactedAndSkippedWithoutBlockingLaterCandidate() {
         Fixture first=fixture(),second=fixture();pending(second,false);
         doReturn(List.of(new AttachmentCleanupTarget(first.id(),"invalid-private-locator",2),new AttachmentCleanupTarget(second.id(),second.reference(),2))).when(attachments).pendingCleanup();
