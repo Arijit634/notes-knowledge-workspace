@@ -13,6 +13,7 @@ cp target/notes-knowledge-workspace-0.0.1-SNAPSHOT.jar "$context/application.jar
 cp -a "$context/BOOT-INF/classes/org" "$context/artifacts/classes/"
 cp "$context"/BOOT-INF/lib/{pdfbox-*,fontbox-*,commons-logging-*,spring-web-*}.jar "$context/artifacts/libraries/"
 cp -a target/test-classes/org "$context/controller/"
+cp -a "$context/BOOT-INF/lib" "$context/controller/libraries"
 mkdir "$context/controller/sandbox"
 cp target/test-classes/sandbox/PdfPageRasterWorker.java "$context/controller/sandbox/"
 curl --fail --location --retry 2 --proto '=https' --tlsv1.2 https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz --output "$context/ffmpeg-9.0.2.tar.xz"
@@ -23,7 +24,7 @@ case "$(uname -m)" in x86_64) expected=amd64 ;; aarch64) expected=arm64 ;; esac
 test "$(docker image inspect --format '{{.Architecture}}' "$image")" = "$expected"
 printf 'Native architecture: %s\nCandidate image: %s\n' "$(uname -m)" "$image"
 common=(run --rm --init --network none --user 65533:65533 --cap-drop ALL --security-opt no-new-privileges --read-only --memory=1g --cpus=2 --pids-limit=300 --tmpfs /tmp:rw,noexec,nosuid,nodev,size=192m)
-cp='/qualification:/opt/pdf/artifacts/classes:/opt/pdf/artifacts/libraries/*'
+cp='/qualification:/opt/pdf/artifacts/classes:/qualification/libraries/*'
 docker "${common[@]}" "$image" -Xmx192m -cp "$cp" org.notesknowledge.notes.NativePdfStartupDiagnostic /opt/pdf
 helper_hash="$(docker "${common[@]}" --entrypoint sha256sum "$image" /opt/pdf/helper | cut -d ' ' -f 1)"
 case "$expected" in amd64) java_arch=amd64 ;; arm64) java_arch=aarch64 ;; esac

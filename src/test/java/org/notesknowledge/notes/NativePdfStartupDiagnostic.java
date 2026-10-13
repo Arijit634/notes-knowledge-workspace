@@ -45,6 +45,15 @@ public final class NativePdfStartupDiagnostic {
                     +",\"sveMention\":"+(messages.contains("SVE")||messages.contains("sve")||messages.contains("vector length"))
                     +",\"threadMention\":"+messages.contains("thread")
                     +",\"archiveMention\":"+(messages.contains("archive")||messages.contains("CDS"));
+            // Only a JVM initialization/exception headline from this fixed,
+            // blank synthetic startup may be classified. Never print stacks,
+            // native text wholesale, paths, addresses or environment values.
+            String reason=messages.lines().filter(line->line.startsWith("java.lang.")||line.startsWith("Error occurred during initialization of VM"))
+                    .limit(2).map(line->line.replaceAll("(?:[A-Za-z]:[\\\\/]|/)[^\\s]+","[path]")
+                        .replaceAll("0x[0-9a-fA-F]+","[address]").replaceAll("[^ -~]","")
+                        .replaceAll("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+","[redacted]"))
+                    .map(line->line.substring(0,Math.min(200,line.length()))).collect(java.util.stream.Collectors.joining("; "));
+            facts+=",\"startupReason\":\""+reason.replace("\\","\\\\").replace("\"","\\\"")+"\"";
             System.out.println("{\"syntheticStartup\":\""+kind+"\",\"exit\":"+child.exitValue()+",\"stdoutBytes\":"+output.length+",\"stderrBytes\":"+error.length+facts+"}");
             return valid;
         }finally {
