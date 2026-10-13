@@ -57,8 +57,10 @@ docker run --rm --init --user 65533:65533 --group-add 0 --cap-drop ALL --securit
   -v "$testspace/repository:/repository" -v "$testspace/home:/home/test" -w /workspace \
   -e JAVA_HOME=/jdk -e HOME=/home/test -e TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal \
   --entrypoint /maven/bin/mvn "$image" -o -Dmaven.repo.local=/repository \
-  -Dtest=ConfiguredMultimodalApplicationTest -Dnkw.test.media.pdfRoot=/opt/pdf \
-  -Dnkw.test.media.videoRoot=/opt/video -Dnkw.test.media.videoFixture=/fixtures/vfr.mp4 test -q || result=$?
+  -Dtest=ConfiguredMultimodalApplicationTest,PrivateDerivationIntegrationTest \
+  -Dnkw.test.pdf.nativeRoot=/opt/pdf -Dnkw.test.video.nativeRoot=/opt/video \
+  -Dnkw.test.media.pdfRoot=/opt/pdf -Dnkw.test.media.videoRoot=/opt/video \
+  -Dnkw.test.media.videoFixture=/fixtures/vfr.mp4 test -q || result=$?
 python3 - "$testspace/source/target/surefire-reports/TEST-org.notesknowledge.knowledge.ConfiguredMultimodalApplicationTest.xml" <<'PY'
 import json,sys,xml.etree.ElementTree as ET
 root=ET.parse(sys.argv[1]).getroot()

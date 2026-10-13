@@ -23,7 +23,8 @@ RUN mkdir -p /opt/pdf /opt/video /fixtures /provenance \
     && gcc -std=c11 -O2 -Wall -Wextra -Werror=implicit-function-declaration -o /opt/pdf/helper /native/pdf-sandbox.c \
     && gcc -std=c11 -O2 -Wall -Wextra -Werror=implicit-function-declaration -o /opt/video/helper /native/video-sandbox.c \
     && /jdk/bin/jlink --add-modules java.base,java.desktop,java.logging,java.xml \
-       --strip-debug --no-header-files --no-man-pages --compress=zip-6 --output /opt/pdf/runtime \
+       --strip-debug --no-header-files --no-man-pages --compress=zip-6 --output /tmp/pdf-linked-runtime \
+    && cp -rL /tmp/pdf-linked-runtime /opt/pdf/runtime \
     && cp -a /opt/pdf/runtime /opt/video/runtime \
     && cp /usr/lib/$(gcc -dumpmachine)/libopenh264.so.2.3.1 /opt/video/tools/libopenh264.so.7 \
     && cp /usr/share/doc/libopenh264-7/copyright /provenance/openh264-copyright \
@@ -32,6 +33,8 @@ RUN mkdir -p /opt/pdf /opt/video /fixtures /provenance \
     && dpkg-query -W > /provenance/os-build-packages.txt \
     && /jdk/bin/java -version 2> /provenance/jdk-version.txt \
     && /opt/video/tools/bin/ffmpeg -buildconf > /provenance/ffmpeg-buildconf.txt 2>&1
+# jlink's trusted legal-notice aliases are materialized as regular files above.
+# Runtime identity/custody still reject every symlink; that check is not relaxed.
 COPY artifacts/ /opt/pdf/artifacts/
 RUN cp -a /opt/pdf/artifacts /opt/video/artifacts
 RUN /opt/video/tools/bin/ffmpeg -hide_banner -loglevel error -nostdin -y -f lavfi \
