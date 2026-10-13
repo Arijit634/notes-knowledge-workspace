@@ -40,10 +40,16 @@ public final class NativePdfStartupDiagnostic {
             var stdout=tasks.submit(()->child.getInputStream().readNBytes(4_194_369));
             var stderr=tasks.submit(()->child.getErrorStream().readNBytes(8193));
             try(var document=new org.apache.pdfbox.pdmodel.PDDocument();var bytes=new java.io.ByteArrayOutputStream()) {
-                document.addPage(new org.apache.pdfbox.pdmodel.PDPage(new org.apache.pdfbox.pdmodel.common.PDRectangle(32,32)));
+                var page=textPage?new org.apache.pdfbox.pdmodel.PDPage():
+                        new org.apache.pdfbox.pdmodel.PDPage(new org.apache.pdfbox.pdmodel.common.PDRectangle(32,32));
+                document.addPage(page);
+                if(textPage)try(var content=new org.apache.pdfbox.pdmodel.PDPageContentStream(document,page)) {
+                    content.beginText();content.setFont(new org.apache.pdfbox.pdmodel.font.PDType1Font(
+                            org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA),12);
+                    content.newLineAtOffset(40,700);content.showText("Fictional archive ledger page 1: ordinary supplies and inventory.");content.endText();
+                }
                 document.save(bytes);pdf=bytes.toByteArray();
             }
-            if(textPage)pdf=MeaningfulMediaFixtures.media("mixed").getBytes();
             try(var input=new java.io.DataOutputStream(child.getOutputStream())) {
                 input.writeInt(0x4e4b5731);input.writeInt(1);input.writeInt(pdf.length);input.write(pdf);
             }catch(java.io.IOException earlyExit){ /* classify only bounded synthetic output below */ }
