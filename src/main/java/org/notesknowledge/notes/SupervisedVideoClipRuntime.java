@@ -11,8 +11,8 @@ import org.notesknowledge.knowledge.spi.PrivateDerivationSource.VideoPlan;
 import org.notesknowledge.knowledge.spi.PrivateDerivationSource.VideoChild;
 import org.notesknowledge.websupport.ApiFailureException;
 
-/** Implemented native candidate, deliberately NOT registered until deployment,
- * codec-use and supported-platform qualification are complete. No Docker API,
+/** Explicitly selected confined native runtime. Deployment and codec-use
+ * qualification remain required; registration never supplies legal clearance. No Docker API,
  * shell, arbitrary executable/options, provider configuration or media logging.
  */
 final class SupervisedVideoClipRuntime implements VideoClipRuntime,AutoCloseable {
