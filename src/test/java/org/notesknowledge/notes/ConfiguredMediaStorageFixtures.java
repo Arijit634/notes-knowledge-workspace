@@ -66,7 +66,16 @@ public class ConfiguredMediaStorageFixtures {
     }
     public static org.notesknowledge.knowledge.spi.PrivateDerivationSource.PdfChild page(
             org.springframework.context.ApplicationContext application, byte[] original, int page) {
-        return application.getBean(PdfPageRuntime.class).render(original, page);
+        try { return application.getBean(PdfPageRuntime.class).render(original, page); }
+        catch (RuntimeException denied) {
+            // Synthetic native qualification only: distinguish parent admission
+            // from child processing without logging source/paths/native output.
+            boolean budgetAvailable;
+            try { PdfLinuxServiceBudget.require(); budgetAvailable=true; }
+            catch (java.io.IOException unavailable) { budgetAvailable=false; }
+            System.out.println("{\"configuredPdfFailure\":true,\"parentBudgetAvailable\":"+budgetAvailable+"}");
+            throw denied;
+        }
     }
     public static org.notesknowledge.knowledge.spi.PrivateDerivationSource.VideoPlan plan(
             org.springframework.context.ApplicationContext application, byte[] original) {

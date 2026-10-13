@@ -9,13 +9,15 @@ public final class NativePdfStartupDiagnostic {
     public static void main(String[] args) throws Exception {
         if(args.length!=1)throw new IllegalArgumentException("Native root required");
         Path root=Path.of(args[0]);
-        boolean valid=probe(root.resolve("helper"),root);
+        boolean valid=probe(root.resolve("helper"),root,false);
         if(!valid) {
-            probe(Path.of("/qualification/pdf-diagnostic-helper"),root);
+            probe(Path.of("/qualification/pdf-diagnostic-helper"),root,false);
             throw new IllegalStateException("Native PDF synthetic startup denied");
         }
+        if(!probe(root.resolve("helper"),root,true))
+            throw new IllegalStateException("Native PDF synthetic text-page processing denied");
     }
-    private static boolean probe(Path helper,Path root)throws Exception {
+    private static boolean probe(Path helper,Path root,boolean textPage)throws Exception {
         var builder=new ProcessBuilder(helper.toString(),root.resolve("runtime").toString(),root.resolve("artifacts").toString());
         builder.environment().clear();builder.directory(root.resolve("artifacts").toFile());
         Process child=builder.start();byte[] output=null,error=null,pdf=null;
@@ -41,6 +43,7 @@ public final class NativePdfStartupDiagnostic {
                 document.addPage(new org.apache.pdfbox.pdmodel.PDPage(new org.apache.pdfbox.pdmodel.common.PDRectangle(32,32)));
                 document.save(bytes);pdf=bytes.toByteArray();
             }
+            if(textPage)pdf=MeaningfulMediaFixtures.media("mixed").getBytes();
             try(var input=new java.io.DataOutputStream(child.getOutputStream())) {
                 input.writeInt(0x4e4b5731);input.writeInt(1);input.writeInt(pdf.length);input.write(pdf);
             }catch(java.io.IOException earlyExit){ /* classify only bounded synthetic output below */ }
@@ -87,7 +90,7 @@ public final class NativePdfStartupDiagnostic {
                         .map(line->line.substring(0,Math.min(200,line.length()))).collect(java.util.stream.Collectors.joining("; "));
             }
             facts+=",\"startupReason\":\""+reason.replace("\\","\\\\").replace("\"","\\\"")+"\"";
-            System.out.println("{\"syntheticStartup\":\""+kind+"\",\"exit\":"+child.exitValue()+",\"stdoutBytes\":"+output.length+",\"stderrBytes\":"+error.length+facts+"}");
+            System.out.println("{\"syntheticStartup\":\""+kind+"\",\"fixedFixture\":\""+(textPage?"MIXED_TEXT_PAGE":"BLANK")+"\",\"exit\":"+child.exitValue()+",\"stdoutBytes\":"+output.length+",\"stderrBytes\":"+error.length+facts+"}");
             return valid;
         }finally {
             try {
