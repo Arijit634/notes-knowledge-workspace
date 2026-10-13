@@ -14,7 +14,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: native-media-${{ github.ref }}
+  # Retain in-flight exact-source qualification evidence across corrective pushes.
+  group: native-media-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: true
 
 jobs:
