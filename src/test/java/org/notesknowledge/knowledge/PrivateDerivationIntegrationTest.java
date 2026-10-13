@@ -45,7 +45,7 @@ import tools.jackson.databind.ObjectMapper;
 @Tag("DATABASE") @Tag("API") @Tag("SECURITY") @Tag("RETRIEVAL") @Tag("EVALUATION")
 @Testcontainers @SpringBootTest @AutoConfigureMockMvc
 @org.springframework.context.annotation.Import({org.notesknowledge.notes.DerivationMediaFixtures.class,
-    org.notesknowledge.notes.PdfPageRuntimeFixtures.class})
+    org.notesknowledge.notes.PdfPageRuntimeFixtures.class,org.notesknowledge.notes.VideoClipRuntimeFixtures.class})
 class PrivateDerivationIntegrationTest {
     @Container static final PostgreSQLContainer postgres=new PostgreSQLContainer("pgvector/pgvector:0.8.6-pg18-trixie")
         .withDatabaseName("private_derivation").withUsername("synthetic_migrator").withPassword("synthetic-derivation-password");
@@ -103,6 +103,86 @@ class PrivateDerivationIntegrationTest {
     }
     @AfterEach void clear(){SecurityContextHolder.clearContext();}
     @AfterAll static void closeNativePdfQualification(){org.notesknowledge.notes.PdfPageRuntimeFixtures.closeNativeQualification();}
+    @AfterAll static void closeNativeVideoQualification()throws Exception{org.notesknowledge.notes.VideoClipRuntimeFixtures.closeNative();}
+    @Test void longVideoClipsRequireIndependentApprovalsAndActivateOriginalTimeEvidence()throws Exception {
+        var attempt=videoChildAttempt(true);var permits=new ArrayList<AiProcessingGate.SourceAiPermit>();
+        doAnswer(call->{
+            AiProcessingGate.SourceAiPermit permit=call.getArgument(0);TransformedMediaIdentity child=call.getArgument(1);
+            byte[] original=call.getArgument(2),payload=call.getArgument(3);MediaUnderstandingRequest request=call.getArgument(4);
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            permit.requireGoogleChildDispatch(child,original,payload);GoogleDerivationAdapters.requireChildScope(child,request);
+            assertThat(child.scope().startTick()).isEqualTo(permits.size()*20000L);permits.add(permit);
+            return List.of(new DerivedSegment("Synthetic visible scene interval","video_scene","",null,null,null,1d,2d,null,null,null,null));
+        }).when(media).describeChild(any(),any(),any(),any(),any());
+        executor.execute(attempt);assertThat(state(attempt)).isEqualTo("completed");assertThat(permits).hasSize(2);
+        assertThat(permits.getFirst()).isNotSameAs(permits.getLast());
+        assertThat(jdbc.queryForList("select time_start from knowledge.private_derived_segment where owner_user_id=? order by ordinal",Double.class,owner)).containsExactly(1d,21d);
+        assertThat(jdbc.queryForList("select time_end from knowledge.private_derived_segment where owner_user_id=? order by ordinal",Double.class,owner)).containsExactly(2d,22d);
+        activate();assertThat(search.search(request(),"video",vector(),10)).hasSize(2);
+    }
+    @Test void unapprovedVideoChildNeverReachesProviderOrActivation()throws Exception {
+        var attempt=videoChildAttempt(false);executor.execute(attempt);
+        verify(media,never()).describeChild(any(),any(),any(),any(),any());verify(embeddings,never()).embed(any(),any());
+        assertThat(state(attempt)).isEqualTo("obsolete");assertThat(readyCount()).isZero();
+    }
+    @ParameterizedTest @ValueSource(strings={"ai-off","delete","save","policy","child-revoked","bad-output","truncated"})
+    void videoLaterRegionFailureCannotActivatePartialEvidence(String mode)throws Exception {
+        var attempt=videoChildAttempt(true);var firstDone=new java.util.concurrent.atomic.AtomicBoolean();
+        doAnswer(call->{
+            if(firstDone.compareAndSet(true,false)) {
+                if(mode.equals("ai-off"))disable();
+                if(mode.equals("delete")) {
+                    String url="/api/notes/"+note+"/attachments/"+attempt.intent().expected().attachmentId();
+                    String etag=mvc.perform(get(url).cookie(browser.cookie)).andExpect(status().isOk()).andReturn().getResponse().getHeader("ETag");
+                    mvc.perform(delete(url).cookie(browser.cookie).header("X-CSRF-TOKEN",browser.csrf).header("If-Match",etag)).andExpect(status().isNoContent());
+                }
+                if(mode.equals("save"))mutate("put","",Map.of("title","Changed","markdown","Changed source context"));
+                if(mode.equals("policy"))policy(2,"b");
+                if(mode.equals("child-revoked"))when(dispatchConfiguration.approvedChildFingerprints()).thenReturn(List.of());
+            }
+            return call.callRealMethod();
+        }).when(coordination).dispatch(any(),any());
+        var count=new java.util.concurrent.atomic.AtomicInteger();
+        doAnswer(call->{
+            int index=count.incrementAndGet();
+            if(index==2&&mode.equals("truncated"))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
+            firstDone.set(true);
+            return List.of(new DerivedSegment("Synthetic visible region","video_scene","",null,null,null,0d,
+                index==2&&mode.equals("bad-output")?21d:1d,null,null,null,null));
+        }).when(media).describeChild(any(),any(),any(),any(),any());
+        executor.execute(attempt);assertThat(readyCount()).isZero();verify(embeddings,never()).embed(any(),any());
+        assertThat(state(attempt)).isIn("obsolete","failed");
+        assertThat(count.get()).isEqualTo(mode.equals("bad-output")||mode.equals("truncated")?2:1);
+        if(!mode.equals("delete")) {
+            var content=mvc.perform(get("/api/notes/"+note+"/attachments/"+attempt.intent().expected().attachmentId()+"/content").cookie(browser.cookie))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
+            assertThat(content).isEqualTo(org.notesknowledge.notes.VideoClipRuntimeFixtures.original());
+        }
+    }
+    private KnowledgeWork.Claim videoChildAttempt(boolean approved)throws Exception {
+        byte[] original=org.notesknowledge.notes.VideoClipRuntimeFixtures.original();
+        var file=new org.springframework.mock.web.MockMultipartFile("file","synthetic.mp4","video/mp4",original);
+        var response=mvc.perform(multipart("/api/notes/"+note+"/attachments").file(file).cookie(browser.cookie).header("X-CSRF-TOKEN",browser.csrf))
+            .andExpect(status().isCreated()).andReturn().getResponse();
+        UUID id=UUID.fromString(json.readTree(response.getContentAsString()).get("id").asText());
+        var expected=new PrivateAiSourceCurrentness.Expected(owner,note,id,1,1,1L);
+        unpaidGemini();approve(expected);when(configuration.videoChildren()).thenReturn(true);
+        when(configuration.videoTransformFingerprint()).thenReturn(org.notesknowledge.notes.VideoClipRuntimeFixtures.fingerprint());
+        var lineage=lineageForPolicy(policy,1,"video");var approvals=new ArrayList<String>();
+        var plan=org.notesknowledge.notes.VideoClipRuntimeFixtures.plan(original);
+        for(int first=0;first<plan.durations().size();) {
+            int last=plan.next(first);
+            try(var child=org.notesknowledge.notes.VideoClipRuntimeFixtures.render(original,plan,first,last)) {
+                byte[] payload=child.bytes();approvals.add(new TransformedMediaIdentity(expected,TransformedMediaIdentity.digest(original),original.length,"video/mp4",
+                    child.profile(),child.implementationVersion(),child.artifactSha256(),child.configurationSha256(),TransformedMediaIdentity.digest(payload),payload.length,"video/mp4",
+                    new TransformedMediaIdentity.Scope("video_samples",first,last,plan.timescale(),plan.tick(first),plan.tick(last)),lineage.id(),"gemini",configuration.mediaModel(),"media-understanding","a".repeat(64)).approvalFingerprint());
+                java.util.Arrays.fill(payload,(byte)0);
+            }
+            first=last;
+        }
+        when(dispatchConfiguration.approvedChildFingerprints()).thenReturn(approved?approvals:List.of());
+        return claimWithLineage(expected,lineage);
+    }
     @Test void frozenCorpusCompletesAndInterruptedLongNoteResumesFromDurableSyntheticResults(@org.junit.jupiter.api.io.TempDir java.nio.file.Path checkpoint)throws Exception {
         unpaidGemini();when(configuration.embeddingModel()).thenReturn("gemini-embedding-2");when(configuration.dimension()).thenReturn(768);
         var journal=new java.util.concurrent.atomic.AtomicReference<>(new QualificationJournal(checkpoint,"offline-recovery-v1"));

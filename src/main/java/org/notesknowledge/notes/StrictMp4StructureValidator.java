@@ -27,6 +27,10 @@ final class StrictMp4StructureValidator {
     private static final Set<Integer> AVC_LEVELS = Set.of(10, 11, 12, 13, 20, 21, 22, 30, 31, 32, 40, 41, 42, 50, 51, 52);
 
     record Video(int width, int height, double durationSeconds) { }
+    record Timeline(long timescale,long[] durations) {
+        Timeline {durations=durations.clone();}
+        @Override public long[] durations(){return durations.clone();}
+    }
     private record Box(String type, long payload, long end) {
         long length() { return end - payload; }
     }
@@ -45,6 +49,15 @@ final class StrictMp4StructureValidator {
         }
     }
 
+    /** Only used inside the isolated planner, never an application-process parser. */
+    Timeline timeline(Path input) {
+        try(var channel=FileChannel.open(input,StandardOpenOption.READ)) {
+            if(channel.size()<8||channel.size()>MAX_BYTES)throw invalid();
+            var reader=new Reader(channel);reader.validate();return reader.timeline;
+        }catch(IOException unavailable){throw ApiFailureException.of(ApiFailureException.Kind.SERVICE_UNAVAILABLE);}
+        catch(ArithmeticException malformed){throw invalid();}
+    }
+
     private static ApiFailureException invalid() {
         return ApiFailureException.of(ApiFailureException.Kind.INVALID_INPUT);
     }
@@ -53,6 +66,7 @@ final class StrictMp4StructureValidator {
         private final FileChannel channel;
         private final ByteBuffer scratch = ByteBuffer.allocate(8);
         private int visited;
+        private Timeline timeline;
         private final List<Range> media = new ArrayList<>();
 
         Reader(FileChannel channel) { this.channel = channel; }
@@ -186,6 +200,12 @@ final class StrictMp4StructureValidator {
                 ticks = Math.addExact(ticks, Math.multiplyExact(samples, delta));
             }
             if (count != sampleCount || ticks != expected.ticks()) throw invalid();
+            long[] durations=new long[sampleCount];int sample=0;
+            for(int i=0;i<entries;i++) {
+                int samples=Math.toIntExact(u32(box,8+i*8L));long delta=u32(box,12+i*8L);
+                java.util.Arrays.fill(durations,sample,sample+samples,delta);sample+=samples;
+            }
+            timeline=new Timeline(expected.scale(),durations);
         }
 
         private void ranges(Box stsc, Box stco, long[] sizes) throws IOException {

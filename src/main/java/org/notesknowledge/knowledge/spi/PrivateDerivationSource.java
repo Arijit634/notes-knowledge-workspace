@@ -26,8 +26,51 @@ public interface PrivateDerivationSource {
             throw org.notesknowledge.websupport.ApiFailureException.of(
                 org.notesknowledge.websupport.ApiFailureException.Kind.SERVICE_UNAVAILABLE);
         }
+        /** Qualified isolated processing only. Metadata/child values grant no dispatch authority. */
+        default VideoPlan videoPlan(byte[] original) {throw unavailableVideo();}
+        default VideoChild videoChild(byte[] original,VideoPlan plan,int first,int last) {throw unavailableVideo();}
+        private static org.notesknowledge.websupport.ApiFailureException unavailableVideo() {
+            return org.notesknowledge.websupport.ApiFailureException.of(org.notesknowledge.websupport.ApiFailureException.Kind.SERVICE_UNAVAILABLE);
+        }
         /** One-shot bounded private stream, opened/consumed/closed outside database transactions. */
         InputStream open();
+    }
+    record VideoPlan(long timescale,List<Long> durations) {
+        public VideoPlan {
+            if(timescale<1||timescale>1_000_000||durations==null||durations.isEmpty()||durations.size()>18_000)
+                throw new IllegalArgumentException("Invalid video plan");
+            durations=List.copyOf(durations);long total=0;
+            for(Long delta:durations){if(delta==null||delta<1||delta>30*timescale)throw new IllegalArgumentException("Invalid video plan");total=Math.addExact(total,delta);}
+            if(total>300*timescale||durations.size()*timescale>60*total)throw new IllegalArgumentException("Invalid video plan");
+        }
+        public long tick(int sample) {
+            if(sample<0||sample>durations.size())throw new IllegalArgumentException("Invalid video scope");
+            long result=0;for(int i=0;i<sample;i++)result+=durations.get(i);return result;
+        }
+        /** Half-open frame interval. No frame is omitted or duplicated; VFR remains rational. */
+        public int next(int first) {
+            if(first<0||first>=durations.size())throw new IllegalArgumentException("Invalid video scope");
+            int last=first;long ticks=0;
+            while(last<durations.size()&&ticks+durations.get(last)<=20*timescale){ticks+=durations.get(last++);}
+            if(last==first)return first+1;
+            return last;
+        }
+        @Override public String toString(){return "VideoPlan[private timing omitted]";}
+    }
+    record VideoChild(VideoPlan plan,int first,int last,byte[] bytes,String profile,String implementationVersion,
+            String artifactSha256,String configurationSha256) implements AutoCloseable {
+        public VideoChild {
+            if(plan==null||first<0||last<=first||last>plan.durations().size()||plan.tick(last)-plan.tick(first)>30*plan.timescale()
+                    ||bytes==null||bytes.length<8||bytes.length>4_194_304||!"video-avc-baseline-preserve-ticks-v1".equals(profile)
+                    ||implementationVersion==null||!implementationVersion.matches("[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}")
+                    ||artifactSha256==null||!artifactSha256.matches("[0-9a-f]{64}")
+                    ||configurationSha256==null||!configurationSha256.matches("[0-9a-f]{64}"))throw new IllegalArgumentException("Invalid video child");
+            bytes=bytes.clone();
+        }
+        @Override public byte[] bytes(){return bytes.clone();}
+        public String transformFingerprint(){return PdfChild.transformFingerprint(profile,implementationVersion,artifactSha256,configurationSha256);}
+        @Override public void close(){java.util.Arrays.fill(bytes,(byte)0);}
+        @Override public String toString(){return "VideoChild[private media omitted]";}
     }
     record PdfChild(int page,byte[] bytes,String profile,String implementationVersion,
             String artifactSha256,String configurationSha256) implements AutoCloseable {

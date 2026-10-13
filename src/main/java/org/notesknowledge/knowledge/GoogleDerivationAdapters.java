@@ -51,9 +51,7 @@ class GoogleDerivationAdapters {
             }
             public List<DerivedSegment> describeChild(AiProcessingGate.SourceAiPermit permit,TransformedMediaIdentity child,
                     byte[] original,byte[] bytes,MediaUnderstandingRequest request) {
-                if(child==null||!request.mediaType().equals(child.childType())||!request.pdfScope()
-                        ||!"pdf_pages".equals(child.scope().kind())||child.scope().first()!=request.firstPage()
-                        ||child.scope().last()!=request.lastPage())throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
+                requireChildScope(child,request);
                 return call(bytes,request,()->permit.requireGoogleChildDispatch(child,original,bytes));
             }
             private List<DerivedSegment> call(byte[] bytes,MediaUnderstandingRequest request,Runnable authorize) {
@@ -78,6 +76,15 @@ class GoogleDerivationAdapters {
                 } catch(RuntimeException malformed){throw invalidOutput(ProviderFailureDiagnostic.Stage.MEDIA,started);}
             }
         };
+    }
+    static void requireChildScope(TransformedMediaIdentity child,MediaUnderstandingRequest request) {
+        if(child==null||!request.mediaType().equals(child.childType()))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
+        boolean pdf=request.pdfScope()&&"pdf_pages".equals(child.scope().kind())
+            &&child.scope().first()==request.firstPage()&&child.scope().last()==request.lastPage();
+        boolean video=!request.pdfScope()&&"video/mp4".equals(request.mediaType())&&"video_samples".equals(child.scope().kind())
+            &&request.durationSeconds()!=null&&Double.compare(request.durationSeconds(),
+                (double)(child.scope().endTick()-child.scope().startTick())/child.scope().timescale())==0;
+        if(!pdf&&!video)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
     }
     static org.springframework.core.retry.RetryTemplate noHiddenRetry() {
         // Durable retries obtain fresh permits; SDK/model retries cannot silently

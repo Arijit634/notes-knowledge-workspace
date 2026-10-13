@@ -109,6 +109,13 @@ class DerivationExecutor {
                     for(var page:pages)if(!page.provenEmpty()&&page.text().isBlank()&&extracted.stream().noneMatch(s->s.page()==page.page()))
                         throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
                     segments=List.copyOf(extracted);
+                } else if(initial.source().modality().equals("video")&&configuration.videoChildren()) {
+                    if(!work.heartbeat(claim))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
+                    var plan=coordinated(claim,dispatches,permit->material.videoPlan(bytes));
+                    segments=VideoDerivation.derive(initial,bytes,plan,configuration,(timeline,first,last)->{
+                        if(!work.heartbeat(claim))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
+                        return coordinated(claim,dispatches,permit->material.videoChild(bytes,timeline,first,last));
+                    },(identity,payload,request)->understandChild(claim,dispatches,understand,identity,bytes,payload,request,budget),budget);
                 } else {
                     // The full accepted WAV (<=10 MiB) fits the encoded budget. Keep its
                     // original bytes and time base; no transformed-source approval is inferred.
@@ -209,6 +216,7 @@ class DerivationExecutor {
         }
         if(!handle.safelyReleased()) {
             if(result instanceof org.notesknowledge.knowledge.spi.PrivateDerivationSource.PdfChild child)child.close();
+            if(result instanceof org.notesknowledge.knowledge.spi.PrivateDerivationSource.VideoChild child)child.close();
             if(result instanceof byte[] bytes)java.util.Arrays.fill(bytes,(byte)0);
             throw new DerivationFailure(KnowledgeWork.Failure.TRANSIENT_DEPENDENCY);
         }

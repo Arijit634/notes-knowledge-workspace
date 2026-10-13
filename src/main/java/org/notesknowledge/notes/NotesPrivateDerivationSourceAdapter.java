@@ -23,10 +23,13 @@ class NotesPrivateDerivationSourceAdapter implements PrivateDerivationSource {
     private final AttachmentRepository attachments;
     private final ObjectProvider<PrivateAttachmentObjectStore> stores;
     private final ObjectProvider<PdfPageRuntime> pdfRuntimes;
+    private final ObjectProvider<VideoClipRuntime> videoRuntimes;
     NotesPrivateDerivationSourceAdapter(ObjectProvider<JdbcClient> clients,NotesPrivateAiSourceCurrentnessAdapter current,
-            AttachmentRepository attachments,ObjectProvider<PrivateAttachmentObjectStore> stores,ObjectProvider<PdfPageRuntime> pdfRuntimes) {
+            AttachmentRepository attachments,ObjectProvider<PrivateAttachmentObjectStore> stores,ObjectProvider<PdfPageRuntime> pdfRuntimes,
+            ObjectProvider<VideoClipRuntime> videoRuntimes) {
         this.clients=clients;this.current=current;this.attachments=attachments;this.stores=stores;
         this.pdfRuntimes=pdfRuntimes;
+        this.videoRuntimes=videoRuntimes;
     }
     private static final String SOURCES="""
         select n.owner_user_id,n.note_id,null::uuid attachment_id,n.revision,n.ai_generation,
@@ -78,6 +81,15 @@ class NotesPrivateDerivationSourceAdapter implements PrivateDerivationSource {
                 if(runtime==null)throw ApiFailureException.of(ApiFailureException.Kind.SERVICE_UNAVAILABLE);
                 return runtime.render(original,page);
             }
+            private VideoClipRuntime videoRuntime() {
+                if(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
+                    throw new IllegalStateException("Media processing outside transaction required");
+                var runtime=videoRuntimes.getIfAvailable();
+                if(runtime==null)throw ApiFailureException.of(ApiFailureException.Kind.SERVICE_UNAVAILABLE);
+                return runtime;
+            }
+            public VideoPlan videoPlan(byte[] original){return videoRuntime().plan(original);}
+            public VideoChild videoChild(byte[] original,VideoPlan plan,int first,int last){return videoRuntime().render(original,plan,first,last);}
             public InputStream open() {
                 if(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()
                     ||!used.compareAndSet(false,true))throw new IllegalStateException("One-shot media outside transaction required");

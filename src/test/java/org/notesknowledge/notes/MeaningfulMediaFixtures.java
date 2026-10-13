@@ -82,6 +82,11 @@ public final class MeaningfulMediaFixtures {
      * One two-second still scene; NO audio track. The current accepted container gate rejects multi-track video.
      */
     public static byte[] video()throws Exception {
+        return videoSamples(1,2000);
+    }
+    /** Real independent IDR samples with explicit rational duration, for pipeline tests. */
+    public static byte[] videoSamples(int count,int delta)throws Exception {
+        if(count<1||count>150||delta<1||count*(long)delta>300000)throw new IllegalArgumentException("Synthetic timing bounds");
         var sps=new Bits();sps.bits(66,8);sps.bits(0,8);sps.bits(10,8);sps.ue(0);sps.ue(0);sps.ue(2);sps.ue(0);sps.bit(0);
         sps.ue(9);sps.ue(5);sps.bit(1);sps.bit(1);sps.bit(0);sps.bit(0);
         var pps=new Bits();pps.ue(0);pps.ue(0);pps.bit(0);pps.bit(0);pps.ue(0);pps.ue(0);pps.ue(0);pps.bit(0);pps.bits(0,2);pps.se(0);pps.se(0);pps.se(0);pps.bit(1);pps.bit(0);pps.bit(0);
@@ -99,19 +104,20 @@ public final class MeaningfulMediaFixtures {
         byte[] idr=nal(0x65,slice.finish());byte[] sample=join(ints(idr.length),idr);
         byte[] avc=box("avcC",join(new byte[]{1,66,0,10,(byte)255,(byte)225},shorts(sequence.length),sequence,new byte[]{1},shorts(picture.length),picture));
         byte[] ftyp=box("ftyp","mp42\0\0\0\0mp42".getBytes(StandardCharsets.US_ASCII));
-        var movie=ByteBuffer.allocate(100).putInt(0).putInt(0).putInt(0).putInt(1000).putInt(2000);
+        var movie=ByteBuffer.allocate(100).putInt(0).putInt(0).putInt(0).putInt(1000).putInt(count*delta);
         movie.putInt(0x10000).putShort((short)0x100).position(36);matrix(movie);movie.position(96);movie.putInt(2);
-        var track=ByteBuffer.allocate(84).putInt(7).putInt(0).putInt(0).putInt(1).putInt(0).putInt(2000);
+        var track=ByteBuffer.allocate(84).putInt(7).putInt(0).putInt(0).putInt(1).putInt(0).putInt(count*delta);
         track.position(40);matrix(track);track.putInt(160<<16).putInt(96<<16);
-        byte[] mdhd=ByteBuffer.allocate(24).putInt(0).putInt(0).putInt(0).putInt(1000).putInt(2000).putShort((short)0x55c4).putShort((short)0).array();
+        byte[] mdhd=ByteBuffer.allocate(24).putInt(0).putInt(0).putInt(0).putInt(1000).putInt(count*delta).putShort((short)0x55c4).putShort((short)0).array();
         byte[] hdlr=ByteBuffer.allocate(25).putInt(0).putInt(0).put("vide".getBytes(StandardCharsets.US_ASCII)).array();
         var description=ByteBuffer.allocate(94).putInt(0).putInt(1).putInt(86+avc.length).put("avc1".getBytes(StandardCharsets.US_ASCII));
         description.position(22);description.putShort((short)1);description.position(40);description.putShort((short)160).putShort((short)96).putInt(72<<16).putInt(72<<16).putInt(0).putShort((short)1);
         description.position(90);description.putShort((short)24).putShort((short)-1);
-        var table=box("stbl",join(box("stsd",join(description.array(),avc)),box("stts",ints(0,1,1,2000)),box("stsc",ints(0,1,1,1,1)),box("stsz",ints(0,0,1,sample.length)),box("stco",ints(0,1,ftyp.length+8))));
+        var table=box("stbl",join(box("stsd",join(description.array(),avc)),box("stts",ints(0,1,count,delta)),box("stsc",ints(0,1,1,count,1)),box("stsz",count==1?ints(0,0,1,sample.length):ints(0,sample.length,count)),box("stco",ints(0,1,ftyp.length+8))));
         var dinf=box("dinf",box("dref",join(ints(0,1),box("url ",ints(1)))));
         var mdia=box("mdia",join(box("mdhd",mdhd),box("hdlr",hdlr),box("minf",join(box("vmhd",ints(1,0,0)),dinf,table))));
-        return join(ftyp,box("mdat",sample),box("moov",join(box("mvhd",movie.array()),box("trak",join(box("tkhd",track.array()),mdia)))));
+        var samples=new ByteArrayOutputStream();for(int i=0;i<count;i++)samples.writeBytes(sample);
+        return join(ftyp,box("mdat",samples.toByteArray()),box("moov",join(box("mvhd",movie.array()),box("trak",join(box("tkhd",track.array()),mdia)))));
     }
     private static void matrix(ByteBuffer b){b.putInt(0x10000).putInt(0).putInt(0).putInt(0).putInt(0x10000).putInt(0).putInt(0).putInt(0).putInt(0x40000000);}
     private static int yuv(int rgb,int plane){int r=rgb>>16&255,g=rgb>>8&255,b=rgb&255;return switch(plane){case 0->16+((66*r+129*g+25*b+128)>>8);case 1->128+((-38*r-74*g+112*b+128)>>8);default->128+((112*r-94*g-18*b+128)>>8);};}

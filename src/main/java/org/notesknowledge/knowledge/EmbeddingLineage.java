@@ -16,6 +16,7 @@ record EmbeddingLineage(String id,String configuration,String modality,int dimen
                 modality.equals("pdf")&&c.pdfPageChildren()?"pdf-page-rgb144-cap2048-v1":"media-scoped-coverage-surrogate-v2",c.configurationId(),c.region(),c.tier(),
             p.policyId().toString(),Long.toString(p.version()),p.fingerprint());
         if(modality.equals("pdf")&&c.pdfPageChildren())normalized+="\n"+c.pdfTransformFingerprint();
+        if(modality.equals("video")&&c.videoChildren())normalized+="\nvideo-avc-baseline-preserve-ticks-v1\n"+c.videoTransformFingerprint();
         try { return new EmbeddingLineage(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
             .digest(normalized.getBytes(StandardCharsets.UTF_8))),normalized,modality,c.dimension(),c.operator(),p.policyId(),c.normalization()); }
         catch(java.security.NoSuchAlgorithmException impossible) { throw new IllegalStateException("SHA-256 unavailable"); }
