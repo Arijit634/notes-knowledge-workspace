@@ -23,6 +23,7 @@ import org.springframework.stereotype.Component;
 @IdentityCoreEnabled
 @ConditionalOnProperty(prefix = "identity.delivery", name = "polling-enabled", havingValue = "true")
 final class SecurityEmailPoller {
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(SecurityEmailPoller.class);
     private final SecurityEmailDeliveryRepository delivery;
     private final SecurityEmailWorker worker;
     private final Clock clock;
@@ -54,6 +55,16 @@ final class SecurityEmailPoller {
 
     @Scheduled(fixedDelayString = "${identity.delivery.poll-delay}")
     synchronized void poll() {
+        try {
+            pollAvailable();
+        } catch (org.springframework.dao.DataAccessException | org.springframework.transaction.TransactionException unavailable) {
+            // No claim/effect is reported successful. A later scheduled poll or
+            // PostgreSQL lease recovery owns progress when the database returns.
+            LOG.warn("security_email_poll_unavailable");
+        }
+    }
+
+    private void pollAvailable() {
         var now = clock.instant();
         delivery.failExhausted(now, policy.maximumBatchSize());
         int reserved = 0;
@@ -85,6 +96,14 @@ final class SecurityEmailPoller {
                 try {
                     executor.execute(() -> {
                         try { worker.process(claim); }
+                        catch (org.springframework.dao.DataAccessException | org.springframework.transaction.TransactionException unavailable) {
+                            LOG.warn("security_email_worker_deferred");
+                        } catch (RuntimeException failed) {
+                            // Default uncaught-thread stderr can expose private exception
+                            // payloads outside structured logging. Retain an ERROR signal,
+                            // leave the durable fence/state untouched, and do not retry here.
+                            LOG.error("security_email_worker_failed");
+                        }
                         finally { admission.release(); }
                     });
                     handedOff++;

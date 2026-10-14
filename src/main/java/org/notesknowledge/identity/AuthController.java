@@ -13,7 +13,6 @@ import org.notesknowledge.websupport.ApiFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -25,7 +24,6 @@ import org.springframework.web.bind.annotation.RestController;
 @IdentityCoreEnabled
 @RequestMapping("/api/auth")
 final class AuthController {
-    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(AuthController.class);
     record EmailInput(String email) { }
     record RegistrationInput(String email, String password) { }
     record ConfirmationInput(String token) { }
@@ -35,39 +33,25 @@ final class AuthController {
     private final RegistrationService registration;
     private final EmailVerificationService verification;
     private final PasswordAuthenticationService passwords;
-    private final MfaChallengeService challenges;
     private final PasswordRecoveryService recovery;
-    private final IdentityPersistence identity;
     private final RateControlService rates;
     private final RateKeyDeriver rateKeys;
     private final MfaRateControl mfaRates;
-    private final java.time.Clock clock;
-    private final SpringSessionAuthorityAdapter sessionAuthority;
-    private final ApplicationSessionDescriptorRepository sessionDescriptors;
-    private final org.springframework.transaction.support.TransactionTemplate transactions;
+    private final AuthenticationSessionService sessions;
 
     AuthController(RegistrationService registration, EmailVerificationService verification,
-            PasswordAuthenticationService passwords, MfaChallengeService challenges,
+            PasswordAuthenticationService passwords,
             PasswordRecoveryService recovery,
-            IdentityPersistence identity,
             RateControlService rates, RateKeyDeriver rateKeys,
-            MfaRateControl mfaRates, java.time.Clock clock,
-            SpringSessionAuthorityAdapter sessionAuthority,
-            ApplicationSessionDescriptorRepository sessionDescriptors,
-            org.springframework.transaction.PlatformTransactionManager manager) {
+            MfaRateControl mfaRates, AuthenticationSessionService sessions) {
         this.registration = registration;
         this.verification = verification;
         this.passwords = passwords;
-        this.challenges = challenges;
         this.recovery = recovery;
-        this.identity = identity;
         this.rates = rates;
         this.rateKeys = rateKeys;
         this.mfaRates = mfaRates;
-        this.clock = clock;
-        this.sessionAuthority = sessionAuthority;
-        this.sessionDescriptors = sessionDescriptors;
-        this.transactions = new org.springframework.transaction.support.TransactionTemplate(manager);
+        this.sessions = sessions;
     }
 
     @GetMapping("/csrf")
@@ -82,26 +66,10 @@ final class AuthController {
 
     @GetMapping("/session")
     ResponseEntity<Map<String, String>> session(HttpServletRequest request) {
-        var authentication = SecurityContextHolder.getContext().getAuthentication();
-        String state = "anonymous";
-        String challengeId = null;
-        if (authentication != null && authentication.isAuthenticated()
-                && authentication.getPrincipal() instanceof IdentitySessionPrincipal principal
-                && identity.isActive(principal.userId())) {
-            if (authentication.getAuthorities().stream()
-                    .anyMatch(a -> "ROLE_USER".equals(a.getAuthority()))) {
-                state = "authenticated";
-            } else if (authentication.getAuthorities().stream()
-                    .anyMatch(a -> "ROLE_MFA_PENDING".equals(a.getAuthority()))) {
-                state = "mfaRequired";
-            }
-            if ("mfaRequired".equals(state)) {
-                challengeId = challenges.currentContinuation(principal.userId(), request);
-            }
-        }
+        var current = sessions.state(request);
         return ResponseEntity.ok().cacheControl(CacheControl.noStore())
-                .body(challengeId == null ? Map.of("state", state)
-                        : Map.of("state", state, "challengeId", challengeId));
+                .body(current.challengeId() == null ? Map.of("state", current.state())
+                        : Map.of("state", current.state(), "challengeId", current.challengeId()));
     }
 
     @PostMapping("/registrations")
@@ -185,39 +153,13 @@ final class AuthController {
         if (input == null || input.email() != null) {
             throw ApiFailureException.of(ApiFailureException.Kind.INVALID_INPUT);
         }
-        passwords.reauthenticate(userId, input.password());
-        request.getSession().setAttribute(IdentitySessionState.RECENT_ATTRIBUTE,
-                new IdentitySessionState.RecentAuthentication(userId, clock.instant(), "password"));
+        sessions.reauthenticate(userId, input.password(), request);
         return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
     }
 
     @PostMapping("/logout")
     ResponseEntity<Void> logout(HttpServletRequest request) {
-        var authentication = SecurityContextHolder.getContext().getAuthentication();
-        UUID userId = authentication != null
-                && authentication.getPrincipal() instanceof IdentitySessionPrincipal principal
-                ? principal.userId() : null;
-        var session = request.getSession(false);
-        if (session != null) {
-            transactions.executeWithoutResult(status -> {
-                if (userId != null) {
-                    var current = sessionAuthority.lockBySessionId(session.getId());
-                    if (current != null) {
-                        sessionDescriptors.revoke(userId, current.primaryId(), clock.instant());
-                    }
-                }
-                session.invalidate();
-            });
-        }
-        SecurityContextHolder.clearContext();
-        if (userId != null) {
-            try {
-                identity.auditLogout(userId, clock.instant());
-            } catch (RuntimeException failure) {
-                // Revocation has already happened. Never restore authority for audit availability.
-                LOG.warn("logout_audit_failed");
-            }
-        }
+        sessions.logout(request);
         return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
     }
 

@@ -138,6 +138,22 @@ class GoogleDerivationAdaptersTest {
             }).hasCause(null).hasMessage("Derivation unavailable");
         assertThat(requests).hasSize(1);
     }
+    @ParameterizedTest @ValueSource(strings={"answer","extract","tags"})
+    void authorityLostAtFinalGenerationBoundaryNeverDispatchesOrBecomesTransportFailure(String task) {
+        generated("{\"claims\":[{\"text\":\"Synthetic\",\"evidenceIds\":[\"e0\"]}],\"conflicting\":false}");
+        var permit=spy(evidence());
+        doCallRealMethod().doThrow(new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE))
+            .when(permit).requireGoogle(query);
+        var port=adapters.googleStructuredKnowledgePort(config("gemini-embedding-2"),clients,json);
+        var selected=List.of(new StructuredKnowledgePort.Evidence("e0","Synthetic","note"));
+        assertThatThrownBy(()->port.generate(permit,query,task,selected))
+            .isInstanceOfSatisfying(DerivationFailure.class,f->assertThat(f.category).isEqualTo(KnowledgeWork.Failure.INVALID_SOURCE))
+            .hasCause(null).hasMessage("Derivation unavailable");
+        verify(permit,times(2)).requireGoogle(query);
+        assertThat(requests).isEmpty(); // Serialization must not count as disclosure.
+        assertThat(port.generate(evidence(),query,task,selected).claims()).hasSize(1);
+        assertThat(requests).hasSize(1); // Independent fresh authority, not a retry.
+    }
     @Test void ordinaryGenerationUsesThePinnedModelWithoutStructuredOrToolOptions() {
         generated("Synthetic service available.");
         var options=org.springframework.ai.google.genai.GoogleGenAiChatOptions.builder().model("gemini-3.8-flash")

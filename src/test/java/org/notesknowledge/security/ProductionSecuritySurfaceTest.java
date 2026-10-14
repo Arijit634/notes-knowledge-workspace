@@ -21,6 +21,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
 @Tag("SECURITY")
+@org.junit.jupiter.api.extension.ExtendWith(org.springframework.boot.test.system.OutputCaptureExtension.class)
 @SpringBootTest(properties = {
         "spring.autoconfigure.exclude="
                 + "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,"
@@ -30,6 +31,20 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
 })
 @AutoConfigureMockMvc
 class ProductionSecuritySurfaceTest {
+
+    @Test
+    void structuredFrameworkFailureRetainsSafeEventButNotExceptionPayload(
+            org.springframework.boot.test.system.CapturedOutput output) {
+        var cause = new java.sql.SQLException("synthetic-private-bind-canary");
+        var failure = new org.springframework.dao.DataAccessResourceFailureException(
+                "select synthetic-private-sql-canary from synthetic_table", cause);
+        org.slf4j.LoggerFactory.getLogger("org.springframework.transaction.support.TransactionTemplate")
+                .error("framework_dependency_unavailable", failure);
+        assertThat(output.getAll()).contains("framework_dependency_unavailable", "\"level\":\"ERROR\"",
+                        "\"type\":\"org.springframework.dao.DataAccessResourceFailureException\"")
+                .doesNotContain("synthetic-private-bind-canary", "synthetic-private-sql-canary",
+                        "PreparedStatementCallback", "\"stack_trace\"");
+    }
 
     @Autowired
     MockMvc mockMvc;
