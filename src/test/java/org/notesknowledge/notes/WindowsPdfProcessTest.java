@@ -70,8 +70,10 @@ class WindowsPdfProcessTest {
     }
     @Test void tcpAndUdpLoopbackAreDeniedWithoutNetworkCapabilities()throws Exception {
         if(!WINDOWS){requireUnsupportedDenial();return;}
-        try(var tcp=new java.net.ServerSocket(0,1,java.net.InetAddress.getByName("127.0.0.1"));var udp=new java.net.DatagramSocket(tcp.getLocalPort(),java.net.InetAddress.getByName("127.0.0.1"));var process=start(probe)){
-            var send=new DataOutputStream(process.getOutputStream());send.writeUTF("network");send.writeInt(tcp.getLocalPort());send.close();
+        // TCP and UDP have independent port namespaces. Keep both OS-assigned
+        // listeners bound: reserving a TCP port does not reserve that UDP port.
+        try(var tcp=new java.net.ServerSocket(0,1,java.net.InetAddress.getByName("127.0.0.1"));var udp=new java.net.DatagramSocket(0,java.net.InetAddress.getByName("127.0.0.1"));var process=start(probe)){
+            var send=new DataOutputStream(process.getOutputStream());send.writeUTF("network");send.writeInt(tcp.getLocalPort());send.writeInt(udp.getLocalPort());send.close();
             var result=new DataInputStream(process.getInputStream());
             for(String transport:java.util.List.of("TCP","UDP")){
                 int denied=result.readUnsignedByte();

@@ -39,7 +39,7 @@ public final class PdfPageRasterWorker {
                 }
             }
             case "network" -> {
-                nativeNetwork(input.readInt(),out);
+                nativeNetwork(input.readInt(),input.readInt(),out);
             }
             case "linux-network" -> {
                 var linker=java.lang.foreign.Linker.nativeLinker();
@@ -158,7 +158,7 @@ public final class PdfPageRasterWorker {
         }
         out.flush();
     }
-    private static void nativeNetwork(int port,java.io.DataOutputStream out)throws Exception {
+    private static void nativeNetwork(int tcpPort,int udpPort,java.io.DataOutputStream out)throws Exception {
         var linker=java.lang.foreign.Linker.nativeLinker();
         var p=java.lang.foreign.ValueLayout.ADDRESS;var i=java.lang.foreign.ValueLayout.JAVA_INT;var l=java.lang.foreign.ValueLayout.JAVA_LONG;
         try(var arena=java.lang.foreign.Arena.ofConfined()){
@@ -176,8 +176,10 @@ public final class PdfPageRasterWorker {
             try {
                 int started=(int)startup.invokeExact((short)0x202,arena.allocate(512,8));if(started!=0)throw new IllegalStateException("Winsock bootstrap unavailable");
                 try{
-                    var address=arena.allocate(16,4);address.set(java.lang.foreign.ValueLayout.JAVA_SHORT,0,(short)2);address.set(java.lang.foreign.ValueLayout.JAVA_BYTE,2,(byte)(port>>>8));address.set(java.lang.foreign.ValueLayout.JAVA_BYTE,3,(byte)port);address.set(java.lang.foreign.ValueLayout.JAVA_BYTE,4,(byte)127);address.set(java.lang.foreign.ValueLayout.JAVA_BYTE,7,(byte)1);
+                    var address=arena.allocate(16,4);address.set(java.lang.foreign.ValueLayout.JAVA_SHORT,0,(short)2);address.set(java.lang.foreign.ValueLayout.JAVA_BYTE,4,(byte)127);address.set(java.lang.foreign.ValueLayout.JAVA_BYTE,7,(byte)1);
                     for(int type:new int[]{1,2}){
+                        int port=type==1?tcpPort:udpPort;
+                        address.set(java.lang.foreign.ValueLayout.JAVA_BYTE,2,(byte)(port>>>8));address.set(java.lang.foreign.ValueLayout.JAVA_BYTE,3,(byte)port);
                         long handle=(long)socket.invokeExact(state,2,type,type==1?6:17);boolean denied;int result=-1,reason;
                         if(handle==-1){reason=(int)error.get(state,0L);denied=reason==10013;}
                         else {try{result=type==1?(int)connect.invokeExact(state,handle,address,16):(int)send.invokeExact(state,handle,arena.allocateFrom(java.lang.foreign.ValueLayout.JAVA_BYTE,(byte)1),1,0,address,16);reason=(int)error.get(state,0L);denied=result==-1&&reason==10013;}finally{int ignored=(int)close.invokeExact(handle);}}
