@@ -93,6 +93,38 @@ class PublicDiscoveryIntegrationTest {
         assertThat(PublicDiscoveryService.trending(Long.MAX_VALUE,Long.MAX_VALUE,clock.instant(),clock.instant())).isEqualTo(PublicDiscoveryService.trending(10000,100000,clock.instant(),clock.instant()));
         assertThat(read("/api/public/explore?sort=trending").toString()).doesNotContain("confidence","uniqueViewers",a.owner().toString());
     }
+    @Test void rapidPublicReadsAreDeduplicatedByAccountAcrossSessionsAndNotAcrossPublications()throws Exception {
+        var p=publication("Repeated views","Synthetic public content","views");
+        var second=publication("Other publication","Synthetic public content","views");
+        UUID viewer=PublicDiscoveryFixtures.account(jdbc);
+        var firstSession=browser(viewer);var otherSession=browser(viewer);
+        readPublic(p.id(),firstSession);readPublic(p.id(),firstSession);readPublic(p.id(),otherSession);
+        assertThat(jdbc.queryForObject("select view_count from discovery.publication_projection where publication_id=?",Long.class,p.id())).isEqualTo(1);
+        readPublic(p.id(),browser(PublicDiscoveryFixtures.account(jdbc)));
+        assertThat(jdbc.queryForObject("select view_count from discovery.publication_projection where publication_id=?",Long.class,p.id())).isEqualTo(2);
+        readPublic(second.id(),firstSession);
+        assertThat(jdbc.queryForObject("select view_count from discovery.publication_projection where publication_id=?",Long.class,second.id())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select sum(view_count) from discovery.publication_view_aggregate where publication_id=?",Long.class,p.id())).isEqualTo(2);
+    }
+    @Test void anonymousPublicReadDoesNotCreateAVisitorIdentityJustToCountViews()throws Exception {
+        var p=publication("Anonymous reader","Synthetic public content","views");
+        var response=mvc.perform(get("/api/public/publications/"+p.id())).andExpect(status().isOk()).andReturn().getResponse();
+        assertThat(response.getHeaders("Set-Cookie")).isEmpty();
+        assertThat(jdbc.queryForObject("select view_count from discovery.publication_projection where publication_id=?",Long.class,p.id())).isZero();
+    }
+    @Test void concurrentReadsByOneViewerCommitOnlyOneApproximateView()throws Exception {
+        var p=publication("Concurrent views","Synthetic public content","views");
+        var browser=browser(PublicDiscoveryFixtures.account(jdbc));var ready=new CountDownLatch(4);var release=new CountDownLatch(1);
+        try(var workers=Executors.newFixedThreadPool(4)){
+            var tasks=new ArrayList<Future<Integer>>();
+            for(int i=0;i<4;i++)tasks.add(workers.submit(()->{ready.countDown();await(release);
+                return mvc.perform(get("/api/public/publications/"+p.id()).cookie(browser.cookie)).andReturn().getResponse().getStatus();}));
+            assertThat(ready.await(10,TimeUnit.SECONDS)).isTrue();release.countDown();
+            for(var task:tasks)assertThat(task.get(15,TimeUnit.SECONDS)).isEqualTo(200);
+        }finally{release.countDown();}
+        assertThat(jdbc.queryForObject("select view_count from discovery.publication_projection where publication_id=?",Long.class,p.id())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select sum(view_count) from discovery.publication_view_aggregate where publication_id=?",Long.class,p.id())).isEqualTo(1);
+    }
     @Test void likesAreIdempotentIsolatedAndViewerCompositionIsNotCached()throws Exception {
         var p=publication("Public","Copied content","films");var a=browser(PublicDiscoveryFixtures.account(jdbc));var b=browser(PublicDiscoveryFixtures.account(jdbc));
         mutate(a,p.id(),true);mutate(a,p.id(),true);mutate(b,p.id(),true);

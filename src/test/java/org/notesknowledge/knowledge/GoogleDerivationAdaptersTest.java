@@ -123,6 +123,21 @@ class GoogleDerivationAdaptersTest {
         assertThat(wire.get("generationConfig").has("responseJsonSchema")).isTrue();
         assertThat(wire.has("tools")).isFalse();assertThat(wire.has("cachedContent")).isFalse();
     }
+    @ParameterizedTest @ValueSource(strings={"MAX_TOKENS","SAFETY","RECITATION","OTHER","FINISH_REASON_UNSPECIFIED"})
+    void validStructuredJsonWithoutSuccessfulCompletionNeverBecomesGroundedEvidence(String finishReason) {
+        generated("{\"claims\":[{\"text\":\"Synthetic partial claim\",\"evidenceIds\":[\"e0\"]}],\"conflicting\":false}");
+        response=response.replace("\"STOP\"","\""+finishReason+"\"");
+        var port=adapters.googleStructuredKnowledgePort(config("gemini-embedding-2"),clients,json);
+        assertThatThrownBy(()->port.generate(evidence(),query,"answer",
+                List.of(new StructuredKnowledgePort.Evidence("e0","Synthetic partial claim","note"))))
+            .isInstanceOfSatisfying(DerivationFailure.class,f->{
+                assertThat(f.category).isEqualTo(KnowledgeWork.Failure.INVALID_OUTPUT);
+                assertThat(f.diagnostic.kind()).isEqualTo(ProviderFailureDiagnostic.Kind.PARSING);
+                assertThat(f.diagnostic.providerReached()).isEqualTo(ProviderFailureDiagnostic.Reach.HTTP_RESPONSE_RECEIVED);
+                assertThat(f.diagnostic.structurallyValidResponse()).isFalse();
+            }).hasCause(null).hasMessage("Derivation unavailable");
+        assertThat(requests).hasSize(1);
+    }
     @Test void ordinaryGenerationUsesThePinnedModelWithoutStructuredOrToolOptions() {
         generated("Synthetic service available.");
         var options=org.springframework.ai.google.genai.GoogleGenAiChatOptions.builder().model("gemini-3.8-flash")

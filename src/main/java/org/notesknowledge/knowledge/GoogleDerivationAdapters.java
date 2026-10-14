@@ -114,9 +114,20 @@ class GoogleDerivationAdapters {
                     +"Use only supplied evidence. Each material claim/item must cite supplied evidenceIds. If unsupported, claims must be empty. Preserve conflicting supported facts separately and set conflicting true; never choose silently. "
                     +"Task answer: grounded focused answer, no generic knowledge. Task extract: identify every item matching the arbitrary user-requested category inside supplied evidence, not a hardcoded movie category. "
                     +"Task tags: each claim is one concise proposed tag. No HTML, actions, browsing or invented locations. At most32 claims,2000characters each.\n";
-                String output;long started=System.nanoTime();
-                try {output=model.call(new Prompt(UserMessage.builder().text(instruction+json.writeValueAsString(java.util.Map.of("task",task,"query",query,"evidence",evidence))).build(),options)).getResult().getOutput().getText();}
+                var prompt=new Prompt(UserMessage.builder().text(instruction+json.writeValueAsString(java.util.Map.of("task",task,"query",query,"evidence",evidence))).build(),options);
+                // Serialization is not disclosure. Revalidate at the final call boundary,
+                // outside transport-error translation so lost authority cannot be retried.
+                permit.requireGoogle(query);
+                org.springframework.ai.chat.model.ChatResponse response;long started=System.nanoTime();
+                try {response=model.call(prompt);}
                 catch(RuntimeException failure){throw providerFailure(failure,ProviderFailureDiagnostic.Stage.GENERATION,started);}
+                // A syntactically valid JSON prefix is not successful completion:
+                // truncated/refused answers and extraction batches cannot activate.
+                if(response==null||response.getResult()==null||response.getResult().getOutput()==null
+                        ||response.getResult().getMetadata()==null
+                        ||!"STOP".equals(response.getResult().getMetadata().getFinishReason()))
+                    throw invalidOutput(ProviderFailureDiagnostic.Stage.GENERATION,started);
+                String output=response.getResult().getOutput().getText();
                 if(output==null||output.length()>80000)throw invalidOutput(ProviderFailureDiagnostic.Stage.GENERATION,started);
                 try {var parsed=json.readValue(output,Output.class);KnowledgeQueryEngine.validate(parsed,evidence.size());return parsed;}
                 catch(RuntimeException malformed){throw invalidOutput(ProviderFailureDiagnostic.Stage.GENERATION,started);}

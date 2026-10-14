@@ -2,7 +2,7 @@ name: Native media qualification
 
 on:
   push:
-    branches: [knowledge/multimodal-ingestion]
+    branches: [knowledge/multimodal-ingestion, backend/completion-and-qualification]
     paths:
       - 'src/**'
       - 'pom.xml'

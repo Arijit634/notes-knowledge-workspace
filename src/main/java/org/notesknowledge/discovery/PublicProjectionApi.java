@@ -23,7 +23,8 @@ public class PublicProjectionApi {
     private final ObjectProvider<JdbcClient> clients;
     private final Clock clock;
     private final PublicDiscoveryRepository likes;
-    PublicProjectionApi(ObjectProvider<JdbcClient> clients,Clock clock,PublicDiscoveryRepository likes){this.clients=clients;this.clock=clock;this.likes=likes;}
+    private final TransientViewDeduplicator views;
+    PublicProjectionApi(ObjectProvider<JdbcClient> clients,Clock clock,PublicDiscoveryRepository likes,TransientViewDeduplicator views){this.clients=clients;this.clock=clock;this.likes=likes;this.views=views;}
     @Transactional(readOnly=true)
     public boolean viewerLiked(UUID viewer,UUID publication,long generation) {
         if(!likes.projectionCurrent(publication,generation,false))throw ApiFailureException.of(ApiFailureException.Kind.RESOURCE_NOT_FOUND);
@@ -59,11 +60,12 @@ public class PublicProjectionApi {
             .optional().orElseThrow(()->ApiFailureException.of(ApiFailureException.Kind.RESOURCE_NOT_FOUND));
     }
     @Transactional
-    public void recordApproximateView(UUID publication,long generation) {
+    public void recordApproximateView(UUID publication,long generation,org.notesknowledge.security.RateLimitPort.OpaqueKey viewer) {
+        if(viewer==null)return;
         // Serialize with projection invalidation; failure is isolated from the public read's transaction.
         var current=clients.getObject().sql("select publication_id from discovery.publication_projection where publication_id=:id and publication_generation=:generation and active for update")
             .param("id",publication).param("generation",generation).query(UUID.class).optional();
-        if(current.isEmpty())return;
+        if(current.isEmpty()||!views.firstWithinWindow(publication,viewer))return;
         var now=Timestamp.from(clock.instant());
         clients.getObject().sql("""
             insert into discovery.publication_view_aggregate(publication_id,bucket_date,view_count,updated_at)
