@@ -36,6 +36,17 @@ class DerivationConfigurationTest {
         for(float[] bad:new float[][]{{0,0},{Float.NaN,1},{Float.POSITIVE_INFINITY,1},{1}})
             assertThatThrownBy(()->lineage.prepare(bad)).isInstanceOf(DerivationFailure.class);
     }
+    @Test void pageChildrenDefaultOffAndRequireAProfileIdentityInTheirDistinctLineage() {
+        var c=config("none","synthetic-v1");assertThat(c.pdfPageChildren()).isFalse();
+        var policy=new ProcessingPolicyService.AcknowledgedProcessingPolicy(new UUID(0,1),1,"a".repeat(64));
+        var child=new AiDerivationProperties(c.enabled(),false,c.provider(),c.embeddingModel(),c.mediaModel(),c.modelRevision(),
+            c.region(),c.tier(),c.configurationId(),c.adapterVersion(),c.dimension(),c.operator(),c.normalization(),c.approvedPolicyFingerprint(),true,"b".repeat(64));
+        assertThat(child.configured()).isTrue();assertThat(EmbeddingLineage.create(child,policy,"pdf").id()).isNotEqualTo(EmbeddingLineage.create(c,policy,"pdf").id());
+        assertThat(EmbeddingLineage.create(child,policy,"note")).isEqualTo(EmbeddingLineage.create(c,policy,"note"));
+        var invalid=new AiDerivationProperties(c.enabled(),false,c.provider(),c.embeddingModel(),c.mediaModel(),c.modelRevision(),
+            c.region(),c.tier(),c.configurationId(),c.adapterVersion(),c.dimension(),c.operator(),c.normalization(),c.approvedPolicyFingerprint(),true,null);
+        assertThat(invalid.configured()).isFalse();
+    }
     @Test void malformedRegionAndOutOfBudgetOffsetsFailBeforePersistence() {
         assertThatThrownBy(()->new DerivedSegment("synthetic","image_region","",null,null,1,null,null,0d,0d,0.5d,0.5d))
                 .isInstanceOf(DerivationFailure.class);

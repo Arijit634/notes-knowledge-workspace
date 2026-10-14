@@ -140,24 +140,34 @@ class AttachmentUploadService {
         } catch (RuntimeException failure) { LOG.warn("attachment_cleanup_deferred"); }
     }
 
-    /** Internal bounded operation only. No scheduler or HTTP mapping. */
+    /** Internal bounded operation only; no HTTP mapping. */
     @Transactional(propagation = Propagation.NEVER)
     String reconcile(String afterReference) {
+        return reconcile(afterReference, INVENTORY_LIMIT);
+    }
+
+    @Transactional(propagation = Propagation.NEVER)
+    String reconcile(String afterReference, int limit) {
+        if (limit < 1 || limit > INVENTORY_LIMIT) throw unavailable();
         if (afterReference != null && !afterReference.matches("private-attachment/[0-9a-f]{64}")) throw unavailable();
         staging.writeLock().lock();
         try {
             var cutoff = clock.instant().minus(ORPHAN_AGE);
-            var page = store.inventoryBefore(cutoff, afterReference, INVENTORY_LIMIT);
-            if (page.size() > INVENTORY_LIMIT) throw unavailable();
+            var page = store.scanBefore(cutoff, afterReference, limit);
+            if (page.objects().size() > limit) throw unavailable();
+            String next = page.continueAfter();
+            if (next != null && (!next.matches("private-attachment/[0-9a-f]{64}")
+                    || afterReference != null && next.compareTo(afterReference) <= 0)) throw unavailable();
             String cursor = afterReference;
-            for (var object : page) {
+            for (var object : page.objects()) {
                 String reference = object.reference();
                 if (reference == null || !reference.matches("private-attachment/[0-9a-f]{64}")
                         || object.createdAt() == null || !object.createdAt().isBefore(cutoff)
-                        || cursor != null && reference.compareTo(cursor) <= 0) throw unavailable();
+                        || cursor != null && reference.compareTo(cursor) <= 0
+                        || next != null && reference.compareTo(next) > 0) throw unavailable();
                 cleanUnreferenced(reference); cursor = reference;
             }
-            return page.size() == INVENTORY_LIMIT ? cursor : null;
+            return next;
         } finally { staging.writeLock().unlock(); }
     }
     private static ApiFailureException unavailable() { return ApiFailureException.of(ApiFailureException.Kind.SERVICE_UNAVAILABLE); }

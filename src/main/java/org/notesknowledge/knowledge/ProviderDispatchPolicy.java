@@ -20,11 +20,13 @@ class ProviderDispatchPolicy {
     static void validate(ProviderDispatchProperties properties) {
         var fingerprints=properties.approvedSourceFingerprints();
         var queries=properties.approvedQueryFingerprints();
+        var children=properties.approvedChildFingerprints();
         if(properties.dispatchPolicy()!=null&&!properties.dispatchPolicy().isBlank()
                 &&!"unpaid-synthetic-demo".equals(properties.dispatchPolicy())
                 ||fingerprints!=null&&(fingerprints.size()>MAX_APPROVED_SOURCES
                 ||fingerprints.stream().anyMatch(f->f==null||!f.matches("[0-9a-f]{64}")))
-                ||queries!=null&&(queries.size()>MAX_APPROVED_SOURCES||queries.stream().anyMatch(f->f==null||!f.matches("[0-9a-f]{64}"))))
+                ||queries!=null&&(queries.size()>MAX_APPROVED_SOURCES||queries.stream().anyMatch(f->f==null||!f.matches("[0-9a-f]{64}")))
+                ||children.size()>MAX_APPROVED_SOURCES||children.stream().anyMatch(f->f==null||!f.matches("[0-9a-f]{64}")))
             throw new IllegalArgumentException("Invalid provider dispatch policy configuration");
     }
     boolean permitsQuery(AiDerivationProperties configuration,String normalizedQuery) {
@@ -56,6 +58,13 @@ class ProviderDispatchPolicy {
         return "gemini".equals(configuration.provider())&&"unpaid".equals(configuration.tier())
             &&"global".equals(configuration.region())&&"unpaid-synthetic-demo".equals(properties.dispatchPolicy())
             &&properties.approvedSourceFingerprints()!=null&&properties.approvedSourceFingerprints().contains(fingerprint(source));
+    }
+    boolean permitsUnpaidGeminiChild(AiDerivationProperties configuration,TransformedMediaIdentity child) {
+        validate(properties);
+        return child!=null&&permitsUnpaidGemini(configuration,child.original())
+            &&configuration.provider().equals(child.provider())&&configuration.mediaModel().equals(child.model())
+            &&configuration.approvedPolicyFingerprint().equals(child.policySha256())
+            &&properties.approvedChildFingerprints().contains(child.approvalFingerprint());
     }
     /** SHA-256 over UTF-8, LF-separated fixed fields, no trailing LF; '-' represents absent Attachment fields. */
     static String fingerprint(PrivateAiSourceCurrentness.Expected source) {

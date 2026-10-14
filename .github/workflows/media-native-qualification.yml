@@ -1,0 +1,99 @@
+name: Native media qualification
+
+on:
+  push:
+    branches: [knowledge/multimodal-ingestion]
+    paths:
+      - 'src/**'
+      - 'pom.xml'
+      - '.github/scripts/media-jdk.*'
+      - '.github/scripts/qualify-media.sh'
+      - '.github/workflows/media-native-qualification.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  # Retain in-flight exact-source qualification evidence across corrective pushes.
+  group: native-media-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Native media / ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install checksum-pinned native JDK
+        shell: bash
+        run: bash .github/scripts/media-jdk.sh
+      - name: Compile qualification controllers and package backend
+        shell: bash
+        run: ./mvnw --batch-mode --no-transfer-progress -Dtest=MediaRuntimeConfigurationTest package
+      - name: Qualify packaged native runtimes
+        shell: bash
+        run: bash .github/scripts/qualify-media.sh
+      - name: Retain sanitized deployment scan and SBOM evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: media-security-${{ matrix.runner }}
+          path: |
+            ${{ runner.temp }}/media-security-readiness/security-readiness.json
+            ${{ runner.temp }}/media-security-readiness/deployment.cdx.json
+            ${{ runner.temp }}/media-security-readiness/sbom-receipt.json
+          if-no-files-found: warn
+          retention-days: 3
+          include-hidden-files: false
+      - name: Verify complete backend on final native-qualified source
+        id: full-backend
+        if: matrix.runner == 'ubuntu-24.04'
+        shell: bash
+        run: ./mvnw --batch-mode --no-transfer-progress clean verify -q
+      - name: Summarize complete backend evidence
+        if: always() && matrix.runner == 'ubuntu-24.04'
+        shell: bash
+        env:
+          FULL_BACKEND_OUTCOME: ${{ steps.full-backend.outcome }}
+        run: |
+          python3 - <<'PY'
+          import glob,json,os,xml.etree.ElementTree as ET
+          totals=dict(tests=0,failures=0,errors=0,skipped=0)
+          files=glob.glob('target/surefire-reports/TEST-*.xml')
+          for path in files:
+              root=ET.parse(path).getroot()
+              for key in totals: totals[key]+=int(root.attrib[key])
+          outcome=os.environ.get('FULL_BACKEND_OUTCOME','')
+          print(json.dumps(dict(fullBackendExecuted=outcome in ('success','failure'),commandOutcome=outcome,classes=len(files),**totals)))
+          PY
+  windows:
+    name: Native media / Windows development
+    runs-on: windows-2025
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install checksum-pinned native JDK
+        shell: pwsh
+        run: ./.github/scripts/media-jdk.ps1
+      - name: Qualify isolated Windows PDF development boundary
+        shell: pwsh
+        run: ./mvnw.cmd --batch-mode --no-transfer-progress '-Dtest=WindowsPdfProcessTest,MediaRuntimeConfigurationTest' test
+      - name: Summarize Windows evidence
+        if: always()
+        shell: pwsh
+        run: |
+          $totals = @{tests=0;failures=0;errors=0;skipped=0}
+          foreach ($file in Get-ChildItem target/surefire-reports -Filter 'TEST-*.xml') {
+            [xml]$report = Get-Content -LiteralPath $file.FullName -Raw
+            foreach ($key in @('tests','failures','errors','skipped')) { $totals[$key] += [int]$report.testsuite.$key }
+          }
+          $totals | ConvertTo-Json -Compress

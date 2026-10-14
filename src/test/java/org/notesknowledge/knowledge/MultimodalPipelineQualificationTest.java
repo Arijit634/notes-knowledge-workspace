@@ -103,8 +103,12 @@ class MultimodalPipelineQualificationTest {
                     var decoded=javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(actual));
                     assertThat(decoded.getWidth()).isEqualTo(160);assertThat(decoded.getHeight()).isEqualTo(96);
                     assertThat(decoded.getRGB(24,24)&0xffffff).isEqualTo(0x0000ff);assertThat(decoded.getRGB(116,30)&0xffffff).isEqualTo(0xff0000);
+                } else if(kind.equals("pdf"))try(var pdf=org.apache.pdfbox.Loader.loadPDF(actual)) {
+                    assertThat(pdf.getNumberOfPages()).isEqualTo(3);
+                    assertThat(new org.apache.pdfbox.text.PDFTextStripper().getText(pdf)).contains(FACTS.get(gold));
                 } else assertThat(actual).isEqualTo(MeaningfulMediaFixtures.media(kind).getBytes());
                 if(kind.equals("audio"))return List.of(new DerivedSegment(FACTS.get(gold),"transcript","",null,null,null,0.,p.source().durationSeconds(),null,null,null,null));
+                if(kind.equals("pdf"))return List.of(); // Native facts remain authoritative parser provenance; vision has no additional fact here.
                 return List.of(segment(kind,FACTS.get(gold)));});
             if(kind.equals("scan"))modality="pdf";
         }
@@ -124,7 +128,7 @@ class MultimodalPipelineQualificationTest {
             case "audio","video" -> {assertThat(location.get("timeStart").asDouble()).isZero();if(kind.equals("audio"))assertThat(location.get("timeEnd").asDouble()).isGreaterThan(1);else assertThat(location.get("timeEnd").asDouble()).isEqualTo(1);}
         }
         assertThat(result.get("coverage").get("boundary").asText()).isEqualTo("bounded");assertThat(result.get("coverage").get("completed").asBoolean()).isFalse();
-        if(kind.equals("pdf"))verifyNoInteractions(media); // Actual PDF text extraction, not a fabricated media reply.
+        if(kind.equals("pdf"))verify(media).describe(any(),any(),any());
         var unsupported=query("What is the fictional antimatter refrigerator serial number?");assertInsufficient(unsupported);
         assertThat(vectors.search(owner,modality,axis(gold),20)).isNotEmpty();
         evidence("multimodal-pipeline-"+kind,Map.of("tier","Tier 1 controlled providers; NOT Gemini quality","modality",kind,
@@ -137,10 +141,17 @@ class MultimodalPipelineQualificationTest {
         assertInsufficient(query("What did the photographed page show?"));
     }
     @Test void pageEighteenFactSurvivesRealExtractionAndCitesOnlyItsActualPage()throws Exception {
+        var original=org.notesknowledge.notes.QualityMediaFixtures.pdf(18,false,false);
         var response=mvc.perform(multipart("/api/notes/"+note+"/attachments")
-            .file(org.notesknowledge.notes.QualityMediaFixtures.pdf(18,false,false)).cookie(cookie).header("X-CSRF-TOKEN",csrf))
+            .file(original).cookie(cookie).header("X-CSRF-TOKEN",csrf))
             .andExpect(status().isCreated()).andReturn().getResponse();
         UUID attachment=UUID.fromString(json.readTree(response.getContentAsString()).get("id").asText());
+        var permits=new ArrayList<AiProcessingGate.SourceAiPermit>();var scopes=new ArrayList<MediaUnderstandingRequest>();
+        when(media.describe(any(),any(),any())).thenAnswer(call->{
+            outside();AiProcessingGate.SourceAiPermit p=call.getArgument(0);p.requireDispatch();permits.add(p);scopes.add(call.getArgument(2));
+            assertThat((byte[])call.getArgument(1)).isEqualTo(original.getBytes());
+            return List.of();
+        });
         String question="What amount did the report recommend setting aside for equipment?";
         doAnswer(call->{outside();AiProcessingGate.SourceAiPermit p=call.getArgument(0);p.requireDispatch();
             List<String> texts=call.getArgument(1);return texts.stream().map(t->axis(t.contains("740 fictional credits")?0:7)).toList();}).when(embeddings).embed(any(),any());
@@ -148,7 +159,11 @@ class MultimodalPipelineQualificationTest {
         doAnswer(call->{outside();KnowledgeQueryGate.EvidencePermit p=call.getArgument(0);p.requireDispatch();
             selected=List.copyOf(call.getArgument(3));var claims=selected.stream().filter(e->e.text().contains("740 fictional credits"))
                 .map(e->new StructuredKnowledgePort.Claim("740 fictional credits",List.of(e.id()))).toList();return new StructuredKnowledgePort.Output(claims,false);}).when(answer).generate(any(),any(),any(),any());
-        assertThat(state(derive(attachment,"pdf"))).isEqualTo("completed");verifyNoInteractions(media);
+        assertThat(state(derive(attachment,"pdf"))).isEqualTo("completed");verify(media,times(3)).describe(any(),any(),any());
+        var distinctPermits=Collections.newSetFromMap(new IdentityHashMap<AiProcessingGate.SourceAiPermit,Boolean>());distinctPermits.addAll(permits);
+        assertThat(distinctPermits).hasSize(3);
+        assertThat(scopes.stream().map(MediaUnderstandingRequest::firstPage)).containsExactly(1,9,17);
+        assertThat(scopes.stream().map(MediaUnderstandingRequest::lastPage)).containsExactly(8,16,18);
         assertThat(jdbc.queryForObject("select count(*) from knowledge.private_derived_segment where owner_user_id=?",Integer.class,owner)).isEqualTo(18);
         var result=query(question);assertThat(selected).hasSize(1);assertThat(result.get("aiAnswer").get("claims").get(0).asText()).isEqualTo("740 fictional credits");
         var citation=result.get("citations").get(0);assertThat(citation.get("attachmentId").asText()).isEqualTo(attachment.toString());
@@ -164,11 +179,44 @@ class MultimodalPipelineQualificationTest {
         assertThat(jdbc.queryForObject("select count(*) from knowledge.private_derived_segment where owner_user_id=?",Integer.class,owner)).isEqualTo(2);
         assertInsufficient(query("What place did the voice name for the silver domed building?"));assertInsufficient(query("Which clip had the geometric shapes and a label?"));
     }
-    @Test void mixedPdfTextDoesNotPretendAnUnprocessedScannedPageWasRead()throws Exception {
-        UUID id=upload("mixed");assertThat(state(derive(id,"pdf"))).isEqualTo("completed");verifyNoInteractions(media);
-        assertThat(jdbc.queryForObject("select count(*) from knowledge.private_derived_segment where owner_user_id=?",Integer.class,owner)).isEqualTo(2);
-        assertThat(jdbc.queryForObject("select count(*) from knowledge.private_derived_segment where owner_user_id=? and page_number=3",Integer.class,owner)).isZero();
-        assertInsufficient(query("What did the photographed page show?"));
+    @Test void mixedPdfPreservesNativeTextAndReadsScannedPageWithOriginalProvenance()throws Exception {
+        UUID id=upload("mixed");
+        when(media.describe(any(),any(),any())).thenAnswer(call->{
+            outside();AiProcessingGate.SourceAiPermit permit=call.getArgument(0);permit.requireDispatch();
+            var scope=(MediaUnderstandingRequest)call.getArgument(2);assertThat(scope.firstPage()).isEqualTo(1);assertThat(scope.lastPage()).isEqualTo(3);
+            return List.of(new DerivedSegment(FACTS.get(4),"pdf_text","",null,null,3,null,null,null,null,null,null));
+        });
+        assertThat(state(derive(id,"pdf"))).isEqualTo("completed");verify(media).describe(any(),any(),any());
+        assertThat(jdbc.queryForObject("select count(*) from knowledge.private_derived_segment where owner_user_id=?",Integer.class,owner)).isEqualTo(3);
+        var result=query("What did the photographed page show?");
+        assertThat(result.get("aiAnswer").get("claims").get(0).asText()).isEqualTo(FACTS.get(4));
+        assertThat(result.get("citations").get(0).get("location").get("page").asInt()).isEqualTo(3);
+    }
+    @Test void missingScannedPageOrPartialProviderFailureCannotActivateNativeOnlyPdf()throws Exception {
+        UUID id=upload("mixed");when(media.describe(any(),any(),any())).thenReturn(List.of());
+        assertThat(state(derive(id,"pdf"))).isEqualTo("failed");
+        assertThat(jdbc.queryForObject("select count(*) from knowledge.private_derived_representation where owner_user_id=? and state='ready'",Integer.class,owner)).isZero();
+        verify(embeddings,never()).embed(any(),any());assertInsufficient(query("What did the photographed page show?"));
+    }
+    @Test void audioRetainsSeparateTopicsWithOriginalTimeAndImageRetainsGroundedOcr()throws Exception {
+        UUID audio=upload("audio"),image=upload("image");
+        when(media.describe(any(),any(),any())).thenAnswer(call->{
+            outside();AiProcessingGate.SourceAiPermit p=call.getArgument(0);p.requireDispatch();
+            var scope=(MediaUnderstandingRequest)call.getArgument(2);
+            if(p.source().modality().equals("audio")) {
+                assertThat((byte[])call.getArgument(1)).isEqualTo(MeaningfulMediaFixtures.media("audio").getBytes());
+                assertThat(scope.durationSeconds()).isEqualTo(p.source().durationSeconds());
+                double split=scope.durationSeconds()/2;
+                return List.of(new DerivedSegment("The fictional observatory is on planet Aster.","transcript","",null,null,null,0.,split,null,null,null,null),
+                    new DerivedSegment("Its dome is silver. [uncertain trailing word]","transcript","",null,null,null,split,scope.durationSeconds(),null,null,null,null));
+            }
+            return List.of(new DerivedSegment("Blue square left of red circle.","whole_image","",null,null,null,null,null,null,null,null,null),
+                new DerivedSegment("ASTER","image_region","",null,null,null,null,null,.05,.65,.6,.3));
+        });
+        assertThat(state(derive(audio,"audio"))).isEqualTo("completed");assertThat(state(derive(image,"image"))).isEqualTo("completed");
+        var timed=jdbc.queryForList("select time_start,time_end from knowledge.private_derived_segment where owner_user_id=? and segment_kind='transcript' order by ordinal",owner);
+        assertThat(timed).hasSize(2);
+        assertThat(jdbc.queryForList("select surrogate_text from knowledge.private_derived_segment where owner_user_id=?",String.class,owner)).contains("ASTER","Its dome is silver. [uncertain trailing word]");
     }
     @Test void unsupportedEmptyMediaCannotCreateAnAttachmentOrProviderWork()throws Exception {
         mvc.perform(multipart("/api/notes/"+note+"/attachments").file(new org.springframework.mock.web.MockMultipartFile("file","empty.mp4","video/mp4",new byte[0]))

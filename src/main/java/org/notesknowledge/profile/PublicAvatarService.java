@@ -114,21 +114,29 @@ class PublicAvatarService {
             store.delete(reference);sample.success();}}
         catch(RuntimeException failure){org.slf4j.LoggerFactory.getLogger(PublicAvatarService.class).warn("public_avatar_cleanup_deferred");}
     }
-    /** Bounded internal reconciliation, never a scheduler or HTTP endpoint. */
+    /** Bounded internal reconciliation; an owner-module maintenance sweep may call it. */
     @Transactional(propagation=Propagation.NEVER)
     String reconcile(String after) {
+        return reconcile(after,100);
+    }
+    @Transactional(propagation=Propagation.NEVER)
+    String reconcile(String after,int limit) {
+        if(limit<1||limit>100)throw unavailable();
         staging.writeLock().lock();
         try {
             var cutoff=clock.instant().minus(Duration.ofHours(24));
-            var objects=store.inventoryBefore(cutoff,after,100);
-            if(objects.size()>100)throw unavailable();String cursor=after;
+            var page=store.scanBefore(cutoff,after,limit);var objects=page.objects();
+            if(objects.size()>limit)throw unavailable();String cursor=after;
             for(var object:objects) {
                 if(object.reference()==null||!object.reference().matches("public-profile-avatar/[0-9a-f]{64}")
                     ||object.createdAt()==null||!object.createdAt().isBefore(cutoff)
                     ||cursor!=null&&object.reference().compareTo(cursor)<=0)throw unavailable();
                 clean(object.reference());cursor=object.reference();
             }
-            return objects.size()==100?cursor:null;
+            var next=page.continueAfter();
+            if(next!=null&&(!next.matches("public-profile-avatar/[0-9a-f]{64}")
+                ||after!=null&&next.compareTo(after)<=0||cursor!=null&&next.compareTo(cursor)<0))throw unavailable();
+            return next;
         }finally{staging.writeLock().unlock();}
     }
     private static ApiFailureException unavailable(){return ApiFailureException.of(ApiFailureException.Kind.SERVICE_UNAVAILABLE);}

@@ -86,6 +86,22 @@ class AttachmentMediaValidatorTest {
         }
     }
 
+    @Test void decimalVideoAdmissionAndLegacyStructuralBoundsAreSeparate() throws Exception {
+        Path path=Files.write(directory.resolve("bounded.mp4"),MeaningfulMediaFixtures.paddedVideo(20_000_000));
+        try(var validator=new AttachmentMediaValidator()) {
+            assertThat(validator.validate(path,"bounded.mp4","video/mp4").sizeBytes()).isEqualTo(20_000_000);
+            Files.write(path,MeaningfulMediaFixtures.paddedVideo(20_000_001));
+            assertThatThrownBy(()->validator.validate(path,"bounded.mp4","video/mp4"))
+                .isInstanceOfSatisfying(ApiFailureException.class,f->assertThat(f.kind()).isEqualTo(ApiFailureException.Kind.REQUEST_TOO_LARGE));
+            Files.write(path,MeaningfulMediaFixtures.paddedVideo(25*1024*1024));
+            assertThat(new StrictMp4StructureValidator().validate(path).durationSeconds()).isEqualTo(2);
+        }
+        assertThat(AttachmentMediaValidator.IMAGE_BYTES).isEqualTo(5*1024*1024);
+        assertThat(AttachmentMediaValidator.AUDIO_BYTES).isEqualTo(10*1024*1024);
+        assertThat(AttachmentMediaValidator.PDF_BYTES).isEqualTo(10*1024*1024);
+        assertThat(AttachmentMediaValidator.SECONDS).isEqualTo(300);
+    }
+
     @Test void imageCanonicalizationRemovesTrailingContentAndRejectsPixelBombBeforeDecode() throws Exception {
         Path path = directory.resolve("canonical.png");
         javax.imageio.ImageIO.write(new BufferedImage(16, 12, BufferedImage.TYPE_INT_RGB), "png", path.toFile());

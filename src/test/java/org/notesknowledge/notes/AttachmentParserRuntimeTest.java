@@ -32,6 +32,38 @@ class AttachmentParserRuntimeTest {
     @TempDir Path temporary;
 
     @ParameterizedTest
+    @ValueSource(strings={"META-INF/tika/parsers.idx","BOOT-INF/classes/META-INF/tika/parsers.idx"})
+    void copiesFixedRegistryFromBootRootOrClassesLayout(String path) throws Exception {
+        Path archive=temporary.resolve("synthetic.jar");
+        byte[] registry="pdf-evidence-parser=synthetic-fixed-registry".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        try(var output=new java.util.jar.JarOutputStream(Files.newOutputStream(archive))) {
+            output.putNextEntry(new JarEntry(path));output.write(registry);output.closeEntry();
+        }
+        Path classes=temporary.resolve("classes");
+        try(var jar=new java.util.jar.JarFile(archive.toFile())) {
+            AttachmentParserRuntime.copyParserRegistry(jar,classes);
+        }
+        assertThat(Files.readAllBytes(classes.resolve("META-INF/tika/parsers.idx"))).isEqualTo(registry);
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints={0,4097})
+    void rejectsMissingOrOversizedRegistry(int size) throws Exception {
+        Path archive=temporary.resolve("synthetic.jar");
+        try(var output=new java.util.jar.JarOutputStream(Files.newOutputStream(archive))) {
+            if(size>0) {
+                output.putNextEntry(new JarEntry("META-INF/tika/parsers.idx"));
+                output.write(new byte[size]);output.closeEntry();
+            }
+        }
+        try(var jar=new java.util.jar.JarFile(archive.toFile())) {
+            assertThatThrownBy(()->AttachmentParserRuntime.copyParserRegistry(jar,temporary.resolve("classes")))
+                    .isInstanceOf(IOException.class).hasMessage("Parser registry unavailable");
+        }
+        assertThat(temporary.resolve("classes/META-INF/tika/parsers.idx")).doesNotExist();
+    }
+
+    @ParameterizedTest
     @ValueSource(strings = {"../tika-evil.jar", "..\\tika-evil.jar", "/tmp/tika-evil.jar",
             "\\\\server\\share\\tika-evil.jar", "subdir/tika-evil.jar", "subdir\\tika-evil.jar",
             ".", "..", "", "   ", "C:\\tika-evil.jar", "C:/tika-evil.jar", "C:tika-evil.jar",

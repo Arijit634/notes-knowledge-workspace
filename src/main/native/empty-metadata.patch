@@ -1,0 +1,11 @@
+--- a/libavformat/movenc.c
++++ b/libavformat/movenc.c
+@@ -5097,7 +5097,7 @@ static int mov_write_udta_tag(AVIOContext *pb, MOVMuxContext *mov,
+         mov_write_string_metadata(s, pb_buf, "\251xyz", "location",    0);
+         mov_write_string_metadata(s, pb_buf, "\251key", "keywords",    0);
+         mov_write_raw_metadata_tag(s, pb_buf, "XMP_", "xmp");
+-    } else {
++    } else if (av_dict_count(s->metadata)) {
+         /* iTunes meta data */
+         mov_write_meta_tag(pb_buf, mov, s);
+         mov_write_loci_tag(s, pb_buf);

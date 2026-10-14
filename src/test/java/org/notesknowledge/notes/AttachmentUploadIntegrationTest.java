@@ -80,6 +80,18 @@ class AttachmentUploadIntegrationTest {
         store.clear();
     }
 
+    @Test void newMp4DecimalBoundaryIsEnforcedAcrossUploadAndStoredAccess() throws Exception {
+        UUID owner=account(),note=note(owner);Browser browser=browser(owner,"ROLE_USER");
+        byte[] bytes=MeaningfulMediaFixtures.paddedVideo(20_000_000);
+        var accepted=upload(browser,note,new MockMultipartFile("file","bounded.mp4","video/mp4",bytes)).andExpect(status().isCreated()).andReturn();
+        var core=json.readTree(accepted.getResponse().getContentAsString());assertThat(core.get("sizeBytes").asLong()).isEqualTo(20_000_000);
+        mvc.perform(get(path(note)+"/"+core.get("id").asText()+"/content").cookie(browser.cookie()).header("Range","bytes=0-31"))
+            .andExpect(status().isPartialContent());
+        upload(browser,note,new MockMultipartFile("file","oversized.mp4","video/mp4",MeaningfulMediaFixtures.paddedVideo(20_000_001)))
+            .andExpect(status().isContentTooLarge());
+        assertThat(count(note)).isEqualTo(1);assertThat(store.bytes).hasSize(1);assertThat(store.sawTransaction).isFalse();
+    }
+
     @ParameterizedTest @ValueSource(strings = {"image", "audio", "video", "pdf"})
     void acceptedKindsCommitSafeCoreWithoutChangingNoteRevision(String kind) throws Exception {
         UUID owner = account(), note = note(owner); Browser browser = browser(owner, "ROLE_USER");
@@ -255,20 +267,42 @@ class AttachmentUploadIntegrationTest {
     @Test void realServletFileAndRequestBoundsRejectBeforeStorage() throws Exception {
         UUID owner = account(), note = note(owner); Browser browser = browser(owner, "ROLE_USER");
         try (var client = java.net.http.HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(5)).build()) {
-            for (int length : new int[]{25 * 1024 * 1024 + 1, 26 * 1024 * 1024 + 1}) {
-                var payload = new java.io.ByteArrayOutputStream();
-                payload.write("--synthetic-boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"synthetic.mp4\"\r\nContent-Type: video/mp4\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
-                payload.write(new byte[length]); payload.write("\r\n--synthetic-boundary--\r\n".getBytes(StandardCharsets.US_ASCII));
+            for (int length : new int[]{20_000_001, 25 * 1024 * 1024 + 1, 26 * 1024 * 1024 + 1}) {
+                byte[] header = "--synthetic-boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"synthetic.mp4\"\r\nContent-Type: video/mp4\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
+                byte[] footer = "\r\n--synthetic-boundary--\r\n".getBytes(StandardCharsets.US_ASCII);
+                // Preserve the real request length without retaining multiple oversized
+                // byte arrays in the same JVM as the complete Spring regression suite.
+                var content = java.net.http.HttpRequest.BodyPublishers.fromPublisher(
+                        java.net.http.HttpRequest.BodyPublishers.ofInputStream(() -> syntheticZeroes(length)), length);
+                var payload = java.net.http.HttpRequest.BodyPublishers.concat(
+                        java.net.http.HttpRequest.BodyPublishers.ofByteArray(header), content,
+                        java.net.http.HttpRequest.BodyPublishers.ofByteArray(footer));
+                assertThat(payload.contentLength()).isEqualTo((long) header.length + length + footer.length);
                 var request = java.net.http.HttpRequest.newBuilder(java.net.URI.create("http://127.0.0.1:" + port + path(note)))
                         .timeout(java.time.Duration.ofSeconds(20)).header("Cookie", "SESSION=" + browser.cookie().getValue())
                         .header("X-CSRF-TOKEN", browser.csrf()).header("Content-Type", "multipart/form-data; boundary=synthetic-boundary")
-                        .POST(java.net.http.HttpRequest.BodyPublishers.ofByteArray(payload.toByteArray())).build();
+                        .POST(payload).build();
                 var response = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
                 assertThat(response.statusCode()).isEqualTo(413);
                 assertThat(response.body()).contains("request_too_large").doesNotContain("synthetic.mp4", "Exception", "private-attachment");
             }
         }
         assertThat(count(note)).isZero(); assertThat(store.bytes).isEmpty();
+    }
+
+    private static InputStream syntheticZeroes(int length) {
+        return new InputStream() {
+            private int remaining = length;
+            @Override public int read() { if (remaining == 0) return -1; remaining--; return 0; }
+            @Override public int read(byte[] bytes, int offset, int count) {
+                java.util.Objects.checkFromIndexSize(offset, count, bytes.length);
+                if (count == 0) return 0;
+                if (remaining == 0) return -1;
+                int size = Math.min(remaining, count);
+                java.util.Arrays.fill(bytes, offset, offset + size, (byte) 0);
+                remaining -= size; return size;
+            }
+        };
     }
 
     @Test void databaseConstrainsOwnerIdentityMetadataStateAndRestrictiveForeignKeys() throws Exception {

@@ -10,12 +10,19 @@ import org.springframework.context.annotation.Configuration;
 @Configuration(proxyBeanMethods = false)
 class AvatarStorageConfiguration {
     @Bean @ConditionalOnMissingBean(AvatarObjectStore.class)
+    @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(prefix="profile.avatar-storage",name="enabled",havingValue="false",matchIfMissing=true)
     AvatarObjectStore unavailableAvatarObjectStore() {
         return new AvatarObjectStore() {
             public void write(String reference, byte[] bytes) { throw unavailable(); }
             public void delete(String reference) { throw unavailable(); }
             public List<StoredObject> inventoryBefore(Instant cutoff, String afterReference, int limit) { throw unavailable(); }
         };
+    }
+
+    @Bean(destroyMethod="close")
+    @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(prefix="profile.avatar-storage",name="enabled",havingValue="true")
+    OciPrivateAvatarObjectStore privateAvatarObjectStore(org.springframework.core.env.Environment environment) {
+        return new OciPrivateAvatarObjectStore(AvatarStorageClients.create(environment,"profile.avatar-storage","private-avatar/"));
     }
 
     private static ApiFailureException unavailable() {

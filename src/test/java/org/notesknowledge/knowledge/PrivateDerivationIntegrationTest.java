@@ -44,7 +44,8 @@ import tools.jackson.databind.ObjectMapper;
 
 @Tag("DATABASE") @Tag("API") @Tag("SECURITY") @Tag("RETRIEVAL") @Tag("EVALUATION")
 @Testcontainers @SpringBootTest @AutoConfigureMockMvc
-@org.springframework.context.annotation.Import(org.notesknowledge.notes.DerivationMediaFixtures.class)
+@org.springframework.context.annotation.Import({org.notesknowledge.notes.DerivationMediaFixtures.class,
+    org.notesknowledge.notes.PdfPageRuntimeFixtures.class,org.notesknowledge.notes.VideoClipRuntimeFixtures.class})
 class PrivateDerivationIntegrationTest {
     @Container static final PostgreSQLContainer postgres=new PostgreSQLContainer("pgvector/pgvector:0.8.6-pg18-trixie")
         .withDatabaseName("private_derivation").withUsername("synthetic_migrator").withPassword("synthetic-derivation-password");
@@ -101,6 +102,87 @@ class PrivateDerivationIntegrationTest {
         owner=account();note=note(owner,true);browser=browser(owner);policy=policy(1,"a");ack(owner,policy);
     }
     @AfterEach void clear(){SecurityContextHolder.clearContext();}
+    @AfterAll static void closeNativePdfQualification(){org.notesknowledge.notes.PdfPageRuntimeFixtures.closeNativeQualification();}
+    @AfterAll static void closeNativeVideoQualification()throws Exception{org.notesknowledge.notes.VideoClipRuntimeFixtures.closeNative();}
+    @Test void longVideoClipsRequireIndependentApprovalsAndActivateOriginalTimeEvidence()throws Exception {
+        var attempt=videoChildAttempt(true);var permits=new ArrayList<AiProcessingGate.SourceAiPermit>();
+        doAnswer(call->{
+            AiProcessingGate.SourceAiPermit permit=call.getArgument(0);TransformedMediaIdentity child=call.getArgument(1);
+            byte[] original=call.getArgument(2),payload=call.getArgument(3);MediaUnderstandingRequest request=call.getArgument(4);
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            permit.requireGoogleChildDispatch(child,original,payload);GoogleDerivationAdapters.requireChildScope(child,request);
+            assertThat(child.scope().startTick()).isEqualTo(permits.size()*20000L);permits.add(permit);
+            return List.of(new DerivedSegment("Synthetic visible scene interval","video_scene","",null,null,null,1d,2d,null,null,null,null));
+        }).when(media).describeChild(any(),any(),any(),any(),any());
+        executor.execute(attempt);assertThat(state(attempt)).isEqualTo("completed");assertThat(permits).hasSize(2);
+        assertThat(permits.getFirst()).isNotSameAs(permits.getLast());
+        assertThat(jdbc.queryForList("select time_start from knowledge.private_derived_segment where owner_user_id=? order by ordinal",Double.class,owner)).containsExactly(1d,21d);
+        assertThat(jdbc.queryForList("select time_end from knowledge.private_derived_segment where owner_user_id=? order by ordinal",Double.class,owner)).containsExactly(2d,22d);
+        activate();assertThat(search.search(request(),"video",vector(),10)).hasSize(2);
+    }
+    @Test void unapprovedVideoChildNeverReachesProviderOrActivation()throws Exception {
+        var attempt=videoChildAttempt(false);executor.execute(attempt);
+        verify(media,never()).describeChild(any(),any(),any(),any(),any());verify(embeddings,never()).embed(any(),any());
+        assertThat(state(attempt)).isEqualTo("obsolete");assertThat(readyCount()).isZero();
+    }
+    @ParameterizedTest @ValueSource(strings={"ai-off","delete","save","policy","child-revoked","bad-output","truncated"})
+    void videoLaterRegionFailureCannotActivatePartialEvidence(String mode)throws Exception {
+        var attempt=videoChildAttempt(true);var firstDone=new java.util.concurrent.atomic.AtomicBoolean();
+        doAnswer(call->{
+            if(firstDone.compareAndSet(true,false)) {
+                if(mode.equals("ai-off"))disable();
+                if(mode.equals("delete")) {
+                    String url="/api/notes/"+note+"/attachments/"+attempt.intent().expected().attachmentId();
+                    String etag=mvc.perform(get(url).cookie(browser.cookie)).andExpect(status().isOk()).andReturn().getResponse().getHeader("ETag");
+                    mvc.perform(delete(url).cookie(browser.cookie).header("X-CSRF-TOKEN",browser.csrf).header("If-Match",etag)).andExpect(status().isNoContent());
+                }
+                if(mode.equals("save"))mutate("put","",Map.of("title","Changed","markdown","Changed source context"));
+                if(mode.equals("policy"))policy(2,"b");
+                if(mode.equals("child-revoked"))when(dispatchConfiguration.approvedChildFingerprints()).thenReturn(List.of());
+            }
+            return call.callRealMethod();
+        }).when(coordination).dispatch(any(),any());
+        var count=new java.util.concurrent.atomic.AtomicInteger();
+        doAnswer(call->{
+            int index=count.incrementAndGet();
+            if(index==2&&mode.equals("truncated"))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
+            firstDone.set(true);
+            return List.of(new DerivedSegment("Synthetic visible region","video_scene","",null,null,null,0d,
+                index==2&&mode.equals("bad-output")?21d:1d,null,null,null,null));
+        }).when(media).describeChild(any(),any(),any(),any(),any());
+        executor.execute(attempt);assertThat(readyCount()).isZero();verify(embeddings,never()).embed(any(),any());
+        assertThat(state(attempt)).isIn("obsolete","failed");
+        assertThat(count.get()).isEqualTo(mode.equals("bad-output")||mode.equals("truncated")?2:1);
+        if(!mode.equals("delete")) {
+            var content=mvc.perform(get("/api/notes/"+note+"/attachments/"+attempt.intent().expected().attachmentId()+"/content").cookie(browser.cookie))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
+            assertThat(content).isEqualTo(org.notesknowledge.notes.VideoClipRuntimeFixtures.original());
+        }
+    }
+    private KnowledgeWork.Claim videoChildAttempt(boolean approved)throws Exception {
+        byte[] original=org.notesknowledge.notes.VideoClipRuntimeFixtures.original();
+        var file=new org.springframework.mock.web.MockMultipartFile("file","synthetic.mp4","video/mp4",original);
+        var response=mvc.perform(multipart("/api/notes/"+note+"/attachments").file(file).cookie(browser.cookie).header("X-CSRF-TOKEN",browser.csrf))
+            .andExpect(status().isCreated()).andReturn().getResponse();
+        UUID id=UUID.fromString(json.readTree(response.getContentAsString()).get("id").asText());
+        var expected=new PrivateAiSourceCurrentness.Expected(owner,note,id,1,1,1L);
+        unpaidGemini();approve(expected);when(configuration.videoChildren()).thenReturn(true);
+        when(configuration.videoTransformFingerprint()).thenReturn(org.notesknowledge.notes.VideoClipRuntimeFixtures.fingerprint());
+        var lineage=lineageForPolicy(policy,1,"video");var approvals=new ArrayList<String>();
+        var plan=org.notesknowledge.notes.VideoClipRuntimeFixtures.plan(original);
+        for(int first=0;first<plan.durations().size();) {
+            int last=plan.next(first);
+            try(var child=org.notesknowledge.notes.VideoClipRuntimeFixtures.render(original,plan,first,last)) {
+                byte[] payload=child.bytes();approvals.add(new TransformedMediaIdentity(expected,TransformedMediaIdentity.digest(original),original.length,"video/mp4",
+                    child.profile(),child.implementationVersion(),child.artifactSha256(),child.configurationSha256(),TransformedMediaIdentity.digest(payload),payload.length,"video/mp4",
+                    new TransformedMediaIdentity.Scope("video_samples",first,last,plan.timescale(),plan.tick(first),plan.tick(last)),lineage.id(),"gemini",configuration.mediaModel(),"media-understanding","a".repeat(64)).approvalFingerprint());
+                java.util.Arrays.fill(payload,(byte)0);
+            }
+            first=last;
+        }
+        when(dispatchConfiguration.approvedChildFingerprints()).thenReturn(approved?approvals:List.of());
+        return claimWithLineage(expected,lineage);
+    }
     @Test void frozenCorpusCompletesAndInterruptedLongNoteResumesFromDurableSyntheticResults(@org.junit.jupiter.api.io.TempDir java.nio.file.Path checkpoint)throws Exception {
         unpaidGemini();when(configuration.embeddingModel()).thenReturn("gemini-embedding-2");when(configuration.dimension()).thenReturn(768);
         var journal=new java.util.concurrent.atomic.AtomicReference<>(new QualificationJournal(checkpoint,"offline-recovery-v1"));
@@ -272,7 +354,7 @@ class PrivateDerivationIntegrationTest {
         var fake=gate.issueForDispatch(syntheticClaim,handle).orElseThrow();
         assertThatThrownBy(()->adapters.googleTextEmbeddingPort(configuration,sdk).embed(fake,List.of("Synthetic")))
             .isInstanceOfSatisfying(DerivationFailure.class,failure->assertThat(failure.category).isEqualTo(KnowledgeWork.Failure.INVALID_SOURCE));
-        assertThatThrownBy(()->adapters.googleMediaUnderstandingPort(configuration,sdk,json).describe(fake,new byte[0],"image/png"))
+        assertThatThrownBy(()->adapters.googleMediaUnderstandingPort(configuration,sdk,json).describe(fake,new byte[0],new MediaUnderstandingRequest("image/png",null,null,null)))
             .isInstanceOfSatisfying(DerivationFailure.class,failure->assertThat(failure.category).isEqualTo(KnowledgeWork.Failure.INVALID_SOURCE));
         unpaidGemini();approve(noteExpected());
         assertThatThrownBy(fake::requireGoogleDispatch).isInstanceOf(DerivationFailure.class);
@@ -292,6 +374,188 @@ class PrivateDerivationIntegrationTest {
         String fingerprint=ProviderDispatchPolicy.fingerprint(noteExpected());
         assertThat(response).doesNotContain(owner.toString(),note.toString(),fingerprint,"approvedSourceFingerprints","revision","generation");
         assertThat(output.getAll()).doesNotContain(owner.toString(),note.toString(),fingerprint,ProviderDispatchPolicy.fingerprint(new PrivateAiSourceCurrentness.Expected(owner,note,null,2,1,null)));
+    }
+    @Test void exactChildPermitRequiresBothApprovalsBytesLineageAndAnActiveOutsideTransactionScope() throws Exception {
+        UUID attachment=upload("pdf");var expected=new PrivateAiSourceCurrentness.Expected(owner,note,attachment,1,1,1L);
+        unpaidGemini();approve(expected);var attempt=claim(expected,"pdf");
+        AiProcessingGate.SourceAiPermit issued;var bytes=new byte[]{1,2};var original=originalBytes(attempt);
+        TransformedMediaIdentity child;
+        try(var handle=coordination.dispatch(owner,note)) {
+            issued=gate.issueForDispatch(attempt,handle).orElseThrow();
+            child=approvedTestChild(issued,original,bytes);
+            var permit=issued;var identity=child;
+            assertThatThrownBy(()->permit.requireGoogleChildDispatch(identity,original,bytes)).isInstanceOf(DerivationFailure.class);
+            when(dispatchConfiguration.approvedChildFingerprints()).thenReturn(List.of(child.approvalFingerprint()));
+            issued.requireGoogleChildDispatch(child,original,bytes);
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            assertThatThrownBy(()->permit.requireGoogleChildDispatch(identity,original,new byte[]{1,3})).isInstanceOf(DerivationFailure.class);
+            var tampered=original.clone();tampered[tampered.length-1]^=1;
+            assertThatThrownBy(()->permit.requireGoogleChildDispatch(identity,tampered,bytes)).isInstanceOf(DerivationFailure.class);
+            assertThatThrownBy(()->new TransactionTemplate(transactions).execute(s->{permit.requireGoogleChildDispatch(identity,original,bytes);return true;}))
+                .isInstanceOf(DerivationFailure.class);
+            // Independent current original approval remains mandatory even with exact child approval.
+            when(dispatchConfiguration.approvedSourceFingerprints()).thenReturn(List.of());
+            assertThatThrownBy(()->permit.requireGoogleChildDispatch(identity,original,bytes)).isInstanceOf(DerivationFailure.class);
+            approve(expected);issued.requireGoogleChildDispatch(child,original,bytes);
+        }
+        var permit=issued;var identity=child;
+        assertThatThrownBy(()->permit.requireGoogleChildDispatch(identity,original,bytes)).isInstanceOf(org.notesknowledge.websupport.ApiFailureException.class);
+        verifyNoInteractions(embeddings,media);
+    }
+    @ParameterizedTest @ValueSource(strings={"disable","save","trash","suspend","policy","lineage","child-revoke","lease-expire"})
+    void nextChildDispatchRechecksCurrentAuthorityInsteadOfReusingItsPreviousPermit(String mutation) throws Exception {
+        UUID attachment=upload("pdf");var expected=new PrivateAiSourceCurrentness.Expected(owner,note,attachment,1,1,1L);
+        unpaidGemini();approve(expected);var attempt=claim(expected,"pdf");var bytes=new byte[]{1,2};var original=originalBytes(attempt);
+        try(var handle=coordination.dispatch(owner,note)) {
+            var permit=gate.issueForDispatch(attempt,handle).orElseThrow();var child=approvedTestChild(permit,original,bytes);
+            when(dispatchConfiguration.approvedChildFingerprints()).thenReturn(List.of(child.approvalFingerprint()));
+            permit.requireGoogleChildDispatch(child,original,bytes);
+        }
+        if(mutation.equals("child-revoke")) {
+            // Same global coordination used for a quiesced cross-instance configuration rollout.
+            try(var ignored=coordination.globalMutation()){when(dispatchConfiguration.approvedChildFingerprints()).thenReturn(List.of());}
+        } else if(mutation.equals("lease-expire"))
+            jdbc.update("update knowledge.knowledge_work_intent set lease_until=clock_timestamp()-interval '1 second' where knowledge_work_intent_id=?",attempt.intent().id());
+        else authorityMutation(mutation);
+        try(var handle=coordination.dispatch(owner,note)) {
+            var next=gate.issueForDispatch(attempt,handle);
+            if(mutation.equals("child-revoke")) {
+                assertThat(next).isPresent();var permit=next.orElseThrow();var child=approvedTestChild(permit,original,bytes);
+                assertThatThrownBy(()->permit.requireGoogleChildDispatch(child,original,bytes)).isInstanceOf(DerivationFailure.class);
+            } else assertThat(next).isEmpty();
+        }
+        assertThat(readyCount()).isZero();verifyNoInteractions(embeddings,media);
+    }
+    private byte[] originalBytes(KnowledgeWork.Claim attempt) throws Exception {
+        var expected=attempt.intent().expected();
+        try(var handle=coordination.dispatch(expected.owner(),expected.noteId())) {
+            gate.issueForDispatch(attempt,handle).orElseThrow().requireDispatch();
+            try(var input=derivationTransactions.acquire(attempt).open()){return input.readAllBytes();}
+        }
+    }
+    private TransformedMediaIdentity approvedTestChild(AiProcessingGate.SourceAiPermit permit,byte[] original,byte[] bytes) {
+        // Deliberately no media transform/provider call: this proves only the authorization seam.
+        return new TransformedMediaIdentity(permit.source().expected(),TransformedMediaIdentity.digest(original),permit.source().sizeBytes(),"application/pdf",
+            "pdf-page-v1","synthetic-v1","a".repeat(64),"a".repeat(64),TransformedMediaIdentity.digest(bytes),bytes.length,"image/png",
+            new TransformedMediaIdentity.Scope("pdf_pages",1,1,0,0,0),permit.lineage().id(),"gemini",configuration.mediaModel(),"media-understanding","a".repeat(64));
+    }
+    @Test void realPageChildrenReachAuthorizedAdapterPersistAndRetrieveWithOriginalOrdinals()throws Exception {
+        byte[] original=org.notesknowledge.notes.MeaningfulMediaFixtures.media("mixed").getBytes();
+        var attempt=pageChildAttempt(original,true);
+        var permits=Collections.newSetFromMap(new IdentityHashMap<AiProcessingGate.SourceAiPermit,Boolean>());
+        var pages=new ArrayList<Integer>();
+        doAnswer(call->{
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            AiProcessingGate.SourceAiPermit p=call.getArgument(0);TransformedMediaIdentity child=call.getArgument(1);
+            byte[] source=call.getArgument(2),png=call.getArgument(3);MediaUnderstandingRequest request=call.getArgument(4);
+            p.requireGoogleChildDispatch(child,source,png);permits.add(p);pages.add(request.firstPage());
+            assertThat(source).isEqualTo(original);assertThat(request.mediaType()).isEqualTo("image/png");
+            assertThat(request.firstPage()).isEqualTo(request.lastPage());
+            try(var independent=org.notesknowledge.notes.PdfPageRuntimeFixtures.render(original,request.firstPage())) {
+                assertThat(png).isEqualTo(independent.bytes());
+            }
+            if(request.firstPage()!=3)return List.of();
+            var image=javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(png));
+            assertThat(image.getRGB(128,296)&0xffffff).isEqualTo(0x0000ff);
+            return List.of(new DerivedSegment("The scanned page contains a blue square and ASTER.","pdf_text","",null,null,3,null,null,null,null,null,null));
+        }).when(media).describeChild(any(),any(),any(),any(),any());
+        executor.execute(attempt);
+        assertThat(state(attempt)).isEqualTo("completed");assertThat(pages).containsExactly(1,2,3);assertThat(permits).hasSize(3);
+        verify(media,never()).describe(any(),any(),any());assertThat(readyCount()).isEqualTo(1);
+        assertThat(jdbc.queryForList("select page_number from knowledge.private_derived_segment where owner_user_id=? order by ordinal",Integer.class,owner)).containsExactly(1,2,3);
+        assertThat(search.search(owner,"pdf",vector(),10)).anySatisfy(row->{assertThat(row.segment().page()).isEqualTo(3);});
+        disable();assertThat(search.search(owner,"pdf",vector(),10)).isEmpty();assertThat(readyCount()).isZero();
+    }
+    @Test void pageChildModeWithoutExactChildApprovalCannotDispatchOrActivate()throws Exception {
+        var attempt=pageChildAttempt(org.notesknowledge.notes.MeaningfulMediaFixtures.media("mixed").getBytes(),false);
+        executor.execute(attempt);
+        assertThat(state(attempt)).isEqualTo("obsolete");assertThat(readyCount()).isZero();
+        verify(media,never()).describeChild(any(),any(),any(),any(),any());verify(media,never()).describe(any(),any(),any());
+        verify(embeddings,never()).embed(any(),any());
+    }
+    @ParameterizedTest @ValueSource(strings={"wrong-page","second-call-failure"})
+    void pageChildFailuresCannotActivateAPartialPdf(String failure)throws Exception {
+        var attempt=pageChildAttempt(org.notesknowledge.notes.MeaningfulMediaFixtures.media("mixed").getBytes(),true);
+        var calls=new java.util.concurrent.atomic.AtomicInteger();
+        doAnswer(call->{
+            AiProcessingGate.SourceAiPermit p=call.getArgument(0);p.requireGoogleChildDispatch(call.getArgument(1),call.getArgument(2),call.getArgument(3));
+            int number=calls.incrementAndGet();
+            if(failure.equals("wrong-page"))return List.of(new DerivedSegment("Invented page","pdf_text","",null,null,99,null,null,null,null,null,null));
+            if(number==2)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
+            return List.of(new DerivedSegment("A bounded first-page fact","pdf_text","",null,null,1,null,null,null,null,null,null));
+        }).when(media).describeChild(any(),any(),any(),any(),any());
+        executor.execute(attempt);assertThat(state(attempt)).isEqualTo("failed");assertThat(readyCount()).isZero();
+        assertThat(calls).hasValue(failure.equals("wrong-page")?1:2);verify(embeddings,never()).embed(any(),any());
+        verify(media,never()).describe(any(),any(),any());
+    }
+    @Test void invalidationBetweenRealPageChildrenDeniesLaterCallsAndActivation()throws Exception {
+        var attempt=pageChildAttempt(org.notesknowledge.notes.MeaningfulMediaFixtures.media("mixed").getBytes(),true);
+        var captured=new CountDownLatch(1);var release=new CountDownLatch(1);var committed=new CountDownLatch(1);
+        doAnswer(call->{
+            AiProcessingGate.SourceAiPermit p=call.getArgument(0);p.requireGoogleChildDispatch(call.getArgument(1),call.getArgument(2),call.getArgument(3));
+            captured.countDown();assertThat(release.await(15,TimeUnit.SECONDS)).isTrue();return List.of();
+        }).when(media).describeChild(any(),any(),any(),any(),any());
+        try(var pool=Executors.newFixedThreadPool(2)) {
+            var worker=pool.submit(()->executor.execute(attempt));assertThat(captured.await(15,TimeUnit.SECONDS)).isTrue();
+            doAnswer(call->{assertThat(committed.await(15,TimeUnit.SECONDS)).isTrue();return call.callRealMethod();}).when(coordination).dispatch(any(),any());
+            var mutation=pool.submit(()->{disable();committed.countDown();return null;});
+            awaitAdvisoryWaiter();assertThat(mutation.isDone()).isFalse();release.countDown();
+            mutation.get(20,TimeUnit.SECONDS);worker.get(20,TimeUnit.SECONDS);
+        } finally {release.countDown();committed.countDown();}
+        verify(media,times(1)).describeChild(any(),any(),any(),any(),any());verify(embeddings,never()).embed(any(),any());
+        assertThat(state(attempt)).isEqualTo("obsolete");assertThat(readyCount()).isZero();
+    }
+    private KnowledgeWork.Claim pageChildAttempt(byte[] original,boolean approveChildren)throws Exception {
+        var file=new org.springframework.mock.web.MockMultipartFile("file","synthetic.pdf","application/pdf",original);
+        var response=mvc.perform(multipart("/api/notes/"+note+"/attachments").file(file).cookie(browser.cookie).header("X-CSRF-TOKEN",browser.csrf))
+            .andExpect(status().isCreated()).andReturn().getResponse();
+        UUID id=UUID.fromString(json.readTree(response.getContentAsString()).get("id").asText());
+        var expected=new PrivateAiSourceCurrentness.Expected(owner,note,id,1,1,1L);
+        unpaidGemini();approve(expected);when(configuration.pdfPageChildren()).thenReturn(true);
+        when(configuration.pdfTransformFingerprint()).thenReturn(org.notesknowledge.notes.PdfPageRuntimeFixtures.transformFingerprint());
+        var lineage=lineageForPolicy(policy,1,"pdf");var approvals=new ArrayList<String>();
+        for(int page=1;page<=3;page++)try(var child=org.notesknowledge.notes.PdfPageRuntimeFixtures.render(original,page)) {
+            byte[] payload=child.bytes();
+            approvals.add(new TransformedMediaIdentity(expected,TransformedMediaIdentity.digest(original),original.length,"application/pdf",child.profile(),child.implementationVersion(),
+                child.artifactSha256(),child.configurationSha256(),TransformedMediaIdentity.digest(payload),payload.length,"image/png",
+                new TransformedMediaIdentity.Scope("pdf_pages",page,page,0,0,0),lineage.id(),"gemini",configuration.mediaModel(),"media-understanding","a".repeat(64)).approvalFingerprint());
+        }
+        when(dispatchConfiguration.approvedChildFingerprints()).thenReturn(approveChildren?approvals:List.of());
+        return claimWithLineage(expected,lineage);
+    }
+    @ParameterizedTest @ValueSource(strings={"expired","poisoned"})
+    void childPermitExpirationAndPoisonVetoApprovedExactBytes(String mode) throws Exception {
+        UUID attachment=upload("pdf");var expected=new PrivateAiSourceCurrentness.Expected(owner,note,attachment,1,1,1L);
+        unpaidGemini();approve(expected);var attempt=claim(expected,"pdf");var original=originalBytes(attempt);var bytes=new byte[]{1,2};
+        try(var handle=coordination.dispatch(owner,note)) {
+            var permit=gate.issueForDispatch(attempt,handle).orElseThrow();var child=approvedTestChild(permit,original,bytes);
+            when(dispatchConfiguration.approvedChildFingerprints()).thenReturn(List.of(child.approvalFingerprint()));
+            if(mode.equals("expired")) {
+                var future=java.time.Instant.now().plusSeconds(16);
+                try(var time=mockStatic(java.time.Instant.class,CALLS_REAL_METHODS)) {
+                    time.when(java.time.Instant::now).thenReturn(future);
+                    assertThatThrownBy(()->permit.requireGoogleChildDispatch(child,original,bytes)).isInstanceOf(DerivationFailure.class);
+                }
+            } else {
+                terminateDispatchSession();
+                assertThatThrownBy(()->permit.requireGoogleChildDispatch(child,original,bytes)).isInstanceOf(org.notesknowledge.websupport.ApiFailureException.class);
+                assertThat(handle.state()).isEqualTo(org.notesknowledge.DispatchCoordinator.Handle.State.POISONED);
+            }
+        }
+        verifyNoInteractions(embeddings,media);assertThat(readyCount()).isZero();
+    }
+    @Test void wholeAttemptBudgetVetoAfterEmbeddingDoesNotActivateAnyPartialGeneration() {
+        var returned=new java.util.concurrent.atomic.AtomicBoolean();
+        doAnswer(call->{returned.set(true);return List.of(vector());}).when(embeddings).embed(any(),any());
+        try(var budgets=mockConstruction(DerivationAttemptBudget.class,(budget,context)->{
+            doAnswer(call->{if(returned.get())throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);return null;}).when(budget).check();
+        })) {
+            var attempt=claim(noteExpected(),"note");executor.execute(attempt);
+            assertThat(budgets.constructed()).hasSize(1);
+            verify(budgets.constructed().getFirst()).providerRequest(eq(false),anyLong());
+            assertThat(state(attempt)).isEqualTo("failed");assertThat(readyCount()).isZero();
+            verify(representations,never()).activate(any(),any(),any(),any());
+        }
     }
     private void unpaidGemini(){when(configuration.provider()).thenReturn("gemini");when(configuration.tier()).thenReturn("unpaid");when(configuration.region()).thenReturn("global");}
     private void approve(PrivateAiSourceCurrentness.Expected e){when(dispatchConfiguration.dispatchPolicy()).thenReturn("unpaid-synthetic-demo");when(dispatchConfiguration.approvedSourceFingerprints()).thenReturn(List.of(ProviderDispatchPolicy.fingerprint(e)));}
@@ -546,9 +810,9 @@ class PrivateDerivationIntegrationTest {
         var projection=json.readTree(mvc.perform(get("/api/notes/"+note+"/ai-processing").cookie(browser.cookie)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
         assertThat(projection.get("attachments").get(0).get("status").asText()).isEqualTo("ready");
     }
-    @Test void pdfTextUsesBoundedDeterministicForkWithActualPageInsteadOfMediaProvider() throws Exception {
+    @Test void pdfTextPreservesNativePageOffsetsAlongsideVisualInspection() throws Exception {
         UUID attachment=upload("pdf-text");executor.execute(claim(new PrivateAiSourceCurrentness.Expected(owner,note,attachment,1,1,1L),"pdf"));
-        assertThat(readyCount()).isEqualTo(1);verify(media,never()).describe(any(),any(),any());
+        assertThat(readyCount()).isEqualTo(1);verify(media).describe(any(),any(),any());
         assertThat(jdbc.queryForList("select page_number from knowledge.private_derived_segment where owner_user_id=?",Integer.class,owner)).containsOnly(1);
         assertThat(jdbc.queryForObject("select surrogate_text from knowledge.private_derived_segment where owner_user_id=?",String.class,owner)).contains("Synthetic PDF page evidence");
     }
@@ -559,6 +823,24 @@ class PrivateDerivationIntegrationTest {
         verify(embeddings,never()).embed(any(),any());verify(media,never()).describe(any(),any(),any());assertThat(readyCount()).isZero();
         mvc.perform(get("/api/notes/"+note+"/attachments/"+attachment+"/content").cookie(browser.cookie)).andExpect(status().isOk());
         assertProjection("excluded");
+    }
+    @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(booleans={false,true})
+    void deterministicEmptyPageMayBeOmittedButCannotReceiveInventedProviderEvidence(boolean hallucinated) throws Exception {
+        UUID attachment=upload("pdf-mixed-empty");
+        when(media.describe(any(),any(),any())).thenReturn(List.of(new DerivedSegment("Synthetic vector rectangle","pdf_text","",null,null,
+            hallucinated?2:3,null,null,null,null,null,null)));
+        var attempt=claim(new PrivateAiSourceCurrentness.Expected(owner,note,attachment,1,1,1L),"pdf");executor.execute(attempt);
+        assertThat(state(attempt)).isEqualTo(hallucinated?"failed":"completed");
+        assertThat(readyCount()).isEqualTo(hallucinated?0:1);
+        if(!hallucinated)assertThat(jdbc.queryForList("select page_number from knowledge.private_derived_segment where owner_user_id=?",Integer.class,owner))
+            .containsExactlyInAnyOrder(1,3);
+    }
+    @Test void allProvenEmptyPdfMakesNoProviderCallAndDoesNotFabricateRepresentation() throws Exception {
+        UUID attachment=upload("pdf-empty");var attempt=claim(new PrivateAiSourceCurrentness.Expected(owner,note,attachment,1,1,1L),"pdf");
+        executor.execute(attempt);
+        // Local availability checks are not provider dispatches.
+        verify(media,never()).describe(any(),any(),any());verify(embeddings,never()).embed(any(),any());assertThat(readyCount()).isZero();
+        assertThat(state(attempt)).isEqualTo("failed");
     }
     @Test void attachmentDeletionWhileProviderCapturedCannotActivateOrResurrectMetadata() throws Exception {
         UUID attachment=upload("image");var expected=new PrivateAiSourceCurrentness.Expected(owner,note,attachment,1,1,1L);
@@ -584,6 +866,36 @@ class PrivateDerivationIntegrationTest {
         UUID attachment=upload("audio");var claim=claim(new PrivateAiSourceCurrentness.Expected(owner,note,attachment,1,1,1L),"audio");
         doReturn(List.of(new DerivedSegment("synthetic","transcript","",null,null,null,0.0,900.0,null,null,null,null))).when(media).describe(any(),any(),any());
         executor.execute(claim);assertThat(state(claim)).isEqualTo("failed");assertThat(readyCount()).isZero();verify(embeddings,never()).embed(any(),any());
+    }
+    @ParameterizedTest @ValueSource(strings={"ai-off","attachment-delete"})
+    void pdfInvalidationBetweenBatchesForbidsEveryLaterDispatchAndActivation(String mutation)throws Exception {
+        var response=mvc.perform(multipart("/api/notes/"+note+"/attachments")
+            .file(org.notesknowledge.notes.QualityMediaFixtures.pdf(18,false,false)).cookie(browser.cookie).header("X-CSRF-TOKEN",browser.csrf))
+            .andExpect(status().isCreated()).andReturn().getResponse();
+        UUID id=UUID.fromString(json.readTree(response.getContentAsString()).get("id").asText());
+        var claim=claim(new PrivateAiSourceCurrentness.Expected(owner,note,id,1,1,1L),"pdf");
+        var captured=new CountDownLatch(1);var release=new CountDownLatch(1);var committed=new CountDownLatch(1);
+        doAnswer(call->{
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            var p=(AiProcessingGate.SourceAiPermit)call.getArgument(0);p.requireDispatch();
+            assertThat(((MediaUnderstandingRequest)call.getArgument(2)).firstPage()).isEqualTo(1);
+            captured.countDown();assertThat(release.await(15,TimeUnit.SECONDS)).isTrue();return List.of();
+        }).when(media).describe(any(),any(),any());
+        try(var pool=Executors.newFixedThreadPool(2)) {
+            var worker=pool.submit(()->executor.execute(claim));assertThat(captured.await(15,TimeUnit.SECONDS)).isTrue();
+            doAnswer(call->{assertThat(committed.await(15,TimeUnit.SECONDS)).isTrue();return call.callRealMethod();}).when(coordination).dispatch(any(),any());
+            String path="/api/notes/"+note+"/attachments/"+id;
+            String etag=mvc.perform(get(path).cookie(browser.cookie)).andExpect(status().isOk()).andReturn().getResponse().getHeader("ETag");
+            var invalidation=pool.submit(()->{
+                if(mutation.equals("ai-off"))disable();
+                else mvc.perform(delete(path).cookie(browser.cookie).header("X-CSRF-TOKEN",browser.csrf).header("If-Match",etag)).andExpect(status().isNoContent());
+                committed.countDown();return null;
+            });
+            awaitAdvisoryWaiter();assertThat(invalidation.isDone()).isFalse();release.countDown();
+            invalidation.get(20,TimeUnit.SECONDS);worker.get(20,TimeUnit.SECONDS);
+        }finally{release.countDown();committed.countDown();}
+        verify(media,times(1)).describe(any(),any(),any());verify(embeddings,never()).embed(any(),any());
+        assertThat(readyCount()).isZero();assertThat(state(claim)).isEqualTo("obsolete");
     }
     @ParameterizedTest @ValueSource(strings={"note-disable","note-save","image-disable","image-save"})
     void invalidationWinsBeforeCrossSessionDispatch(String scenario) throws Exception {
@@ -721,8 +1033,7 @@ class PrivateDerivationIntegrationTest {
         return switch(kind) {
             case "image" -> List.of(new DerivedSegment("Synthetic whole image caption","whole_image","",null,null,null,null,null,null,null,null,null));
             case "audio" -> List.of(new DerivedSegment("Synthetic transcript","transcript","",null,null,null,0.0,0.5,null,null,null,null));
-            case "video" -> List.of(new DerivedSegment("Synthetic transcript","transcript","",null,null,null,0.0,0.5,null,null,null,null),
-                new DerivedSegment("Synthetic sampled scene","video_scene","",null,null,null,0.5,0.5,null,null,null,null));
+            case "video" -> List.of(new DerivedSegment("Synthetic sampled scene","video_scene","",null,null,null,0.0,0.5,null,null,null,null));
             case "pdf" -> List.of(new DerivedSegment("Synthetic PDF text","pdf_text","",null,null,1,null,null,null,null,null,null));
             default -> throw new IllegalArgumentException("Unknown modality");
         };
