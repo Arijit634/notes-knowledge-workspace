@@ -297,15 +297,42 @@ class GoogleDerivationAdaptersTest {
         assertThatThrownBy(()->port.describe(sourcePermit(),new byte[]{1},new MediaUnderstandingRequest("video/mp4",null,null,300.))).isInstanceOf(DerivationFailure.class);
         assertThat(requests).isEmpty();assertThat(requestPaths).isEmpty();
     }
+    @Test void actualSdkCarriesNonSpeechWavAndReturnsQualifiedAcousticEvidence()throws Exception {
+        var wav=org.notesknowledge.notes.MeaningfulMediaFixtures.media("tones").getBytes();
+        generated("{\"complete\":true,\"checkedPages\":[],\"noSpeech\":true,\"segments\":[{\"text\":\"Possibly electronic tones change from higher to lower.\",\"kind\":\"transcript\",\"heading\":\"Acoustic description\",\"timeStart\":0,\"timeEnd\":4}]}");
+        var port=adapters.googleMediaUnderstandingPort(config("gemini-embedding-2"),clients,json);
+        var permit=sourcePermit();var result=port.describe(permit,wav,new MediaUnderstandingRequest("audio/wav",null,null,4.));
+        assertThat(result).hasSize(1);assertThat(result.getFirst().text()).startsWith("Audio description (model inference, not spoken words): ");
+        assertThat(result.getFirst().timeEnd()).isEqualTo(4.);verify(permit,times(2)).requireGoogleDispatch();
+        assertThat(requests).hasSize(1);
+        var wire=json.readTree(requests.getFirst());var parts=wire.get("contents").get(0).get("parts");
+        assertThat(parts.get(0).get("text").asText()).contains("Acoustic description","not spoken words");
+        assertThat(parts.get(1).get("inlineData").get("mimeType").asText()).isEqualTo("audio/wav");
+        assertThat(Base64.getDecoder().decode(parts.get(1).get("inlineData").get("data").asText())).isEqualTo(wav);
+        assertThat(wire.has("tools")).isFalse();assertThat(requests.getFirst()).doesNotContain("fileUri","cachedContent");
+    }
     @Test void onlyMediaExtractorLineagesChangeAndTextLineageKeepsItsExactHash() throws Exception {
         var policy=new ProcessingPolicyService.AcknowledgedProcessingPolicy(new UUID(0,3),1,"a".repeat(64));
         for(String modality:List.of("note","image","audio","video","pdf")) {
             var lineage=EmbeddingLineage.create(config("gemini-embedding-2"),policy,modality);
-            String legacy=lineage.configuration().replace("media-scoped-coverage-surrogate-v2","media-typed-bounded-v1");
+            String legacy=lineage.configuration().replace("media-scoped-coverage-surrogate-v2","media-typed-bounded-v1")
+                .replace("audio-speech-acoustic-surrogate-v3","media-typed-bounded-v1");
             String hash=java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(legacy.getBytes(StandardCharsets.UTF_8)));
             if(modality.equals("note"))assertThat(lineage.id()).isEqualTo(hash);
             else assertThat(lineage.id()).isNotEqualTo(hash);
         }
+    }
+    @Test void acousticPolicyChangesOnlyAudioAndKeepsOtherAcceptedLineagesPinned() {
+        var policy=new ProcessingPolicyService.AcknowledgedProcessingPolicy(new UUID(0,3),1,"a".repeat(64));
+        var unchanged=Map.of(
+            "note","c3ddda5ed8a669c8c7be12bbd005dccf9ea0c396b3fb7178a6e101fb3c7d03fc",
+            "image","0b9549107ca501e284fc534c778cc414c613f2d53b59fecd86a0fabf3e8e1828",
+            "video","9d979bbc5cfb02c7cacd73e249ada34577b7dab3e4c0245340e8271b24285365",
+            "pdf","06a016fe32a07221a67ba6e1332dff74c121345f3198e674948832e4dc4638df");
+        unchanged.forEach((modality,hash)->assertThat(EmbeddingLineage.create(config("gemini-embedding-2"),policy,modality).id()).isEqualTo(hash));
+        var audio=EmbeddingLineage.create(config("gemini-embedding-2"),policy,"audio");
+        assertThat(audio.id()).isNotEqualTo("517832f7fad262113cf18c388374cdd5b31045270e500308d9fb4ebbfc66b411");
+        assertThat(audio.configuration()).contains("audio-speech-acoustic-surrogate-v3");
     }
     @Test void wrongQueryAndMissingKeyFailBeforeNetwork() {
         var port=adapters.googleStructuredKnowledgePort(config("gemini-embedding-2"),clients,json);

@@ -57,6 +57,33 @@ class MediaProcessingScopeTest {
         var late=new DerivedSegment("uncertain","transcript","",null,null,null,0.,5.,null,null,null,null);
         assertThatThrownBy(()->GoogleDerivationAdapters.validateScope(audio,List.of(late))).isInstanceOf(DerivationFailure.class);
     }
+    @Test void nonSpeechAcousticEvidenceIsExplicitlyQualifiedAndNeverInventsATranscript() {
+        var audio=new MediaUnderstandingRequest("audio/wav",null,null,4.);
+        var observation=new DerivedSegment("Possibly two sustained electronic tones, higher then lower.","transcript","Acoustic description",null,null,null,0.,4.,null,null,null,null);
+        var qualified=GoogleDerivationAdapters.validateMediaOutput(audio,new GoogleDerivationAdapters.MediaOutput(true,List.of(),true,List.of(observation)));
+        assertThat(qualified).hasSize(1);
+        assertThat(qualified.getFirst().text()).startsWith("Audio description (model inference, not spoken words): ").contains("Possibly two");
+        assertThat(qualified.getFirst().heading()).isEqualTo("Acoustic description");
+        assertThat(qualified.getFirst().kind()).isEqualTo("transcript");
+        assertThat(qualified.getFirst().timeStart()).isZero();assertThat(qualified.getFirst().timeEnd()).isEqualTo(4.);
+        var speech=new DerivedSegment("Fictional spoken words.","transcript","Transcript",null,null,null,0.,2.,null,null,null,null);
+        assertThat(GoogleDerivationAdapters.validateMediaOutput(audio,new GoogleDerivationAdapters.MediaOutput(true,List.of(),false,List.of(speech,observation))))
+            .hasSize(2).first().extracting(DerivedSegment::text).isEqualTo(speech.text());
+        assertThatThrownBy(()->GoogleDerivationAdapters.validateMediaOutput(audio,new GoogleDerivationAdapters.MediaOutput(true,List.of(),true,List.of(speech))))
+            .isInstanceOf(DerivationFailure.class);
+        assertThatThrownBy(()->GoogleDerivationAdapters.validateMediaOutput(audio,new GoogleDerivationAdapters.MediaOutput(true,List.of(),false,List.of(observation))))
+            .isInstanceOf(DerivationFailure.class);
+        var unsupported=new DerivedSegment("Unsupported classification.","transcript","Artist identification",null,null,null,0.,4.,null,null,null,null);
+        assertThatThrownBy(()->GoogleDerivationAdapters.validateMediaOutput(audio,new GoogleDerivationAdapters.MediaOutput(true,List.of(),false,List.of(unsupported))))
+            .isInstanceOf(DerivationFailure.class);
+        var late=new DerivedSegment("Late observation.","transcript","Acoustic description",null,null,null,0.,4.1,null,null,null,null);
+        assertThatThrownBy(()->GoogleDerivationAdapters.validateMediaOutput(audio,new GoogleDerivationAdapters.MediaOutput(true,List.of(),true,List.of(late))))
+            .isInstanceOf(DerivationFailure.class);
+        var atRawLimit=new DerivedSegment("x".repeat(12000),"transcript","Acoustic description",null,null,null,0.,4.,null,null,null,null);
+        assertThatThrownBy(()->GoogleDerivationAdapters.validateMediaOutput(audio,new GoogleDerivationAdapters.MediaOutput(true,List.of(),true,List.of(atRawLimit))))
+            .isInstanceOf(DerivationFailure.class); // The explanatory prefix cannot bypass text bounds.
+        assertThat(GoogleDerivationAdapters.mediaInstruction(audio)).contains("not spoken words","instruments","uncertainty");
+    }
     @Test void videoOnlyScenesCannotAcceptInventedSpeechAndPartialCoverageIsRejected() {
         var video=new MediaUnderstandingRequest("video/mp4",null,null,2.);
         var scene=new DerivedSegment("Synthetic blue square","video_scene","",null,null,null,0.,1.,null,null,null,null);
