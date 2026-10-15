@@ -27,6 +27,25 @@ public final class MeaningfulMediaFixtures {
         };
     }
     private static MockMultipartFile file(String name,String type,byte[] bytes) {return new MockMultipartFile("file",name,type,bytes);}
+    /** Exact canonical bytes accepted by the real upload validator, not an encoding imitation. */
+    public static MockMultipartFile acceptedImage(String kind)throws Exception {
+        var original=switch(kind) {
+            case "image" -> media("image");
+            case "diagram-image" -> QualityMediaFixtures.picture(false,true);
+            default -> throw new IllegalArgumentException("Unknown frozen image");
+        };
+        var directory=java.nio.file.Files.createTempDirectory("frozen-canonical-image-");var input=directory.resolve("input.png");
+        try(var validator=new AttachmentMediaValidator()) {
+            java.nio.file.Files.write(input,original.getBytes());
+            var accepted=validator.validate(input,original.getOriginalFilename(),original.getContentType());
+            if(!accepted.kind().equals("image")||!accepted.mediaType().equals("image/png"))throw new AssertionError("Unexpected synthetic image custody");
+            byte[] canonical=java.nio.file.Files.readAllBytes(input);
+            // The frozen corpus may itself be uploaded; canonicalization must be idempotent.
+            validator.validate(input,original.getOriginalFilename(),original.getContentType());
+            if(!java.util.Arrays.equals(canonical,java.nio.file.Files.readAllBytes(input)))throw new AssertionError("Synthetic canonical image changed on revalidation");
+            return file(original.getOriginalFilename(),accepted.mediaType(),canonical);
+        } finally {java.nio.file.Files.deleteIfExists(input);java.nio.file.Files.deleteIfExists(directory);}
+    }
     /** Legal inert top-level free box pads a real video without changing samples/timing. */
     public static byte[] paddedVideo(int length)throws Exception {
         byte[] original=video();

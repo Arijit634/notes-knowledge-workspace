@@ -37,6 +37,13 @@ class MediaQualityQualificationHarnessTest {
         for(int i=0;i<first.size();i++)assertThat(first.get(i).bytes()).isEqualTo(second.get(i).bytes());
         byte[] saved=first.getFirst().bytes();first.getFirst().bytes()[0]=0;assertThat(first.getFirst().bytes()).isEqualTo(saved);
     }
+    @Test void imageAllowlistUsesActualCanonicalUploadCustodyRatherThanOriginalEncoding() throws Exception {
+        for(String id:List.of("image","diagram-image")) {
+            byte[] accepted=org.notesknowledge.notes.MeaningfulMediaFixtures.acceptedImage(id).getBytes();
+            assertThat(fixture(id)).isEqualTo(accepted);
+        }
+        assertThat(fixture("image")).isNotEqualTo(org.notesknowledge.notes.MeaningfulMediaFixtures.media("image").getBytes());
+    }
     @Test void reservationIsForcedBeforeDispatchAndSuccessRecordsOnlyBoundedMetrics() throws Exception {
         var permit=permit();var image=fixture("image");var request=imageRequest();
         when(delegate.describe(permit,image,request)).thenAnswer(call->{

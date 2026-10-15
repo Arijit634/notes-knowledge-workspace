@@ -46,13 +46,13 @@ final class MediaQualityQualificationHarness implements MediaUnderstandingPort, 
     static List<Fixture> frozenCorpus() throws Exception {
         var fixtures=new ArrayList<Fixture>();
         for(String kind:List.of("image","mixed","audio","tones","video")) {
-            var file=MeaningfulMediaFixtures.media(kind);
+            var file=kind.equals("image")?MeaningfulMediaFixtures.acceptedImage(kind):MeaningfulMediaFixtures.media(kind);
             byte[] bytes=file.getBytes();
             if(kind.equals("mixed"))bytes=frozenPdf(bytes);
             fixtures.add(new Fixture(kind,file.getContentType(),bytes));
         }
         fixtures.add(new Fixture("long-video","video/mp4",MeaningfulMediaFixtures.videoSamples(40,1000)));
-        fixtures.add(new Fixture("diagram-image","image/png",org.notesknowledge.notes.QualityMediaFixtures.picture(false,true).getBytes()));
+        fixtures.add(new Fixture("diagram-image","image/png",MeaningfulMediaFixtures.acceptedImage("diagram-image").getBytes()));
         fixtures.add(new Fixture("diagram-pdf","application/pdf",frozenPdf(org.notesknowledge.notes.QualityMediaFixtures.pdf(1,true,false).getBytes())));
         return List.copyOf(fixtures);
     }
