@@ -19,6 +19,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.notesknowledge.security.RateLimitPort;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -77,13 +79,38 @@ class MfaCoreIntegrationTest {
     @Autowired TotpEngine totp;
     @Autowired MutableClock clock;
     @Autowired MfaRepository repository;
-    @Autowired MfaManagementService management;
+    @org.springframework.test.context.bean.override.mockito.MockitoSpyBean MfaManagementService management;
     @Autowired MfaChallengeService challenges;
     @Autowired SyntheticRates rates;
     @Autowired FaultyCompletionCheckpoint completionFault;
     @Autowired MfaProperties mfaPolicy;
     @Autowired org.springframework.session.jdbc.JdbcIndexedSessionRepository sessionRepository;
     @Autowired org.springframework.session.web.http.DefaultCookieSerializer cookieSerializer;
+
+    @ParameterizedTest @ValueSource(strings={"sessionRevoked","recentExpired"})
+    void enrollmentRevalidatesPersistedAuthorityAfterControllerAdmission(String change) throws Exception {
+        UUID user=account();Browser full=login(csrf(null),email(user),200);
+        var admitted=new CountDownLatch(1);var resume=new CountDownLatch(1);Instant before=clock.instant();
+        org.mockito.Mockito.doAnswer(call->{
+            admitted.countDown();
+            if(!resume.await(15,java.util.concurrent.TimeUnit.SECONDS))throw new AssertionError("Synthetic enrollment coordination timed out");
+            return call.callRealMethod();
+        }).when(management).begin(org.mockito.ArgumentMatchers.eq(user),org.mockito.ArgumentMatchers.any());
+        try(var workers=Executors.newSingleThreadExecutor()) {
+            var pending=workers.submit(()->mvc.perform(post("/api/me/security/mfa/totp/enrollments")
+                .cookie(full.cookie()).header("X-CSRF-TOKEN",full.csrf())).andReturn().getResponse());
+            try {
+                assertThat(admitted.await(15,java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                if(change.equals("sessionRevoked"))sessionRepository.deleteById(new String(java.util.Base64.getDecoder().decode(full.cookie().getValue()),java.nio.charset.StandardCharsets.UTF_8));
+                else clock.advanceSeconds(mfaPolicy.recentAuthLifetime().toSeconds()+1);
+            } finally {resume.countDown();}
+            var response=pending.get(20,java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(response.getStatus()).isEqualTo(change.equals("sessionRevoked")?401:403);
+            assertThat(response.getContentAsString()).doesNotContain("manualSecret","otpauthUri");
+        } finally {clock.at=before;}
+        assertThat(jdbc.queryForObject("select count(*) from identity.mfa_configuration where user_id=?",Integer.class,user)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from identity.security_audit_fact where target_user_id=? and event_category='mfa_enrollment'",Integer.class,user)).isZero();
+    }
 
     @Test void passwordLoginEnrollmentTotpAndRecoveryAreSessionAndReplaySafe(
             CapturedOutput output) throws Exception {

@@ -64,17 +64,38 @@ final class MfaManagementService {
     }
 
     Setup begin(UUID userId) {
-        if (!identity.isActive(userId) || repository.configuration(userId)
-                .map(c -> "active".equals(c.state())).orElse(false)) {
+        return begin(userId,null);
+    }
+
+    // Browser orchestration must use this overload, as with enrollment confirmation.
+    // The package-internal preparation overload remains for trusted fixture/domain callers.
+    Setup begin(UUID userId,HttpServletRequest request) {
+        if(!identity.isActive(userId)) {
+            if(request!=null)throw unauthenticated();
+            throw ApiFailureException.of(ApiFailureException.Kind.INVALID_LIFECYCLE_TRANSITION);
+        }
+        if (repository.configuration(userId).map(c -> "active".equals(c.state())).orElse(false)) {
             throw ApiFailureException.of(ApiFailureException.Kind.INVALID_LIFECYCLE_TRANSITION);
         }
         byte[] seed = new byte[20];
         random.nextBytes(seed);
         MfaSecretCipher.Envelope envelope = cipher.seal(userId, seed);
         String handle = handles.forPending(userId, envelope.nonce());
-        Instant now = clock.instant();
         try {
             transactions.executeWithoutResult(status -> {
+                if(request!=null) {
+                    if(!identity.lockActiveAccount(userId))throw unauthenticated();
+                    var browser=request.getSession(false);
+                    if(browser==null)throw unauthenticated();
+                    var current=sessions.lockCurrent(userId,browser.getId());
+                    if(current==null) {
+                        staleRequests.discardStaleRequestSession(request);
+                        throw unauthenticated();
+                    }
+                    IdentitySessionState.requireRecent((Object)current.persisted().getAttribute(
+                        IdentitySessionState.RECENT_ATTRIBUTE),userId,clock.instant(),policy);
+                }
+                Instant now=clock.instant();
                 if (!identity.isActive(userId) || repository.begin(userId, envelope, now) != 1) {
                     throw ApiFailureException.of(ApiFailureException.Kind.INVALID_LIFECYCLE_TRANSITION);
                 }

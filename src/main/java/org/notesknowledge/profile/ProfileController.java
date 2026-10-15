@@ -1,5 +1,6 @@
 package org.notesknowledge.profile;
 
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -34,7 +35,7 @@ final class ProfileController {
     }
 
     @PutMapping
-    ResponseEntity<ProfileView> replace(@RequestBody Map<String, Object> input) {
+    ResponseEntity<ProfileView> replace(@RequestBody Map<String, Object> input, HttpServletRequest request) {
         UUID owner = owner();
         if (input == null || !input.keySet().equals(FIELDS)
                 || !(input.get("displayName") instanceof String name)
@@ -42,7 +43,7 @@ final class ProfileController {
                 || (input.get("handle") != null && !(input.get("handle") instanceof String))) {
             throw ApiFailureException.of(ApiFailureException.Kind.INVALID_INPUT);
         }
-        try { return response(profiles.replace(owner, name, biography, (String) input.get("handle"))); }
+        try { return response(profiles.replace(owner, name, biography, (String) input.get("handle"), request)); }
         catch (DataIntegrityViolationException exception) {
             // Translate only the expected handle collision after the transaction rolls back.
             for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
