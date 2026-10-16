@@ -48,7 +48,7 @@ docker run --rm --network none --user 65533:65533 --cap-drop ALL --security-opt 
 provenance="$RUNNER_TEMP/media-runtime-provenance"
 mkdir "$provenance"
 # Deliberate public build metadata only; no runtime properties or private inputs.
-for file in runtime-files.sha256 runtime-linkage.txt jdk-version.txt openh264-source.sha256 openh264-copyright ffmpeg-LGPLv2.1 ffmpeg-buildconf.txt; do
+for file in runtime-files.sha256 runtime-linkage.txt jdk-version.txt openh264-source.sha256 openh264-copyright ffmpeg-LGPLv2.1 ffmpeg-buildconf.txt service-required-modules.txt service-modules.txt; do
   docker run --rm --network none --user 65533:65533 --cap-drop ALL --security-opt no-new-privileges --read-only \
     --entrypoint /bin/cat "$deployment" "/provenance/$file" > "$provenance/$file"
 done

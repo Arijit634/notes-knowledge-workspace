@@ -34,7 +34,7 @@ RUN mkdir -p /opt/pdf /opt/video /fixtures /provenance /native-diagnostics \
        --strip-debug --no-header-files --no-man-pages --compress=zip-6 --output /tmp/pdf-linked-runtime \
     && cp -rL /tmp/pdf-linked-runtime /opt/pdf/runtime \
     && cp -a /opt/pdf/runtime /opt/video/runtime \
-    && /jdk/bin/jlink --add-modules java.se,jdk.crypto.ec,jdk.unsupported,jdk.management,jdk.management.agent,jdk.naming.dns,jdk.localedata,jdk.charsets,jdk.zipfs,jdk.security.auth \
+    && /jdk/bin/jlink --add-modules java.se,jdk.crypto.ec,jdk.unsupported,jdk.management,jdk.management.agent,jdk.naming.dns,jdk.localedata,jdk.charsets,jdk.zipfs,jdk.security.auth,jdk.jfr,jdk.net \
        --strip-debug --no-header-files --no-man-pages --compress=zip-6 --output /service-runtime \
     && cp /usr/lib/$(gcc -dumpmachine)/libopenh264.so.2.6.0 /opt/video/tools/libopenh264.so.8 \
     && cp /usr/share/doc/libopenh264-8/copyright /provenance/openh264-copyright \
@@ -64,6 +64,14 @@ RUN for kind in long vfr; do \
     && printf '\000\000\000\010ftyp' > /fixtures/broken.mp4
 COPY application.jar /application.jar
 COPY controller/ /qualification/
+# Analyze production classes/dependencies, not the controller classes. Optional
+# external integrations can have absent classes, but every discovered JDK module
+# must be present in the linked service runtime before an image can be qualified.
+RUN /jdk/bin/jdeps -J-Xmx256m --multi-release 25 --ignore-missing-deps --recursive --print-module-deps \
+      --class-path '/qualification/libraries/*' /opt/pdf/artifacts/classes > /provenance/service-required-modules.txt \
+    && /service-runtime/bin/java --list-modules > /provenance/service-modules.txt \
+    && for module in $(tr ',' ' ' < /provenance/service-required-modules.txt); do \
+         grep -q "^${module}@" /provenance/service-modules.txt || exit 1; done
 RUN chown -R 0:0 /opt/pdf /opt/video /qualification /fixtures /provenance \
     && chmod -R go-w /opt/pdf /opt/video /qualification /fixtures /provenance \
     && find /opt/pdf /opt/video -type f -exec sha256sum {} \; > /provenance/runtime-files.sha256
