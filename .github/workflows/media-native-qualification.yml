@@ -38,8 +38,9 @@ jobs:
         shell: bash
         run: bash .github/scripts/media-jdk.sh
       - name: Compile qualification controllers and package backend
+        id: package
         shell: bash
-        run: ./mvnw --batch-mode --no-transfer-progress -Dtest=MediaRuntimeConfigurationTest,Argon2CompatibilityTest,Argon2VerificationQualificationTest package
+        run: ./mvnw --batch-mode --no-transfer-progress -Dtest=MediaRuntimeConfigurationTest,Argon2CompatibilityTest,Argon2VerificationQualificationTest,CoreReadinessDatabaseTest package
       - name: Resolve opt-in qualification command classpath
         shell: bash
         run: ./mvnw --batch-mode --no-transfer-progress dependency:build-classpath -DincludeScope=test -Dmdep.outputFile=target/qualification-classpath.txt -q
@@ -67,7 +68,7 @@ jobs:
           include-hidden-files: false
       - name: Verify complete backend on final native-qualified source
         id: full-backend
-        if: always() && matrix.runner == 'ubuntu-24.04'
+        if: always() && matrix.runner == 'ubuntu-24.04' && steps.package.outcome == 'success'
         shell: bash
         run: ./mvnw --batch-mode --no-transfer-progress clean verify -q
       - name: Summarize complete backend evidence
