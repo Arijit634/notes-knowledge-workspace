@@ -7,13 +7,16 @@ gets no test classes, Docker socket, host credentials, external providers or net
 """
 import base64
 import hashlib
+import http.client
 import http.cookiejar
+import ipaddress
 import json
 import os
 import pathlib
 import platform
 import secrets
 import shutil
+import socket
 import ssl
 import struct
 import subprocess
@@ -42,14 +45,39 @@ def command(*args, input=None, check=True):
     return result
 
 
+class IsolatedHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(self, host, peer, **kwargs):
+        super().__init__(host, **kwargs)
+        require(self.host == 'localhost' and ipaddress.ip_address(peer).is_private, 'unapproved_smoke_peer')
+        self.peer = peer
+
+    def connect(self):
+        # Route only this client connection to Docker's isolated bridge address.
+        # TLS still verifies localhost against the explicit synthetic CA; no
+        # global DNS change, proxy, public listener or certificate bypass.
+        self.sock = self._context.wrap_socket(socket.create_connection((self.peer, self.port), self.timeout),
+                                             server_hostname=self.host)
+
+
+class IsolatedHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, browser, certificate):
+        super().__init__(context=ssl.create_default_context(cafile=certificate))
+        self.browser = browser
+
+    def https_open(self, request):
+        return self.do_open(lambda host, **kwargs: IsolatedHTTPSConnection(host, self.browser.peer, **kwargs),
+                            request, context=self._context)
+
+
 class Browser:
-    def __init__(self, origin, certificate):
+    def __init__(self, origin, certificate, peer):
         self.origin = origin
+        self.peer = peer
         self.cookies = http.cookiejar.CookieJar()
         self.opener = urllib.request.build_opener(
             urllib.request.ProxyHandler({}),
             urllib.request.HTTPCookieProcessor(self.cookies),
-            urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=certificate)))
+            IsolatedHTTPSHandler(self, certificate))
         self.csrf = None
         self.sensitive = []
 
@@ -101,6 +129,7 @@ def main(deployment, qualification, evidence):
     prefix = 'nkw-smoke-' + uuid.uuid4().hex[:12]
     network, volume = prefix + '-network', prefix + '-database'
     resources, browsers, events, measurements = [], [], [], []
+    network_created, volume_created = False, False
     canaries = [PASSWORD, 'synthetic-owner@example.test', 'synthetic-other@example.test',
                 'synthetic-access-key', 'synthetic-secret-key', 'PRIVATE_SMOKE_TITLE_731', 'PRIVATE_SMOKE_BODY_731']
     log_events = []
@@ -139,7 +168,7 @@ def main(deployment, qualification, evidence):
         args = ['create', '--name', name, '--label', 'nkw.smoke.invocation=' + prefix, '--network', network, '--init', '--user', '65533:65533',
                 '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--read-only', '--memory', '2g',
                 '--cpus', '2', '--pids-limit', '512', '--tmpfs', '/tmp:rw,noexec,nosuid,nodev,size=512m',
-                '-p', '127.0.0.1::8443', '-v', str(temporary) + ':/config:ro']
+                '-v', str(temporary) + ':/config:ro']
         for directory, size in [('pdf-recovery', '4m'), ('video-recovery', '4m'), ('video-scratch', '192m')]:
             args += ['--tmpfs', '/private/' + directory + ':rw,noexec,nosuid,nodev,size=' + size + ',uid=65533,gid=65533,mode=0700']
         args += ['--entrypoint', '/jdk/bin/java', deployment, '-Xmx512m',
@@ -156,8 +185,8 @@ def main(deployment, qualification, evidence):
                 and not any('docker.sock' in mount['Destination'] for mount in profile['Mounts']),
                 'deployment_profile_not_enforced')
         docker('start', name)
-        port = docker('port', name, '8443/tcp').stdout.strip().split(':')[-1]
-        browser = Browser('https://localhost:' + port, str(temporary / 'certificate.pem'))
+        peer = json.loads(docker('inspect', name).stdout)[0]['NetworkSettings']['Networks'][network]['IPAddress']
+        browser = Browser('https://localhost:8443', str(temporary / 'certificate.pem'), peer)
         browsers.append(browser)
         return name, browser
 
@@ -183,10 +212,13 @@ def main(deployment, qualification, evidence):
                                  scratchSampleBytes=sum(scratch), scratchIsPeak=False))
 
     def await_health(browser, expected, timeout=75):
+        # Infrastructure probes are anonymous, not requests carrying an
+        # application session whose authority itself requires PostgreSQL.
+        probe = Browser(browser.origin, str(temporary / 'certificate.pem'), browser.peer)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
-                status, _, body = browser.request('GET', '/actuator/health/readiness')
+                status, _, body = probe.request('GET', '/actuator/health/readiness')
                 if status == expected:
                     require(set(json.loads(body)) == {'status'}, 'health_details_exposed')
                     return
@@ -208,16 +240,20 @@ def main(deployment, qualification, evidence):
     try:
         temporary.chmod(0o755)  # Dedicated synthetic files must be readable by the service UID.
         docker('network', 'create', '--internal', '--label', 'nkw.purpose=deployment-smoke', network)
+        network_created = True
+        require(docker('volume', 'inspect', volume, check=False).returncode != 0, 'synthetic_volume_already_exists')
         docker('volume', 'create', '--label', 'nkw.purpose=deployment-smoke', volume)
+        volume_created = True
         for suffix, alias, image, rest in [
             ('db', 'database', 'pgvector/pgvector:0.8.6-pg18-trixie',
              ['-e', 'POSTGRES_DB=deployment_smoke', '-e', 'POSTGRES_USER=synthetic_migrator',
               '-e', 'POSTGRES_PASSWORD=synthetic-migration-password', '-v', volume + ':/var/lib/postgresql']),
             ('redis', 'rate-store', 'redis:8.10.2', [])]:
             name = prefix + '-' + suffix
-            docker('run', '-d', '--name', name, '--network', network, '--network-alias', alias,
+            docker('create', '--name', name, '--network', network, '--network-alias', alias,
                    '--memory', '512m', '--cpus', '1', '--pids-limit', '128', *rest, image)
             resources.append(name)
+            docker('start', name)
         database = prefix + '-db'
         for _ in range(60):
             if docker('exec', database, 'pg_isready', '-U', 'synthetic_migrator', '-d', 'deployment_smoke', check=False).returncode == 0:
@@ -281,20 +317,21 @@ def main(deployment, qualification, evidence):
         objects.mkdir(mode=0o777)
         objects.chmod(0o777)
         endpoint = prefix + '-objects'
-        docker('run', '-d', '--name', endpoint, '--network', network, '--network-alias', HOST,
+        docker('create', '--name', endpoint, '--network', network, '--network-alias', HOST,
                '--user', '65533:65533', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--read-only',
                '--memory', '512m', '--cpus', '1', '--pids-limit', '128', '-v', str(temporary) + ':/config:ro',
                '-v', str(objects) + ':/objects', qualification, '-Dloader.path=/qualification',
                '-Dloader.main=org.notesknowledge.ControlledS3Endpoint', '-cp', '/application.jar',
                'org.springframework.boot.loader.launch.PropertiesLauncher', '/config/endpoint.p12', '/objects')
         resources.append(endpoint)
+        docker('start', endpoint)
         app, owner = start_app('service')
         await_health(owner, 200)
         measure(app)
         require(owner.request('GET', '/actuator/health/liveness')[0] == 200, 'liveness_failed')
         require(owner.request('GET', '/actuator/env')[0] in (401, 403, 404), 'operational_details_exposed')
         event('production_startup', nativePreflight=True, testApplicationBeans=False, liveProviders=False)
-        for browser, email in [(owner, 'synthetic-owner@example.test'), (Browser(owner.origin, str(temporary / 'certificate.pem')), 'synthetic-other@example.test')]:
+        for browser, email in [(owner, 'synthetic-owner@example.test'), (Browser(owner.origin, str(temporary / 'certificate.pem'), owner.peer), 'synthetic-other@example.test')]:
             if browser not in browsers:
                 browsers.append(browser)
             browser.bootstrap()
@@ -343,7 +380,8 @@ def main(deployment, qualification, evidence):
         event('rate_store_outage', failedClosed=True)
         docker('stop', '-t', '5', database)
         await_health(owner, 503, 15)
-        require(owner.request('GET', '/actuator/health/liveness')[0] == 200, 'database_outage_killed_liveness')
+        require(Browser(owner.origin, str(temporary / 'certificate.pem'), owner.peer)
+                .request('GET', '/actuator/health/liveness')[0] == 200, 'database_outage_killed_liveness')
         status, _, unavailable = owner.request('GET', '/api/notes/' + note)
         event('database_outage_private_read', status=status)
         require(status in (401, 403, 503) and canaries[5].encode() not in unavailable
@@ -354,7 +392,7 @@ def main(deployment, qualification, evidence):
         event('database_restart', readinessDeniedThenRecovered=True, sessionPersisted=True)
         stop_app(app)
         docker('start', app)
-        owner.origin = 'https://localhost:' + docker('port', app, '8443/tcp').stdout.strip().split(':')[-1]
+        owner.peer = json.loads(docker('inspect', app).stdout)[0]['NetworkSettings']['Networks'][network]['IPAddress']
         await_health(owner, 200)
         require(owner.request('GET', '/api/notes/' + note)[0] == 200, 'service_restart_lost_session_or_note')
         require(owner.request('GET', content)[2] == accepted, 'service_restart_lost_object')
@@ -370,7 +408,7 @@ def main(deployment, qualification, evidence):
                 browser.cookies = owner.cookies
                 browser.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(browser.cookies),
                     urllib.request.ProxyHandler({}),
-                    urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=str(temporary / 'certificate.pem'))))
+                    IsolatedHTTPSHandler(browser, str(temporary / 'certificate.pem')))
                 browser.bootstrap()
                 require(browser.upload(note, synthetic_png())[0] == 503, 'missing_storage_did_not_fail_closed')
                 stop_app(candidate)
@@ -418,11 +456,13 @@ def main(deployment, qualification, evidence):
         # Explicit per-invocation names only; never sweep owner resources or arbitrary paths.
         for name in reversed(resources):
             docker('rm', '-f', '-v', name, check=False)
-        docker('volume', 'rm', volume, check=False)
-        docker('network', 'rm', network, check=False)
+        if volume_created:
+            docker('volume', 'rm', volume, check=False)
+        if network_created:
+            docker('network', 'rm', network, check=False)
         cleanup = dict(containersAbsent=all(docker('inspect', name, check=False).returncode != 0 for name in resources),
-                       volumeAbsent=docker('volume', 'inspect', volume, check=False).returncode != 0,
-                       networkAbsent=docker('network', 'inspect', network, check=False).returncode != 0)
+                       volumeAbsent=not volume_created or docker('volume', 'inspect', volume, check=False).returncode != 0,
+                       networkAbsent=not network_created or docker('network', 'inspect', network, check=False).returncode != 0)
         (output / 'cleanup.json').write_text(json.dumps(cleanup) + '\n')
         require(temporary.parent == pathlib.Path(os.environ['RUNNER_TEMP']).resolve()
                 and temporary.name.startswith('backend-smoke-'), 'cleanup_path_outside_owned_directory')
