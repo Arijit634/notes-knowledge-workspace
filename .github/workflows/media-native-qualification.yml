@@ -2,12 +2,15 @@ name: Native media qualification
 
 on:
   push:
-    branches: [knowledge/multimodal-ingestion, backend/completion-and-qualification, backend/provider-and-release-qualification]
+    branches: [knowledge/multimodal-ingestion, backend/completion-and-qualification, backend/provider-and-release-qualification, backend/runtime-release-hardening]
     paths:
       - 'src/**'
       - 'pom.xml'
       - '.github/scripts/media-jdk.*'
       - '.github/scripts/qualify-media.sh'
+      - '.github/scripts/scan-deployment.sh'
+      - '.github/scripts/deployment-smoke.py'
+      - '.github/scripts/compare-deployment.py'
       - '.github/workflows/media-native-qualification.yml'
 
 permissions:
@@ -26,7 +29,7 @@ jobs:
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 55
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -52,6 +55,12 @@ jobs:
             ${{ runner.temp }}/media-security-readiness/security-readiness.json
             ${{ runner.temp }}/media-security-readiness/deployment.cdx.json
             ${{ runner.temp }}/media-security-readiness/sbom-receipt.json
+            ${{ runner.temp }}/media-security-readiness/runtime-comparison.json
+            ${{ runner.temp }}/media-before-security/security-readiness.json
+            ${{ runner.temp }}/media-before-security/deployment.cdx.json
+            ${{ runner.temp }}/media-before-security/sbom-receipt.json
+            ${{ runner.temp }}/media-deployment-smoke/*.json
+            ${{ runner.temp }}/media-deployment-smoke/*.jsonl
           if-no-files-found: warn
           retention-days: 3
           include-hidden-files: false
