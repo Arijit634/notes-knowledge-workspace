@@ -61,6 +61,7 @@ jobs:
             ${{ runner.temp }}/media-before-security/sbom-receipt.json
             ${{ runner.temp }}/media-deployment-smoke/*.json
             ${{ runner.temp }}/media-deployment-smoke/*.jsonl
+            ${{ runner.temp }}/media-runtime-provenance/*
           if-no-files-found: warn
           retention-days: 3
           include-hidden-files: false

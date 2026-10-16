@@ -100,7 +100,7 @@ def main(deployment, qualification, evidence):
     temporary = pathlib.Path(tempfile.mkdtemp(prefix='backend-smoke-', dir=os.environ['RUNNER_TEMP'])).resolve()
     prefix = 'nkw-smoke-' + uuid.uuid4().hex[:12]
     network, volume = prefix + '-network', prefix + '-database'
-    resources, browsers, events = [], [], []
+    resources, browsers, events, measurements = [], [], [], []
     canaries = [PASSWORD, 'synthetic-owner@example.test', 'synthetic-other@example.test',
                 'synthetic-access-key', 'synthetic-secret-key', 'PRIVATE_SMOKE_TITLE_731', 'PRIVATE_SMOKE_BODY_731']
     log_events = []
@@ -147,6 +147,14 @@ def main(deployment, qualification, evidence):
                  '-jar', '/application.jar', '--spring.config.additional-location=file:/config/' + label + '.properties']
         docker(*args)
         resources.append(name)
+        profile = json.loads(docker('inspect', name).stdout)[0]
+        limits = profile['HostConfig']
+        require(profile['Config']['User'] == '65533:65533' and limits['ReadonlyRootfs']
+                and limits['Memory'] == 2 * 1024 ** 3 and limits['NanoCpus'] == 2 * 10 ** 9
+                and limits['PidsLimit'] == 512 and limits['CapDrop'] == ['ALL']
+                and any(value.startswith('no-new-privileges') for value in limits['SecurityOpt'])
+                and not any('docker.sock' in mount['Destination'] for mount in profile['Mounts']),
+                'deployment_profile_not_enforced')
         docker('start', name)
         port = docker('port', name, '8443/tcp').stdout.strip().split(':')[-1]
         browser = Browser('https://localhost:' + port, str(temporary / 'certificate.pem'))
@@ -155,6 +163,24 @@ def main(deployment, qualification, evidence):
 
     def state(name):
         return json.loads(docker('inspect', '--format', '{{json .State}}', name).stdout)
+
+    def measure(name):
+        # cgroup peaks are kernel-accounted for the whole application process
+        # tree, not just the parent JVM. Scratch is explicitly a point sample.
+        result = docker('exec', name, '/bin/sh', '-c',
+                        'cat /sys/fs/cgroup/memory.peak /sys/fs/cgroup/pids.peak; '
+                        'cat /sys/fs/cgroup/cpu.stat; '
+                        'du -sk /private/pdf-recovery /private/video-recovery /private/video-scratch')
+        lines = result.stdout.splitlines()
+        memory, pids = int(lines[0]), int(lines[1])
+        cpu = {key: int(value) for key, value in (line.split() for line in lines[2:-3])}
+        scratch = [int(line.split()[0]) * 1024 for line in lines[-3:]]
+        require(0 < memory <= 2 * 1024 ** 3 and 0 < pids <= 512
+                and all(value <= limit for value, limit in zip(scratch, [4 * 1024 ** 2, 4 * 1024 ** 2, 192 * 1024 ** 2])),
+                'observed_resource_budget_exceeded')
+        measurements.append(dict(memoryPeakBytes=memory, processPeak=pids,
+                                 cpuUsageMicroseconds=cpu['usage_usec'],
+                                 scratchSampleBytes=sum(scratch), scratchIsPeak=False))
 
     def await_health(browser, expected, timeout=75):
         deadline = time.monotonic() + timeout
@@ -170,6 +196,7 @@ def main(deployment, qualification, evidence):
         raise RuntimeError('readiness_transition_failed_' + str(expected))
 
     def stop_app(name):
+        measure(name)
         started = time.monotonic()
         docker('stop', '-t', '40', name)
         info = state(name)
@@ -214,7 +241,7 @@ def main(deployment, qualification, evidence):
         docker(*tool, '-Dloader.path=/qualification', '-Dloader.main=org.notesknowledge.DeploymentSmokeDatabase',
                '-cp', '/application.jar', 'org.springframework.boot.loader.launch.PropertiesLauncher', 'initialize')
         # Trust only the synthetic endpoint certificate, without disabling TLS validation.
-        docker('run', '--rm', '--network', 'none', '--user', '0:0', '--memory', '256m',
+        docker('run', '--rm', '--network', 'none', '--user', str(os.getuid()) + ':' + str(os.getgid()), '--memory', '256m',
                '-v', str(temporary) + ':/config', '--entrypoint', '/jdk/bin/keytool', qualification,
                '-importcert', '-noprompt', '-alias', 'synthetic-endpoint', '-file', '/config/certificate.pem',
                '-keystore', '/config/trust.p12', '-storepass', 'synthetic-keystore-password')
@@ -224,6 +251,9 @@ def main(deployment, qualification, evidence):
         properties = dict(line.split('=', 1) for line in selected.splitlines() if line and not line.startswith('#'))
         properties.update({'spring.datasource.url': 'jdbc:postgresql://database:5432/deployment_smoke',
                            'spring.datasource.username': 'synthetic_runtime', 'spring.datasource.password': 'synthetic-runtime-password',
+                           # Flyway has separate migration authority; ordinary requests
+                           # never receive DDL/history-write privileges through the runtime role.
+                           'spring.flyway.user': 'synthetic_migrator', 'spring.flyway.password': 'synthetic-migration-password',
                            'spring.datasource.hikari.maximum-pool-size': '5', 'spring.datasource.hikari.minimum-idle': '0',
                            'spring.datasource.hikari.connection-timeout': '2000', 'spring.datasource.hikari.validation-timeout': '1000',
                            'spring.data.redis.host': 'rate-store', 'spring.data.redis.port': '6379',
@@ -260,6 +290,7 @@ def main(deployment, qualification, evidence):
         resources.append(endpoint)
         app, owner = start_app('service')
         await_health(owner, 200)
+        measure(app)
         require(owner.request('GET', '/actuator/health/liveness')[0] == 200, 'liveness_failed')
         require(owner.request('GET', '/actuator/env')[0] in (401, 403, 404), 'operational_details_exposed')
         event('production_startup', nativePreflight=True, testApplicationBeans=False, liveProviders=False)
@@ -305,6 +336,7 @@ def main(deployment, qualification, evidence):
         else:
             raise RuntimeError('storage_recovery_failed')
         event('storage_failure_and_recovery', passed=True, actualOci=False)
+        measure(app)
         docker('stop', '-t', '5', prefix + '-redis')
         require(owner.request('POST', '/api/notes', {'title': 'rate unavailable', 'markdown': ''})[0] == 503, 'rate_store_failed_open')
         docker('start', prefix + '-redis')
@@ -354,6 +386,7 @@ def main(deployment, qualification, evidence):
                        qualificationImage=qualification, productionJar=True, testApplicationBeans=False,
                        liveProviderCalls=0, actualOci=False, relations=38, memoryBytes=2147483648,
                        cpus=2, pidsLimit=512, privateScratchBytes=209715200, events=events,
+                       resourceMeasurements=measurements,
                        rawApplicationLogsExcluded=True, knownSyntheticCanariesAbsent=True)
         (output / 'deployment-smoke.json').write_text(json.dumps(receipt, indent=2) + '\n')
         (output / 'application-sanitized.jsonl').write_text(''.join(json.dumps(row) + '\n' for row in log_events))
@@ -371,7 +404,14 @@ def main(deployment, qualification, evidence):
                     databasePrivilegeDenied='permission denied' in text.lower(),
                     nativePreflightDenied='Media runtime preflight unavailable' in text,
                     configurationDenied='configuration unavailable' in text.lower()))
-        (output / 'deployment-smoke-failure.json').write_text(json.dumps(dict(passed=False, code=code, events=events, states=states)) + '\n')
+        locations = []
+        frame = failure.__traceback__
+        while frame:
+            if pathlib.Path(frame.tb_frame.f_code.co_filename).resolve() == pathlib.Path(__file__).resolve():
+                locations.append(dict(function=frame.tb_frame.f_code.co_name, line=frame.tb_lineno))
+            frame = frame.tb_next
+        (output / 'deployment-smoke-failure.json').write_text(json.dumps(dict(passed=False, code=code,
+            exceptionType=type(failure).__name__, locations=locations, events=events, states=states)) + '\n')
         print(json.dumps(dict(deploymentSmoke=True, passed=False, code=code)), flush=True)
         raise RuntimeError(code) from None
     finally:
@@ -380,9 +420,14 @@ def main(deployment, qualification, evidence):
             docker('rm', '-f', '-v', name, check=False)
         docker('volume', 'rm', volume, check=False)
         docker('network', 'rm', network, check=False)
+        cleanup = dict(containersAbsent=all(docker('inspect', name, check=False).returncode != 0 for name in resources),
+                       volumeAbsent=docker('volume', 'inspect', volume, check=False).returncode != 0,
+                       networkAbsent=docker('network', 'inspect', network, check=False).returncode != 0)
+        (output / 'cleanup.json').write_text(json.dumps(cleanup) + '\n')
         require(temporary.parent == pathlib.Path(os.environ['RUNNER_TEMP']).resolve()
                 and temporary.name.startswith('backend-smoke-'), 'cleanup_path_outside_owned_directory')
         shutil.rmtree(temporary)
+        require(all(cleanup.values()), 'synthetic_resource_cleanup_failed')
 
 
 if __name__ == '__main__':
