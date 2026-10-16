@@ -92,7 +92,12 @@ assert len(shipped)==6 and len({c['bom-ref'] for c in data['components']})==len(
 data['version']=data.get('version',1)+1
 data['metadata'].setdefault('properties',[]).append(dict(name='nkw:sbom:augmentation',
     value='Explicit shipped JAR/JRE/native binary hashes; not additional scanner vulnerability coverage'))
-path.write_text(json.dumps(data,indent=2)+'\n')
+# Trivy's container owns the original file. The runner owns this dedicated
+# directory: replace atomically rather than requiring writes to a root-owned
+# payload or weakening its permissions.
+augmented=root/'deployment-augmented.cdx.json'
+with augmented.open('x') as output: output.write(json.dumps(data,indent=2)+'\n')
+augmented.replace(path)
 (root/'shipped-artifacts.sha256').unlink()
 receipt=dict(releaseSbom=True,image=sys.argv[2],format='CycloneDX',specVersion=data['specVersion'],
     components=len(data['components']),explicitShippedArtifacts=6,manualNativeVulnerabilityCoverageClaimed=False,
