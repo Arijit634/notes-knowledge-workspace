@@ -133,6 +133,7 @@ def main(deployment, qualification, evidence):
     prefix = 'nkw-smoke-' + uuid.uuid4().hex[:12]
     network, volume = prefix + '-network', prefix + '-database'
     resources, browsers, events, measurements = [], [], [], []
+    contract_failures = []
     network_created, volume_created = False, False
     canaries = [PASSWORD, 'synthetic-owner@example.test', 'synthetic-other@example.test',
                 'synthetic-access-key', 'synthetic-secret-key', 'PRIVATE_SMOKE_TITLE_731', 'PRIVATE_SMOKE_BODY_731']
@@ -306,6 +307,7 @@ def main(deployment, qualification, evidence):
                            'spring.datasource.hikari.maximum-pool-size': '5', 'spring.datasource.hikari.minimum-idle': '0',
                            'spring.datasource.hikari.connection-timeout': '2000', 'spring.datasource.hikari.validation-timeout': '1000',
                            'spring.data.redis.host': 'rate-store', 'spring.data.redis.port': '6379',
+                           'spring.data.redis.connect-timeout': '2s', 'spring.data.redis.timeout': '2s',
                            'server.port': '8443', 'server.ssl.enabled': 'true', 'server.ssl.key-store': 'file:/config/endpoint.p12',
                            'server.ssl.key-store-password': 'synthetic-keystore-password', 'server.ssl.key-store-type': 'PKCS12',
                            'identity.delivery.polling-enabled': 'false', 'identity.delivery.smtp-enabled': 'false',
@@ -387,7 +389,11 @@ def main(deployment, qualification, evidence):
         event('storage_failure_and_recovery', passed=True, actualOci=False)
         measure(app)
         docker('stop', '-t', '5', prefix + '-redis')
-        require(owner.request('POST', '/api/notes', {'title': 'rate unavailable', 'markdown': ''})[0] == 503, 'rate_store_failed_open')
+        # Attachment upload is an approved security-critical Redis-controlled
+        # path; ordinary Note creation does not have that rate-control contract.
+        rate_status, _, rate_body = owner.upload(note, synthetic_png())
+        event('rate_store_outage_response', status=rate_status)
+        require(rate_status == 503 and json.loads(rate_body).get('code') == 'service_unavailable', 'rate_store_outage_contract_failed')
         docker('start', prefix + '-redis')
         event('rate_store_outage', failedClosed=True)
         docker('stop', '-t', '5', database)
@@ -396,8 +402,13 @@ def main(deployment, qualification, evidence):
                 .request('GET', '/actuator/health/liveness')[0] == 200, 'database_outage_killed_liveness')
         status, _, unavailable = owner.request('GET', '/api/notes/' + note)
         event('database_outage_private_read', status=status)
-        require(status in (401, 403, 503) and canaries[5].encode() not in unavailable
+        require(status >= 400 and canaries[5].encode() not in unavailable
                 and canaries[6].encode() not in unavailable, 'database_outage_private_denial_failed')
+        if status != 503:
+            # Collect further recovery/shutdown facts after this read-only,
+            # fail-closed contract failure. It still fails the entire smoke;
+            # no 401/403/500 is reported as a successful dependency response.
+            contract_failures.append('database_outage_expected_503')
         docker('start', database)
         await_health(owner, 200)
         require(owner.request('GET', '/api/notes/' + note)[0] == 200, 'database_recovery_failed')
@@ -432,6 +443,7 @@ def main(deployment, qualification, evidence):
                 require(not info['Running'] and info['ExitCode'] != 0 and not info['OOMKilled'], label + '_not_refused')
                 collect_logs(candidate)
             event(label.replace('-', '_'), failedClosed=True)
+        require(not contract_failures, 'deployment_dependency_contract_failed')
         receipt = dict(deploymentSmoke=True, passed=True, deploymentImage=deployment,
                        qualificationImage=qualification, productionJar=True, testApplicationBeans=False,
                        liveProviderCalls=0, actualOci=False, relations=38, memoryBytes=2147483648,
@@ -480,7 +492,7 @@ def main(deployment, qualification, evidence):
                 locations.append(dict(function=frame.tb_frame.f_code.co_name, line=frame.tb_lineno))
             frame = frame.tb_next
         (output / 'deployment-smoke-failure.json').write_text(json.dumps(dict(passed=False, code=code,
-            exceptionType=type(failure).__name__, locations=locations, events=events, states=states)) + '\n')
+            exceptionType=type(failure).__name__, locations=locations, contractFailures=contract_failures, events=events, states=states)) + '\n')
         print(json.dumps(dict(deploymentSmoke=True, passed=False, code=code)), flush=True)
         raise RuntimeError(code) from None
     finally:

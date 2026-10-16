@@ -56,12 +56,46 @@ PY
 docker run --rm --memory=2g --cpus=2 -v /var/run/docker.sock:/var/run/docker.sock:ro \
   -v "$security:/evidence" -v "$cache:/root/.cache/trivy" "$scanner" image \
   "${database_flags[@]}" --timeout 5m --format cyclonedx --output /evidence/deployment.cdx.json "$deployment"
+docker run --rm --network none --user 65533:65533 --cap-drop ALL --security-opt no-new-privileges --read-only \
+  --entrypoint sha256sum "$deployment" /opt/video/tools/bin/ffmpeg /opt/video/tools/bin/ffprobe \
+  /opt/pdf/helper /opt/video/helper /jdk/lib/modules /application.jar > "$security/shipped-artifacts.sha256"
 python3 - "$security" "$deployment" <<'PY'
 import hashlib,json,pathlib,sys
 root=pathlib.Path(sys.argv[1]); path=root/'deployment.cdx.json'; data=json.loads(path.read_text())
 assert data.get('bomFormat')=='CycloneDX' and data.get('components')
 assert sum(c.get('purl','').startswith('pkg:maven/') for c in data['components'])>=200, 'Java SBOM coverage missing'
+# Package scanners cannot infer manually built artifacts from dpkg metadata.
+# Add their exact shipped binary hashes without inventing vulnerability coverage.
+shipped={line.split()[1]:line.split()[0] for line in (root/'shipped-artifacts.sha256').read_text().splitlines()}
+explicit_refs=[]
+for file,name,version in [('/opt/video/tools/bin/ffmpeg','ffmpeg','9.0.2'),
+                          ('/opt/video/tools/bin/ffprobe','ffprobe','9.0.2'),
+                          ('/opt/pdf/helper','pdf-sandbox-helper',None),
+                          ('/opt/video/helper','video-sandbox-helper',None),
+                          ('/jdk/lib/modules','microsoft-jdk-runtime-modules','25.0.4.1'),
+                          ('/application.jar','notes-knowledge-application-jar',None)]:
+    component=dict(type='file',name=name,**{'bom-ref':'urn:nkw:artifact:'+name+':'+shipped[file]},
+                   hashes=[dict(alg='SHA-256',content=shipped[file])],
+                   properties=[dict(name='nkw:shipped:path',value=file),
+                               dict(name='nkw:inventory:origin',value='explicit-shipped-artifact'),
+                               dict(name='nkw:scanner:coverage',value='not-claimed-for-manually-built-code')])
+    if version: component['version']=version
+    data['components'].append(component)
+    explicit_refs.append(component['bom-ref'])
+root_ref=data['metadata']['component']['bom-ref']
+dependencies=data.setdefault('dependencies',[])
+root_dependency=next((row for row in dependencies if row['ref']==root_ref),None)
+if root_dependency is None:
+    root_dependency=dict(ref=root_ref,dependsOn=[]);dependencies.append(root_dependency)
+root_dependency.setdefault('dependsOn',[]).extend(explicit_refs)
+assert len(shipped)==6 and len({c['bom-ref'] for c in data['components']})==len(data['components'])
+data['version']=data.get('version',1)+1
+data['metadata'].setdefault('properties',[]).append(dict(name='nkw:sbom:augmentation',
+    value='Explicit shipped JAR/JRE/native binary hashes; not additional scanner vulnerability coverage'))
+path.write_text(json.dumps(data,indent=2)+'\n')
+(root/'shipped-artifacts.sha256').unlink()
 receipt=dict(releaseSbom=True,image=sys.argv[2],format='CycloneDX',specVersion=data['specVersion'],
-    components=len(data['components']),sha256=hashlib.sha256(path.read_bytes()).hexdigest(),registryPublished=False,signedAttestation=False)
+    components=len(data['components']),explicitShippedArtifacts=6,manualNativeVulnerabilityCoverageClaimed=False,
+    sha256=hashlib.sha256(path.read_bytes()).hexdigest(),registryPublished=False,signedAttestation=False)
 (root/'sbom-receipt.json').write_text(json.dumps(receipt,indent=2)+'\n');print(json.dumps(receipt))
 PY
