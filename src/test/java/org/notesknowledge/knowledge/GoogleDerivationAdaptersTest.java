@@ -291,6 +291,32 @@ class GoogleDerivationAdaptersTest {
         assertThatThrownBy(()->port.describe(sourcePermit(),new byte[]{1},new MediaUnderstandingRequest("audio/wav",null,null,3.))).isInstanceOf(DerivationFailure.class);
         assertThat(requests).hasSize(4);assertThat(requestPaths).allSatisfy(p->assertThat(p).endsWith(":generateContent"));
     }
+    @ParameterizedTest @ValueSource(strings={"image/png","audio/wav","video/mp4","application/pdf"})
+    void absentSpringAiMediaCompletionMetadataFailsClosedAfterRealSdkResponse(String type) throws Exception {
+        generated("{\"complete\":true,\"checkedPages\":"+(type.equals("application/pdf")?"[1]":"[]")+",\"noSpeech\":false,\"segments\":[]}");
+        String kind=switch(type){case "image/png"->"image";case "audio/wav"->"audio";case "video/mp4"->"video";default->"pdf";};
+        var bytes=org.notesknowledge.notes.DerivationMediaFixtures.media(kind).getBytes();
+        var scope=new MediaUnderstandingRequest(type,type.equals("application/pdf")?1:null,type.equals("application/pdf")?1:null,
+            type.equals("audio/wav")||type.equals("video/mp4")?.5:null);
+        var permit=sourcePermit();var port=adapters.googleMediaUnderstandingPort(config("gemini-embedding-2"),clients,json);
+        // Fault-inject only nullable Spring AI metadata after a real STOP HTTP/SDK response;
+        // omitting a provider wire field is not equivalent to a null Spring AI object.
+        try(var generations=mockConstruction(org.springframework.ai.chat.model.Generation.class,(generation,context)->{
+            when(generation.getOutput()).thenReturn((org.springframework.ai.chat.messages.AssistantMessage)context.arguments().getFirst());
+            when(generation.getMetadata()).thenReturn(null);
+        })) {
+            assertThatThrownBy(()->port.describe(permit,bytes,scope))
+                .isInstanceOfSatisfying(DerivationFailure.class,f->{
+                    assertThat(f.category).isEqualTo(KnowledgeWork.Failure.INVALID_OUTPUT);
+                    assertThat(f.diagnostic.stage()).isEqualTo(ProviderFailureDiagnostic.Stage.MEDIA);
+                    assertThat(f.diagnostic.kind()).isEqualTo(ProviderFailureDiagnostic.Kind.PARSING);
+                    assertThat(f.diagnostic.providerReached()).isEqualTo(ProviderFailureDiagnostic.Reach.HTTP_RESPONSE_RECEIVED);
+                    assertThat(f.diagnostic.structurallyValidResponse()).isFalse();
+                }).hasCause(null).hasMessage("Derivation unavailable");
+            assertThat(generations.constructed()).hasSize(1);
+        }
+        verify(permit,times(2)).requireGoogleDispatch();assertThat(requests).hasSize(1);
+    }
     @Test void inlineByteAndVideoDurationBudgetRejectBeforeAnyHttpRequest() {
         var port=adapters.googleMediaUnderstandingPort(config("gemini-embedding-2"),clients,json);
         assertThatThrownBy(()->port.describe(sourcePermit(),new byte[20_000_000],new MediaUnderstandingRequest("video/mp4",null,null,2.))).isInstanceOf(DerivationFailure.class);

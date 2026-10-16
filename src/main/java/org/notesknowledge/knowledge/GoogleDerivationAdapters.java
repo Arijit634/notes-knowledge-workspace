@@ -67,6 +67,7 @@ class GoogleDerivationAdapters {
                     .media(new Media(MimeTypeUtils.parseMimeType(request.mediaType()),new org.springframework.core.io.ByteArrayResource(bytes))).build(),options));}
                 catch(RuntimeException providerFailure){throw providerFailure(providerFailure,ProviderFailureDiagnostic.Stage.MEDIA,started);}
                 if(response==null||response.getResult()==null||response.getResult().getOutput()==null
+                        ||response.getResult().getMetadata()==null
                         ||!"STOP".equals(response.getResult().getMetadata().getFinishReason()))throw invalidOutput(ProviderFailureDiagnostic.Stage.MEDIA,started);
                 String output=response.getResult().getOutput().getText();
                 if(output==null||output.length()>256000)throw invalidOutput(ProviderFailureDiagnostic.Stage.MEDIA,started);
