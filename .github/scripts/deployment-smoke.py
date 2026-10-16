@@ -193,6 +193,7 @@ def main(deployment, qualification, evidence):
         docker('start', name)
         peer = json.loads(docker('inspect', name).stdout)[0]['NetworkSettings']['Networks'][network]['IPAddress']
         browser = Browser('https://localhost:8443', str(temporary / 'certificate.pem'), peer)
+        browser.container = name
         browsers.append(browser)
         return name, browser
 
@@ -223,6 +224,8 @@ def main(deployment, qualification, evidence):
         probe = Browser(browser.origin, str(temporary / 'certificate.pem'), browser.peer)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
+            if hasattr(browser, 'container') and not state(browser.container)['Running']:
+                raise RuntimeError('service_exited_before_readiness')
             try:
                 status, _, body = probe.request('GET', '/actuator/health/readiness')
                 if status == expected:
@@ -447,10 +450,29 @@ def main(deployment, qualification, evidence):
                 info = state(name)
                 raw = docker('logs', name, check=False)
                 text = raw.stdout + raw.stderr
+                error_types = set()
+                for line in text.splitlines():
+                    try:
+                        row = json.loads(line)
+                        error_type = row.get('error.type') or row.get('error', {}).get('type')
+                        if isinstance(error_type, str) and len(error_type) <= 160 and error_type.startswith(
+                                ('java.', 'javax.', 'jakarta.', 'org.springframework.', 'org.hibernate.', 'org.flywaydb.')):
+                            error_types.add(error_type)
+                    except (ValueError, AttributeError):
+                        pass
+                known_beans = ('isolatedPdfPageRuntime', 'isolatedVideoClipRuntime', 'notesCursorKeyRing',
+                               'entityManagerFactory', 'flywayInitializer', 'dataSource', 'springSessionRepositoryFilter')
+                known_reasons = ('Media runtime preflight unavailable', 'Media runtime profile unavailable',
+                                 'Notes cursor active key is required', 'Invalid Notes cursor key configuration',
+                                 'Failed to configure a DataSource', 'Failed to start web server',
+                                 'ClassNotFoundException', 'NoClassDefFoundError', 'BeanDefinitionOverrideException',
+                                 'ConflictingBeanDefinitionException')
                 states.append(dict(running=info['Running'], exitCode=info['ExitCode'], oomKilled=info['OOMKilled'],
                     databasePrivilegeDenied='permission denied' in text.lower(),
                     nativePreflightDenied='Media runtime preflight unavailable' in text,
-                    configurationDenied='configuration unavailable' in text.lower()))
+                    configurationDenied='configuration unavailable' in text.lower(),
+                    startupErrorTypes=sorted(error_types), knownBeansMentioned=[bean for bean in known_beans if bean in text],
+                    knownReasonsMentioned=[reason for reason in known_reasons if reason in text]))
         locations = []
         frame = failure.__traceback__
         while frame:
