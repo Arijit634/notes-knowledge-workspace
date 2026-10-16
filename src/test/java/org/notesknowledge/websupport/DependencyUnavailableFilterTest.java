@@ -41,6 +41,7 @@ class DependencyUnavailableFilterTest {
         response.setHeader("Content-Range", "bytes 0-99/100");
         response.setHeader("ETag", "\"synthetic-validator\"");
         response.setHeader("Location", "/private-uncommitted-representation");
+        response.setHeader("X-Content-Type-Options", "nosniff");
         response.getOutputStream().write(new byte[] {1, 2, 3});
         filter.doFilter(request, response, (req, res) -> {
             throw new CannotGetJdbcConnectionException(PRIVATE);
@@ -50,6 +51,7 @@ class DependencyUnavailableFilterTest {
         assertThat(response.getHeader("Content-Range")).isNull();
         assertThat(response.getHeader("ETag")).isNull();
         assertThat(response.getHeader("Location")).isNull();
+        assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
         assertThat(filter.getClass().getAnnotation(Order.class).value())
                 .isLessThan(SessionRepositoryFilter.DEFAULT_ORDER);
     }
@@ -82,7 +84,9 @@ class DependencyUnavailableFilterTest {
     @Test
     void programmingAndSqlSyntaxDefectsAreNotHiddenAsDependencyOutages() {
         for (var failure : java.util.List.of(new IllegalStateException(PRIVATE),
-                new BadSqlGrammarException("synthetic", "select synthetic", new SQLException(PRIVATE)))) {
+                new BadSqlGrammarException("synthetic", "select synthetic", new SQLException(PRIVATE)),
+                new CannotCreateTransactionException(PRIVATE,
+                        new BadSqlGrammarException("synthetic", "select synthetic", new SQLException(PRIVATE))))) {
             var response = new MockHttpServletResponse();
             assertThatThrownBy(() -> filter.doFilter(new MockHttpServletRequest(), response, (req, res) -> {
                 throw failure;

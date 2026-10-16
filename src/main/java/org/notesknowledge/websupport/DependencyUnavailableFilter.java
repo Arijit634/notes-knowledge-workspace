@@ -6,9 +6,14 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.Locale;
+import java.util.Set;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.InvalidDataAccessResourceUsageException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.CannotCreateTransactionException;
@@ -19,6 +24,8 @@ import org.springframework.web.filter.OncePerRequestFilter;
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 1)
 public final class DependencyUnavailableFilter extends OncePerRequestFilter {
+    private static final Set<String> REPRESENTATION_HEADERS = Set.of("content-type", "content-length",
+            "content-range", "content-encoding", "content-disposition", "etag", "accept-ranges", "location");
     private final ApiProblemWriter problems;
 
     public DependencyUnavailableFilter(ApiProblemWriter problems) {
@@ -38,10 +45,17 @@ public final class DependencyUnavailableFilter extends OncePerRequestFilter {
                 request.setAttribute(ResponseStreamInterruptedException.REQUEST_ATTRIBUTE, Boolean.TRUE);
                 throw new ResponseStreamInterruptedException();
             }
-            for (String header : List.of(HttpHeaders.CONTENT_LENGTH, HttpHeaders.CONTENT_RANGE,
-                    HttpHeaders.CONTENT_DISPOSITION, HttpHeaders.ETAG, HttpHeaders.ACCEPT_RANGES, HttpHeaders.LOCATION)) {
-                response.setHeader(header, null);
+            var retained = new HttpHeaders();
+            for (String header : response.getHeaderNames()) {
+                if (!REPRESENTATION_HEADERS.contains(header.toLowerCase(Locale.ROOT))) {
+                    retained.put(header, new ArrayList<>(response.getHeaders(header)));
+                }
             }
+            // resetBuffer/setHeader(null) can leave servlet content-length and
+            // content-type state behind. Reset the representation completely,
+            // then preserve existing security/correlation and cookie headers.
+            response.reset();
+            retained.forEach((header, values) -> values.forEach(value -> response.addHeader(header, value)));
             problems.writeServiceUnavailable(request, response);
         }
     }
@@ -49,10 +63,13 @@ public final class DependencyUnavailableFilter extends OncePerRequestFilter {
     static boolean unavailable(Throwable failure) {
         // Typed infrastructure failures only. Bad SQL, integrity violations and
         // programming defects are not relabelled as temporary dependency loss.
+        boolean unavailable = false;
         for (int depth = 0; failure != null && depth < 16; depth++, failure = failure.getCause()) {
+            if (failure instanceof InvalidDataAccessResourceUsageException
+                    || failure instanceof DataIntegrityViolationException) return false;
             if (failure instanceof CannotCreateTransactionException
-                    || failure instanceof DataAccessResourceFailureException) return true;
+                    || failure instanceof DataAccessResourceFailureException) unavailable = true;
         }
-        return false;
+        return failure == null && unavailable;
     }
 }
