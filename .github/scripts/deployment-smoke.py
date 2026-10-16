@@ -30,6 +30,7 @@ import zlib
 
 HOST = 'syntheticnamespace.compat.objectstorage.ap-mumbai-1.oci.customer-oci.com'
 PASSWORD = 'Synthetic-smoke-password-731!'
+STORAGES = ('notes.private-storage', 'profile.avatar-storage', 'profile.public-avatar-storage', 'publishing.media-storage')
 
 
 def require(value, code):
@@ -126,6 +127,8 @@ def main(deployment, qualification, evidence):
     output = pathlib.Path(evidence).resolve()
     output.mkdir(exist_ok=False, parents=True)
     temporary = pathlib.Path(tempfile.mkdtemp(prefix='backend-smoke-', dir=os.environ['RUNNER_TEMP'])).resolve()
+    service_config = temporary / 'service-config'
+    service_config.mkdir(mode=0o755)
     prefix = 'nkw-smoke-' + uuid.uuid4().hex[:12]
     network, volume = prefix + '-network', prefix + '-database'
     resources, browsers, events, measurements = [], [], [], []
@@ -162,13 +165,13 @@ def main(deployment, qualification, evidence):
         config = dict(properties)
         config.update(overrides or {})
         name = prefix + '-' + label
-        path = temporary / (label + '.properties')
+        path = service_config / (label + '.properties')
         path.write_text(''.join(key + '=' + str(value) + '\n' for key, value in config.items()))
         path.chmod(0o644)
         args = ['create', '--name', name, '--label', 'nkw.smoke.invocation=' + prefix, '--network', network, '--init', '--user', '65533:65533',
                 '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--read-only', '--memory', '2g',
                 '--cpus', '2', '--pids-limit', '512', '--tmpfs', '/tmp:rw,noexec,nosuid,nodev,size=512m',
-                '-v', str(temporary) + ':/config:ro']
+                '-v', str(service_config) + ':/config:ro']
         for directory, size in [('pdf-recovery', '4m'), ('video-recovery', '4m'), ('video-scratch', '192m')]:
             args += ['--tmpfs', '/private/' + directory + ':rw,noexec,nosuid,nodev,size=' + size + ',uid=65533,gid=65533,mode=0700']
         args += ['--entrypoint', '/jdk/bin/java', deployment, '-Xmx512m',
@@ -182,7 +185,9 @@ def main(deployment, qualification, evidence):
                 and limits['Memory'] == 2 * 1024 ** 3 and limits['NanoCpus'] == 2 * 10 ** 9
                 and limits['PidsLimit'] == 512 and limits['CapDrop'] == ['ALL']
                 and any(value.startswith('no-new-privileges') for value in limits['SecurityOpt'])
-                and not any('docker.sock' in mount['Destination'] for mount in profile['Mounts']),
+                and not limits.get('PortBindings')
+                and not any('docker.sock' in mount['Destination'] for mount in profile['Mounts'])
+                and all(mount['Source'] == str(service_config) for mount in profile['Mounts'] if mount['Type'] == 'bind'),
                 'deployment_profile_not_enforced')
         docker('start', name)
         peer = json.loads(docker('inspect', name).stdout)[0]['NetworkSettings']['Networks'][network]['IPAddress']
@@ -273,7 +278,7 @@ def main(deployment, qualification, evidence):
         tool = ['run', '--rm', '--network', network, '--user', '65533:65533', '--cap-drop', 'ALL',
                 '--security-opt', 'no-new-privileges', '--read-only', '--memory', '512m', '--cpus', '1',
                 '--pids-limit', '128', '--tmpfs', '/tmp:rw,nosuid,nodev,size=64m',
-                '-v', str(temporary) + ':/config', qualification]
+                qualification]
         docker(*tool, '-Dloader.path=/qualification', '-Dloader.main=org.notesknowledge.DeploymentSmokeDatabase',
                '-cp', '/application.jar', 'org.springframework.boot.loader.launch.PropertiesLauncher', 'initialize')
         # Trust only the synthetic endpoint certificate, without disabling TLS validation.
@@ -282,6 +287,9 @@ def main(deployment, qualification, evidence):
                '-importcert', '-noprompt', '-alias', 'synthetic-endpoint', '-file', '/config/certificate.pem',
                '-keystore', '/config/trust.p12', '-storepass', 'synthetic-keystore-password')
         (temporary / 'trust.p12').chmod(0o644)
+        for name in ('endpoint.p12', 'trust.p12'):
+            shutil.copyfile(temporary / name, service_config / name)
+            (service_config / name).chmod(0o644)
         selected = docker('run', '--rm', '--network', 'none', '--entrypoint', '/bin/cat', deployment,
                           '/provenance/runtime-selection.properties').stdout
         properties = dict(line.split('=', 1) for line in selected.splitlines() if line and not line.startswith('#'))
@@ -307,7 +315,7 @@ def main(deployment, qualification, evidence):
             value = base64.b64encode(secrets.token_bytes(32)).decode()
             properties[key] = value
             canaries.append(value)
-        for storage in ['notes.private-storage', 'profile.avatar-storage', 'profile.public-avatar-storage', 'publishing.media-storage']:
+        for storage in STORAGES:
             properties.update({storage + '.enabled': 'true', storage + '.profile': 'oci-s3-private-v1',
                                storage + '.endpoint': 'https://' + HOST, storage + '.region': 'ap-mumbai-1',
                                storage + '.bucket': 'synthetic-private-bucket', storage + '.credentials-source': 'injected',
@@ -319,10 +327,10 @@ def main(deployment, qualification, evidence):
         endpoint = prefix + '-objects'
         docker('create', '--name', endpoint, '--network', network, '--network-alias', HOST,
                '--user', '65533:65533', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--read-only',
-               '--memory', '512m', '--cpus', '1', '--pids-limit', '128', '-v', str(temporary) + ':/config:ro',
+               '--memory', '512m', '--cpus', '1', '--pids-limit', '128', '-v', str(temporary / 'endpoint.p12') + ':/endpoint.p12:ro',
                '-v', str(objects) + ':/objects', qualification, '-Dloader.path=/qualification',
                '-Dloader.main=org.notesknowledge.ControlledS3Endpoint', '-cp', '/application.jar',
-               'org.springframework.boot.loader.launch.PropertiesLauncher', '/config/endpoint.p12', '/objects')
+               'org.springframework.boot.loader.launch.PropertiesLauncher', '/endpoint.p12', '/objects')
         resources.append(endpoint)
         docker('start', endpoint)
         app, owner = start_app('service')
@@ -398,7 +406,7 @@ def main(deployment, qualification, evidence):
         require(owner.request('GET', content)[2] == accepted, 'service_restart_lost_object')
         stop_app(app)
         event('service_restart', preservedAuthorityAndObjects=True)
-        for label, changes in [('missing-storage', {'notes.private-storage.enabled': 'false'}),
+        for label, changes in [('missing-storage', {storage + '.enabled': 'false' for storage in STORAGES}),
                                ('invalid-credential', {'notes.private-storage.access-key-id': 'short'}),
                                ('invalid-runtime', {'notes.media-runtime.video.artifact-identity': '0' * 64})]:
             candidate, browser = start_app(label, changes)
