@@ -136,6 +136,10 @@ public final class ApiProblemHandler {
     ResponseEntity<ProblemDetail> unexpected(
             Exception exception,
             HttpServletRequest request) {
+        if (DependencyUnavailableFilter.unavailable(exception)) {
+            return response(problemWriter.create(request, HttpStatus.SERVICE_UNAVAILABLE,
+                    "service_unavailable", "Required service is unavailable"));
+        }
         LOGGER.error("Request failed with internal_error");
         return response(problemWriter.create(request, HttpStatus.INTERNAL_SERVER_ERROR,
                 "internal_error", "Request could not be completed"));

@@ -40,7 +40,7 @@ jobs:
       - name: Compile qualification controllers and package backend
         id: package
         shell: bash
-        run: ./mvnw --batch-mode --no-transfer-progress -Dtest=MediaRuntimeConfigurationTest,Argon2CompatibilityTest,Argon2VerificationQualificationTest,CoreReadinessDatabaseTest package
+        run: ./mvnw --batch-mode --no-transfer-progress -Dtest=MediaRuntimeConfigurationTest,Argon2CompatibilityTest,Argon2VerificationQualificationTest,CoreReadinessDatabaseTest,DependencyUnavailableFilterTest package
       - name: Resolve opt-in qualification command classpath
         shell: bash
         run: ./mvnw --batch-mode --no-transfer-progress dependency:build-classpath -DincludeScope=test -Dmdep.outputFile=target/qualification-classpath.txt -q
@@ -100,7 +100,7 @@ jobs:
         run: ./.github/scripts/media-jdk.ps1
       - name: Qualify isolated Windows PDF development boundary
         shell: pwsh
-        run: ./mvnw.cmd --batch-mode --no-transfer-progress '-Dtest=WindowsPdfProcessTest,MediaRuntimeConfigurationTest,Argon2CompatibilityTest,Argon2VerificationQualificationTest' test
+        run: ./mvnw.cmd --batch-mode --no-transfer-progress '-Dtest=WindowsPdfProcessTest,MediaRuntimeConfigurationTest,Argon2CompatibilityTest,Argon2VerificationQualificationTest,DependencyUnavailableFilterTest' test
       - name: Summarize Windows evidence
         if: always()
         shell: pwsh
