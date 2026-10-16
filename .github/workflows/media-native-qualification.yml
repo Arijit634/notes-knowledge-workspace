@@ -67,7 +67,7 @@ jobs:
           include-hidden-files: false
       - name: Verify complete backend on final native-qualified source
         id: full-backend
-        if: matrix.runner == 'ubuntu-24.04'
+        if: always() && matrix.runner == 'ubuntu-24.04'
         shell: bash
         run: ./mvnw --batch-mode --no-transfer-progress clean verify -q
       - name: Summarize complete backend evidence

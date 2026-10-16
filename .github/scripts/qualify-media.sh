@@ -41,7 +41,7 @@ deployment="$(tail -n 1 "$RUNNER_TEMP/media-deployment-image")"
 test "$(docker image inspect --format '{{.Architecture}}' "$deployment")" = "$expected"
 test "$(docker image inspect --format '{{.Config.User}}' "$deployment")" = '65533:65533'
 docker run --rm --network none --user 65533:65533 --cap-drop ALL --security-opt no-new-privileges --read-only \
-  --entrypoint /bin/sh "$deployment" -c 'test ! -e /qualification && test ! -e /fixtures && test ! -e /codec && test ! -e /native && test ! -e /jdk/bin/javac && test ! -e /jdk/bin/jlink && ! command -v gcc && dpkg-query -W' \
+  --entrypoint /bin/sh "$deployment" -c 'test ! -e /qualification && test ! -e /fixtures && test ! -e /codec && test ! -e /native && test ! -e /jdk/bin/javac && test ! -e /jdk/bin/jlink && ! command -v gcc && test -z "$(find /usr /opt /jdk -xdev -type f -perm /6000 -print -quit)" && dpkg-query -W' \
   > "$RUNNER_TEMP/media-deployment-packages.txt"
 docker run --rm --network none --user 65533:65533 --cap-drop ALL --security-opt no-new-privileges --read-only \
   --entrypoint sha256sum "$deployment" /provenance/runtime-files.sha256 > "$RUNNER_TEMP/media-runtime-manifest.sha256"
@@ -82,7 +82,7 @@ print(json.dumps(dict(releaseInventory=True,deploymentImage=image,user='65533:65
     applicationSha256=hashlib.sha256(pathlib.Path(jar).read_bytes()).hexdigest(),libraries=libraries,osPackages=os_packages,
     runtimeManifestSha256=pathlib.Path(manifest).read_text().split()[0],
     baseImage='debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f',
-    qualificationPayloadAbsent=True,registryPublished=False,vulnerabilityScanPerformed=False,
+    qualificationPayloadAbsent=True,setuidSetgidFilesAbsent=True,registryPublished=False,vulnerabilityScanPerformed=False,
     codecLegalClearance=False)))
 PY
 common=(run --rm --init --network none --user 65533:65533 --cap-drop ALL --security-opt no-new-privileges --read-only --memory=1g --cpus=2 --pids-limit=300 --tmpfs /tmp:rw,noexec,nosuid,nodev,size=192m)

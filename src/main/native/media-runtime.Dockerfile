@@ -84,6 +84,9 @@ COPY --from=build /provenance /provenance
 COPY --from=build /source.tar.xz /provenance/ffmpeg-9.0.2.tar.xz
 COPY --from=build /native/empty-metadata.patch /provenance/empty-metadata.patch
 COPY --from=build /application.jar /application.jar
+# The service never needs setuid/setgid utilities. Remove their privilege bits
+# as image-level defense in depth, independently of runtime no-new-privileges.
+RUN find /usr /opt /jdk -xdev -type f -perm /6000 -exec chmod a-s {} +
 USER 65533:65533
 ENTRYPOINT ["/jdk/bin/java", "-jar", "/application.jar"]
 # No registry publication is performed. A release must separately reconcile

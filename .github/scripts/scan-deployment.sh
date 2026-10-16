@@ -24,7 +24,7 @@ assert raw.is_file(), 'Scanner infrastructure failed; missing evidence is not ze
 data=json.loads(raw.read_text()); vulnerabilities=[]; secrets=[]; misconfigurations=[]; java_packages=0; os_packages=0
 assert int(os.environ['SCAN_RESULT']) in (0,1) and data.get('Metadata'), 'Scanner execution failed'
 recognized_os=data['Metadata'].get('OS',{})
-assert recognized_os.get('Family')=='debian' and recognized_os.get('Name') in ('12','13'), 'Supported deployment OS not recognized'
+assert recognized_os.get('Family')=='debian' and str(recognized_os.get('Name','')).split('.')[0] in ('12','13'), 'Supported deployment OS not recognized'
 for item in data.get('Results',[]):
     if item.get('Type')=='jar': java_packages+=len(item.get('Packages',[]))
     if item.get('Class')=='os-pkgs': os_packages+=len(item.get('Packages',[]))
@@ -42,6 +42,7 @@ database=json.loads(db_path.read_text())
 receipt=dict(releaseSecurity=True,image=sys.argv[2],scanner=sys.argv[3],scanExit=int(os.environ['SCAN_RESULT']),
     database={k:database.get(k) for k in ('Version','UpdatedAt','NextUpdate','DownloadedAt')},
     javaPackagesAnalyzed=java_packages,osPackagesAnalyzed=os_packages,recognizedOs=recognized_os,
+    javaVulnerabilityCount=sum(len(item.get('Vulnerabilities',[])) for item in data.get('Results',[]) if item.get('Type')=='jar'),
     vulnerabilityCounts=dict(collections.Counter(v['Severity'] for v in vulnerabilities)),vulnerabilities=vulnerabilities,
     secretFindingCount=len(secrets),secretFindings=secrets,misconfigurations=misconfigurations,
     releaseGatePassed=not(vulnerabilities or secrets or misconfigurations) and os.environ['SCAN_RESULT']=='0',
