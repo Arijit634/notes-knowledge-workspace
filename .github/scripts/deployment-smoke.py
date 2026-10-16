@@ -129,6 +129,7 @@ def main(deployment, qualification, evidence):
     temporary = pathlib.Path(tempfile.mkdtemp(prefix='backend-smoke-', dir=os.environ['RUNNER_TEMP'])).resolve()
     service_config = temporary / 'service-config'
     service_config.mkdir(mode=0o755)
+    objects = temporary / 'objects'
     prefix = 'nkw-smoke-' + uuid.uuid4().hex[:12]
     network, volume = prefix + '-network', prefix + '-database'
     resources, browsers, events, measurements = [], [], [], []
@@ -274,7 +275,8 @@ def main(deployment, qualification, evidence):
                 '-in', str(temporary / 'certificate.pem'), '-out', str(temporary / 'endpoint.p12'),
                 '-passout', 'pass:synthetic-keystore-password')
         for path in temporary.iterdir():
-            path.chmod(0o644)
+            if path.is_file():
+                path.chmod(0o644)
         tool = ['run', '--rm', '--network', network, '--user', '65533:65533', '--cap-drop', 'ALL',
                 '--security-opt', 'no-new-privileges', '--read-only', '--memory', '512m', '--cpus', '1',
                 '--pids-limit', '128', '--tmpfs', '/tmp:rw,nosuid,nodev,size=64m',
@@ -321,7 +323,6 @@ def main(deployment, qualification, evidence):
                                storage + '.bucket': 'synthetic-private-bucket', storage + '.credentials-source': 'injected',
                                storage + '.private-bucket-confirmed': 'true', storage + '.reconciliation-enabled': 'false',
                                storage + '.access-key-id': 'synthetic-access-key', storage + '.secret-access-key': 'synthetic-secret-key'})
-        objects = temporary / 'objects'
         objects.mkdir(mode=0o777)
         objects.chmod(0o777)
         endpoint = prefix + '-objects'
@@ -471,10 +472,19 @@ def main(deployment, qualification, evidence):
         cleanup = dict(containersAbsent=all(docker('inspect', name, check=False).returncode != 0 for name in resources),
                        volumeAbsent=not volume_created or docker('volume', 'inspect', volume, check=False).returncode != 0,
                        networkAbsent=not network_created or docker('network', 'inspect', network, check=False).returncode != 0)
-        (output / 'cleanup.json').write_text(json.dumps(cleanup) + '\n')
         require(temporary.parent == pathlib.Path(os.environ['RUNNER_TEMP']).resolve()
                 and temporary.name.startswith('backend-smoke-'), 'cleanup_path_outside_owned_directory')
+        if objects.is_dir():
+            # The external endpoint, not the host runner, owns its synthetic
+            # object files. Clean only that invocation's object mount using
+            # the same unprivileged UID, without granting host/root authority.
+            docker('run', '--rm', '--network', 'none', '--user', '65533:65533', '--cap-drop', 'ALL',
+                   '--security-opt', 'no-new-privileges', '--read-only', '--memory', '64m', '--cpus', '1',
+                   '--pids-limit', '32', '-v', str(objects) + ':/objects', '--entrypoint', '/bin/sh', qualification,
+                   '-c', 'find /objects -type f -delete && find /objects -depth -mindepth 1 -type d -empty -delete')
         shutil.rmtree(temporary)
+        cleanup['temporaryFilesAbsent'] = not temporary.exists()
+        (output / 'cleanup.json').write_text(json.dumps(cleanup) + '\n')
         require(all(cleanup.values()), 'synthetic_resource_cleanup_failed')
 
 
