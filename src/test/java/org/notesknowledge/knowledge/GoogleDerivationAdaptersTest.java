@@ -52,7 +52,9 @@ class GoogleDerivationAdaptersTest {
             exchange.sendResponseHeaders(status,bytes.length);exchange.getResponseBody().write(bytes);exchange.close();
         });server.start();
         sdk=Client.builder().apiKey("synthetic-not-a-provider-key").httpOptions(HttpOptions.builder()
-            .baseUrl("http://127.0.0.1:"+server.getAddress().getPort()).timeout(2000)
+            // Status/parsing contracts use the production deadline, not an unrelated
+            // two-second scheduling threshold on a resource-constrained test host.
+            .baseUrl("http://127.0.0.1:"+server.getAddress().getPort()).timeout(10000)
             .retryOptions(HttpRetryOptions.builder().attempts(1).build()).build()).build();
         clients=mock(ObjectProvider.class);when(clients.getIfAvailable()).thenReturn(sdk);
     }
@@ -174,7 +176,7 @@ class GoogleDerivationAdaptersTest {
             code<500?KnowledgeWork.Failure.PROVIDER_UNAVAILABLE:KnowledgeWork.Failure.TRANSIENT_DEPENDENCY;
         assertThatThrownBy(()->port.generate(evidence(),query,"answer",List.of(new StructuredKnowledgePort.Evidence("e0","Synthetic","note"))))
             .isInstanceOfSatisfying(DerivationFailure.class,f->{
-                assertThat(f.category).isEqualTo(category);
+                assertThat(f.category).as("sanitized provider diagnostic: %s",f.diagnostic).isEqualTo(category);
                 assertThat(f.diagnostic.httpStatus()).isEqualTo(code);
                 assertThat(f.diagnostic.providerReached()).isEqualTo(ProviderFailureDiagnostic.Reach.HTTP_RESPONSE_RECEIVED);
                 assertThat(f.diagnostic.structurallyValidResponse()).isFalse();

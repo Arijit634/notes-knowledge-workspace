@@ -12,6 +12,25 @@ import org.junit.jupiter.api.*;
  * No password, salt or encoded hash is emitted as diagnostic evidence. */
 @Tag("FAST") @Tag("SECURITY")
 class Argon2VerificationQualificationTest {
+    @Test void eachFreshSpringHashAgreesWithDirectDependencyOnItsActualEncodedSalt(){
+        var encoder=new IdentityPasswordConfiguration().identityPasswordEncoder();
+        // Bounded diagnostic, not rerun-until-green. Verify ALL hashes with both paths.
+        for(int i=0;i<16;i++){
+            String value="synthetic-dependency-oracle-"+i+"-\u03bb";
+            String encoded=encoder.encode(value);
+            String[] fields=encoded.substring("{argon2id}".length()).split("\\$");
+            assertThat(fields.length==6&&fields[1].equals("argon2id")&&fields[2].equals("v=19")
+                &&fields[3].equals("m=65536,t=3,p=1")).as("approved encoding structure %d",i).isTrue();
+            byte[] salt=Base64.getDecoder().decode(fields[4]),actual=Base64.getDecoder().decode(fields[5]);
+            byte[] password=value.getBytes(StandardCharsets.UTF_8),expected=derive(password,salt);
+            try {
+                assertThat(salt.length==16&&actual.length==32).as("approved output shape %d",i).isTrue();
+                assertThat(java.security.MessageDigest.isEqual(expected,actual)).as("direct dependency agrees with fresh encoding %d",i).isTrue();
+                assertThat(encoder.matches(value,encoded)).as("Spring correct-password verification %d",i).isTrue();
+                assertThat(encoder.matches(value+"-wrong",encoded)).as("wrong password rejected %d",i).isFalse();
+            } finally {Arrays.fill(salt,(byte)0);Arrays.fill(actual,(byte)0);Arrays.fill(password,(byte)0);Arrays.fill(expected,(byte)0);}
+        }
+    }
     @Test void independentEncoderInstancesAndUnicodeRoundTripsRemainConsistent(){
         var first=new IdentityPasswordConfiguration().identityPasswordEncoder();
         var second=new IdentityPasswordConfiguration().identityPasswordEncoder();
