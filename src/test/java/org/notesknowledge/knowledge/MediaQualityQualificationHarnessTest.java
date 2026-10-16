@@ -33,7 +33,7 @@ class MediaQualityQualificationHarnessTest {
     }
     @Test void corpusIsRepeatableDefensiveAndIncludesFrozenLongVideoAndNonSpeech() throws Exception {
         var first=MediaQualityQualificationHarness.frozenCorpus();var second=MediaQualityQualificationHarness.frozenCorpus();
-        assertThat(first).extracting(MediaQualityQualificationHarness.Fixture::id).containsExactly("image","mixed","audio","tones","video","long-video","diagram-image","diagram-pdf");
+        assertThat(first).extracting(MediaQualityQualificationHarness.Fixture::id).containsExactly("image","mixed","audio","tones","video","long-video","diagram-image","diagram-pdf","text-pdf","scan-pdf");
         for(int i=0;i<first.size();i++)assertThat(first.get(i).bytes()).isEqualTo(second.get(i).bytes());
         byte[] saved=first.getFirst().bytes();first.getFirst().bytes()[0]=0;assertThat(first.getFirst().bytes()).isEqualTo(saved);
     }

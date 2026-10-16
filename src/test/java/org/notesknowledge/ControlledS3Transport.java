@@ -16,7 +16,8 @@ public final class ControlledS3Transport implements SdkHttpClient {
     final Path directory;
     public final AtomicInteger calls=new AtomicInteger();
     public boolean ambiguousPut, failDelete, wrongRange, shortRange, redirect, checksumMismatch, ignoredRange, malformedInventory;
-    public boolean createOnly, checksumVerified, closedBody;
+    public boolean createOnly, checksumVerified, closedBody, denyAccess, customerDomain, tamperSignedPayload;
+    public int rotatedCredentialRequests;
     public int largestRead;
     public java.util.function.Consumer<String> afterPut=key->{};
 
@@ -31,10 +32,13 @@ public final class ControlledS3Transport implements SdkHttpClient {
         if(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
             throw new AssertionError("Object transport invoked in database transaction");
         calls.incrementAndGet();var http=request.httpRequest();
-        if(!http.getUri().getHost().equals("syntheticnamespace.compat.objectstorage.ap-mumbai-1.oraclecloud.com"))
+        if(!http.getUri().getHost().equals("syntheticnamespace.compat.objectstorage.ap-mumbai-1."+(customerDomain?"oci.customer-oci.com":"oraclecloud.com")))
             throw new AssertionError("Unexpected synthetic endpoint");
         if(http.firstMatchingHeader("Authorization").filter(v->v.startsWith("AWS4-HMAC-SHA256 ")).isEmpty())
             throw new AssertionError("Missing request signature");
+        SyntheticSigV4Verifier.require(tamperSignedPayload?http.toBuilder().putHeader("x-amz-content-sha256","0".repeat(64)).build():http);
+        if(http.firstMatchingHeader("Authorization").filter(v->v.contains("Credential=synthetic-rotated/")).isPresent())rotatedCredentialRequests++;
+        if(denyAccess)return error(403,"AccessDenied");
         if(redirect)return response(307,Map.of("Location","https://untrusted.invalid/object"),new byte[0]);
         String path=http.encodedPath(),prefix="/synthetic-private-bucket/";
         if(http.method()==SdkHttpMethod.GET&&http.rawQueryParameters().containsKey("list-type"))return listing(http);

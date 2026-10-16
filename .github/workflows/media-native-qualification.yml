@@ -2,7 +2,7 @@ name: Native media qualification
 
 on:
   push:
-    branches: [knowledge/multimodal-ingestion, backend/completion-and-qualification]
+    branches: [knowledge/multimodal-ingestion, backend/completion-and-qualification, backend/provider-and-release-qualification]
     paths:
       - 'src/**'
       - 'pom.xml'
@@ -36,7 +36,10 @@ jobs:
         run: bash .github/scripts/media-jdk.sh
       - name: Compile qualification controllers and package backend
         shell: bash
-        run: ./mvnw --batch-mode --no-transfer-progress -Dtest=MediaRuntimeConfigurationTest package
+        run: ./mvnw --batch-mode --no-transfer-progress -Dtest=MediaRuntimeConfigurationTest,Argon2CompatibilityTest,Argon2VerificationQualificationTest package
+      - name: Resolve opt-in qualification command classpath
+        shell: bash
+        run: ./mvnw --batch-mode --no-transfer-progress dependency:build-classpath -DincludeScope=test -Dmdep.outputFile=target/qualification-classpath.txt -q
       - name: Qualify packaged native runtimes
         shell: bash
         run: bash .github/scripts/qualify-media.sh
@@ -86,7 +89,7 @@ jobs:
         run: ./.github/scripts/media-jdk.ps1
       - name: Qualify isolated Windows PDF development boundary
         shell: pwsh
-        run: ./mvnw.cmd --batch-mode --no-transfer-progress '-Dtest=WindowsPdfProcessTest,MediaRuntimeConfigurationTest' test
+        run: ./mvnw.cmd --batch-mode --no-transfer-progress '-Dtest=WindowsPdfProcessTest,MediaRuntimeConfigurationTest,Argon2CompatibilityTest,Argon2VerificationQualificationTest' test
       - name: Summarize Windows evidence
         if: always()
         shell: pwsh

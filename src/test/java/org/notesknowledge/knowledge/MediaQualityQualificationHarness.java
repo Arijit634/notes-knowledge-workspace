@@ -54,6 +54,8 @@ final class MediaQualityQualificationHarness implements MediaUnderstandingPort, 
         fixtures.add(new Fixture("long-video","video/mp4",MeaningfulMediaFixtures.videoSamples(40,1000)));
         fixtures.add(new Fixture("diagram-image","image/png",MeaningfulMediaFixtures.acceptedImage("diagram-image").getBytes()));
         fixtures.add(new Fixture("diagram-pdf","application/pdf",frozenPdf(org.notesknowledge.notes.QualityMediaFixtures.pdf(1,true,false).getBytes())));
+        fixtures.add(new Fixture("text-pdf","application/pdf",frozenPdf(MeaningfulMediaFixtures.media("pdf").getBytes())));
+        fixtures.add(new Fixture("scan-pdf","application/pdf",frozenPdf(MeaningfulMediaFixtures.media("scan").getBytes())));
         return List.copyOf(fixtures);
     }
     private static byte[] frozenPdf(byte[] bytes)throws Exception {

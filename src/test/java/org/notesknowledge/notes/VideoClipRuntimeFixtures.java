@@ -27,14 +27,15 @@ public class VideoClipRuntimeFixtures {
         try {
             var nativeValue=nativeRuntime();
             if(nativeValue!=null)return nativeValue.plan(original);
-            if(!java.util.Arrays.equals(original,original()))throw new IllegalArgumentException("Unexpected synthetic input");
-            return new VideoPlan(1000,Collections.nCopies(20,2000L));
+            if(java.util.Arrays.equals(original,original()))return new VideoPlan(1000,Collections.nCopies(20,2000L));
+            if(java.util.Arrays.equals(original,MeaningfulMediaFixtures.videoSamples(40,1000)))return new VideoPlan(1000,Collections.nCopies(40,1000L));
+            throw new IllegalArgumentException("Unexpected synthetic input");
         }catch(Exception failed){throw new AssertionError("Synthetic video fixture unavailable",failed);}
     }
     public static VideoChild render(byte[] original,VideoPlan plan,int first,int last) {
         try {
             var nativeValue=nativeRuntime();if(nativeValue!=null)return nativeValue.render(original,plan,first,last);
-            return new VideoChild(plan,first,last,MeaningfulMediaFixtures.videoSamples(last-first,2000),SupervisedVideoClipRuntime.PROFILE,
+            return new VideoChild(plan,first,last,MeaningfulMediaFixtures.videoSamples(last-first,Math.toIntExact(plan.durations().get(first))),SupervisedVideoClipRuntime.PROFILE,
                 "controlled-fixture-v1","b".repeat(64),"c".repeat(64));
         }catch(Exception failed){throw new AssertionError("Synthetic video fixture unavailable",failed);}
     }

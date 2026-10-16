@@ -12,7 +12,7 @@ record AvatarStorageProperties(boolean enabled, String profile, String endpoint,
                     || bucket == null || !bucket.matches("[a-z0-9][a-z0-9-]{1,61}[a-z0-9]")) throw unavailable();
             var uri = URI.create(endpoint);
             if (!"https".equals(uri.getScheme()) || uri.getHost() == null
-                    || !uri.getHost().matches("[a-z0-9]{1,63}\\.compat\\.objectstorage\\."+java.util.regex.Pattern.quote(region)+"\\.oraclecloud\\.com")
+                    || !uri.getHost().matches("[a-z0-9]{1,63}\\.compat\\.objectstorage\\."+java.util.regex.Pattern.quote(region)+"\\.(?:oraclecloud\\.com|oci\\.customer-oci\\.com)")
                     || uri.getRawUserInfo() != null || uri.getPort() != -1 && uri.getPort() != 443
                     || uri.getRawQuery() != null || uri.getRawFragment() != null
                     || !uri.getRawPath().isEmpty()) throw unavailable();
