@@ -20,12 +20,32 @@ public final class MeaningfulMediaFixtures {
         return switch(kind) {
             case "image" -> file("scene.png","image/png",png(scene()));
             case "audio" -> file("aster.wav","audio/wav",speech());
+            case "tones" -> file("synthetic-tones.wav","audio/wav",tones());
             case "video" -> file("scene.mp4","video/mp4",video());
             case "pdf", "scan", "mixed", "unreadable" -> file("fictional.pdf","application/pdf",pdf(kind));
             default -> throw new IllegalArgumentException("Unknown fictional fixture");
         };
     }
     private static MockMultipartFile file(String name,String type,byte[] bytes) {return new MockMultipartFile("file",name,type,bytes);}
+    /** Exact canonical bytes accepted by the real upload validator, not an encoding imitation. */
+    public static MockMultipartFile acceptedImage(String kind)throws Exception {
+        var original=switch(kind) {
+            case "image" -> media("image");
+            case "diagram-image" -> QualityMediaFixtures.picture(false,true);
+            default -> throw new IllegalArgumentException("Unknown frozen image");
+        };
+        var directory=java.nio.file.Files.createTempDirectory("frozen-canonical-image-");var input=directory.resolve("input.png");
+        try(var validator=new AttachmentMediaValidator()) {
+            java.nio.file.Files.write(input,original.getBytes());
+            var accepted=validator.validate(input,original.getOriginalFilename(),original.getContentType());
+            if(!accepted.kind().equals("image")||!accepted.mediaType().equals("image/png"))throw new AssertionError("Unexpected synthetic image custody");
+            byte[] canonical=java.nio.file.Files.readAllBytes(input);
+            // The frozen corpus may itself be uploaded; canonicalization must be idempotent.
+            validator.validate(input,original.getOriginalFilename(),original.getContentType());
+            if(!java.util.Arrays.equals(canonical,java.nio.file.Files.readAllBytes(input)))throw new AssertionError("Synthetic canonical image changed on revalidation");
+            return file(original.getOriginalFilename(),accepted.mediaType(),canonical);
+        } finally {java.nio.file.Files.deleteIfExists(input);java.nio.file.Files.deleteIfExists(directory);}
+    }
     /** Legal inert top-level free box pads a real video without changing samples/timing. */
     public static byte[] paddedVideo(int length)throws Exception {
         byte[] original=video();
@@ -41,6 +61,19 @@ public final class MeaningfulMediaFixtures {
         } finally {g.dispose();}return image;
     }
     private static byte[] png(BufferedImage image)throws Exception {var out=new ByteArrayOutputStream();javax.imageio.ImageIO.write(image,"png",out);return out.toByteArray();}
+    /** Four seconds of public-safe generated tones; not a song/instrument/artist oracle. */
+    private static byte[] tones() {
+        int rate=8000,frames=rate*4,bytes=frames*2;
+        var output=ByteBuffer.allocate(44+bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            .put("RIFF".getBytes(StandardCharsets.US_ASCII)).putInt(36+bytes).put("WAVEfmt ".getBytes(StandardCharsets.US_ASCII)).putInt(16)
+            .putShort((short)1).putShort((short)1).putInt(rate).putInt(rate*2).putShort((short)2).putShort((short)16)
+            .put("data".getBytes(StandardCharsets.US_ASCII)).putInt(bytes);
+        for(int frame=0;frame<frames;frame++) {
+            double frequency=frame<rate*2?660:330;
+            output.putShort((short)Math.round(8000*Math.sin(2*Math.PI*frequency*frame/rate)));
+        }
+        return output.array();
+    }
     private static byte[] speech()throws Exception {
         // Windows System.Speech, fictional sentence only. Frozen PCM makes CI portable/offline.
         // Spoken: The fictional observatory is on planet Aster. Its dome is silver.

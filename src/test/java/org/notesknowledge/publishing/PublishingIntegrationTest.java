@@ -296,8 +296,9 @@ class PublishingIntegrationTest {
     }
     @Test void staleDiscoveryGenerationCannotReactivateAndApproximateViewFailureDoesNotFailRead()throws Exception {
         var b=ready();UUID note=note(b);var p=publish(b,note,List.of());
-        org.mockito.Mockito.doThrow(new org.springframework.dao.DataAccessResourceFailureException("synthetic views unavailable")).when(discovery).recordApproximateView(any(),org.mockito.ArgumentMatchers.anyLong());
-        mvc.perform(get(publicPath(p))).andExpect(status().isOk());
+        org.mockito.Mockito.doThrow(new org.springframework.dao.DataAccessResourceFailureException("synthetic views unavailable")).when(discovery).recordApproximateView(any(),org.mockito.ArgumentMatchers.anyLong(),any());
+        mvc.perform(get(publicPath(p)).cookie(b.cookie)).andExpect(status().isOk());
+        org.mockito.Mockito.verify(discovery).recordApproximateView(any(),org.mockito.ArgumentMatchers.anyLong(),any());
         mvc.perform(post(ownerPath(p)+"/unpublish").cookie(b.cookie).header("X-CSRF-TOKEN",b.csrf).header("If-Match",p.getResponse().getHeader("ETag"))).andExpect(status().isOk());
         UUID author=jdbc.queryForObject("select public_profile_projection_id from publishing.publication where publication_id=?",UUID.class,id(p));
         UUID publication=id(p);

@@ -13,11 +13,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.notesknowledge.identity.IdentitySessionPrincipal;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -69,6 +72,31 @@ class ProfileIntegrationTest {
 
     @BeforeEach void resetRates() {
         org.mockito.Mockito.when(rates.evaluate(any())).thenReturn(new org.notesknowledge.security.RateLimitPort.Allowed());
+    }
+
+    @ParameterizedTest @ValueSource(strings={"suspension","sessionRevocation"})
+    void previouslyAdmittedReplacementCannotCommitAfterAuthorityIsRevoked(String transition) throws Exception {
+        UUID user=account();Browser browser=browser(user,"ROLE_USER");
+        replace(browser,input("Original","Kept",null)).andExpect(status().isOk());
+        var admitted=new CountDownLatch(1);var resume=new CountDownLatch(1);
+        org.mockito.Mockito.doAnswer(call->{
+            admitted.countDown();
+            if(!resume.await(15,TimeUnit.SECONDS))throw new AssertionError("Synthetic profile coordination timed out");
+            return call.callRealMethod();
+        }).when(profiles).replace(any(),any(),any(),any(),any());
+        try(var workers=Executors.newSingleThreadExecutor()) {
+            var pending=workers.submit(()->replace(browser,input("Denied","Must not persist",null)).andReturn().getResponse().getStatus());
+            try {
+                assertThat(admitted.await(15,TimeUnit.SECONDS)).isTrue();
+                if(transition.equals("suspension"))jdbc.update("update identity.account set account_state='suspended' where user_id=?",user);
+                else sessions.deleteById(new String(Base64.getDecoder().decode(browser.cookie().getValue()),StandardCharsets.UTF_8));
+            } finally {resume.countDown();}
+            // The browser already passed CSRF/filter admission; the application transaction
+            // must reject its now-obsolete authority, rather than commit using that snapshot.
+            assertThat(pending.get(20,TimeUnit.SECONDS)).isEqualTo(401);
+        }
+        assertThat(jdbc.queryForObject("select display_name from profile.profile where user_id=?",String.class,user)).isEqualTo("Original");
+        assertThat(jdbc.queryForObject("select biography from profile.profile where user_id=?",String.class,user)).isEqualTo("Kept");
     }
 
     @Test void absentReadIsDeterministicPrivateNoStoreAndDoesNotPersistOrInventData() throws Exception {
@@ -202,7 +230,10 @@ class ProfileIntegrationTest {
     @Test void concurrentFirstReplacementKeepsOneImmutableProfilePerOwner() throws Exception {
         UUID user = account(); Browser one = browser(user, "ROLE_USER"), two = browser(user, "ROLE_USER");
         CyclicBarrier ready = new CyclicBarrier(2);
-        org.mockito.Mockito.doAnswer(invocation -> { ready.await(10, TimeUnit.SECONDS); return invocation.callRealMethod(); }).when(repository).replace(any());
+        // Meet before the legitimate shared Account/session lock. A barrier inside
+        // repository.replace would require the lock holder to wait for its waiter.
+        org.mockito.Mockito.doAnswer(invocation -> { ready.await(10, TimeUnit.SECONDS); return invocation.callRealMethod(); })
+                .when(profiles).replace(any(),any(),any(),any(),any());
         try (var workers = Executors.newFixedThreadPool(2)) {
             var first = workers.submit(() -> replace(one, input("One", "First", null)).andReturn().getResponse().getStatus());
             var second = workers.submit(() -> replace(two, input("Two", "Second", null)).andReturn().getResponse().getStatus());

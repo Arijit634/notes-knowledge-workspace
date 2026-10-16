@@ -68,7 +68,7 @@ final class MfaController {
         rates.check("MFA_ENROLL", userId, request);
         IdentitySessionState.requireRecent(request, userId, clock.instant(), policy);
         return ResponseEntity.status(201).cacheControl(CacheControl.noStore())
-                .body(management.begin(userId));
+                .body(management.begin(userId,request));
     }
 
     @PostMapping("/api/me/security/mfa/totp/enrollments/{enrollmentId}/confirmation")

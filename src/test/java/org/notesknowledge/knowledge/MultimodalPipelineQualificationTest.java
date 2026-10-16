@@ -53,6 +53,8 @@ class MultimodalPipelineQualificationTest {
     @Autowired SessionRepository<? extends Session> sessions; @Autowired PlatformTransactionManager transactions;
     @Autowired KnowledgeWorkRepository rows; @Autowired KnowledgeWorkService work; @Autowired DerivationExecutor executor;
     @Autowired ExactPrivateVectorSearch vectors;
+    @Autowired PrivateRepresentationRepository representations;
+    @Autowired DerivationReconciler reconciler;
     @MockitoBean AiDerivationProperties config; @MockitoBean KnowledgePolicyProperties policyConfig;
     @MockitoBean TextEmbeddingPort embeddings; @MockitoBean MediaUnderstandingPort media;
     @MockitoBean StructuredKnowledgePort answer; @MockitoBean RateLimitPort rates;
@@ -234,6 +236,55 @@ class MultimodalPipelineQualificationTest {
         assertThat(r.get("aiAnswer").get("claims").get(0).asText()).isEqualTo(FACTS.get(5));assertThat(selected).hasSize(1);
         assertThat(r.get("citations").size()).isEqualTo(1);assertThat(r.get("citations").get(0).get("attachmentId").asText()).isEqualTo(audio.toString());
         assertThat(jdbc.queryForObject("select markdown from notes.note where note_id=?",String.class,note)).isEqualTo("Current fictional media library");
+    }
+    @Test void nonSpeechAudioReindexesWithoutLegacyReuseAndRetainsQualifiedTemporalEvidence()throws Exception {
+        UUID attachment=upload("tones");
+        var expected=new Expected(owner,note,attachment,1,1,1L);
+        var current=EmbeddingLineage.create(config,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,"a".repeat(64)),"audio");
+        String legacyConfiguration=current.configuration().replace("audio-speech-acoustic-surrogate-v3","media-scoped-coverage-surrogate-v2");
+        var legacy=new EmbeddingLineage(java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+            .digest(legacyConfiguration.getBytes(StandardCharsets.UTF_8))),legacyConfiguration,"audio",8,"cosine",policy,"none");
+        // Model an already-completed prior extraction, not a pending new upload.
+        jdbc.update("delete from knowledge.knowledge_work_intent where owner_user_id=? and source_attachment_id=?",owner,attachment);
+        new TransactionTemplate(transactions).executeWithoutResult(s->representations.activate(expected,legacy,
+            List.of(new DerivedSegment("Prior speech-only surrogate.","transcript","",null,null,null,0.,4.,null,null,null,null)),List.of(axis(7))));
+        assertThat(vectors.search(owner,"audio",axis(7),10)).isEmpty();
+        org.notesknowledge.knowledge.spi.PrivateDerivationSource.Cursor cursor=null;int pages=0;
+        do {cursor=reconciler.page(cursor);assertThat(++pages).isLessThan(32);}while(cursor!=null);
+        assertThat(jdbc.queryForObject("select count(*) from knowledge.knowledge_work_intent where owner_user_id=? and source_attachment_id=? and target_lineage_id=? and state='queued'",Integer.class,owner,attachment,current.id())).isEqualTo(1);
+        var pending=json.readTree(mvc.perform(get("/api/notes/"+note+"/ai-processing").cookie(cookie)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString()).get("attachments");
+        assertThat(pending.size()).isEqualTo(1);assertThat(pending.get(0).get("status").asText()).isEqualTo("reprocessing");
+        when(media.describe(any(),any(),any())).thenAnswer(call->{
+            outside();AiProcessingGate.SourceAiPermit permit=call.getArgument(0);permit.requireDispatch();
+            assertThat((byte[])call.getArgument(1)).isEqualTo(MeaningfulMediaFixtures.media("tones").getBytes());
+            MediaUnderstandingRequest request=call.getArgument(2);
+            return GoogleDerivationAdapters.validateMediaOutput(request,new GoogleDerivationAdapters.MediaOutput(true,List.of(),true,List.of(
+                new DerivedSegment("Possibly electronic tones change from higher to lower.","transcript","Acoustic description",null,null,null,0.,4.,null,null,null,null))));
+        });
+        var claim=work.claim(new LeaseOwner("fictional-audio-reindex"),10).stream().filter(c->c.intent().expected().equals(expected)).findFirst().orElseThrow();
+        executor.execute(claim);assertThat(state(claim)).isEqualTo("completed");
+        var ready=json.readTree(mvc.perform(get("/api/notes/"+note+"/ai-processing").cookie(cookie)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString()).get("attachments");
+        assertThat(ready.get(0).get("status").asText()).isEqualTo("ready");
+        assertThat(jdbc.queryForObject("select state from knowledge.private_derived_representation where owner_user_id=? and source_attachment_id=? and lineage_id=?",String.class,owner,attachment,legacy.id())).isEqualTo("obsolete");
+        var candidates=vectors.search(owner,"audio",axis(7),10);assertThat(candidates).hasSize(1);
+        assertThat(candidates.getFirst().expected()).isEqualTo(expected);
+        doAnswer(call->{
+            outside();KnowledgeQueryGate.EvidencePermit permit=call.getArgument(0);permit.requireDispatch();selected=List.copyOf(call.getArgument(3));
+            assertThat(selected).hasSize(1);assertThat(selected.getFirst().text()).startsWith("Audio description (model inference, not spoken words): ");
+            return new StructuredKnowledgePort.Output(List.of(new StructuredKnowledgePort.Claim("The description suggests higher tones followed by lower tones.",List.of("e0"))),false);
+        }).when(answer).generate(any(),any(),any(),any());
+        var result=query("What happens to the tones in this recording?");
+        assertThat(result.get("aiAnswer").get("claims").get(0).asText()).contains("description suggests");
+        var citation=result.get("citations").get(0);assertThat(citation.get("attachmentId").asText()).isEqualTo(attachment.toString());
+        assertThat(citation.get("location").get("kind").asText()).isEqualTo("transcript");
+        assertThat(citation.get("location").get("timeStart").asDouble()).isZero();assertThat(citation.get("location").get("timeEnd").asDouble()).isEqualTo(4.);
+        String etag=mvc.perform(get("/api/notes/"+note).cookie(cookie)).andExpect(status().isOk()).andReturn().getResponse().getHeader("ETag");
+        mvc.perform(put("/api/notes/"+note+"/ai-access").cookie(cookie).header("X-CSRF-TOKEN",csrf).header("If-Match",etag)
+            .contentType("application/json").content("{\"aiEnabled\":false}")).andExpect(status().isOk());
+        assertThat(vectors.search(owner,"audio",axis(7),10)).isEmpty();assertThat(query("What happens to the tones in this recording?").get("aiAnswer").isNull()).isTrue();
+        verify(media,times(1)).describe(any(),any(),any());verify(answer,times(1)).generate(any(),any(),any(),any());
+        mvc.perform(get("/api/notes/"+note+"/attachments/"+attachment+"/content").cookie(cookie)).andExpect(status().isOk())
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().bytes(MeaningfulMediaFixtures.media("tones").getBytes()));
     }
     @Test void realisticFrozenQuestionsKeepIndependentJudgmentsAndExcludeObsoleteAndAiOffMaterial()throws Exception {
         var expectedIds=new HashMap<Integer,UUID>();

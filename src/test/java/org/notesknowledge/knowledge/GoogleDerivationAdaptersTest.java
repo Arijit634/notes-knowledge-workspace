@@ -123,6 +123,37 @@ class GoogleDerivationAdaptersTest {
         assertThat(wire.get("generationConfig").has("responseJsonSchema")).isTrue();
         assertThat(wire.has("tools")).isFalse();assertThat(wire.has("cachedContent")).isFalse();
     }
+    @ParameterizedTest @ValueSource(strings={"MAX_TOKENS","SAFETY","RECITATION","OTHER","FINISH_REASON_UNSPECIFIED"})
+    void validStructuredJsonWithoutSuccessfulCompletionNeverBecomesGroundedEvidence(String finishReason) {
+        generated("{\"claims\":[{\"text\":\"Synthetic partial claim\",\"evidenceIds\":[\"e0\"]}],\"conflicting\":false}");
+        response=response.replace("\"STOP\"","\""+finishReason+"\"");
+        var port=adapters.googleStructuredKnowledgePort(config("gemini-embedding-2"),clients,json);
+        assertThatThrownBy(()->port.generate(evidence(),query,"answer",
+                List.of(new StructuredKnowledgePort.Evidence("e0","Synthetic partial claim","note"))))
+            .isInstanceOfSatisfying(DerivationFailure.class,f->{
+                assertThat(f.category).isEqualTo(KnowledgeWork.Failure.INVALID_OUTPUT);
+                assertThat(f.diagnostic.kind()).isEqualTo(ProviderFailureDiagnostic.Kind.PARSING);
+                assertThat(f.diagnostic.providerReached()).isEqualTo(ProviderFailureDiagnostic.Reach.HTTP_RESPONSE_RECEIVED);
+                assertThat(f.diagnostic.structurallyValidResponse()).isFalse();
+            }).hasCause(null).hasMessage("Derivation unavailable");
+        assertThat(requests).hasSize(1);
+    }
+    @ParameterizedTest @ValueSource(strings={"answer","extract","tags"})
+    void authorityLostAtFinalGenerationBoundaryNeverDispatchesOrBecomesTransportFailure(String task) {
+        generated("{\"claims\":[{\"text\":\"Synthetic\",\"evidenceIds\":[\"e0\"]}],\"conflicting\":false}");
+        var permit=spy(evidence());
+        doCallRealMethod().doThrow(new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE))
+            .when(permit).requireGoogle(query);
+        var port=adapters.googleStructuredKnowledgePort(config("gemini-embedding-2"),clients,json);
+        var selected=List.of(new StructuredKnowledgePort.Evidence("e0","Synthetic","note"));
+        assertThatThrownBy(()->port.generate(permit,query,task,selected))
+            .isInstanceOfSatisfying(DerivationFailure.class,f->assertThat(f.category).isEqualTo(KnowledgeWork.Failure.INVALID_SOURCE))
+            .hasCause(null).hasMessage("Derivation unavailable");
+        verify(permit,times(2)).requireGoogle(query);
+        assertThat(requests).isEmpty(); // Serialization must not count as disclosure.
+        assertThat(port.generate(evidence(),query,task,selected).claims()).hasSize(1);
+        assertThat(requests).hasSize(1); // Independent fresh authority, not a retry.
+    }
     @Test void ordinaryGenerationUsesThePinnedModelWithoutStructuredOrToolOptions() {
         generated("Synthetic service available.");
         var options=org.springframework.ai.google.genai.GoogleGenAiChatOptions.builder().model("gemini-3.8-flash")
@@ -260,21 +291,74 @@ class GoogleDerivationAdaptersTest {
         assertThatThrownBy(()->port.describe(sourcePermit(),new byte[]{1},new MediaUnderstandingRequest("audio/wav",null,null,3.))).isInstanceOf(DerivationFailure.class);
         assertThat(requests).hasSize(4);assertThat(requestPaths).allSatisfy(p->assertThat(p).endsWith(":generateContent"));
     }
+    @ParameterizedTest @ValueSource(strings={"image/png","audio/wav","video/mp4","application/pdf"})
+    void absentSpringAiMediaCompletionMetadataFailsClosedAfterRealSdkResponse(String type) throws Exception {
+        generated("{\"complete\":true,\"checkedPages\":"+(type.equals("application/pdf")?"[1]":"[]")+",\"noSpeech\":false,\"segments\":[]}");
+        String kind=switch(type){case "image/png"->"image";case "audio/wav"->"audio";case "video/mp4"->"video";default->"pdf";};
+        var bytes=org.notesknowledge.notes.DerivationMediaFixtures.media(kind).getBytes();
+        var scope=new MediaUnderstandingRequest(type,type.equals("application/pdf")?1:null,type.equals("application/pdf")?1:null,
+            type.equals("audio/wav")||type.equals("video/mp4")?.5:null);
+        var permit=sourcePermit();var port=adapters.googleMediaUnderstandingPort(config("gemini-embedding-2"),clients,json);
+        // Fault-inject only nullable Spring AI metadata after a real STOP HTTP/SDK response;
+        // omitting a provider wire field is not equivalent to a null Spring AI object.
+        try(var generations=mockConstruction(org.springframework.ai.chat.model.Generation.class,(generation,context)->{
+            when(generation.getOutput()).thenReturn((org.springframework.ai.chat.messages.AssistantMessage)context.arguments().getFirst());
+            when(generation.getMetadata()).thenReturn(null);
+        })) {
+            assertThatThrownBy(()->port.describe(permit,bytes,scope))
+                .isInstanceOfSatisfying(DerivationFailure.class,f->{
+                    assertThat(f.category).isEqualTo(KnowledgeWork.Failure.INVALID_OUTPUT);
+                    assertThat(f.diagnostic.stage()).isEqualTo(ProviderFailureDiagnostic.Stage.MEDIA);
+                    assertThat(f.diagnostic.kind()).isEqualTo(ProviderFailureDiagnostic.Kind.PARSING);
+                    assertThat(f.diagnostic.providerReached()).isEqualTo(ProviderFailureDiagnostic.Reach.HTTP_RESPONSE_RECEIVED);
+                    assertThat(f.diagnostic.structurallyValidResponse()).isFalse();
+                }).hasCause(null).hasMessage("Derivation unavailable");
+            assertThat(generations.constructed()).hasSize(1);
+        }
+        verify(permit,times(2)).requireGoogleDispatch();assertThat(requests).hasSize(1);
+    }
     @Test void inlineByteAndVideoDurationBudgetRejectBeforeAnyHttpRequest() {
         var port=adapters.googleMediaUnderstandingPort(config("gemini-embedding-2"),clients,json);
         assertThatThrownBy(()->port.describe(sourcePermit(),new byte[20_000_000],new MediaUnderstandingRequest("video/mp4",null,null,2.))).isInstanceOf(DerivationFailure.class);
         assertThatThrownBy(()->port.describe(sourcePermit(),new byte[]{1},new MediaUnderstandingRequest("video/mp4",null,null,300.))).isInstanceOf(DerivationFailure.class);
         assertThat(requests).isEmpty();assertThat(requestPaths).isEmpty();
     }
+    @Test void actualSdkCarriesNonSpeechWavAndReturnsQualifiedAcousticEvidence()throws Exception {
+        var wav=org.notesknowledge.notes.MeaningfulMediaFixtures.media("tones").getBytes();
+        generated("{\"complete\":true,\"checkedPages\":[],\"noSpeech\":true,\"segments\":[{\"text\":\"Possibly electronic tones change from higher to lower.\",\"kind\":\"transcript\",\"heading\":\"Acoustic description\",\"timeStart\":0,\"timeEnd\":4}]}");
+        var port=adapters.googleMediaUnderstandingPort(config("gemini-embedding-2"),clients,json);
+        var permit=sourcePermit();var result=port.describe(permit,wav,new MediaUnderstandingRequest("audio/wav",null,null,4.));
+        assertThat(result).hasSize(1);assertThat(result.getFirst().text()).startsWith("Audio description (model inference, not spoken words): ");
+        assertThat(result.getFirst().timeEnd()).isEqualTo(4.);verify(permit,times(2)).requireGoogleDispatch();
+        assertThat(requests).hasSize(1);
+        var wire=json.readTree(requests.getFirst());var parts=wire.get("contents").get(0).get("parts");
+        assertThat(parts.get(0).get("text").asText()).contains("Acoustic description","not spoken words");
+        assertThat(parts.get(1).get("inlineData").get("mimeType").asText()).isEqualTo("audio/wav");
+        assertThat(Base64.getDecoder().decode(parts.get(1).get("inlineData").get("data").asText())).isEqualTo(wav);
+        assertThat(wire.has("tools")).isFalse();assertThat(requests.getFirst()).doesNotContain("fileUri","cachedContent");
+    }
     @Test void onlyMediaExtractorLineagesChangeAndTextLineageKeepsItsExactHash() throws Exception {
         var policy=new ProcessingPolicyService.AcknowledgedProcessingPolicy(new UUID(0,3),1,"a".repeat(64));
         for(String modality:List.of("note","image","audio","video","pdf")) {
             var lineage=EmbeddingLineage.create(config("gemini-embedding-2"),policy,modality);
-            String legacy=lineage.configuration().replace("media-scoped-coverage-surrogate-v2","media-typed-bounded-v1");
+            String legacy=lineage.configuration().replace("media-scoped-coverage-surrogate-v2","media-typed-bounded-v1")
+                .replace("audio-speech-acoustic-surrogate-v3","media-typed-bounded-v1");
             String hash=java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(legacy.getBytes(StandardCharsets.UTF_8)));
             if(modality.equals("note"))assertThat(lineage.id()).isEqualTo(hash);
             else assertThat(lineage.id()).isNotEqualTo(hash);
         }
+    }
+    @Test void acousticPolicyChangesOnlyAudioAndKeepsOtherAcceptedLineagesPinned() {
+        var policy=new ProcessingPolicyService.AcknowledgedProcessingPolicy(new UUID(0,3),1,"a".repeat(64));
+        var unchanged=Map.of(
+            "note","c3ddda5ed8a669c8c7be12bbd005dccf9ea0c396b3fb7178a6e101fb3c7d03fc",
+            "image","0b9549107ca501e284fc534c778cc414c613f2d53b59fecd86a0fabf3e8e1828",
+            "video","9d979bbc5cfb02c7cacd73e249ada34577b7dab3e4c0245340e8271b24285365",
+            "pdf","06a016fe32a07221a67ba6e1332dff74c121345f3198e674948832e4dc4638df");
+        unchanged.forEach((modality,hash)->assertThat(EmbeddingLineage.create(config("gemini-embedding-2"),policy,modality).id()).isEqualTo(hash));
+        var audio=EmbeddingLineage.create(config("gemini-embedding-2"),policy,"audio");
+        assertThat(audio.id()).isNotEqualTo("517832f7fad262113cf18c388374cdd5b31045270e500308d9fb4ebbfc66b411");
+        assertThat(audio.configuration()).contains("audio-speech-acoustic-surrogate-v3");
     }
     @Test void wrongQueryAndMissingKeyFailBeforeNetwork() {
         var port=adapters.googleStructuredKnowledgePort(config("gemini-embedding-2"),clients,json);

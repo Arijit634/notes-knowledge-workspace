@@ -21,6 +21,12 @@ public class PublicReadRateControl {
         enforce("PUBLIC_LIKE",viewer.toString());
         enforce("PUBLIC_LIKE_NETWORK",request.getRemoteAddr());
     }
+    /** Reuses only an existing server session; counting never creates a tracking cookie. */
+    public RateLimitPort.OpaqueKey viewKey(HttpServletRequest request,java.util.UUID viewer) {
+        if(viewer!=null)return keys.derive("PUBLIC_VIEW","account:"+viewer);
+        var session=request.getSession(false);
+        return session==null?null:keys.derive("PUBLIC_VIEW","session:"+session.getId());
+    }
     private void enforce(String name,String subject) {
         control.check(new RateLimitPort.Request(new RateLimitPort.ControlClass(name),keys.derive(name,subject),1),RateControlService.Policy.SECURITY_CRITICAL);
     }

@@ -13,6 +13,7 @@ import org.notesknowledge.knowledge.spi.PrivateDerivationSource;
 @EnableScheduling
 @ConditionalOnProperty(name="knowledge.derivation.scheduling-enabled",havingValue="true")
 class DerivationSchedulingConfiguration implements AutoCloseable {
+    private static final org.slf4j.Logger LOG=org.slf4j.LoggerFactory.getLogger(DerivationSchedulingConfiguration.class);
     private final DerivationReconciler reconciler;
     private final KnowledgeWorkService work;
     private final DerivationExecutor executor;
@@ -31,7 +32,7 @@ class DerivationSchedulingConfiguration implements AutoCloseable {
     void poll() {
         try {pollAvailable();}
         catch(org.springframework.dao.DataAccessException|org.springframework.transaction.TransactionException|org.notesknowledge.websupport.ApiFailureException unavailable) {
-            metrics.counter("knowledge.derivation.poll","outcome","unavailable").increment();
+            unavailableMetric();
         }
     }
     private void pollAvailable() {
@@ -45,11 +46,20 @@ class DerivationSchedulingConfiguration implements AutoCloseable {
             try {pool.execute(()->{
                 try {executor.execute(claim);}
                 catch(org.springframework.dao.DataAccessException|org.springframework.transaction.TransactionException unavailable) {
-                    metrics.counter("knowledge.derivation.poll","outcome","unavailable").increment();
+                    unavailableMetric();
+                }
+                catch(RuntimeException unexpected) {
+                    // Do not let Thread's uncaught handler print private payload/SQL.
+                    // Unknown effects stay leased for fenced recovery, never fake success.
+                    LOG.error("knowledge_derivation_worker_failed");unavailableMetric();
                 }
             });}
             catch(org.springframework.core.task.TaskRejectedException bounded) {work.retry(claim);}
         }
+    }
+    private void unavailableMetric() {
+        try {metrics.counter("knowledge.derivation.poll","outcome","unavailable").increment();}
+        catch(RuntimeException unavailable){LOG.warn("knowledge_derivation_telemetry_deferred");}
     }
     public void close(){pool.shutdown();}
 }
