@@ -64,6 +64,7 @@ with zipfile.ZipFile(jar) as z:
     assert not any(marker in n for n in z.namelist() for marker in
         ('ControlledS3Endpoint','DeploymentSmokeDatabase','DependencyUnavailableFilterTest','CoreReadinessDatabaseTest'))
     assert not any(library['file'].startswith(('junit-','testcontainers-','spring-boot-test-','spring-security-test-')) for library in libraries)
+    assert not any('sqlite' in library['file'].lower() for library in libraries)
 os_packages=[dict(zip(('name','version'),line.split('\t'))) for line in pathlib.Path(packages).read_text().splitlines()]
 package_versions={p['name'].split(':')[0]:p['version'] for p in os_packages}
 assert package_versions['perl-base']=='5.40.1-6+deb13u1'
@@ -86,7 +87,7 @@ print(json.dumps(dict(releaseInventory=True,deploymentImage=image,user='65533:65
     runtimeManifestSha256=pathlib.Path(manifest).read_text().split()[0],
     baseImage='debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f',
     qualificationPayloadAbsent=True,testFixturesAbsent=True,testFrameworkDependenciesAbsent=True,
-    setuidSetgidFilesAbsent=True,registryPublished=False,vulnerabilityScanPerformed=False,
+    sqliteApplicationDependencyAbsent=True,setuidSetgidFilesAbsent=True,registryPublished=False,vulnerabilityScanPerformed=False,
     codecLegalClearance=False)))
 PY
 common=(run --rm --init --network none --user 65533:65533 --cap-drop ALL --security-opt no-new-privileges --read-only --memory=1g --cpus=2 --pids-limit=300 --tmpfs /tmp:rw,noexec,nosuid,nodev,size=192m)

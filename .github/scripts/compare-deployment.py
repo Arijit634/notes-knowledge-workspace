@@ -30,6 +30,8 @@ def main(before, after, directory):
     changes = [dict(package=key, before=packages[0].get(key), after=packages[1].get(key))
                for key in sorted(packages[0].keys() | packages[1].keys()) if packages[0].get(key) != packages[1].get(key)]
     receipt = dict(runtimeComparison=True, images=records, packageChanges=changes,
+                   introducedAdvisories=sorted(set(records[1]['distinctAdvisories']) - set(records[0]['distinctAdvisories'])),
+                   removedAdvisories=sorted(set(records[0]['distinctAdvisories']) - set(records[1]['distinctAdvisories'])),
                    sameApplicationJar=True, applicationSha256=hashlib.sha256((root / 'media-context/application.jar').read_bytes()).hexdigest(),
                    priorPackagingSource='ffa878faeb6302f06e0a1fdde7619776af77a27c',
                    smallerCountIsNotSafetyProof=True, findingsSuppressed=False, productionReleaseAuthorized=False)
