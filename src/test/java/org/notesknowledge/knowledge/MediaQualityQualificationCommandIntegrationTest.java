@@ -30,9 +30,11 @@ class MediaQualityQualificationCommandIntegrationTest {
     private static final AtomicInteger calls=new AtomicInteger();
     private static final List<Integer> wireBytes=new java.util.concurrent.CopyOnWriteArrayList<>();
     private static final List<String> models=new java.util.concurrent.CopyOnWriteArrayList<>();
+    private static boolean failGeneration;
 
-    @ParameterizedTest @ValueSource(booleans={false,true})
-    void preparedFrozenUploadsExecuteThroughActualSdkAndPersistedAuthorizedSearchWithoutAutoApproval(boolean children)throws Exception {
+    @ParameterizedTest @ValueSource(strings={"whole","children","generation-failure"})
+    void preparedFrozenUploadsExecuteThroughActualSdkAndPersistedAuthorizedSearchWithoutAutoApproval(String scenario)throws Exception {
+        boolean children=scenario.equals("children");failGeneration=scenario.equals("generation-failure");
         calls.set(0);wireBytes.clear();models.clear();
         server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);server.createContext("/",MediaQualityQualificationCommandIntegrationTest::respond);server.start();
         try(var postgres=new PostgreSQLContainer("pgvector/pgvector:0.8.6-pg18-trixie").withDatabaseName("nkw_media_qualification")
@@ -48,7 +50,7 @@ class MediaQualityQualificationCommandIntegrationTest {
                 "--knowledge.derivation.pdf-page-children="+children,"--knowledge.derivation.video-children="+children,
                 "--knowledge.derivation.pdf-transform-fingerprint="+org.notesknowledge.notes.PdfPageRuntimeFixtures.transformFingerprint(),
                 "--knowledge.derivation.video-transform-fingerprint="+org.notesknowledge.notes.VideoClipRuntimeFixtures.fingerprint()};
-            var selection=children?List.of("mixed","long-video"):List.of("image","mixed","audio","tones","video","diagram-image","diagram-pdf","text-pdf","scan-pdf");
+            var selection=children?List.of("mixed","long-video"):failGeneration?List.of("image"):List.of("image","mixed","audio","tones","video","diagram-image","diagram-pdf","text-pdf","scan-pdf");
             Class<?>[] configurations={ControlledProvider.class,org.notesknowledge.notes.PdfPageRuntimeFixtures.class,org.notesknowledge.notes.VideoClipRuntimeFixtures.class};
             try(var context=MediaQualityQualificationCommand.start(directory,null,args,configurations)){
                 MediaQualityQualificationCommand.prepare(context,directory,selection);
@@ -59,7 +61,9 @@ class MediaQualityQualificationCommandIntegrationTest {
             assertThat(plan.sources()).hasSize(selection.size());assertThat(plan.children()).hasSize(children?5:0);
             var clock=new QualificationRequestBudgetTest.MutableClock();
             try(var context=MediaQualityQualificationCommand.start(directory,plan,args,configurations)){
-                MediaQualityQualificationCommand.execute(context,directory,plan,new QualificationRequestBudget.Limits(64,64L*1024*1024,114688,15),clock,
+                if(failGeneration)assertThatThrownBy(()->MediaQualityQualificationCommand.execute(context,directory,plan,new QualificationRequestBudget.Limits(64,64L*1024*1024,114688,15),clock,
+                    duration->clock.now=clock.now.plus(duration),"controlled-sdk")).isInstanceOf(IllegalStateException.class).hasMessage("Synthetic qualification prerequisite failed");
+                else MediaQualityQualificationCommand.execute(context,directory,plan,new QualificationRequestBudget.Limits(64,64L*1024*1024,114688,15),clock,
                     duration->clock.now=clock.now.plus(duration),"controlled-sdk");
                 var jdbc=context.getBean(JdbcTemplate.class);
                 assertThat(jdbc.queryForObject("select count(*) from knowledge.private_derived_representation where state='ready' and owner_user_id=?",Integer.class,plan.owner())).isEqualTo(selection.size());
@@ -74,18 +78,20 @@ class MediaQualityQualificationCommandIntegrationTest {
             }
             var result=JSON.readTree(Files.readAllBytes(directory.resolve("result.json")));
             assertThat(result.get("mode").asText()).isEqualTo("controlled-sdk");assertThat(result.get("qualityQualified").asBoolean()).isFalse();
-            assertThat(result.get("queries").size()).isEqualTo(children?1:5);
+            assertThat(result.get("queries").size()).isEqualTo(children||failGeneration?1:5);
+            assertThat(result.get("budget").get("failed").asBoolean()).isEqualTo(failGeneration);
             for(var query:result.get("queries")){
-                assertThat(query.get("degraded").asText()).isEqualTo("none");assertThat(query.get("claims").asInt()).isEqualTo(1);
-                assertThat(query.get("validatedCitations").asInt()).isGreaterThan(0);
+                if(failGeneration){assertThat(query.get("degraded").asText()).isEqualTo("providerUnavailable");assertThat(query.get("claims").asInt()).isZero();assertThat(query.get("validatedCitations").asInt()).isZero();}
+                else {assertThat(query.get("degraded").asText()).isEqualTo("none");assertThat(query.get("claims").asInt()).isEqualTo(1);assertThat(query.get("validatedCitations").asInt()).isGreaterThan(0);}
             }
+            if(failGeneration)assertThat(calls).hasValue(4); // Failed last generation is charged once, never retried.
             assertThat(result.get("budget").get("requests").asInt()).isEqualTo(calls.get());
             assertThat(wireBytes).hasSize(calls.get()).allMatch(size->size>0&&size<20_000_000);
             assertThat(models).anyMatch(path->path.contains("gemini-embedding-2")).anyMatch(path->path.contains("gemini-3.8-flash"));
             assertThat(Files.readString(directory.resolve("result.json"))).doesNotContain("synthetic-not-a-provider-key","embeddings","values","Authorization");
             System.out.println(JSON.writeValueAsString(Map.of("mode","controlled-sdk","acceptedMediaCases",selection.size(),"approvedChildren",plan.children().size(),"requests",calls.get(),
                 "serializedSdkBytes",wireBytes.stream().mapToLong(Integer::longValue).sum(),"peakSerializedSdkBytes",wireBytes.stream().mapToInt(Integer::intValue).max().orElse(0),
-                "queryCases",children?1:5,"liveQualityQualified",false)));
+                "queryCases",children||failGeneration?1:5,"liveQualityQualified",false,"providerFailureExpected",failGeneration)));
         }finally{server.stop(0);}
     }
     private static void respond(com.sun.net.httpserver.HttpExchange exchange)throws java.io.IOException {
@@ -122,6 +128,10 @@ class MediaQualityQualificationCommandIntegrationTest {
                     else segments.add(Map.of("text","ASTER blue square beside red circle equipment reserve 740 credits","kind","whole_image","heading",""));
                     Arrays.fill(payload,(byte)0);output=Map.of("complete",true,"checkedPages",pages,"noSpeech",noSpeech,"segments",segments);
                 }else {
+                    if(failGeneration){
+                        byte[] unavailable="{\"error\":{\"code\":503,\"status\":\"UNAVAILABLE\",\"message\":\"Synthetic provider unavailable\"}}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                        exchange.getResponseHeaders().set("Content-Type","application/json");exchange.sendResponseHeaders(503,unavailable.length);exchange.getResponseBody().write(unavailable);exchange.close();return;
+                    }
                     var evidence=JSON.readTree(instruction.substring(instruction.indexOf('\n')+1)).get("evidence");
                     var ids=new ArrayList<String>();for(var item:evidence)ids.add(item.get("id").asText());
                     output=Map.of("claims",List.of(Map.of("text","Controlled supported claim","evidenceIds",ids)),"conflicting",false);

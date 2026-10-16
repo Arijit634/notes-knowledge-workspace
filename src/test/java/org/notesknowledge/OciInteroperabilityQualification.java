@@ -44,9 +44,11 @@ public final class OciInteroperabilityQualification {
             byte[] locator=new byte[32];random.nextBytes(locator);
             String key=entry.getKey()+HexFormat.of().formatHex(locator);
             long started=System.nanoTime();boolean complete=false,cleanup=false;
-            reservation.beforeWrite(entry.getKey(),key);
             try {
                 try(var store=entry.getValue().open()) {
+                    // Production endpoint validation precedes even journal hashing;
+                    // an invalid URI must not turn embedded credentials into metadata.
+                    reservation.beforeWrite(entry.getKey(),key);
                     store.write(key,bytes);
                     boolean rejected=false;
                     try{store.write(key,new byte[]{9});}catch(org.notesknowledge.websupport.ApiFailureException expected){rejected=true;}
@@ -119,9 +121,11 @@ public final class OciInteroperabilityQualification {
             if(!Files.exists(path))continue;
             require(!Files.isSymbolicLink(path)&&Files.size(path)<1024);
             var reserved=json.readValue(Files.readAllBytes(path),ReservedObject.class);
-            require(reserved.configuration().equals(configurationId(c))&&reserved.prefix().equals(entry.getKey())
-                &&reserved.key().matches(java.util.regex.Pattern.quote(entry.getKey())+"[0-9a-f]{64}"));
-            try(var store=entry.getValue().open()){store.delete(reserved.key());}
+            try(var store=entry.getValue().open()){
+                require(reserved.configuration().equals(configurationId(c))&&reserved.prefix().equals(entry.getKey())
+                    &&reserved.key().matches(java.util.regex.Pattern.quote(entry.getKey())+"[0-9a-f]{64}"));
+                store.delete(reserved.key());
+            }
         }
     }
     private static String configurationId(Configuration c){try{return HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")

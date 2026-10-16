@@ -31,6 +31,7 @@ class QualificationRequestBudgetTest {
         clock.now=clock.now.plusSeconds(15);
         assertThatThrownBy(()->budget.call("query-embedding",1,0,calls::incrementAndGet)).isInstanceOf(IllegalStateException.class);
         assertThat(calls).hasValue(1);
+        assertThat(budget.totals()).containsEntry("failed",true);
         assertThatThrownBy(()->new QualificationRequestBudget(path,new QualificationRequestBudget.Limits(4,100,8192,15),clock)).isInstanceOf(FileAlreadyExistsException.class);
     }
     @Test void bytesAndOutputCeilingsDenyBeforeAnyEffect()throws Exception {

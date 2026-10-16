@@ -254,6 +254,9 @@ public final class MediaQualityQualificationCommand {
             }
             QualificationJournal.forceCreate(directory.resolve("result.json"),JSON.writeValueAsBytes(Map.of("mode",mode,"budget",budget.totals(),"queries",results,
                 "media",media.ledger(),"models",List.of(configuration.embeddingModel(),configuration.mediaModel()),"qualityQualified",false)));
+            // A recorded provider failure is not successful execution merely because
+            // the application truthfully returned a degraded 200 projection.
+            require(!Boolean.TRUE.equals(budget.totals().get("failed")));
         } finally {current.set(null);SecurityContextHolder.clearContext();}
     }
     private static long estimate(List<String> text){return MediaUnderstandingRequest.ENVELOPE_RESERVE_BYTES+text.stream().mapToLong(t->6L*t.getBytes(StandardCharsets.UTF_8).length).sum();}

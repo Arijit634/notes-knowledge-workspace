@@ -34,6 +34,13 @@ class OciInteroperabilityQualificationTest {
             assertThatThrownBy(()->OciInteroperabilityQualification.requireConsent(missing)).hasMessage("Live OCI qualification not authorized");}
         OciInteroperabilityQualification.requireConsent(allowed);
     }
+    @Test void invalidEndpointCannotReachReservationHashingOrRemoteIo(){
+        var invalid=new OciInteroperabilityQualification.Configuration("https://synthetic-user@syntheticnamespace.compat.objectstorage.ap-mumbai-1.oraclecloud.com",configuration.region(),configuration.bucket());
+        var transport=new ControlledS3Transport(directory);var reservations=new java.util.concurrent.atomic.AtomicInteger();
+        assertThatThrownBy(()->OciInteroperabilityQualification.exercise(OciInteroperabilityQualification.factories(invalid,credentials,transport),(prefix,key)->reservations.incrementAndGet()))
+            .isInstanceOf(IllegalStateException.class);
+        assertThat(reservations).hasValue(0);assertThat(transport.calls).hasValue(0);
+    }
     @Test void independentSignatureCheckRejectsTamperingWithoutStoringCanonicalRequestOrCredentials(){
         var transport=new ControlledS3Transport(directory);transport.tamperSignedPayload=true;
         for(var entry:OciInteroperabilityQualification.factories(configuration,credentials,transport).entrySet())try(var store=entry.getValue().open()){
