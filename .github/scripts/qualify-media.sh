@@ -62,7 +62,7 @@ with zipfile.ZipFile(jar) as z:
         ('ConfiguredMediaStorageFixtures','ControlledObjectStorageTransport','ControlledS3Transport',
          'ConfiguredAvatarStorageFixtures','ConfiguredPublicMediaStorageFixtures','ControlledRegistrationDelivery','ConfiguredObjectCustodyJourney'))
     assert not any(marker in n for n in z.namelist() for marker in
-        ('ControlledS3Endpoint','DeploymentSmokeDatabase','DependencyUnavailableFilterTest','CoreReadinessDatabaseTest'))
+        ('ControlledS3Endpoint','DeploymentSmokeDatabase','DependencyUnavailableFilterTest','CoreReadinessDatabaseTest','WindowsPdfProcessTest'))
     assert not any(library['file'].startswith(('junit-','testcontainers-','spring-boot-test-','spring-security-test-')) for library in libraries)
     assert not any('sqlite' in library['file'].lower() for library in libraries)
 os_packages=[dict(zip(('name','version'),line.split('\t'))) for line in pathlib.Path(packages).read_text().splitlines()]

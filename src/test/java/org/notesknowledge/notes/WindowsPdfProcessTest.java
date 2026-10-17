@@ -88,22 +88,23 @@ class WindowsPdfProcessTest {
     @Test void onlyFixedOsBootstrapEnvironmentIsInherited()throws Exception {assertProbeBoolean("windows-environment");}
     @Test void anUnrelatedInheritableNativeHandleDoesNotReachTheWorker()throws Exception {
         if(!WINDOWS){requireUnsupportedDenial();return;}
-        try(var handle=new InheritablePipe();var process=start(probe)){
-            var request=new DataOutputStream(process.getOutputStream());request.writeUTF("windows-handle");request.writeLong(handle.read.address());request.close();
-            var response=new DataInputStream(process.getInputStream());int first=response.readUnsignedByte();
-            if(first=='#'){
-                // Windows strict handle checking can raise STATUS_INVALID_HANDLE
-                // instead of returning FALSE/ERROR_INVALID_HANDLE. This precise
-                // denial kills the JVM; no other fatal exception is accepted.
-                String prefix=new String(response.readNBytes(1024),java.nio.charset.StandardCharsets.US_ASCII);
-                assertThat(prefix.contains("EXCEPTION_INVALID_HANDLE (0xc0000008)")).as("exact OS invalid-handle denial").isTrue();
-                response.transferTo(java.io.OutputStream.nullOutputStream());
-                assertThat(process.waitFor(5,TimeUnit.SECONDS)).isTrue();assertThat(process.exitValue()).isNotZero();
-            }else{
-                assertThat(first).as("the unrelated handle is absent").isEqualTo(1);
-                assertThat(response.read()).isEqualTo(-1);
-                assertThat(process.waitFor(5,TimeUnit.SECONDS)).isTrue();assertThat(process.exitValue()).isZero();
+        try(var handle=new InheritablePipe();var different=new InheritablePipe();var process=start(probe)){
+            var request=new DataOutputStream(process.getOutputStream());request.writeUTF("wait");request.close();
+            assertThat(new DataInputStream(process.getInputStream()).readBoolean()).isTrue();
+            try(var oracle=new HandleIdentityOracle(process)){
+                // Handle values are process-local and can be reused for a
+                // different worker object. Validity alone cannot prove a leak.
+                assertThat(oracle.refersTo(handle.read.address(),handle.read))
+                        .as("the parent's unrelated pipe was not inherited").isFalse();
+                // Only this synthetic test injects control handles, AFTER the
+                // inheritance assertion. Prove the oracle detects this exact
+                // object and rejects a different one; never relax launch policy.
+                assertThat(oracle.refersTo(oracle.inject(handle.read),handle.read))
+                        .as("positive control detects the same kernel object").isTrue();
+                assertThat(oracle.refersTo(oracle.inject(different.read),handle.read))
+                        .as("a valid handle for a different object is not a leak").isFalse();
             }
+            assertThat(process.isAlive()).isTrue();
         }
     }
     @Test void nativeAllocationAboveJobMemoryLimitIsRejected()throws Exception {assertProbeBoolean("memory");}
@@ -185,6 +186,53 @@ class WindowsPdfProcessTest {
         assertThat(Files.getFileAttributeView(runtime,java.nio.file.attribute.AclFileAttributeView.class).getAcl()).isEqualTo(rootAcl);
         assertThat(Files.getFileAttributeView(probe,java.nio.file.attribute.AclFileAttributeView.class).getAcl()).isEqualTo(artifactAcl);
         assertThat(Files.getFileAttributeView(file,java.nio.file.attribute.AclFileAttributeView.class).getAcl()).isEqualTo(fileAcl);
+    }
+    private static final class HandleIdentityOracle implements AutoCloseable {
+        private final java.lang.foreign.Arena arena=java.lang.foreign.Arena.ofConfined();
+        private final java.lang.foreign.MemorySegment worker,self;
+        private final java.lang.invoke.MethodHandle duplicate,compare,close;
+        private final java.lang.foreign.MemoryLayout stateLayout=java.lang.foreign.Linker.Option.captureStateLayout();
+        private final java.lang.invoke.VarHandle error=stateLayout.varHandle(java.lang.foreign.MemoryLayout.PathElement.groupElement("GetLastError"));
+        private final java.util.List<Long> injected=new java.util.ArrayList<>();
+        HandleIdentityOracle(WindowsPdfProcess process)throws Exception {
+            var field=WindowsPdfProcess.class.getDeclaredField("process");field.setAccessible(true);
+            worker=(java.lang.foreign.MemorySegment)field.get(process);
+            var p=java.lang.foreign.ValueLayout.ADDRESS;var i=java.lang.foreign.ValueLayout.JAVA_INT;
+            var linker=java.lang.foreign.Linker.nativeLinker();
+            var kernel=java.lang.foreign.SymbolLookup.libraryLookup(Path.of(System.getenv("SystemRoot"),"System32/kernel32.dll"),arena);
+            var base=java.lang.foreign.SymbolLookup.libraryLookup(Path.of(System.getenv("SystemRoot"),"System32/KernelBase.dll"),arena);
+            duplicate=linker.downcallHandle(kernel.find("DuplicateHandle").orElseThrow(),java.lang.foreign.FunctionDescriptor.of(i,p,p,p,p,i,i,i),java.lang.foreign.Linker.Option.captureCallState("GetLastError"));
+            compare=linker.downcallHandle(base.find("CompareObjectHandles").orElseThrow(),java.lang.foreign.FunctionDescriptor.of(i,p,p));
+            close=linker.downcallHandle(kernel.find("CloseHandle").orElseThrow(),java.lang.foreign.FunctionDescriptor.of(i,p));
+            try{self=(java.lang.foreign.MemorySegment)linker.downcallHandle(kernel.find("GetCurrentProcess").orElseThrow(),java.lang.foreign.FunctionDescriptor.of(p)).invokeExact();}
+            catch(Throwable failure){arena.close();throw new AssertionError("Synthetic handle oracle unavailable",failure);}
+        }
+        boolean refersTo(long value,java.lang.foreign.MemorySegment expected){
+            var result=arena.allocate(java.lang.foreign.ValueLayout.ADDRESS);var state=arena.allocate(stateLayout);
+            try{
+                int copied=(int)duplicate.invokeExact(state,worker,java.lang.foreign.MemorySegment.ofAddress(value),self,result,0,0,2);
+                if(copied==0){assertThat((int)error.get(state,0L)).as("only an invalid worker handle proves absence").isEqualTo(6);return false;}
+                var local=result.get(java.lang.foreign.ValueLayout.ADDRESS,0);
+                try{return (int)compare.invokeExact(local,expected)!=0;}
+                finally{assertThat((int)close.invokeExact(local)).isEqualTo(1);}
+            }catch(Throwable failure){throw new AssertionError("Synthetic kernel-object comparison failed",failure);}
+        }
+        long inject(java.lang.foreign.MemorySegment source){
+            var result=arena.allocate(java.lang.foreign.ValueLayout.ADDRESS);var state=arena.allocate(stateLayout);
+            try{
+                assertThat((int)duplicate.invokeExact(state,self,source,worker,result,0,0,2)).as("synthetic positive-control setup").isEqualTo(1);
+                long value=result.get(java.lang.foreign.ValueLayout.ADDRESS,0).address();injected.add(value);return value;
+            }catch(Throwable failure){throw new AssertionError("Synthetic handle control unavailable",failure);}
+        }
+        @Override public void close(){
+            try{
+                for(long value:injected){
+                    assertThat((int)duplicate.invokeExact(arena.allocate(stateLayout),worker,java.lang.foreign.MemorySegment.ofAddress(value),java.lang.foreign.MemorySegment.NULL,java.lang.foreign.MemorySegment.NULL,0,0,1))
+                            .as("synthetic worker control handle closed").isEqualTo(1);
+                }
+            }catch(Throwable failure){throw new AssertionError("Synthetic handle control cleanup failed",failure);}
+            finally{arena.close();}
+        }
     }
     private static final class InheritablePipe implements AutoCloseable {
         private final java.lang.foreign.Arena arena=java.lang.foreign.Arena.ofConfined();

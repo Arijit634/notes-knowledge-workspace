@@ -98,6 +98,13 @@ jobs:
       - name: Install checksum-pinned native JDK
         shell: pwsh
         run: ./.github/scripts/media-jdk.ps1
+      - name: Verify handle identity oracle in independent worker launches
+        shell: pwsh
+        run: |
+          foreach ($attempt in 1..3) {
+            ./mvnw.cmd --batch-mode --no-transfer-progress '-Dtest=WindowsPdfProcessTest#anUnrelatedInheritableNativeHandleDoesNotReachTheWorker' test
+            if ($LASTEXITCODE -ne 0) { throw 'Handle identity qualification failed' }
+          }
       - name: Qualify isolated Windows PDF development boundary
         shell: pwsh
         run: ./mvnw.cmd --batch-mode --no-transfer-progress '-Dtest=WindowsPdfProcessTest,MediaRuntimeConfigurationTest,Argon2CompatibilityTest,Argon2VerificationQualificationTest,DependencyUnavailableFilterTest' test
