@@ -5,9 +5,11 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Locale;
 import java.util.Set;
+import org.hibernate.TransactionException;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.dao.DataAccessResourceFailureException;
@@ -63,11 +65,22 @@ public final class DependencyUnavailableFilter extends OncePerRequestFilter {
         // Typed infrastructure failures only. Bad SQL, integrity violations and
         // programming defects are not relabelled as temporary dependency loss.
         boolean unavailable = false;
+        boolean jdbcTransactionFailure = false;
         for (int depth = 0; failure != null && depth < 16; depth++, failure = failure.getCause()) {
             if (failure instanceof InvalidDataAccessResourceUsageException
                     || failure instanceof DataIntegrityViolationException) return false;
             if (failure instanceof CannotCreateTransactionException
                     || failure instanceof DataAccessResourceFailureException) unavailable = true;
+            if (failure instanceof TransactionException) jdbcTransactionFailure = true;
+            if (failure instanceof SQLException sql) {
+                String state = sql.getSQLState();
+                // A broken pooled connection can also fail Hibernate rollback
+                // with a plain SQLException and no SQLState. Only that typed
+                // transaction path (or SQLState class 08) denotes resource loss;
+                // known integrity/SQL/other database errors remain defects.
+                if (state != null && !state.startsWith("08")) return false;
+                if (jdbcTransactionFailure || state != null) unavailable = true;
+            }
         }
         return failure == null && unavailable;
     }

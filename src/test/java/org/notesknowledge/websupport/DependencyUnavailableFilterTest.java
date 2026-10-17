@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import jakarta.servlet.ServletException;
 import java.sql.SQLException;
 import java.time.Clock;
+import org.hibernate.TransactionException;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.notesknowledge.security.SecurityControlRejectionEvents;
@@ -16,6 +17,7 @@ import org.springframework.jdbc.BadSqlGrammarException;
 import org.springframework.jdbc.CannotGetJdbcConnectionException;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.orm.jpa.JpaSystemException;
 import org.springframework.session.web.http.SessionRepositoryFilter;
 import org.springframework.transaction.CannotCreateTransactionException;
 import tools.jackson.databind.json.JsonMapper;
@@ -66,6 +68,17 @@ class DependencyUnavailableFilterTest {
     }
 
     @Test
+    void brokenConnectionDuringJpaRollbackUsesTheSameSanitizedContract() throws Exception {
+        for (String state : new String[] {null, "08006"}) {
+            var response = new MockHttpServletResponse();
+            filter.doFilter(new MockHttpServletRequest("GET", "/api/auth/session"), response, (req, res) -> {
+                throw new JpaSystemException(new TransactionException(PRIVATE, new SQLException(PRIVATE, state)));
+            });
+            assertUnavailable(response);
+        }
+    }
+
+    @Test
     void committedBytesAreNotRewrittenAndOnlyASanitizedInterruptionEscapes() throws Exception {
         var request = new MockHttpServletRequest("GET", "/api/notes/synthetic/attachments/synthetic/content");
         var response = new MockHttpServletResponse();
@@ -86,7 +99,11 @@ class DependencyUnavailableFilterTest {
         for (var failure : java.util.List.of(new IllegalStateException(PRIVATE),
                 new BadSqlGrammarException("synthetic", "select synthetic", new SQLException(PRIVATE)),
                 new CannotCreateTransactionException(PRIVATE,
-                        new BadSqlGrammarException("synthetic", "select synthetic", new SQLException(PRIVATE))))) {
+                        new BadSqlGrammarException("synthetic", "select synthetic", new SQLException(PRIVATE))),
+                new JpaSystemException(new TransactionException(PRIVATE, new SQLException(PRIVATE, "23505"))),
+                new JpaSystemException(new TransactionException(PRIVATE, new SQLException(PRIVATE, "42601"))),
+                new JpaSystemException(new org.hibernate.HibernateException(PRIVATE)),
+                new IllegalStateException(new SQLException(PRIVATE)))) {
             var response = new MockHttpServletResponse();
             assertThatThrownBy(() -> filter.doFilter(new MockHttpServletRequest(), response, (req, res) -> {
                 throw failure;
