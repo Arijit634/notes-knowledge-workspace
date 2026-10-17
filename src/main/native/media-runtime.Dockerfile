@@ -1,11 +1,18 @@
 # Build on the actual target architecture. This builds a qualification/deployment
 # candidate; neither construction nor an OCI digest grants codec patent rights.
-FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 AS build
+FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS build
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential pkg-config nasm xz-utils patch perl-base=5.36.0-7+deb12u4 \
-    libopenh264-dev=2.3.1+dfsg-3+deb12u2 \
-    libfreetype6=2.12.1+dfsg-5+deb12u4 libfontconfig1=2.14.1-4 fonts-dejavu-core=2.37-6
+# Only this distribution's signed main/updates/security indexes are used.
+# Retain the exact Debian codec source, notices and installed-package inventory.
+RUN sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends \
+    build-essential pkg-config nasm xz-utils patch perl-base=5.40.1-6+deb13u1 \
+    libopenh264-dev=2.6.0+dfsg-2 \
+    libfreetype6=2.13.3+dfsg-1+deb13u1 libfontconfig1=2.15.0-2.3 fonts-dejavu-core=2.37-8 \
+    && mkdir -p /provenance/openh264-source \
+    && cd /provenance/openh264-source && apt-get source --download-only openh264=2.6.0+dfsg-2 \
+    && sha256sum ./* > /provenance/openh264-source.sha256
 COPY jdk/ /jdk/
 COPY ffmpeg-9.0.2.tar.xz /source.tar.xz
 COPY native/ /native/
@@ -27,13 +34,17 @@ RUN mkdir -p /opt/pdf /opt/video /fixtures /provenance /native-diagnostics \
        --strip-debug --no-header-files --no-man-pages --compress=zip-6 --output /tmp/pdf-linked-runtime \
     && cp -rL /tmp/pdf-linked-runtime /opt/pdf/runtime \
     && cp -a /opt/pdf/runtime /opt/video/runtime \
-    && cp /usr/lib/$(gcc -dumpmachine)/libopenh264.so.2.3.1 /opt/video/tools/libopenh264.so.7 \
-    && cp /usr/share/doc/libopenh264-7/copyright /provenance/openh264-copyright \
+    && /jdk/bin/jlink --add-modules java.se,jdk.crypto.ec,jdk.unsupported,jdk.management,jdk.management.agent,jdk.naming.dns,jdk.localedata,jdk.charsets,jdk.zipfs,jdk.security.auth,jdk.jfr,jdk.net \
+       --strip-debug --no-header-files --no-man-pages --compress=zip-6 --output /service-runtime \
+    && cp /usr/lib/$(gcc -dumpmachine)/libopenh264.so.2.6.0 /opt/video/tools/libopenh264.so.8 \
+    && cp /usr/share/doc/libopenh264-8/copyright /provenance/openh264-copyright \
     && cp /codec/COPYING.LGPLv2.1 /provenance/ffmpeg-LGPLv2.1 \
     && cp /codec/ffbuild/config.mak /provenance/ffmpeg-config.mak \
     && dpkg-query -W > /provenance/os-build-packages.txt \
     && /jdk/bin/java -version 2> /provenance/jdk-version.txt \
-    && /opt/video/tools/bin/ffmpeg -buildconf > /provenance/ffmpeg-buildconf.txt 2>&1
+    && /opt/video/tools/bin/ffmpeg -buildconf > /provenance/ffmpeg-buildconf.txt 2>&1 \
+    && ldd /opt/video/tools/bin/ffmpeg /opt/video/tools/bin/ffprobe /jdk/lib/server/libjvm.so > /provenance/runtime-linkage.txt \
+    && ! grep -q 'not found' /provenance/runtime-linkage.txt
 # jlink's trusted legal-notice aliases are materialized as regular files above.
 # Runtime identity/custody still reject every symlink; that check is not relaxed.
 COPY artifacts/ /opt/pdf/artifacts/
@@ -53,6 +64,14 @@ RUN for kind in long vfr; do \
     && printf '\000\000\000\010ftyp' > /fixtures/broken.mp4
 COPY application.jar /application.jar
 COPY controller/ /qualification/
+# Analyze production classes/dependencies, not the controller classes. Optional
+# external integrations can have absent classes, but every discovered JDK module
+# must be present in the linked service runtime before an image can be qualified.
+RUN /jdk/bin/jdeps -J-Xmx256m --multi-release 25 --ignore-missing-deps --recursive --print-module-deps \
+      --class-path '/qualification/libraries/*' /opt/pdf/artifacts/classes > /provenance/service-required-modules.txt \
+    && /service-runtime/bin/java --list-modules > /provenance/service-modules.txt \
+    && for module in $(tr ',' ' ' < /provenance/service-required-modules.txt); do \
+         grep -q "^${module}@" /provenance/service-modules.txt || exit 1; done
 RUN chown -R 0:0 /opt/pdf /opt/video /qualification /fixtures /provenance \
     && chmod -R go-w /opt/pdf /opt/video /qualification /fixtures /provenance \
     && find /opt/pdf /opt/video -type f -exec sha256sum {} \; > /provenance/runtime-files.sha256
@@ -60,24 +79,29 @@ RUN /jdk/bin/java -cp '/qualification:/opt/pdf/artifacts/classes:/opt/pdf/artifa
     org.notesknowledge.notes.MediaRuntimeImageDescriptor /provenance/runtime-selection.properties
 # A separate runtime image omits the compiler/build tree. Qualification adds
 # only synthetic fixtures/controllers to this same runtime filesystem profile.
-FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 AS deployment
+FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS deployment
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    perl-base=5.36.0-7+deb12u4 libpcre2-8-0=10.42-1+deb12u2 \
-    libopenh264-7=2.3.1+dfsg-3+deb12u2 libfreetype6=2.12.1+dfsg-5+deb12u4 \
-    libfontconfig1=2.14.1-4 fonts-dejavu-core=2.37-6 && rm -rf /var/lib/apt/lists/*
-COPY --from=build /jdk /jdk
+RUN apt-get update && apt-get upgrade -y --no-install-recommends && apt-get install -y --no-install-recommends \
+    perl-base=5.40.1-6+deb13u1 libpcre2-8-0=10.46-1~deb13u3 \
+    libopenh264-8=2.6.0+dfsg-2 libfreetype6=2.13.3+dfsg-1+deb13u1 \
+    libfontconfig1=2.15.0-2.3 fonts-dejavu-core=2.37-8 && rm -rf /var/lib/apt/lists/*
+COPY --from=build /service-runtime /jdk
 COPY --from=build /opt/pdf /opt/pdf
 COPY --from=build /opt/video /opt/video
 COPY --from=build /provenance /provenance
 COPY --from=build /source.tar.xz /provenance/ffmpeg-9.0.2.tar.xz
 COPY --from=build /native/empty-metadata.patch /provenance/empty-metadata.patch
 COPY --from=build /application.jar /application.jar
+# The service never needs setuid/setgid utilities. Remove their privilege bits
+# as image-level defense in depth, independently of runtime no-new-privileges.
+RUN find /usr /opt /jdk -xdev -type f -perm /6000 -exec chmod a-s {} +
 USER 65533:65533
 ENTRYPOINT ["/jdk/bin/java", "-jar", "/application.jar"]
 # No registry publication is performed. A release must separately reconcile
 # redistribution, source availability/notice obligations AND codec patent rights.
 FROM deployment AS qualification
+# Compiler/controller tools exist ONLY in the qualification target.
+COPY --from=build /jdk /jdk
 COPY --from=build /qualification /qualification
 COPY --from=build /fixtures /fixtures
 COPY --from=build /native-diagnostics/pdf-diagnostic-helper /qualification/pdf-diagnostic-helper

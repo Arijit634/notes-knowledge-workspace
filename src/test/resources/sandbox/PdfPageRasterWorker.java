@@ -125,18 +125,6 @@ public final class PdfPageRasterWorker {
                     }catch(Throwable failure){throw new IllegalStateException("Synthetic limit authority probe unavailable",failure);}
                 }
             }
-            case "windows-handle" -> {
-                long handle=input.readLong();
-                var linker=java.lang.foreign.Linker.nativeLinker();var p=java.lang.foreign.ValueLayout.ADDRESS;var i=java.lang.foreign.ValueLayout.JAVA_INT;
-                try(var arena=java.lang.foreign.Arena.ofConfined()){
-                    var library=java.lang.foreign.SymbolLookup.libraryLookup("kernel32.dll",arena);
-                    var layout=java.lang.foreign.Linker.Option.captureStateLayout();var error=layout.varHandle(java.lang.foreign.MemoryLayout.PathElement.groupElement("GetLastError"));
-                    var inspect=linker.downcallHandle(library.find("GetHandleInformation").orElseThrow(),java.lang.foreign.FunctionDescriptor.of(i,p,p),java.lang.foreign.Linker.Option.captureCallState("GetLastError"));
-                    var state=arena.allocate(layout);
-                    try{int result=(int)inspect.invokeExact(state,java.lang.foreign.MemorySegment.ofAddress(handle),arena.allocate(4,4));out.writeBoolean(result==0&&(int)error.get(state,0L)==6);}
-                    catch(Throwable failure){throw new IllegalStateException("Synthetic handle probe unavailable",failure);}
-                }
-            }
             case "child" -> {
                 boolean denied=false;
                 try{var child=new ProcessBuilder(java.nio.file.Path.of(System.getProperty("java.home"),"bin/javaw.exe").toString(),"-version").start();child.destroyForcibly();child.waitFor();}

@@ -18,6 +18,16 @@ mkdir "$context/controller/sandbox"
 cp target/test-classes/sandbox/PdfPageRasterWorker.java "$context/controller/sandbox/"
 curl --fail --location --retry 2 --proto '=https' --tlsv1.2 https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz --output "$context/ffmpeg-9.0.2.tar.xz"
 printf '8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e  %s/ffmpeg-9.0.2.tar.xz\n' "$context" | sha256sum --check --strict -
+# Rebuild the prior deployment packaging with this identical JAR and compare
+# both images against the same scanner/database snapshot; no old result reuse.
+prior=ffa878faeb6302f06e0a1fdde7619776af77a27c
+comparison="$RUNNER_TEMP/media-comparison"
+mkdir "$comparison"
+git cat-file -e "$prior^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "$prior"
+git show "$prior:src/main/native/media-runtime.Dockerfile" > "$comparison/Dockerfile"
+docker build --file "$comparison/Dockerfile" --target deployment --tag nkw-media-before "$context"
+before="$(docker image inspect --format '{{.Id}}' nkw-media-before)"
+docker run --rm --network none --entrypoint /bin/sh "$before" -c 'dpkg-query -W' > "$RUNNER_TEMP/media-before-packages.txt"
 docker build --file src/main/native/media-runtime.Dockerfile --target qualification --tag nkw-media-qualification "$context"
 image="$(docker image inspect --format '{{.Id}}' nkw-media-qualification)"
 case "$(uname -m)" in x86_64) expected=amd64 ;; aarch64) expected=arm64 ;; esac
@@ -31,10 +41,17 @@ deployment="$(tail -n 1 "$RUNNER_TEMP/media-deployment-image")"
 test "$(docker image inspect --format '{{.Architecture}}' "$deployment")" = "$expected"
 test "$(docker image inspect --format '{{.Config.User}}' "$deployment")" = '65533:65533'
 docker run --rm --network none --user 65533:65533 --cap-drop ALL --security-opt no-new-privileges --read-only \
-  --entrypoint /bin/sh "$deployment" -c 'test ! -e /qualification && test ! -e /fixtures && test ! -e /codec && test ! -e /native && dpkg-query -W' \
+  --entrypoint /bin/sh "$deployment" -c 'test ! -e /qualification && test ! -e /fixtures && test ! -e /codec && test ! -e /native && test ! -e /jdk/bin/javac && test ! -e /jdk/bin/jlink && ! command -v gcc && test -z "$(find /usr /opt /jdk -xdev -type f -perm /6000 -print -quit)" && dpkg-query -W' \
   > "$RUNNER_TEMP/media-deployment-packages.txt"
 docker run --rm --network none --user 65533:65533 --cap-drop ALL --security-opt no-new-privileges --read-only \
   --entrypoint sha256sum "$deployment" /provenance/runtime-files.sha256 > "$RUNNER_TEMP/media-runtime-manifest.sha256"
+provenance="$RUNNER_TEMP/media-runtime-provenance"
+mkdir "$provenance"
+# Deliberate public build metadata only; no runtime properties or private inputs.
+for file in runtime-files.sha256 runtime-linkage.txt jdk-version.txt openh264-source.sha256 openh264-copyright ffmpeg-LGPLv2.1 ffmpeg-buildconf.txt ffmpeg-config.mak os-build-packages.txt service-required-modules.txt service-modules.txt; do
+  docker run --rm --network none --user 65533:65533 --cap-drop ALL --security-opt no-new-privileges --read-only \
+    --entrypoint /bin/cat "$deployment" "/provenance/$file" > "$provenance/$file"
+done
 python3 - "$deployment" "$context/application.jar" "$RUNNER_TEMP/media-deployment-packages.txt" "$RUNNER_TEMP/media-runtime-manifest.sha256" <<'PY'
 import hashlib,json,pathlib,sys,zipfile,subprocess
 image,jar,packages,manifest=sys.argv[1:]
@@ -44,10 +61,15 @@ with zipfile.ZipFile(jar) as z:
     assert not any(marker in n for n in z.namelist() for marker in
         ('ConfiguredMediaStorageFixtures','ControlledObjectStorageTransport','ControlledS3Transport',
          'ConfiguredAvatarStorageFixtures','ConfiguredPublicMediaStorageFixtures','ControlledRegistrationDelivery','ConfiguredObjectCustodyJourney'))
+    assert not any(marker in n for n in z.namelist() for marker in
+        ('ControlledS3Endpoint','DeploymentSmokeDatabase','DependencyUnavailableFilterTest','CoreReadinessDatabaseTest','WindowsPdfProcessTest'))
+    assert not any(library['file'].startswith(('junit-','testcontainers-','spring-boot-test-','spring-security-test-')) for library in libraries)
+    assert not any('sqlite' in library['file'].lower() for library in libraries)
 os_packages=[dict(zip(('name','version'),line.split('\t'))) for line in pathlib.Path(packages).read_text().splitlines()]
 package_versions={p['name'].split(':')[0]:p['version'] for p in os_packages}
-assert package_versions['perl-base']=='5.36.0-7+deb12u4'
-assert package_versions['libpcre2-8-0']=='10.42-1+deb12u2'
+assert package_versions['perl-base']=='5.40.1-6+deb13u1'
+assert package_versions['libpcre2-8-0']=='10.46-1~deb13u3'
+assert package_versions['libopenh264-8']=='2.6.0+dfsg-2'
 assert not any(p.startswith(('nodejs','npm')) for p in package_versions)
 # Preserve the raw scanner finding. This independently inspects the shipped
 # binary for the specific contrib/minizip entry point described by Debian.
@@ -59,12 +81,13 @@ print(json.dumps(dict(zlibApplicability=True,deploymentImage=image,cve='CVE-2023
     packageVersion=package_versions['zlib1g'],minizipPackagePresent=any('minizip' in p for p in package_versions),
     vulnerableEntryPointPresent=zlib_symbols=='present',scannerFindingSuppressed=False,
     distroAdvisory='https://security-tracker.debian.org/tracker/CVE-2023-45853',
-    scope='Bookworm zlib binary only; not a general zlib security clearance')))
+    scope='This exact Trixie zlib binary; vendor marks Trixie fixed, old Bookworm contrib assessment is not inherited')))
 print(json.dumps(dict(releaseInventory=True,deploymentImage=image,user='65533:65533',
     applicationSha256=hashlib.sha256(pathlib.Path(jar).read_bytes()).hexdigest(),libraries=libraries,osPackages=os_packages,
     runtimeManifestSha256=pathlib.Path(manifest).read_text().split()[0],
-    baseImage='debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587',
-    qualificationPayloadAbsent=True,registryPublished=False,vulnerabilityScanPerformed=False,
+    baseImage='debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f',
+    qualificationPayloadAbsent=True,testFixturesAbsent=True,testFrameworkDependenciesAbsent=True,
+    sqliteApplicationDependencyAbsent=True,setuidSetgidFilesAbsent=True,registryPublished=False,vulnerabilityScanPerformed=False,
     codecLegalClearance=False)))
 PY
 common=(run --rm --init --network none --user 65533:65533 --cap-drop ALL --security-opt no-new-privileges --read-only --memory=1g --cpus=2 --pids-limit=300 --tmpfs /tmp:rw,noexec,nosuid,nodev,size=192m)
@@ -127,60 +150,10 @@ for name in ('ConfiguredMultimodalApplicationTest','PrivateDerivationIntegration
     root=ET.parse(path).getroot()
     print(json.dumps({"nativeMedia":True,"testClass":name,**{key:int(root.attrib[key]) for key in ("tests","failures","errors","skipped")}}))
 PY
-# Qualification evidence, not release promotion. Preserve native-test results
-# independently from vulnerability findings; any finding still blocks release.
-security="$RUNNER_TEMP/media-security-readiness"
-cache="$RUNNER_TEMP/media-security-cache"
-mkdir -p "$security" "$cache"
-scanner='ghcr.io/aquasecurity/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa'
-scan_result=0
-docker run --rm --memory=2g --cpus=2 -v /var/run/docker.sock:/var/run/docker.sock:ro \
-  -v "$security:/evidence" -v "$cache:/root/.cache/trivy" "$scanner" image \
-  --timeout 5m --scanners vuln,secret,misconfig --image-config-scanners misconfig,secret \
-  --list-all-pkgs --exit-code 1 --format json --output /evidence/raw-scan.json "$deployment" || scan_result=$?
-SCAN_RESULT="$scan_result" python3 - "$security" "$deployment" "$scanner" "$cache" <<'PY'
-import collections,hashlib,json,os,pathlib,sys
-root=pathlib.Path(sys.argv[1]); raw=root/'raw-scan.json'
-assert raw.is_file(), 'Scanner infrastructure failed; missing evidence is not zero findings'
-data=json.loads(raw.read_text()); vulnerabilities=[]; secrets=[]; misconfigurations=[]; java_packages=0; os_packages=0
-assert int(os.environ['SCAN_RESULT']) in (0,1) and data.get('Metadata'), 'Scanner execution failed'
-for item in data.get('Results',[]):
-    if item.get('Type')=='jar': java_packages+=len(item.get('Packages',[]))
-    if item.get('Class')=='os-pkgs': os_packages+=len(item.get('Packages',[]))
-    for v in item.get('Vulnerabilities',[]):
-        vulnerabilities.append({k:v.get(k) for k in ('VulnerabilityID','PkgName','InstalledVersion','FixedVersion','Severity','Status','PrimaryURL')})
-    for v in item.get('Secrets',[]):
-        # Never publish Match, Code, source lines or secret-bearing metadata.
-        secrets.append({k:v.get(k) for k in ('RuleID','Category','Severity')})
-    for v in item.get('Misconfigurations',[]):
-        misconfigurations.append({k:v.get(k) for k in ('ID','Severity','Status','PrimaryURL')})
-assert java_packages>=200 and os_packages>0, 'Packaged Java/OS scan coverage missing; zero findings is not clearance'
-db_path=pathlib.Path(sys.argv[4])/'db'/'metadata.json'
-assert db_path.is_file(), 'Vulnerability database metadata missing'
-database=json.loads(db_path.read_text())
-receipt=dict(releaseSecurity=True,image=sys.argv[2],scanner=sys.argv[3],scanExit=int(os.environ['SCAN_RESULT']),
-    database={k:database.get(k) for k in ('Version','UpdatedAt','NextUpdate','DownloadedAt')},
-    javaPackagesAnalyzed=java_packages,osPackagesAnalyzed=os_packages,
-    vulnerabilityCounts=dict(collections.Counter(v['Severity'] for v in vulnerabilities)),vulnerabilities=vulnerabilities,
-    secretFindingCount=len(secrets),secretFindings=secrets,misconfigurations=misconfigurations,
-    releaseGatePassed=not(vulnerabilities or secrets or misconfigurations) and os.environ['SCAN_RESULT']=='0',
-    registryPublished=False,codecLegalClearance=False)
-assert receipt['scanExit']==0 or vulnerabilities or secrets or misconfigurations, 'Scanner failed without a complete findings report'
-(root/'security-readiness.json').write_text(json.dumps(receipt,indent=2)+'\n')
-raw.unlink() # Raw matches never leave this controlled ephemeral scan boundary.
-print(json.dumps(receipt))
-assert not secrets, 'Potential secret finding: STOP AND REVIEW; no match values were published'
-PY
-docker run --rm --memory=2g --cpus=2 -v /var/run/docker.sock:/var/run/docker.sock:ro \
-  -v "$security:/evidence" -v "$cache:/root/.cache/trivy" "$scanner" image \
-  --timeout 5m --format cyclonedx --output /evidence/deployment.cdx.json "$deployment"
-python3 - "$security" "$deployment" <<'PY'
-import hashlib,json,pathlib,sys
-root=pathlib.Path(sys.argv[1]); path=root/'deployment.cdx.json'; data=json.loads(path.read_text())
-assert data.get('bomFormat')=='CycloneDX' and data.get('components')
-assert sum(c.get('purl','').startswith('pkg:maven/') for c in data['components'])>=200, 'Java SBOM coverage missing'
-receipt=dict(releaseSbom=True,image=sys.argv[2],format='CycloneDX',specVersion=data['specVersion'],
-    components=len(data['components']),sha256=hashlib.sha256(path.read_bytes()).hexdigest(),registryPublished=False,signedAttestation=False)
-(root/'sbom-receipt.json').write_text(json.dumps(receipt,indent=2)+'\n');print(json.dumps(receipt))
-PY
+bash .github/scripts/scan-deployment.sh "$before" "$RUNNER_TEMP/media-before-security" "$RUNNER_TEMP/media-security-cache"
+bash .github/scripts/scan-deployment.sh "$deployment" "$RUNNER_TEMP/media-security-readiness" "$RUNNER_TEMP/media-security-cache"
+python3 .github/scripts/compare-deployment.py "$before" "$deployment" "$RUNNER_TEMP"
+# Run the actual production process, with no test classes or Docker socket mounted.
+# Scan evidence survives even if this independent operational gate fails.
+python3 .github/scripts/deployment-smoke.py "$deployment" "$image" "$RUNNER_TEMP/media-deployment-smoke"
 exit "$result"
