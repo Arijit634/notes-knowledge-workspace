@@ -60,16 +60,18 @@ class DependencyUnavailableFilterTest {
 
     @Test
     void wrappedTransactionAcquisitionFailureUsesTheSameContract() throws Exception {
-        var response = new MockHttpServletResponse();
-        filter.doFilter(new MockHttpServletRequest("GET", "/api/notes"), response, (req, res) -> {
-            throw new ServletException(new CannotCreateTransactionException(PRIVATE, new SQLException(PRIVATE)));
-        });
-        assertUnavailable(response);
+        for (String state : new String[] {null, "57P03"}) {
+            var response = new MockHttpServletResponse();
+            filter.doFilter(new MockHttpServletRequest("GET", "/api/notes"), response, (req, res) -> {
+                throw new ServletException(new CannotCreateTransactionException(PRIVATE, new SQLException(PRIVATE, state)));
+            });
+            assertUnavailable(response);
+        }
     }
 
     @Test
     void brokenConnectionDuringJpaRollbackUsesTheSameSanitizedContract() throws Exception {
-        for (String state : new String[] {null, "08006"}) {
+        for (String state : new String[] {null, "08006", "57P01", "57P02", "57P03"}) {
             var response = new MockHttpServletResponse();
             filter.doFilter(new MockHttpServletRequest("GET", "/api/auth/session"), response, (req, res) -> {
                 throw new JpaSystemException(new TransactionException(PRIVATE, new SQLException(PRIVATE, state)));
@@ -102,6 +104,9 @@ class DependencyUnavailableFilterTest {
                         new BadSqlGrammarException("synthetic", "select synthetic", new SQLException(PRIVATE))),
                 new JpaSystemException(new TransactionException(PRIVATE, new SQLException(PRIVATE, "23505"))),
                 new JpaSystemException(new TransactionException(PRIVATE, new SQLException(PRIVATE, "42601"))),
+                new JpaSystemException(new TransactionException(PRIVATE, new SQLException(PRIVATE, "22003"))),
+                new JpaSystemException(new TransactionException(PRIVATE, new SQLException(PRIVATE, "0A000"))),
+                new JpaSystemException(new TransactionException(PRIVATE, new SQLException(PRIVATE, "40P01"))),
                 new JpaSystemException(new org.hibernate.HibernateException(PRIVATE)),
                 new IllegalStateException(new SQLException(PRIVATE)))) {
             var response = new MockHttpServletResponse();

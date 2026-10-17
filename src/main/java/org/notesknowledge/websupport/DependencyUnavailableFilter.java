@@ -76,10 +76,16 @@ public final class DependencyUnavailableFilter extends OncePerRequestFilter {
                 String state = sql.getSQLState();
                 // A broken pooled connection can also fail Hibernate rollback
                 // with a plain SQLException and no SQLState. Only that typed
-                // transaction path (or SQLState class 08) denotes resource loss;
-                // known integrity/SQL/other database errors remain defects.
-                if (state != null && !state.startsWith("08")) return false;
-                if (jdbcTransactionFailure || state != null) unavailable = true;
+                // transaction path, connection states, or PostgreSQL shutdown/
+                // recovery states add resource-loss evidence. Do not overturn
+                // an already-typed resource failure merely for a different
+                // SQLState, but never hide integrity/data/SQL defects.
+                if (state != null && (state.startsWith("23") || state.startsWith("22")
+                        || state.startsWith("42") || state.startsWith("0A"))) return false;
+                if ((jdbcTransactionFailure && state == null) || (state != null
+                        && (state.startsWith("08") || Set.of("57P01", "57P02", "57P03").contains(state)))) {
+                    unavailable = true;
+                }
             }
         }
         return failure == null && unavailable;
