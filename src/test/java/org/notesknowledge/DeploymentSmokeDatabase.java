@@ -8,6 +8,15 @@ import org.flywaydb.core.Flyway;
  * Spring test context or test-only application beans. */
 public final class DeploymentSmokeDatabase {
     public static void main(String[] args)throws Exception {
+        if(args.length==1&&java.util.Set.of("readiness","liveness").contains(args[0])){
+            var client=java.net.http.HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(2)).build();
+            var response=client.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create("http://127.0.0.1:8081/actuator/health/"+args[0]))
+                .timeout(java.time.Duration.ofSeconds(5)).GET().build(),java.net.http.HttpResponse.BodyHandlers.ofString());
+            var json=new tools.jackson.databind.ObjectMapper();var body=json.readTree(response.body());
+            if(body.size()!=1||!body.has("status")||!java.util.Set.of("UP","DOWN","OUT_OF_SERVICE","UNKNOWN").contains(body.get("status").asString()))
+                throw new IllegalStateException("Restricted health probe contract failed");
+            System.out.println(json.writeValueAsString(java.util.Map.of("httpStatus",response.statusCode(),"healthStatus",body.get("status").asString())));return;
+        }
         if(args.length==1&&args[0].equals("metrics")){
             var client=java.net.http.HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(3)).build();
             var response=client.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create("http://127.0.0.1:8081/actuator/prometheus"))

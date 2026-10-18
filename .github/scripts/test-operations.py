@@ -33,6 +33,10 @@ class OperationsContracts(unittest.TestCase):
     def test_complete_finite_source_contract(self):
         ops.validate(self.data)
         self.assertEqual((len(self.data['dashboards']), len(self.data['alerts']), len(self.data['events'])), (7, 27, 17))
+        profile=json.loads((ops.ROOT/'src/main/resources/operations/container-profile.json').read_text())
+        self.assertEqual(profile['logOptions'],dict(mode='non-blocking',**{'max-buffer-size':'4m','max-size':'8m','max-file':'3'}))
+        self.assertTrue(profile['readOnly']);self.assertEqual(profile['user'],'65533:65533')
+        self.assertGreaterEqual(profile['stopTimeoutSeconds'],225)
 
     def test_unbound_cloud_evidence_is_not_a_fake_healthy_signal(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -54,8 +58,12 @@ class OperationsContracts(unittest.TestCase):
         for key in self.data['operatorSignals']:
             config['signals'][key] = dict(namespace='synthetic_test', query='synthetic_test[1m].max()', verifiedAvailable=True)
         for alarm in self.data['alerts']:
-            if 'query' not in alarm:
+            if 'query' not in alarm or alarm['id'] in ops.OPERATOR_ESCALATIONS:
                 config['alarms'][str(alarm['id'])] = dict(namespace='synthetic_test', query='synthetic_test[1m].max() > 0', verifiedAvailable=True)
+                if alarm['id'] in ops.OPERATOR_ESCALATIONS:
+                    config['alarms'][str(alarm['id'])]['overrides']=[dict(ruleName='high',query='synthetic_test[1m].max() > 1',severity='ERROR',pendingDuration='PT1M')]
+                    if alarm['id']==19:
+                        config['alarms'][str(alarm['id'])]['overrides'].append(dict(ruleName='critical',query='synthetic_test[1m].max() > 2',severity='CRITICAL',pendingDuration='PT1M'))
         with tempfile.TemporaryDirectory() as temporary:
             directory = pathlib.Path(temporary) / 'plan'
             result = ops.render(self.data, ops.bind(self.data, config), directory)
@@ -63,6 +71,8 @@ class OperationsContracts(unittest.TestCase):
             self.assertFalse(result['productionReady'])
             self.assertEqual(result['cloudCalls'], 0)
             self.assertEqual(len(list(directory.glob('alarm-*.json'))), 27)
+            for number in (11,13):
+                self.assertEqual(json.loads((directory/('alarm-'+str(number)+'.json')).read_text())['overrides'][0]['severity'],'ERROR')
 
     def test_private_scrape_and_nonsuppressible_invariants_are_mandatory(self):
         unsafe = copy.deepcopy(self.data); unsafe['scrape']['url'] = 'https://example.test/metrics'
@@ -122,13 +132,19 @@ class ReleaseContracts(unittest.TestCase):
         manifest = dict(source='a' * 40, publishedDigest='sha256:' + 'b' * 64, releaseEligible=True,
             attestationVerified=True, securityGatePassed=True, architecture='arm64', schemaVersion=19)
         approval = dict(source=manifest['source'], digest=manifest['publishedDigest'], schemaVersion=19, rollback=True,
-            previousDigest='sha256:' + 'c' * 64)
+            previousDigest='sha256:' + 'b' * 64, runningDigest='sha256:'+'c'*64)
         for gate in ('humanProductionApproval', 'currentBackupVerified', 'freeTierVerified', 'providerPostureVerified',
                      'secretsExternallyInjected', 'schemaCompatibilityVerified', 'readinessAndSyntheticPlanApproved', 'serializedMaintenanceConfirmed'):
             approval[gate] = True
         with self.assertRaises(ValueError): release.promotion(manifest, approval)
         approval['previousArtifactSupportsCurrentSchema'] = True
         self.assertFalse(release.promotion(manifest, approval)['databaseRestoreForRollback'])
+
+    def test_promotion_does_not_trust_manifest_verification_booleans(self):
+        manifest=dict(source='a'*40,publishedDigest='sha256:'+'b'*64)
+        with patch.object(release,'command',side_effect=ValueError('signature_failed')) as transport:
+            with self.assertRaises(ValueError): release.verify_published_artifact(manifest)
+            self.assertEqual(transport.call_count,1)
 
 
 if __name__ == '__main__':

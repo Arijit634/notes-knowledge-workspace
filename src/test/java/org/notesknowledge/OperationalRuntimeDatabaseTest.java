@@ -63,4 +63,12 @@ class OperationalRuntimeDatabaseTest {
         var admin=new org.springframework.jdbc.datasource.DriverManagerDataSource(DB.getJdbcUrl(),DB.getUsername(),DB.getPassword());
         assertThatThrownBy(()->OperationalDatabaseConfiguration.requireRuntimeRole(JdbcClient.create(admin))).isInstanceOf(IllegalStateException.class);
     }
+    @Test void indirectFileOrProcessAuthorityIsNotMistakenForOrdinaryRuntimeDml()throws Exception{
+        try(var connection=DriverManager.getConnection(DB.getJdbcUrl(),DB.getUsername(),DB.getPassword());var sql=connection.createStatement()){
+            sql.execute("grant pg_execute_server_program to synthetic_runtime");
+            try{assertThatThrownBy(()->OperationalDatabaseConfiguration.requireRuntimeRole(jdbc)).isInstanceOf(IllegalStateException.class);}
+            finally{sql.execute("revoke pg_execute_server_program from synthetic_runtime");}
+        }
+        OperationalDatabaseConfiguration.requireRuntimeRole(jdbc);
+    }
 }

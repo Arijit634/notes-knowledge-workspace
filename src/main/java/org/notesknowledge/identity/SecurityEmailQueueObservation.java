@@ -19,6 +19,13 @@ class SecurityEmailQueueObservation {
     private final SecurityEmailDeliveryProperties properties;
     SecurityEmailQueueObservation(JdbcClient jdbc,ObjectProvider<PlatformTransactionManager> managers,io.micrometer.core.instrument.MeterRegistry meters,Clock clock,SecurityEmailDeliveryProperties properties){
         this.jdbc=jdbc;this.managers=managers;this.properties=properties;metrics=new WorkQueueTelemetry(meters,clock,true);
+        // Both terminal series start at zero so an all-failure window has a
+        // real denominator, not a missing success series. This is a count of
+        // observed terminal work, not proof of current Account eligibility.
+        for(String kind:java.util.List.of("capability_link","security_notice"))
+            for(String outcome:java.util.List.of("success","failed"))try{
+                meters.counter("notes.workspace.security_email.outcome","jobType",kind,"outcome",outcome);
+            }catch(RuntimeException unavailable){/* diagnostic only */}
     }
     @Scheduled(fixedDelay=60000,initialDelay=1000)
     void sample(){try{

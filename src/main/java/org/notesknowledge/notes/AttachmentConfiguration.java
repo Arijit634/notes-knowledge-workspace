@@ -14,7 +14,7 @@ import org.springframework.core.env.Environment;
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(PrivateStorageProperties.class)
 class AttachmentConfiguration {
-    @Bean AttachmentMediaValidator attachmentMediaValidator(io.micrometer.core.instrument.MeterRegistry meters) { return new AttachmentMediaValidator(meters); }
+    @Bean AttachmentMediaValidator attachmentMediaValidator(org.springframework.beans.factory.ObjectProvider<io.micrometer.core.instrument.MeterRegistry> meters) { return new AttachmentMediaValidator(meters.getIfAvailable()); }
     @Bean @ConditionalOnMissingBean(PrivateAttachmentObjectStore.class)
     @ConditionalOnProperty(prefix="notes.private-storage",name="enabled",havingValue="false",matchIfMissing=true)
     PrivateAttachmentObjectStore unavailableAttachmentObjectStore() {
@@ -29,7 +29,7 @@ class AttachmentConfiguration {
 
     @Bean(destroyMethod="close")
     @ConditionalOnProperty(prefix="notes.private-storage",name="enabled",havingValue="true")
-    OciPrivateAttachmentObjectStore ociPrivateAttachmentObjectStore(PrivateStorageProperties properties,Environment environment,org.notesknowledge.PublicStorageTelemetry telemetry) {
+    OciPrivateAttachmentObjectStore ociPrivateAttachmentObjectStore(PrivateStorageProperties properties,Environment environment,org.springframework.beans.factory.ObjectProvider<org.notesknowledge.PublicStorageTelemetry> telemetry) {
         try {
             properties.requireConfigured();
             String access=environment.getProperty("notes.private-storage.access-key-id");
@@ -37,7 +37,7 @@ class AttachmentConfiguration {
             if(!credential(access)||!credential(secret))throw new IllegalStateException();
             var credentials=software.amazon.awssdk.auth.credentials.StaticCredentialsProvider.create(
                     software.amazon.awssdk.auth.credentials.AwsBasicCredentials.create(access,secret));
-            return new OciPrivateAttachmentObjectStore(OciPrivateAttachmentObjectStore.client(properties,credentials,null),properties.bucket(),telemetry);
+            return new OciPrivateAttachmentObjectStore(OciPrivateAttachmentObjectStore.client(properties,credentials,null),properties.bucket(),telemetry.getIfAvailable());
         }catch(RuntimeException invalid){throw new IllegalStateException("Private storage configuration unavailable");}
     }
     private static boolean credential(String value){return value!=null&&value.matches("[!-~]{16,256}");}

@@ -76,6 +76,7 @@ def candidate(source, image, security, sbom, smoke):
     require(command('docker', 'image', 'inspect', '--format', '{{index .Config.Labels "org.opencontainers.image.revision"}}', image) == source, 'image_source_binding_missing')
     return dict(source=source, candidateImage=image, architecture='arm64', schemaVersion=19, relations=38,
                 sbomSha256=sbom['sha256'], securityGatePassed=True, smokePassed=True,
+                containerProfileSha256=smoke['containerProfileSha256'],
                 registryPublished=False, attestationVerified=False, releaseEligible=False, productionAuthorized=False)
 
 
@@ -90,10 +91,28 @@ def promotion(manifest, approval):
     require(approval['schemaVersion'] == manifest['schemaVersion'], 'schema_compatibility_missing')
     if approval.get('rollback'):
         digest(approval['previousDigest'])
+        require(approval['previousDigest'] == manifest['publishedDigest'], 'rollback_target_not_the_previous_release')
+        require(digest(approval['runningDigest']) != manifest['publishedDigest'], 'rollback_running_identity_ambiguous')
         require(approval.get('previousArtifactSupportsCurrentSchema') is True, 'rollback_requires_forward_correction')
     # Receipt only; never SSH, restore old data, run migrations or open traffic.
     return dict(source=manifest['source'], digest=manifest['publishedDigest'], manualGateValidated=True,
                 deploymentPerformed=False, databaseRestoreForRollback=False)
+
+
+def verify_published_artifact(manifest):
+    """Independently recheck a supplied manifest; its booleans are not signatures."""
+    repository='Arijit634/notes-knowledge-workspace'
+    source=sha(manifest['source']); image=digest(manifest['publishedDigest'])
+    subject='ghcr.io/arijit634/notes-knowledge-workspace@'+image
+    for predicate in ('https://slsa.dev/provenance/v1','https://cyclonedx.org/bom'):
+        command('gh','attestation','verify','oci://'+subject,'--repo',repository,
+                '--signer-workflow',repository+'/.github/workflows/backend-release.yml',
+                '--source-ref','refs/heads/main','--source-digest',source,'--predicate-type',predicate,'--format','json')
+    # Pull only the verified digest, never a tag. No container is created or run.
+    command('docker','pull',subject)
+    require(command('docker','image','inspect','--format','{{.Architecture}}',subject)=='arm64', 'published_architecture_mismatch')
+    require(command('docker','image','inspect','--format','{{index .Config.Labels "org.opencontainers.image.revision"}}',subject)==source, 'published_source_mismatch')
+    return dict(canonicalDigestVerified=True,provenanceAndSbomReverified=True,containerStarted=False)
 
 
 def main():
@@ -109,7 +128,9 @@ def main():
     elif args.mode == 'candidate':
         result = candidate(args.source, args.image, load(args.security), load(args.sbom), load(args.smoke))
     else:
-        result = promotion(load(args.manifest), load(args.approval))
+        manifest=load(args.manifest)
+        result = promotion(manifest, load(args.approval))
+        result.update(verify_published_artifact(manifest))
     with args.output.open('x') as output:
         json.dump(result, output, indent=2)
     print(json.dumps(dict(gate=args.mode, passed=True, externalMutation=False)))

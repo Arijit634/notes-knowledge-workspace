@@ -16,6 +16,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CONTRACT = ROOT / 'src/main/resources/operations/observability.json'
+OPERATOR_ESCALATIONS={5,7,16,17,18,19,20,23}
 
 
 def require(condition, code):
@@ -59,11 +60,16 @@ def bind(data, config):
     require(set(config['signals']).issubset(data['operatorSignals']), 'unknown_external_signal')
     require(set(config['alarms']).issubset({str(n) for n in range(1, 28)}), 'unknown_alarm')
     for value in list(config['signals'].values()) + list(config['alarms'].values()):
-        require(set(value) == {'namespace', 'query', 'verifiedAvailable'} and value['verifiedAvailable'] is True, 'unverified_external_signal')
+        require({'namespace', 'query', 'verifiedAvailable'}.issubset(value) and set(value).issubset({'namespace', 'query', 'verifiedAvailable','overrides'})
+                and value['verifiedAvailable'] is True, 'unverified_external_signal')
         require(re.fullmatch(r'[A-Za-z][A-Za-z0-9_]{0,63}', value['namespace']), 'unsafe_external_namespace')
         require(isinstance(value['query'], str) and 0 < len(value['query']) <= 2048
                 and '\n' not in value['query'] and re.match(r'^[A-Za-z_(]', value['query'])
                 and not any(v in value['query'].lower() for v in ('http:', 'https:', 'token', 'password', 'secret')), 'unsafe_external_query')
+        for rule in value.get('overrides',[]):
+            require(set(rule)=={'ruleName','query','severity','pendingDuration'} and re.fullmatch('[a-z][a-z0-9_-]{0,31}',rule['ruleName']), 'invalid_alarm_override')
+            require(rule['severity'] in ('ERROR','CRITICAL') and re.fullmatch('PT[0-9]+M',rule['pendingDuration']), 'invalid_alarm_escalation')
+            require(0<len(rule['query'])<=2048 and '\n' not in rule['query'] and not any(s in rule['query'].lower() for s in ('http:','https:','password','secret','token')), 'unsafe_override_query')
     return config
 
 
@@ -96,12 +102,17 @@ def render(data, config, directory):
         if not query:
             missing.append('alarm-' + str(alarm['id']))
             continue
+        rules=override.get('overrides',alarm.get('overrides',[])) if override else alarm.get('overrides',[])
+        if alarm['id'] in OPERATOR_ESCALATIONS and (not rules or alarm['id']==19 and not any(r['severity']=='CRITICAL' for r in rules)):
+            missing.append('alarm-'+str(alarm['id'])+'-escalation')
         payload = dict(compartmentId=config['compartmentId'], metricCompartmentId=config['compartmentId'],
             destinations=[config['notificationTopicId']], displayName='NKW ' + alarm['name'],
             namespace=override['namespace'] if override else data['namespace'], queryText=query,
             pendingDuration=alarm['pending'], resolution='1m', severity=alarm['severity'],
             isEnabled=False, repeatNotificationDuration='PT1H', isNotificationsPerMetricDimensionEnabled=False,
             body='Runbook: ' + alarm['runbook'] + '. Recovery: ' + alarm['recovery'] + '. No private data in notifications.')
+        if rules:
+            payload['overrides']=rules
         (directory / ('alarm-' + str(alarm['id']) + '.json')).write_text(json.dumps(payload, indent=2) + '\n')
     receipt = dict(dashboards=7, logicalAlerts=27, events=17, unbound=sorted(set(missing)),
                    configurationBound=not missing, productionReady=False, deploymentAuthorized=False, cloudCalls=0,

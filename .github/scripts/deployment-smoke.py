@@ -127,6 +127,8 @@ def main(deployment, qualification, evidence):
     require(deployment.startswith('sha256:') and qualification.startswith('sha256:'), 'exact_images_required')
     output = pathlib.Path(evidence).resolve()
     output.mkdir(exist_ok=False, parents=True)
+    profile_file = pathlib.Path(__file__).resolve().parents[2] / 'src/main/resources/operations/container-profile.json'
+    container_profile = json.loads(profile_file.read_text())
     temporary = pathlib.Path(tempfile.mkdtemp(prefix='backend-smoke-', dir=os.environ['RUNNER_TEMP'])).resolve()
     service_config = temporary / 'service-config'
     service_config.mkdir(mode=0o755)
@@ -171,12 +173,20 @@ def main(deployment, qualification, evidence):
         path = service_config / (label + '.properties')
         path.write_text(''.join(key + '=' + str(value) + '\n' for key, value in config.items()))
         path.chmod(0o644)
-        args = ['create', '--name', name, '--label', 'nkw.smoke.invocation=' + prefix, '--network', network, '--init', '--user', '65533:65533',
-                '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--read-only', '--memory', '2g',
-                '--cpus', '2', '--pids-limit', '512', '--tmpfs', '/tmp:rw,noexec,nosuid,nodev,size=512m',
+        args = ['create', '--name', name, '--label', 'nkw.smoke.invocation=' + prefix, '--network', network, '--init', '--user', container_profile['user'],
+                '--memory', str(container_profile['memoryBytes']), '--cpus', str(container_profile['nanoCpus'] / 1e9), '--pids-limit', str(container_profile['pidsLimit']),
                 '-v', str(service_config) + ':/config:ro']
-        for directory, size in [('pdf-recovery', '4m'), ('video-recovery', '4m'), ('video-scratch', '192m')]:
-            args += ['--tmpfs', '/private/' + directory + ':rw,noexec,nosuid,nodev,size=' + size + ',uid=65533,gid=65533,mode=0700']
+        if container_profile['readOnly']:
+            args += ['--read-only']
+        for capability in container_profile['capDrop']:
+            args += ['--cap-drop', capability]
+        for option in container_profile['securityOpt']:
+            args += ['--security-opt', option]
+        args += ['--log-driver', container_profile['logDriver']]
+        for key, value in container_profile['logOptions'].items():
+            args += ['--log-opt', key + '=' + value]
+        for directory, options in container_profile['tmpfs'].items():
+            args += ['--tmpfs', directory + ':' + options]
         args += ['--entrypoint', '/jdk/bin/java', deployment, '-Xmx512m',
                  '-Djavax.net.ssl.trustStore=/config/trust.p12', '-Djavax.net.ssl.trustStorePassword=synthetic-keystore-password',
                  '-jar', '/application.jar', '--spring.config.additional-location=file:/config/' + label + '.properties']
@@ -190,6 +200,8 @@ def main(deployment, qualification, evidence):
                 and any(value.startswith('no-new-privileges') for value in limits['SecurityOpt'])
                 and not limits.get('PortBindings')
                 and not any('docker.sock' in mount['Destination'] for mount in profile['Mounts'])
+                and limits['LogConfig']['Type'] == container_profile['logDriver']
+                and limits['LogConfig']['Config'] == container_profile['logOptions']
                 and all(mount['Source'] == str(service_config) for mount in profile['Mounts'] if mount['Type'] == 'bind'),
                 'deployment_profile_not_enforced')
         docker('start', name)
@@ -233,30 +245,40 @@ def main(deployment, qualification, evidence):
                                  javaProcessesInspected=checked, sqliteLoaded=False))
 
     def await_health(browser, expected, timeout=75):
-        # Infrastructure probes are anonymous, not requests carrying an
-        # application session whose authority itself requires PostgreSQL.
-        probe = Browser(browser.origin, str(temporary / 'certificate.pem'), browser.peer)
+        # Production management binds only loopback in the service namespace.
+        # The external controller joins that namespace; the service receives
+        # neither test classes nor a Docker socket nor a public management port.
         deadline = time.monotonic() + timeout
+        observed = None
         while time.monotonic() < deadline:
             if hasattr(browser, 'container') and not state(browser.container)['Running']:
                 raise RuntimeError('service_exited_before_readiness')
             try:
-                status, _, body = probe.request('GET', '/actuator/health/readiness')
-                if status == expected:
-                    require(set(json.loads(body)) == {'status'}, 'health_details_exposed')
+                result = management_probe(browser, 'readiness')
+                observed = None if result is None else result['httpStatus']
+                if observed == expected:
                     return
             except (OSError, urllib.error.URLError):
                 pass
             time.sleep(0.5)  # Bounded external service readiness polling, not a flaky assertion sleep.
+        event('readiness_timeout', expectedStatus=expected, observedStatus=observed)
         raise RuntimeError('readiness_transition_failed_' + str(expected))
+
+    def management_probe(browser, kind):
+        require(kind in ('readiness','liveness'), 'unapproved_management_probe')
+        result = docker('run', '--rm', '--network', 'container:' + browser.container, '--user', '65533:65533',
+            '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--read-only', '--memory', '256m', '--cpus', '1',
+            qualification, '-Dloader.path=/qualification', '-Dloader.main=org.notesknowledge.DeploymentSmokeDatabase',
+            '-cp', '/application.jar', 'org.springframework.boot.loader.launch.PropertiesLauncher', kind, check=False)
+        return None if result.returncode else json.loads(result.stdout)
 
     def stop_app(name):
         measure(name)
         started = time.monotonic()
-        docker('stop', '-t', '300', name)
+        docker('stop', '-t', str(container_profile['stopTimeoutSeconds']), name)
         info = state(name)
         require(not info['Running'] and not info['OOMKilled'] and info['ExitCode'] in (0, 143)
-                and info['Pid'] == 0 and time.monotonic() - started < 300, 'shutdown_boundary_failed')
+                and info['Pid'] == 0 and time.monotonic() - started < container_profile['stopTimeoutSeconds'], 'shutdown_boundary_failed')
         collect_logs(name)
         event('bounded_shutdown', containerProcessesRetained=0, oomKilled=False)
 
@@ -356,7 +378,7 @@ def main(deployment, qualification, evidence):
         app, owner = start_app('service')
         await_health(owner, 200)
         measure(app)
-        require(owner.request('GET', '/actuator/health/liveness')[0] == 200, 'liveness_failed')
+        require(management_probe(owner,'liveness')['httpStatus'] == 200, 'liveness_failed')
         require(owner.request('GET', '/actuator/env')[0] in (401, 403, 404), 'operational_details_exposed')
         event('production_startup', nativePreflight=True, testApplicationBeans=False, liveProviders=False)
         for browser, email in [(owner, 'synthetic-owner@example.test'), (Browser(owner.origin, str(temporary / 'certificate.pem'), owner.peer), 'synthetic-other@example.test')]:
@@ -442,8 +464,7 @@ def main(deployment, qualification, evidence):
         event('rate_store_outage', failedClosed=True)
         docker('stop', '-t', '5', database)
         await_health(owner, 503, 15)
-        require(Browser(owner.origin, str(temporary / 'certificate.pem'), owner.peer)
-                .request('GET', '/actuator/health/liveness')[0] == 200, 'database_outage_killed_liveness')
+        require(management_probe(owner,'liveness')['httpStatus'] == 200, 'database_outage_killed_liveness')
         status, _, unavailable = owner.request('GET', '/api/notes/' + note)
         event('database_outage_private_read', status=status)
         require(status >= 400 and canaries[5].encode() not in unavailable
@@ -583,6 +604,7 @@ def main(deployment, qualification, evidence):
                        liveProviderCalls=0, actualOci=False, relations=38, memoryBytes=2147483648,
                        cpus=2, pidsLimit=512, privateScratchBytes=209715200, events=events,
                        resourceMeasurements=measurements,
+                       containerProfileSha256=hashlib.sha256(profile_file.read_bytes()).hexdigest(),
                        rawApplicationLogsExcluded=True, knownSyntheticCanariesAbsent=True)
         (output / 'deployment-smoke.json').write_text(json.dumps(receipt, indent=2) + '\n')
         (output / 'application-sanitized.jsonl').write_text(''.join(json.dumps(row) + '\n' for row in log_events))

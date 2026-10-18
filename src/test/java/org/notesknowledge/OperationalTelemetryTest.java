@@ -29,6 +29,8 @@ class OperationalTelemetryTest {
             registry.config().meterFilter(new OperationalMeterConfiguration().boundedOperationalDimensions());
             BackendTelemetry.record(registry,BackendTelemetry.Event.PROVIDER,BackendTelemetry.Operation.GENERATION,BackendTelemetry.Outcome.SUCCESS,2_000_000);
             BackendTelemetry.record(registry,BackendTelemetry.Event.WORK,BackendTelemetry.Operation.DERIVATION,BackendTelemetry.Outcome.OBSOLETE,0);
+            BackendTelemetry.record(registry,BackendTelemetry.Event.RETRIEVAL,BackendTelemetry.Operation.ORDINARY,BackendTelemetry.Outcome.SUCCESS,1);
+            assertThat(registry.get("notes.workspace.search.request").tags("queryClass","ranked","strategy","lexical").timer().count()).isEqualTo(1);
             String scrape=registry.scrape();
             assertThat(scrape).contains("notes_workspace_ai_provider_seconds_count", "capability=\"generation\"", "notes_workspace_knowledge_work_outcome_total");
             assertThat(scrape).doesNotContain("owner", "noteId", "attachmentId", "traceId", "Synthetic-Private-Canary");

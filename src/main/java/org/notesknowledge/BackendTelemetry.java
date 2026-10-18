@@ -38,14 +38,22 @@ public final class BackendTelemetry {
 
     public static void record(MeterRegistry registry,Event event,Operation operation,Outcome outcome,long nanos) {
         // Export failure must not change a committed operation, provider fence or API result.
+        String op=operation.name().toLowerCase(Locale.ROOT),result=outcome.name().toLowerCase(Locale.ROOT);
         try {
-            String op=operation.name().toLowerCase(Locale.ROOT),result=outcome.name().toLowerCase(Locale.ROOT);
             if(registry!=null&&(event!=Event.VALIDATION||operation!=Operation.UNKNOWN)) {
-                if(event==Event.RETRIEVAL||event==Event.PROVIDER||event==Event.VALIDATION||event==Event.STORAGE)
+                if(event==Event.RETRIEVAL){
+                    String queryClass=operation==Operation.ORDINARY?"ranked":op;
+                    String strategy=operation==Operation.ORDINARY?"lexical":operation==Operation.SEMANTIC_CORPUS?"semantic":
+                        operation==Operation.DETERMINISTIC_CORPUS?"deterministic":"hybrid";
+                    registry.timer(event.meter,event.dimension,queryClass,"strategy",strategy,"outcome",result)
+                        .record(Math.max(0,nanos),TimeUnit.NANOSECONDS);
+                }else if(event==Event.PROVIDER||event==Event.VALIDATION||event==Event.STORAGE)
                     registry.timer(event.meter,event.dimension,op,"outcome",result)
                         .record(Math.max(0,nanos),TimeUnit.NANOSECONDS);
                 else registry.counter(event.meter,event.dimension,op,"outcome",result).increment();
             }
+        }catch(RuntimeException unavailable){/* metric export is never business authority */}
+        try{
             var logger=LoggerFactory.getLogger(BackendTelemetry.class);
             var log=outcome==Outcome.SUCCESS&&event!=Event.DENIAL?logger.atInfo():logger.atWarn();
             log.addKeyValue("event.name",event.name).addKeyValue("module",event.module)
