@@ -38,13 +38,14 @@ public final class PackagedMultimediaSearchAcceptance {
     private static final String POLICY="a".repeat(64), PASSWORD="Synthetic-Media-Password-731!";
     private static final String KEY=Base64.getEncoder().encodeToString(new byte[32]);
     private static ControlledGemini provider;
+    private static String phase="setup";
     private static final List<String> LOG_CANARIES=new java.util.concurrent.CopyOnWriteArrayList<>(List.of(PASSWORD,
         "synthetic-media-owner@example.test","synthetic-media-other@example.test","Fictional context only.","Aster project deadline is 18 November."));
     private static final List<String> QUERIES=List.of(
         "Find the image with a blue square and red circle", "What is written in my scanned PDF?",
         "What does the archive PDF say about its door?", "Which recording mentions the observatory?",
         "Find the recording with high then low tones", "What is visible around the 25 second mark in my video?",
-        "Find Aster observations", "List all Aster observations", "Show every URL I saved", "What is written on page 7?");
+        "Find Aster observations", "Find everything about Aster", "Show every URL I saved", "What is written on page 7?");
     private record Uploaded(String fixture,UUID note,UUID attachment,byte[] bytes,String type) {
         @Override public String toString(){return "SyntheticUpload[REDACTED]";}
     }
@@ -55,6 +56,7 @@ public final class PackagedMultimediaSearchAcceptance {
     private UUID policy;
     private Browser browser,other;
     private ConfigurableApplicationContext app;
+    private static javax.net.ssl.SSLContext browserTls;
 
     public static void main(String[] args)throws Exception {
         require(args.length==3,"explicit_native_roots_and_report_directory_required");
@@ -62,7 +64,8 @@ public final class PackagedMultimediaSearchAcceptance {
                 DerivationSchedulingConfiguration.class,GoogleDerivationAdapters.class,ExactPrivateVectorSearch.class))
             require(type.getProtectionDomain().getCodeSource().getLocation().toString().contains(".jar"),"production_jar_required");
         var report=Path.of(args[2]).toAbsolutePath();Files.createDirectory(report);
-        var console=System.out;var errors=System.err;var logs=new BoundedLogs();boolean passed=false;String failureCode="acceptance_failed";
+        var console=System.out;var errors=System.err;var logs=new BoundedLogs();boolean passed=false;String failureCode="acceptance_failed",failureType="none";
+        var failureClasses=new ArrayList<String>();
         System.setOut(new java.io.PrintStream(logs,true,StandardCharsets.UTF_8));System.setErr(System.out);
         try(var database=new PostgreSQLContainer("pgvector/pgvector:0.8.6-pg18-trixie")
                 .withDatabaseName("multimedia_acceptance").withUsername("synthetic_migrator").withPassword("synthetic-migration-password")) {
@@ -74,14 +77,16 @@ public final class PackagedMultimediaSearchAcceptance {
             }
             require(!logs.truncated,"log_inspection_bound");String captured=logs.toString(StandardCharsets.UTF_8);
             require(LOG_CANARIES.stream().noneMatch(value->!value.isEmpty()&&captured.contains(value)),"log_privacy_failure");passed=true;
-        }catch(Throwable failure){if(failure instanceof AssertionError&&failure.getMessage()!=null&&failure.getMessage().matches("[a-z_0-9-]+"))failureCode=failure.getMessage();}
+        }catch(Throwable failure){if(failure instanceof AssertionError&&failure.getMessage()!=null&&failure.getMessage().matches("[a-z_0-9-]+"))failureCode=failure.getMessage();failureType=failure.getClass().getSimpleName();
+            for(Throwable cause=failure;cause!=null&&failureClasses.size()<10;cause=cause.getCause())failureClasses.add(cause.getClass().getName());}
         finally {System.setOut(console);System.setErr(errors);logs.reset();LOG_CANARIES.clear();}
-        console.println("{\"packagedMultimediaSearch\":true,\"result\":\""+(passed?"passed":failureCode)+"\",\"logPrivacyChecked\":"+passed+",\"providerEvidence\":\"controlled-real-sdk\"}");
+        console.println(JSON.writeValueAsString(Map.of("packagedMultimediaSearch",true,"result",passed?"passed":failureCode,"phase",phase,"failureType",failureType,"failureClasses",failureClasses,"logPrivacyChecked",passed,"providerEvidence","controlled-real-sdk")));
         if(!passed)System.exit(1);
     }
     private void execute(PostgreSQLContainer database,Path pdfRoot,Path videoRoot,Path report)throws Exception {
         Path local=Files.createTempDirectory("multimedia-http-");
         try {
+            localTls(local);
             settings.put("spring.datasource.url",database.getJdbcUrl());settings.put("spring.datasource.username",database.getUsername());settings.put("spring.datasource.password",database.getPassword());
             settings.put("server.address","127.0.0.1");settings.put("server.port","0");settings.put("spring.main.banner-mode","off");
             settings.put("identity.rate.key-base64",KEY);settings.put("identity.delivery.key-base64",KEY);settings.put("identity.delivery.public-origin","https://example.test");
@@ -92,14 +97,14 @@ public final class PackagedMultimediaSearchAcceptance {
             settings.put("knowledge.operations.scheduling-enabled","false");settings.put("identity.delivery.polling-enabled","false");
             settings.put("identity.delivery.smtp-enabled","false");settings.put("identity.oidc.google.enabled","false");
             selectRuntime("pdf",pdfRoot,local);selectRuntime("video",videoRoot,local);
-            start();browser=register("synthetic-media-owner@example.test");other=register("synthetic-media-other@example.test");
+            phase="registration";start();browser=register("synthetic-media-owner@example.test");other=register("synthetic-media-other@example.test");
             var jdbc=app.getBean(JdbcTemplate.class);
             owner=jdbc.queryForObject("select user_id from identity.account where canonical_email='synthetic-media-owner@example.test'",UUID.class);
             policy=jdbc.queryForObject("insert into knowledge.processing_policy(policy_code,policy_version,policy_fingerprint,disclosure_revision,effective_at) values('packaged-synthetic',1,?,'synthetic-1',clock_timestamp()-interval '1 minute') returning processing_policy_id",UUID.class,POLICY);
             acknowledge(browser);acknowledge(other);
-            note("Aster text", "Aster project deadline is 18 November. https://example.test/aster");
-            for(String kind:List.of("image","pdf","scan","mixed","audio","tones","video-short","video-long","seven"))upload(kind);
-            var approvals=new ArrayList<String>();var children=new ArrayList<String>();
+            phase="upload";note("Aster text", "Aster project deadline is 18 November. https://example.test/aster");
+            for(String kind:List.of("image","pdf","scan","mixed","audio","tones","video-short","video-long","seven","jpeg"))upload(kind);
+            phase="exact-synthetic-approvals";var approvals=new ArrayList<String>();var children=new ArrayList<String>();
             String pdfTransform,videoTransform;
             try(var child=ConfiguredMediaStorageFixtures.page(app,uploads.get(1).bytes(),1)){pdfTransform=child.transformFingerprint();}
             var longVideo=uploaded("video-long");var timeline=ConfiguredMediaStorageFixtures.plan(app,longVideo.bytes());
@@ -140,10 +145,10 @@ public final class PackagedMultimediaSearchAcceptance {
             // Ordinary schedulers, not executor invocation or direct work-row insertion.
             app.close();app=null;settings.put("knowledge.derivation.scheduling-enabled","true");settings.put("knowledge.derivation.poll-delay-ms","200");
             settings.put("knowledge.operations.scheduling-enabled","true");settings.put("knowledge.operations.poll-delay-ms","200");
-            start();browser.origin=origin();other.origin=origin();
+            phase="scheduled-processing";start();browser.origin=origin();other.origin=origin();
             for(var uploaded:uploads)awaitReady(uploaded);
-            for(String query:QUERIES){JsonNode result=query(browser,query);verify(query,result);results.add(Map.of("query",query,"response",result));}
-            providerFailureAndRecovery();isolationAndRevocation();
+            phase="search";for(String query:QUERIES){JsonNode result=query(browser,query);verify(query,result);results.add(Map.of("query",query,"response",result));}
+            phase="negative-scenarios";providerFailureAndRecovery();isolationAndRevocation();
             Files.writeString(report.resolve("search-demonstration.json"),JSON.writerWithDefaultPrettyPrinter().writeValueAsString(Map.ofEntries(
                 Map.entry("providerEvidence","controlled-real-sdk-not-live-gemini"),Map.entry("packagedApplication",true),Map.entry("scheduledProcessing",true),
                 Map.entry("uploads",uploads.stream().map(u->Map.of("fixture",u.fixture(),"noteId",u.note(),"attachmentId",u.attachment())).toList()),
@@ -168,7 +173,19 @@ public final class PackagedMultimediaSearchAcceptance {
     }
     private static AiDerivationProperties configuration(String pdf,String video){return new AiDerivationProperties(true,true,"gemini","controlled-embedding","controlled-media","v1","global","unpaid","controlled-v1","controlled-v1",8,"cosine","none",POLICY,true,pdf,true,video);}
     private void start(){app=new SpringApplicationBuilder(Application.class,ConfiguredMediaStorageFixtures.class,ControlledRegistrationDelivery.class,ExternalServices.class).run(settings.entrySet().stream().map(e->"--"+e.getKey()+"="+e.getValue()).toArray(String[]::new));}
-    private String origin(){return "http://127.0.0.1:"+app.getEnvironment().getProperty("local.server.port");}
+    private String origin(){return "https://localhost:"+app.getEnvironment().getProperty("local.server.port");}
+    private void localTls(Path local)throws Exception {
+        // Ephemeral test-only TLS. No host trust store or TLS verification bypass.
+        Path keyStore=local.resolve("localhost.p12");String password="synthetic-keystore-password";LOG_CANARIES.add(password);
+        var process=new ProcessBuilder(Path.of(System.getProperty("java.home"),"bin","keytool").toString(),"-genkeypair","-alias","localhost","-keyalg","EC","-groupname","secp256r1","-dname","CN=localhost","-ext","SAN=dns:localhost,ip:127.0.0.1","-validity","2","-storetype","PKCS12","-keystore",keyStore.toString(),"-storepass",password,"-noprompt")
+            .redirectOutput(ProcessBuilder.Redirect.DISCARD).redirectError(ProcessBuilder.Redirect.DISCARD).start();
+        if(!process.waitFor(20,java.util.concurrent.TimeUnit.SECONDS)){process.destroyForcibly();throw new AssertionError("test_tls_deadline");}
+        require(process.exitValue()==0,"test_tls_setup");var store=java.security.KeyStore.getInstance("PKCS12");
+        try(var input=Files.newInputStream(keyStore)){store.load(input,password.toCharArray());}
+        var trusts=javax.net.ssl.TrustManagerFactory.getInstance(javax.net.ssl.TrustManagerFactory.getDefaultAlgorithm());trusts.init(store);
+        browserTls=javax.net.ssl.SSLContext.getInstance("TLS");browserTls.init(null,trusts.getTrustManagers(),null);
+        settings.put("server.ssl.enabled","true");settings.put("server.ssl.key-store",keyStore.toUri().toString());settings.put("server.ssl.key-store-type","PKCS12");settings.put("server.ssl.key-store-password",password);
+    }
     private Browser register(String email)throws Exception{
         var b=new Browser(origin());b.csrf();b.json("POST","/api/auth/registrations",Map.of("email",email,"password",PASSWORD),202);
         String token=ControlledRegistrationDelivery.verificationToken(app);
@@ -189,7 +206,7 @@ public final class PackagedMultimediaSearchAcceptance {
         UUID attachment=UUID.fromString(JSON.readTree(r.body()).get("id").asText());
         byte[] stored=browser.send("GET","/api/notes/"+note+"/attachments/"+attachment+"/content",null,Map.of(),200).body();
         uploads.add(new Uploaded(kind,note,attachment,stored,file.getContentType()));
-        if(kind.equals("image")){provider.media(stored,List.of(segment("Aster image: a blue square left of a red circle. The text ASTER is below.","whole_image",null,null,null)));provider.failOnce.add(TransformedMediaIdentity.digest(stored));}
+        if(kind.equals("image")||kind.equals("jpeg")){provider.media(stored,List.of(segment("Aster image: a blue square left of a red circle. The text ASTER is below.","whole_image",null,null,null)));if(kind.equals("image"))provider.failOnce.add(TransformedMediaIdentity.digest(stored));}
         if(kind.equals("audio"))provider.media(stored,List.of(segment("The fictional observatory is on planet Aster. Its dome is silver.","transcript",null,0.,(double)(stored.length-44)/java.nio.ByteBuffer.wrap(stored).order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt(28))));
         if(kind.equals("tones"))provider.media(stored,List.of(new DerivedSegment("A high tone followed by a low tone; no intelligible speech.","transcript","Acoustic description",null,null,null,0.,4.,null,null,null,null)));
     }
@@ -217,7 +234,7 @@ public final class PackagedMultimediaSearchAcceptance {
             UUID id=UUID.fromString(media.asText());var original=uploads.stream().filter(u->u.attachment().equals(id)).findFirst().orElseThrow();require(citation.get("noteId").asText().equals(original.note().toString()),"citation_pair");targets.add(id);
             if(original.type().equals("application/pdf"))require(citation.get("location").get("page").asInt()>0,"pdf_page");
         }}
-        if(query.equals(QUERIES.get(0)))require(targets.contains(uploads.get(0).attachment()),"image_retrieval");
+        if(query.equals(QUERIES.get(0)))require(targets.contains(uploads.get(0).attachment())&&targets.contains(uploaded("jpeg").attachment()),"image_retrieval");
         if(query.equals(QUERIES.get(1)))require(targets.contains(uploads.get(2).attachment()),"scan_retrieval");
         if(query.equals(QUERIES.get(2)))require(targets.contains(uploads.get(1).attachment()),"native_pdf_retrieval");
         if(query.equals(QUERIES.get(3)))require(targets.contains(uploads.get(4).attachment()),"speech_retrieval");
@@ -271,11 +288,11 @@ public final class PackagedMultimediaSearchAcceptance {
         @Bean @Primary org.notesknowledge.security.RateLimitPort controlledExternalRateStore(){return request->new org.notesknowledge.security.RateLimitPort.Allowed();}
     }
     private static final class Browser {
-        private final HttpClient http=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).followRedirects(HttpClient.Redirect.NEVER).build();
+        private final HttpClient http=HttpClient.newBuilder().sslContext(browserTls).connectTimeout(Duration.ofSeconds(10)).followRedirects(HttpClient.Redirect.NEVER).build();
         String origin,cookie,csrf;
         Browser(String origin){this.origin=origin;}
-        // Loopback test client explicitly returns the Secure cookie over the
-        // isolated HTTP test socket. The application's cookie flags stay intact.
+        // Session/CSRF stay memory-only. The synthetic TLS certificate is trusted
+        // only by this client and hostname verification remains enabled.
         HttpResponse<byte[]> send(String method,String path,byte[] data,Map<String,String> headers,Integer expected)throws Exception{
             require(path.startsWith("/api/")&&!path.contains("://"),"local_api_only");var request=HttpRequest.newBuilder(URI.create(origin+path)).timeout(Duration.ofSeconds(40));
             if(cookie!=null)request.header("Cookie",cookie);if(csrf!=null&&!method.equals("GET"))request.header("X-CSRF-TOKEN",csrf);headers.forEach(request::header);

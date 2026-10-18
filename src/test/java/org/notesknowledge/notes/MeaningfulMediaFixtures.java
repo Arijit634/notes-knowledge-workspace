@@ -19,6 +19,7 @@ public final class MeaningfulMediaFixtures {
     public static MockMultipartFile media(String kind) throws Exception {
         return switch(kind) {
             case "image" -> file("scene.png","image/png",png(scene()));
+            case "jpeg" -> file("scene.jpg","image/jpeg",jpeg(scene()));
             case "audio" -> file("aster.wav","audio/wav",speech());
             case "tones" -> file("synthetic-tones.wav","audio/wav",tones());
             case "video" -> file("scene.mp4","video/mp4",video());
@@ -61,6 +62,7 @@ public final class MeaningfulMediaFixtures {
         } finally {g.dispose();}return image;
     }
     private static byte[] png(BufferedImage image)throws Exception {var out=new ByteArrayOutputStream();javax.imageio.ImageIO.write(image,"png",out);return out.toByteArray();}
+    private static byte[] jpeg(BufferedImage image)throws Exception {var out=new ByteArrayOutputStream();javax.imageio.ImageIO.write(image,"jpeg",out);return out.toByteArray();}
     /** Four seconds of public-safe generated tones; not a song/instrument/artist oracle. */
     private static byte[] tones() {
         int rate=8000,frames=rate*4,bytes=frames*2;
