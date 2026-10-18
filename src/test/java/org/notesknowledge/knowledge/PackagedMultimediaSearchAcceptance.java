@@ -66,6 +66,7 @@ public final class PackagedMultimediaSearchAcceptance {
         var report=Path.of(args[2]).toAbsolutePath();Files.createDirectory(report);
         var console=System.out;var errors=System.err;var logs=new BoundedLogs();boolean passed=false;String failureCode="acceptance_failed",failureType="none";
         var failureClasses=new ArrayList<String>();
+        var failureFrames=new ArrayList<String>();var nativeLibraries=new ArrayList<String>();
         System.setOut(new java.io.PrintStream(logs,true,StandardCharsets.UTF_8));System.setErr(System.out);
         try(var database=new PostgreSQLContainer("pgvector/pgvector:0.8.6-pg18-trixie")
                 .withDatabaseName("multimedia_acceptance").withUsername("synthetic_migrator").withPassword("synthetic-migration-password")) {
@@ -78,9 +79,11 @@ public final class PackagedMultimediaSearchAcceptance {
             require(!logs.truncated,"log_inspection_bound");String captured=logs.toString(StandardCharsets.UTF_8);
             require(LOG_CANARIES.stream().noneMatch(value->!value.isEmpty()&&captured.contains(value)),"log_privacy_failure");passed=true;
         }catch(Throwable failure){if(failure instanceof AssertionError&&failure.getMessage()!=null&&failure.getMessage().matches("[a-z_0-9-]+"))failureCode=failure.getMessage();failureType=failure.getClass().getSimpleName();
-            for(Throwable cause=failure;cause!=null&&failureClasses.size()<10;cause=cause.getCause())failureClasses.add(cause.getClass().getName());}
+            for(Throwable cause=failure;cause!=null&&failureClasses.size()<10;cause=cause.getCause())failureClasses.add(cause.getClass().getName());
+            for(var frame:Arrays.stream(failure.getStackTrace()).limit(8).toList())failureFrames.add(frame.getClassName()+"."+frame.getMethodName());
+            if(failure instanceof UnsatisfiedLinkError&&failure.getMessage()!=null){var match=java.util.regex.Pattern.compile("[A-Za-z0-9_]+\\.(?:so|dll|dylib)(?:\\.[0-9]+)*").matcher(failure.getMessage());while(match.find()&&nativeLibraries.size()<8)nativeLibraries.add(match.group());}}
         finally {System.setOut(console);System.setErr(errors);logs.reset();LOG_CANARIES.clear();}
-        console.println(JSON.writeValueAsString(Map.of("packagedMultimediaSearch",true,"result",passed?"passed":failureCode,"phase",phase,"failureType",failureType,"failureClasses",failureClasses,"logPrivacyChecked",passed,"providerEvidence","controlled-real-sdk")));
+        console.println(JSON.writeValueAsString(Map.of("packagedMultimediaSearch",true,"result",passed?"passed":failureCode,"phase",phase,"failureType",failureType,"failureClasses",failureClasses,"failureFrames",failureFrames,"nativeLibraries",nativeLibraries,"logPrivacyChecked",passed,"providerEvidence","controlled-real-sdk")));
         if(!passed)System.exit(1);
     }
     private void execute(PostgreSQLContainer database,Path pdfRoot,Path videoRoot,Path report)throws Exception {
@@ -148,12 +151,12 @@ public final class PackagedMultimediaSearchAcceptance {
             phase="scheduled-processing";start();browser.origin=origin();other.origin=origin();
             for(var uploaded:uploads)awaitReady(uploaded);
             phase="search";for(String query:QUERIES){JsonNode result=query(browser,query);verify(query,result);results.add(Map.of("query",query,"response",result));}
-            phase="negative-scenarios";providerFailureAndRecovery();isolationAndRevocation();
+            phase="negative-scenarios";providerFailureAndRecovery();processingChangeRace();isolationAndRevocation();
             Files.writeString(report.resolve("search-demonstration.json"),JSON.writerWithDefaultPrettyPrinter().writeValueAsString(Map.ofEntries(
                 Map.entry("providerEvidence","controlled-real-sdk-not-live-gemini"),Map.entry("packagedApplication",true),Map.entry("scheduledProcessing",true),
                 Map.entry("uploads",uploads.stream().map(u->Map.of("fixture",u.fixture(),"noteId",u.note(),"attachmentId",u.attachment())).toList()),
                 Map.entry("queries",results),Map.entry("twoUserIsolation",true),Map.entry("aiOffRevocation",true),Map.entry("attachmentDeletion",true),Map.entry("sdkRequests",provider.requests.get()),
-                Map.entry("transientMediaFailuresRecovered",provider.transientFailures.get()),Map.entry("invalidProviderOutputDenied",true),Map.entry("providerOutageAndRecovery",true))));
+                Map.entry("transientMediaFailuresRecovered",provider.transientFailures.get()),Map.entry("invalidProviderOutputDenied",true),Map.entry("providerOutageAndRecovery",true),Map.entry("sourceChangedDuringProcessing",true))));
         }finally{
             if(app!=null){app.close();app=null;}
             // Only this command's fresh temporary directory, never repository/user media.
@@ -274,6 +277,43 @@ public final class PackagedMultimediaSearchAcceptance {
         browser.get("/api/notes/"+uploads.get(0).note(),200);
         provider.generationMode="normal";verify(QUERIES.get(0),query(browser,QUERIES.get(0)));
     }
+    private void processingChangeRace()throws Exception {
+        UUID note=note("Fictional processing race","Fictional context only.");var original=uploaded("image");
+        var response=uploadBytes(note,original.bytes(),original.type(),"race.png");UUID attachment=UUID.fromString(JSON.readTree(response.body()).get("id").asText());
+        var tx=new TransactionTemplate(app.getBean(PlatformTransactionManager.class));
+        var source=tx.execute(s->app.getBean(PrivateDerivationSource.class).noteSources(owner,note)).stream().filter(s->attachment.equals(s.expected().attachmentId())).findFirst().orElseThrow();
+        // Approve only the exact synthetic Attachment. Its parent Note root is
+        // deliberately not approved, so no second derivation can masquerade as
+        // the mutation waiter in the PostgreSQL coordination observation below.
+        settings.put("knowledge.derivation.approved-source-fingerprints",settings.get("knowledge.derivation.approved-source-fingerprints")+","+ProviderDispatchPolicy.fingerprint(source.expected()));
+        provider.blockDigest=TransformedMediaIdentity.digest(original.bytes());
+        app.close();app=null;start();browser.origin=origin();other.origin=origin();
+        try {
+            require(provider.blockEntered.await(30,java.util.concurrent.TimeUnit.SECONDS),"processing_race_dispatch_entered");
+            var before=browser.send("GET","/api/notes/"+note,null,Map.of(),200);String etag=before.headers().firstValue("ETag").orElseThrow();
+            var save=java.util.concurrent.CompletableFuture.runAsync(()->{try{
+                browser.send("PUT","/api/notes/"+note,JSON.writeValueAsBytes(Map.of("title","Changed during processing","markdown","Changed fictional source.")),Map.of("Content-Type","application/json","If-Match",etag),200);
+            }catch(Exception failure){throw new java.util.concurrent.CompletionException(failure);}});
+            var jdbc=app.getBean(JdbcTemplate.class);
+            int key=java.nio.ByteBuffer.wrap(java.security.MessageDigest.getInstance("SHA-256").digest(note.toString().getBytes(StandardCharsets.UTF_8))).getInt();
+            long until=System.nanoTime()+Duration.ofSeconds(3).toNanos();boolean waiting=false;
+            do {
+                waiting=Boolean.TRUE.equals(jdbc.queryForObject("select exists(select 1 from pg_locks where locktype='advisory' and classid=17403 and objid=?::oid and not granted)",Boolean.class,Integer.toUnsignedLong(key)));
+                if(waiting)break;Thread.sleep(20);
+            }while(System.nanoTime()<until);
+            require(waiting&&!save.isDone(),"processing_race_mutation_waits_for_dispatch");
+            provider.blockRelease.countDown();save.get(15,java.util.concurrent.TimeUnit.SECONDS);
+            long deadline=System.nanoTime()+Duration.ofSeconds(15).toNanos();String state;
+            do {
+                state=jdbc.queryForObject("select state from knowledge.knowledge_work_intent where owner_user_id=? and source_attachment_id=? order by created_at desc limit 1",String.class,owner,attachment);
+                if(state.equals("obsolete"))break;Thread.sleep(100);
+            }while(System.nanoTime()<deadline);
+            require(state.equals("obsolete"),"processing_race_old_work_obsolete");
+            require(jdbc.queryForObject("select count(*) from knowledge.private_derived_representation where owner_user_id=? and source_attachment_id=? and state='ready'",Integer.class,owner,attachment)==0,"processing_race_no_stale_activation");
+            browser.send("GET","/api/notes/"+note+"/attachments/"+attachment+"/content",null,Map.of(),200);
+            require(query(browser,QUERIES.get(0)).get("citations").valueStream().noneMatch(c->c.get("attachmentId").asText().equals(attachment.toString())),"processing_race_no_stale_citation");
+        }finally{provider.blockRelease.countDown();provider.blockDigest=null;}
+    }
     private static TransformedMediaIdentity identity(AiDerivationProperties config,PrivateDerivationSource.Metadata metadata,EmbeddingLineage lineage,Uploaded original,byte[] bytes,String profile,String version,String artifact,String configuration,String type,TransformedMediaIdentity.Scope scope){return new TransformedMediaIdentity(metadata.expected(),TransformedMediaIdentity.digest(original.bytes()),original.bytes().length,original.type(),profile,version,artifact,configuration,TransformedMediaIdentity.digest(bytes),bytes.length,type,scope,lineage.id(),config.provider(),config.mediaModel(),"media-understanding",POLICY);}
     private Uploaded uploaded(String fixture){return uploads.stream().filter(u->u.fixture().equals(fixture)).findFirst().orElseThrow();}
     private static DerivedSegment pdfSegment(String fixture,int page){String text=fixture.equals("scan")||fixture.equals("mixed")&&page==3
@@ -317,6 +357,8 @@ public final class PackagedMultimediaSearchAcceptance {
         final Set<String> failOnce=ConcurrentHashMap.newKeySet();
         final java.util.concurrent.atomic.AtomicInteger requests=new java.util.concurrent.atomic.AtomicInteger(),transientFailures=new java.util.concurrent.atomic.AtomicInteger();
         volatile String generationMode="normal";
+        volatile String blockDigest;
+        final java.util.concurrent.CountDownLatch blockEntered=new java.util.concurrent.CountDownLatch(1),blockRelease=new java.util.concurrent.CountDownLatch(1);
         ControlledGemini()throws Exception{
             server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);server.createContext("/",exchange->{
                 try{require(exchange.getRequestURI().getRawQuery()==null,"no_query_credentials");
@@ -329,6 +371,7 @@ public final class PackagedMultimediaSearchAcceptance {
                     }else{
                         JsonNode parts=payload.get("contents").get(0).get("parts");JsonNode inline=parts.valueStream().filter(p->p.has("inlineData")).findFirst().orElse(null);Object structured;
                         if(inline!=null){byte[] bytes=Base64.getDecoder().decode(inline.get("inlineData").get("data").asText());
+                            if(Objects.equals(blockDigest,TransformedMediaIdentity.digest(bytes))){blockEntered.countDown();require(blockRelease.await(8,java.util.concurrent.TimeUnit.SECONDS),"controlled_media_block_deadline");}
                             if(failOnce.remove(TransformedMediaIdentity.digest(bytes))){Arrays.fill(bytes,(byte)0);transientFailures.incrementAndGet();exchange.sendResponseHeaders(503,-1);return;}
                             var scope=java.util.regex.Pattern.compile("ONLY original PDF page ([0-9]+)").matcher(parts.get(0).get("text").asText());int page=scope.find()?Integer.parseInt(scope.group(1)):0;
                             var segments=media.get(TransformedMediaIdentity.digest(bytes)+"/"+page);Arrays.fill(bytes,(byte)0);require(segments!=null,"unknown_media_bytes");
