@@ -40,7 +40,8 @@ public final class PackagedMultimediaSearchAcceptance {
     private static ControlledGemini provider;
     private static String phase="setup";
     private static final List<String> LOG_CANARIES=new java.util.concurrent.CopyOnWriteArrayList<>(List.of(PASSWORD,
-        "synthetic-media-owner@example.test","synthetic-media-other@example.test","Fictional context only.","Aster project deadline is 18 November."));
+        "synthetic-media-owner@example.test","synthetic-media-other@example.test","Fictional context only.","Aster project deadline is 18 November.",
+        "synthetic-runtime-password","synthetic-migration-password","synthetic-access-key","synthetic-secret-key","synthetic-not-a-provider-key"));
     private static final List<String> QUERIES=List.of(
         "Find the image with a blue square and red circle", "What is written in my scanned PDF?",
         "What does the archive PDF say about its door?", "Which recording mentions the observatory?",
@@ -55,6 +56,7 @@ public final class PackagedMultimediaSearchAcceptance {
     private UUID owner;
     private UUID policy;
     private UUID textNote;
+    private String corpusOperation;
     private Browser browser,other;
     private ConfigurableApplicationContext app;
     private static javax.net.ssl.SSLContext browserTls;
@@ -91,7 +93,8 @@ public final class PackagedMultimediaSearchAcceptance {
         Path local=Files.createTempDirectory("multimedia-http-");
         try {
             localTls(local);
-            settings.put("spring.datasource.url",database.getJdbcUrl());settings.put("spring.datasource.username",database.getUsername());settings.put("spring.datasource.password",database.getPassword());
+            prepareDatabase(database);
+            settings.put("spring.datasource.url",database.getJdbcUrl());settings.put("spring.datasource.username","synthetic_runtime");settings.put("spring.datasource.password","synthetic-runtime-password");settings.put("spring.flyway.enabled","false");
             settings.put("server.address","127.0.0.1");settings.put("server.port","0");settings.put("spring.main.banner-mode","off");
             settings.put("identity.rate.key-base64",KEY);settings.put("identity.delivery.key-base64",KEY);settings.put("identity.delivery.public-origin","https://example.test");
             settings.put("notes.cursor.active.version","test1");settings.put("notes.cursor.active.key-base64",KEY);
@@ -103,6 +106,8 @@ public final class PackagedMultimediaSearchAcceptance {
             selectRuntime("pdf",pdfRoot,local);selectRuntime("video",videoRoot,local);
             phase="registration";start();browser=register("synthetic-media-owner@example.test");other=register("synthetic-media-other@example.test");
             var jdbc=app.getBean(JdbcTemplate.class);
+            require(!jdbc.queryForObject("select rolsuper or rolcreatedb or rolcreaterole or rolreplication from pg_roles where rolname=current_user",Boolean.class)
+                &&!jdbc.queryForObject("select has_schema_privilege(current_user,'notes','CREATE')",Boolean.class),"restricted_runtime_role");
             owner=jdbc.queryForObject("select user_id from identity.account where canonical_email='synthetic-media-owner@example.test'",UUID.class);
             policy=jdbc.queryForObject("insert into knowledge.processing_policy(policy_code,policy_version,policy_fingerprint,disclosure_revision,effective_at) values('packaged-synthetic',1,?,'synthetic-1',clock_timestamp()-interval '1 minute') returning processing_policy_id",UUID.class,POLICY);
             acknowledge(browser);acknowledge(other);
@@ -163,6 +168,7 @@ public final class PackagedMultimediaSearchAcceptance {
             Files.writeString(report.resolve("search-demonstration.json"),JSON.writerWithDefaultPrettyPrinter().writeValueAsString(Map.ofEntries(
                 Map.entry("providerEvidence","controlled-real-sdk-not-live-gemini"),Map.entry("packagedApplication",true),Map.entry("scheduledProcessing",true),
                 Map.entry("matrix",matrix),Map.entry("observationOrder","Positive observations precede deliberate negative revocation scenarios; reports are not retained authorization."),
+                Map.entry("runtimeRoleRestricted",true),Map.entry("postgresVersion",app.getBean(JdbcTemplate.class).queryForObject("show server_version",String.class)),
                 Map.entry("uploads",uploads.stream().map(u->Map.of("fixture",u.fixture(),"noteId",u.note(),"attachmentId",u.attachment())).toList()),
                 Map.entry("queries",results),Map.entry("twoUserIsolation",true),Map.entry("aiOffRevocation",true),Map.entry("attachmentDeletion",true),Map.entry("sdkRequests",provider.requests.get()),
                 Map.entry("transientMediaFailuresRecovered",provider.transientFailures.get()),Map.entry("invalidProviderOutputDenied",true),Map.entry("providerOutageAndRecovery",true),Map.entry("sourceChangedDuringProcessing",true))));
@@ -178,6 +184,20 @@ public final class PackagedMultimediaSearchAcceptance {
         settings.put(prefix+"recovery-directory",journal.toString());settings.put(prefix+"artifact-identity",kind.equals("pdf")?ConfiguredMediaStorageFixtures.pdfIdentity(root):ConfiguredMediaStorageFixtures.videoIdentity(root));
         settings.put(prefix+"version",kind.equals("pdf")?"native-pdf-v1":"ffmpeg-9.0.2-profile-v1");
         if(kind.equals("video")){var scratch=Files.createDirectory(local.resolve("video-scratch"));Files.setPosixFilePermissions(scratch,java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));settings.put(prefix+"scratch-directory",scratch.toString());}
+    }
+    private static void prepareDatabase(PostgreSQLContainer database)throws Exception {
+        // External synthetic fixture provisioning, not application startup DDL.
+        org.flywaydb.core.Flyway.configure().dataSource(database.getJdbcUrl(),database.getUsername(),database.getPassword()).load().migrate();
+        try(var connection=java.sql.DriverManager.getConnection(database.getJdbcUrl(),database.getUsername(),database.getPassword());var sql=connection.createStatement()){
+            sql.execute("create role synthetic_runtime login password 'synthetic-runtime-password' nosuperuser nocreatedb nocreaterole noreplication");
+            sql.execute("revoke create on schema public from public");sql.execute("grant usage on schema public to synthetic_runtime");
+            sql.execute("grant select on public.flyway_schema_history to synthetic_runtime");
+            for(String schema:List.of("identity","profile","notes","knowledge","publishing","discovery","moderation")){
+                sql.execute("grant usage on schema "+schema+" to synthetic_runtime");
+                sql.execute("grant select,insert,update,delete on all tables in schema "+schema+" to synthetic_runtime");
+                sql.execute("grant usage,select on all sequences in schema "+schema+" to synthetic_runtime");
+            }
+        }
     }
     private void configure(String pdf,String video){
         var values=Map.ofEntries(Map.entry("enabled","true"),Map.entry("provider","gemini"),Map.entry("embedding-model","gemini-embedding-2"),Map.entry("media-model","gemini-3.8-flash"),Map.entry("model-revision","v1"),Map.entry("region","global"),Map.entry("tier","unpaid"),Map.entry("configuration-id","controlled-v1"),Map.entry("adapter-version","controlled-v1"),Map.entry("dimension","8"),Map.entry("operator","cosine"),Map.entry("normalization","none"),Map.entry("approved-policy-fingerprint",POLICY),Map.entry("pdf-page-children","true"),Map.entry("video-children","true"),Map.entry("pdf-transform-fingerprint",pdf),Map.entry("video-transform-fingerprint",video),Map.entry("dispatch-policy","unpaid-synthetic-demo"));
@@ -237,6 +257,7 @@ public final class PackagedMultimediaSearchAcceptance {
         var response=b.send("POST","/api/knowledge/query",JSON.writeValueAsBytes(Map.of("query",query)),Map.of("Content-Type","application/json"),null);
         if(response.statusCode()==200)return JSON.readTree(response.body());
         require(response.statusCode()==202,"query_acceptance");String location=response.headers().firstValue("Location").orElseThrow();require(location.startsWith("/api/knowledge/operations/"),"operation_location");
+        if(b==browser&&query.equals(QUERIES.get(7)))corpusOperation=location;
         long until=System.nanoTime()+Duration.ofMinutes(3).toNanos();while(System.nanoTime()<until){var view=b.get(location,200);String state=view.get("status").asText();if(state.equals("completed"))return view.get("result");require(!Set.of("failed","obsolete","cancelled").contains(state),"operation_"+state);Thread.sleep(200);}throw new AssertionError("operation_deadline");
     }
     private void verify(String query,JsonNode result){
@@ -263,6 +284,8 @@ public final class PackagedMultimediaSearchAcceptance {
         var target=uploads.get(0);String path="/api/notes/"+target.note()+"/attachments/"+target.attachment();
         other.get(path,404);var current=browser.send("GET",path,null,Map.of(),200);
         browser.send("DELETE",path,null,Map.of("If-Match",current.headers().firstValue("ETag").orElseThrow()),204);browser.get(path,404);
+        require(corpusOperation!=null,"semantic_operation_was_tracked");var revokedOperation=browser.get(corpusOperation,200);
+        require(revokedOperation.get("status").asText().equals("obsolete")&&revokedOperation.get("result").isNull(),"completed_operation_revalidates_before_exposure");
         require(query(browser,QUERIES.get(0)).get("citations").valueStream().noneMatch(c->c.get("attachmentId").asText().equals(target.attachment().toString())),"deleted_media_denied");
         var replacement=uploadBytes(target.note(),target.bytes(),target.type(),"replacement.png");
         String replacementId=JSON.readTree(replacement.body()).get("id").asText();require(!replacementId.equals(target.attachment().toString()),"replacement_identity");
@@ -276,6 +299,11 @@ public final class PackagedMultimediaSearchAcceptance {
         browser.send("GET",notePath+"/attachments/"+audio.attachment()+"/content",null,Map.of(),200);
         var mixed=uploads.get(3);String mixedPath="/api/notes/"+mixed.note();var before=browser.send("GET",mixedPath,null,Map.of(),200);
         browser.send("PUT",mixedPath,JSON.writeValueAsBytes(Map.of("title","Changed fictional context","markdown","Changed fictional source.")),Map.of("Content-Type","application/json","If-Match",before.headers().firstValue("ETag").orElseThrow()),200);
+        require(Arrays.equals(browser.send("GET",mixedPath+"/attachments/"+mixed.attachment()+"/content",null,Map.of(),200).body(),mixed.bytes()),"private_save_preserves_media_bytes");
+        // Preserve the existing conservative Save invalidation/fencing policy.
+        // The immutable Attachment remains stored; its ordinary reconciliation
+        // may rederive it before it is current/ready again. Do not race that work.
+        awaitReady(mixed);
         require(query(browser,QUERIES.get(1)).get("citations").valueStream().anyMatch(c->c.get("attachmentId").asText().equals(mixed.attachment().toString())),"private_save_preserves_unchanged_attachment");
         String textPath="/api/notes/"+textNote;var oldText=browser.send("GET",textPath,null,Map.of(),200);
         browser.send("PUT",textPath,JSON.writeValueAsBytes(Map.of("title","Changed private text","markdown","Different fictional context.")),Map.of("Content-Type","application/json","If-Match",oldText.headers().firstValue("ETag").orElseThrow()),200);
@@ -366,11 +394,12 @@ public final class PackagedMultimediaSearchAcceptance {
     }
     /** Frozen, byte-bound media outputs and explicit semantic-vector oracle.
      * Real SDK JSON/HTTP paths; never claim these descriptions came from Gemini. */
-    private static final class ControlledGemini implements AutoCloseable {
+    static final class ControlledGemini implements AutoCloseable {
         final HttpServer server;final Map<String,List<DerivedSegment>> media=new ConcurrentHashMap<>();
         final Set<String> failOnce=ConcurrentHashMap.newKeySet();
         final java.util.concurrent.atomic.AtomicInteger requests=new java.util.concurrent.atomic.AtomicInteger(),transientFailures=new java.util.concurrent.atomic.AtomicInteger();
         volatile String generationMode="normal";
+        volatile String failureCode="none";
         volatile String blockDigest;
         final java.util.concurrent.CountDownLatch blockEntered=new java.util.concurrent.CountDownLatch(1),blockRelease=new java.util.concurrent.CountDownLatch(1);
         ControlledGemini()throws Exception{
@@ -397,10 +426,10 @@ public final class PackagedMultimediaSearchAcceptance {
                             if(generationMode.equals("invalid")){claims.clear();claims.add(Map.of("text","Unsupported synthetic output","evidenceIds",List.of("foreign")));}
                             structured=Map.of("claims",claims,"conflicting",false);
                         }
-                        output=Map.of("candidates",List.of(Map.of("finishReason","STOP","content",Map.of("role","model","parts",List.of(Map.of("text",JSON.writeValueAsString(structured)))))));
+                        output=Map.of("modelVersion","gemini-3.8-flash","candidates",List.of(Map.of("finishReason","STOP","content",Map.of("role","model","parts",List.of(Map.of("text",JSON.writeValueAsString(structured)))))));
                     }
                     byte[] response=JSON.writeValueAsBytes(output);exchange.getResponseHeaders().set("Content-Type","application/json");exchange.sendResponseHeaders(200,response.length);exchange.getResponseBody().write(response);
-                }catch(Exception|AssertionError invalid){exchange.sendResponseHeaders(503,-1);}finally{exchange.close();}
+                }catch(Exception|AssertionError invalid){failureCode=invalid instanceof AssertionError&&invalid.getMessage()!=null&&invalid.getMessage().matches("[a-z_0-9]+")?invalid.getMessage():invalid.getClass().getSimpleName();exchange.sendResponseHeaders(503,-1);}finally{exchange.close();}
             });server.start();
         }
         void media(byte[] bytes,List<DerivedSegment> segments){media.put(TransformedMediaIdentity.digest(bytes)+"/"+segments.stream().map(DerivedSegment::page).filter(Objects::nonNull).findFirst().orElse(0),List.copyOf(segments));}
