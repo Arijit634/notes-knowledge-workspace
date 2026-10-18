@@ -28,9 +28,14 @@ docker run --rm --network none --user 0:0 --cap-drop ALL --cap-add CHOWN --read-
   -v "$report:/report" --entrypoint /bin/chown "$image" 65533:65533 /report
 group="$(stat -c '%g' /var/run/docker.sock)"
 [[ "$group" =~ ^[0-9]+$ ]]
+# Testcontainers' approved JNA transport needs to map its trusted JAR library.
+# Isolate that cache; /tmp and untrusted media custody remain noexec. This is
+# solely the external test controller, not a production/native-worker profile.
 docker run --rm --init --user 65533:65533 --group-add "$group" --cap-drop ALL --security-opt no-new-privileges --read-only \
   --memory=2g --cpus=2 --pids-limit=512 --tmpfs /tmp:rw,nosuid,nodev,size=512m \
+  --tmpfs /trusted-test-native:rw,exec,nosuid,nodev,size=4m,uid=65533,gid=65533,mode=0700 \
   --add-host host.docker.internal:host-gateway -v /var/run/docker.sock:/var/run/docker.sock -v "$report:/report" \
   -e TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal --entrypoint /jdk/bin/java "$image" -Xmx512m \
+  -Djna.tmpdir=/trusted-test-native \
   -Dloader.path=/qualification,/qualification/libraries -Dloader.main=org.notesknowledge.knowledge.PackagedMultimediaSearchAcceptance \
   -cp /application.jar org.springframework.boot.loader.launch.PropertiesLauncher /opt/pdf /opt/video /report/accepted
