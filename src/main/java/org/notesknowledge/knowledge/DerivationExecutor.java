@@ -36,7 +36,7 @@ class DerivationExecutor {
             var material=coordinated(claim,dispatches,permit->transactions.acquire(claim));
             budget.check();
             List<DerivedSegment> segments;
-            if(initial.source().modality().equals("note"))segments=new MarkdownChunker().chunk(material.markdown());
+            if(initial.source().modality().equals("note"))segments=noteSegments(material);
             else {
                 var understand=media.getIfAvailable();
                 long size=initial.source().sizeBytes();
@@ -221,6 +221,15 @@ class DerivationExecutor {
             throw new DerivationFailure(KnowledgeWork.Failure.TRANSIENT_DEPENDENCY);
         }
         return result;
+    }
+    static List<DerivedSegment> noteSegments(org.notesknowledge.knowledge.spi.PrivateDerivationSource.Material material) {
+        var segments=new MarkdownChunker().chunk(material.markdown());
+        if(!segments.isEmpty()||material.title()==null||material.title().isBlank())return segments;
+        // A saved Note has a nonblank title even when its body is empty. Keep
+        // this real source evidence instead of inventing body text or failing
+        // every corpus operation containing an otherwise valid media Note.
+        // 0..0 is a Note navigation anchor, NOT a fabricated Markdown span.
+        return List.of(DerivedSegment.note("Note title: "+material.title(),"Note title",0,0));
     }
     static void validateMedia(AiProcessingGate.SourceAiPermit permit,List<DerivedSegment> segments) {
         if(segments.isEmpty()||segments.size()>512)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);

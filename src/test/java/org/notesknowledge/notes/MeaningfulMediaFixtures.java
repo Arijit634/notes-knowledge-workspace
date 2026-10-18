@@ -19,10 +19,11 @@ public final class MeaningfulMediaFixtures {
     public static MockMultipartFile media(String kind) throws Exception {
         return switch(kind) {
             case "image" -> file("scene.png","image/png",png(scene()));
+            case "jpeg" -> file("scene.jpg","image/jpeg",jpeg(scene()));
             case "audio" -> file("aster.wav","audio/wav",speech());
             case "tones" -> file("synthetic-tones.wav","audio/wav",tones());
             case "video" -> file("scene.mp4","video/mp4",video());
-            case "pdf", "scan", "mixed", "unreadable" -> file("fictional.pdf","application/pdf",pdf(kind));
+            case "pdf", "scan", "mixed", "seven", "unreadable" -> file("fictional.pdf","application/pdf",pdf(kind));
             default -> throw new IllegalArgumentException("Unknown fictional fixture");
         };
     }
@@ -61,6 +62,7 @@ public final class MeaningfulMediaFixtures {
         } finally {g.dispose();}return image;
     }
     private static byte[] png(BufferedImage image)throws Exception {var out=new ByteArrayOutputStream();javax.imageio.ImageIO.write(image,"png",out);return out.toByteArray();}
+    private static byte[] jpeg(BufferedImage image)throws Exception {var out=new ByteArrayOutputStream();javax.imageio.ImageIO.write(image,"jpeg",out);return out.toByteArray();}
     /** Four seconds of public-safe generated tones; not a song/instrument/artist oracle. */
     private static byte[] tones() {
         int rate=8000,frames=rate*4,bytes=frames*2;
@@ -97,14 +99,14 @@ public final class MeaningfulMediaFixtures {
     }
     private static byte[] pdf(String kind)throws Exception {
         try(var pdf=new PDDocument();var out=new ByteArrayOutputStream()) {
-            int count=kind.equals("pdf")||kind.equals("mixed")?3:1;
+            int count=kind.equals("seven")?7:kind.equals("pdf")||kind.equals("mixed")?3:1;
             for(int n=1;n<=count;n++) {
                 var page=new PDPage();pdf.addPage(page);
                 try(var content=new PDPageContentStream(pdf,page)) {
                     if(kind.equals("scan")||kind.equals("mixed")&&n==3)content.drawImage(LosslessFactory.createFromImage(pdf,scene()),40,500,320,192);
                     else if(!kind.equals("unreadable")) {
                         content.beginText();content.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA),12);content.newLineAtOffset(40,700);
-                        content.showText(n==3?"The fictional archive opens at dawn; its door is violet.":"Fictional archive ledger page "+n+": ordinary supplies and inventory.");content.endText();
+                        content.showText(n==7?"Page seven: the Aster invoice total is 730 credits. Payment is due 18 November.":n==3?"The fictional archive opens at dawn; its door is violet.":"Fictional archive ledger page "+n+": ordinary supplies and inventory.");content.endText();
                     }
                 }
             }

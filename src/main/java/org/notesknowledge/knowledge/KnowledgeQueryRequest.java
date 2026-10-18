@@ -34,7 +34,7 @@ record KnowledgeQueryRequest(String query,List<String> lifecycles,boolean dedupl
         return new KnowledgeQueryRequest(query,states,dedupe,occurrences);
     }
     Plan plan(){String q=query.toLowerCase(java.util.Locale.ROOT);
-        boolean all=q.matches("(?s).*\\b(all|every|list)\\b.*");
+        boolean all=q.matches("(?s).*\\b(all|every|everything|list)\\b.*");
         if(all&&q.matches("(?s).*\\b(urls?|links?)\\b.*"))return Plan.DETERMINISTIC_CORPUS;
         if(all)return Plan.SEMANTIC_CORPUS;
         if(q.matches("(?s).*\\b(what|which|when|who|password|login|budget|amount)\\b.*"))return Plan.FOCUSED;

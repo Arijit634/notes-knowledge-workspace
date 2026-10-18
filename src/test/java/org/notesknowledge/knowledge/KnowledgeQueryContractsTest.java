@@ -54,7 +54,7 @@ class KnowledgeQueryContractsTest {
     }
     @Test void routingIsServerOwnedAndArbitrarySemanticCategoriesAreNotHardcoded(){
         assertThat(KnowledgeQueryRequest.parse(Map.of("query","show every link I saved")).plan()).isEqualTo(KnowledgeQueryRequest.Plan.DETERMINISTIC_CORPUS);
-        for(String q:List.of("list all cities I visited","every book I mentioned","list films to watch","all recipes for dinner"))assertThat(KnowledgeQueryRequest.parse(Map.of("query",q)).plan()).isEqualTo(KnowledgeQueryRequest.Plan.SEMANTIC_CORPUS);
+        for(String q:List.of("list all cities I visited","every book I mentioned","list films to watch","all recipes for dinner","find everything about the project deadline"))assertThat(KnowledgeQueryRequest.parse(Map.of("query",q)).plan()).isEqualTo(KnowledgeQueryRequest.Plan.SEMANTIC_CORPUS);
         assertThat(KnowledgeQueryRequest.parse(Map.of("query","what was my PlayStation password")).plan()).isEqualTo(KnowledgeQueryRequest.Plan.FOCUSED);
         assertThat(KnowledgeQueryRequest.parse(Map.of("query","find Kyoto hotel")).plan()).isEqualTo(KnowledgeQueryRequest.Plan.RANKED);
     }
@@ -66,5 +66,49 @@ class KnowledgeQueryContractsTest {
         assertThatThrownBy(()->KnowledgeQueryEngine.validate(new StructuredKnowledgePort.Output(List.of(new StructuredKnowledgePort.Claim("Unsupported",List.of())),false),1)).isInstanceOf(DerivationFailure.class);
         assertThatThrownBy(()->KnowledgeQueryEngine.validate(new StructuredKnowledgePort.Output(List.of(new StructuredKnowledgePort.Claim("Invented alias",List.of("e00"))),false),1)).isInstanceOf(DerivationFailure.class);
         KnowledgeQueryEngine.validate(new StructuredKnowledgePort.Output(List.of(new StructuredKnowledgePort.Claim("Supported",List.of("e0"))),false),1);
+    }
+    @Test void equalMediaTextAtDifferentLocationsIsNotDuplicateEvidence(){
+        for(var pair:List.of(
+                List.of(mediaSegment("pdf_text",1,null,null,null),mediaSegment("pdf_text",7,null,null,null)),
+                List.of(mediaSegment("transcript",null,0.,1.,null),mediaSegment("transcript",null,25.,26.,null)),
+                List.of(mediaSegment("video_scene",null,0.,1.,null),mediaSegment("video_scene",null,25.,26.,null)),
+                List.of(mediaSegment("image_region",null,null,null,.1),mediaSegment("image_region",null,null,null,.6)))){
+            var first=evidence(UUID.fromString("01999000-0000-7000-8000-000000000003"),pair.get(0));
+            var second=evidence(UUID.fromString("01999000-0000-7000-8000-000000000004"),pair.get(1));
+            assertThat(KnowledgeQueryEngine.overlaps(first,second)).as("distinct location keeps its citation").isFalse();
+            assertThat(KnowledgeQueryEngine.overlaps(first,evidence(second.segmentId(),pair.get(0)))).isTrue();
+            assertThat(KnowledgeQueryEngine.overlaps(first,first)).isTrue();
+        }
+    }
+    @Test void generationEvidenceCarriesTypedLocationsWithoutPrivateIdentifiers(){
+        var segment=mediaSegment("pdf_text",7,null,null,null);
+        var payload=new StructuredKnowledgePort.Evidence("e0",segment.text(),"pdf",KnowledgeQueryEngine.location(segment));
+        var serialized=new tools.jackson.databind.ObjectMapper().writeValueAsString(payload);
+        assertThat(serialized).contains("\"page\":7","\"id\":\"e0\"").doesNotContain(OWNER.toString(),WORK.toString(),"owner","attachmentId","noteId");
+        assertThat(payload.toString()).doesNotContain(segment.text(),"7");
+    }
+    private static DerivedSegment mediaSegment(String kind,Integer page,Double start,Double end,Double x){
+        return new DerivedSegment("Same fictional observation",kind,"",null,null,page,start,end,x,x==null?null:.1,x==null?null:.2,x==null?null:.2);
+    }
+    private static QueryEvidenceRepository.Evidence evidence(UUID segment,DerivedSegment value){
+        var expected=new org.notesknowledge.knowledge.spi.PrivateAiSourceCurrentness.Expected(OWNER,WORK,WORK,1,1,1L);
+        return new QueryEvidenceRepository.Evidence(segment,WORK,expected,"lineage","pdf",0,value);
+    }
+    @ParameterizedTest @ValueSource(strings={""," \n\t"})
+    void titleOnlyNoteProducesRealEvidenceWithoutInventingABodySpan(String body){
+        var segments=DerivationExecutor.noteSegments(material("Fictional media collection",body));
+        assertThat(segments).hasSize(1);var title=segments.getFirst();
+        assertThat(title.text()).isEqualTo("Note title: Fictional media collection");
+        assertThat(title.heading()).isEqualTo("Note title");assertThat(title.start()).isZero();assertThat(title.end()).isZero();
+    }
+    @Test void nonblankMarkdownRetainsItsExistingTextAndExactOffsets(){
+        String body="# Actual heading\nFictional body text";
+        assertThat(DerivationExecutor.noteSegments(material("Separate title",body))).isEqualTo(new MarkdownChunker().chunk(body));
+    }
+    private static org.notesknowledge.knowledge.spi.PrivateDerivationSource.Material material(String title,String body){
+        return new org.notesknowledge.knowledge.spi.PrivateDerivationSource.Material(){
+            public String title(){return title;}public String markdown(){return body;}
+            public java.io.InputStream open(){throw new AssertionError("not_media");}
+        };
     }
 }

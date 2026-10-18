@@ -85,12 +85,18 @@ class KnowledgeQueryEngine {
         Generated answer=selected.isEmpty()?empty(List.of(),degraded,degraded==null&&request.plan()==KnowledgeQueryRequest.Plan.FOCUSED):generate(owner,request.query(),"answer",selected,()->true);
         var r=answer.result();return new Generated(new KnowledgeQueryResult(deterministic,r.aiAnswer(),r.citations(),new KnowledgeQueryResult.Coverage("bounded",sourceMap.size(),false,false,false,false,false),degraded!=null?degraded:r.degraded(),r.insufficientEvidence()),answer.provenance(),answer.lineages());
     }
-    private static boolean overlaps(QueryEvidenceRepository.Evidence a,QueryEvidenceRepository.Evidence b) {
+    static boolean overlaps(QueryEvidenceRepository.Evidence a,QueryEvidenceRepository.Evidence b) {
         if(a.segmentId().equals(b.segmentId()))return true;
         if(!a.representationId().equals(b.representationId()))return false;
         var x=a.segment();var y=b.segment();
-        if(x.text().equals(y.text()))return true;
         if(!x.kind().equals(y.kind())||!java.util.Objects.equals(x.page(),y.page()))return false;
+        // Equal words at different pages/times/regions are separate occurrences,
+        // not duplicate context. Preserve their independently navigable evidence.
+        if(x.text().equals(y.text())&&java.util.Objects.equals(x.timeStart(),y.timeStart())
+                &&java.util.Objects.equals(x.timeEnd(),y.timeEnd())&&java.util.Objects.equals(x.x(),y.x())
+                &&java.util.Objects.equals(x.y(),y.y())&&java.util.Objects.equals(x.width(),y.width())
+                &&java.util.Objects.equals(x.height(),y.height())&&java.util.Objects.equals(x.start(),y.start())
+                &&java.util.Objects.equals(x.end(),y.end()))return true;
         if(x.start()!=null&&x.end()!=null&&y.start()!=null&&y.end()!=null) {
             int overlap=Math.min(x.end(),y.end())-Math.max(x.start(),y.start());
             return overlap>0&&overlap>=0.8*Math.min(x.end()-x.start(),y.end()-y.start());
@@ -122,7 +128,7 @@ class KnowledgeQueryEngine {
                 return gate.evidence(owner,query,provenance,handle);
             });
             int total=0;
-            for(int i=0;i<selected.size();i++){var e=selected.get(i);total+=e.segment().text().length();if(total>48000)throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);payload.add(new StructuredKnowledgePort.Evidence("e"+i,e.segment().text(),e.modality()));}
+            for(int i=0;i<selected.size();i++){var e=selected.get(i);total+=e.segment().text().length();if(total>48000)throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);payload.add(new StructuredKnowledgePort.Evidence("e"+i,e.segment().text(),e.modality(),location(e.segment())));}
             permit.requireDispatch();output=provider.generate(permit,query,task,payload);
             validate(output,payload.size());
         }catch(DerivationFailure failure){return empty(List.of(),safeReason(failure),false);}
@@ -146,7 +152,8 @@ class KnowledgeQueryEngine {
                 ||!id.equals("e"+Integer.parseInt(id.substring(1)))))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
     }
     static PrivateQuerySource.Source referenceOnly(PrivateQuerySource.Source s){return new PrivateQuerySource.Source(s.expected(),s.lifecycle(),s.aiEnabled(),s.modality(),s.createdAt(),"");}
-    static KnowledgeQueryResult.Citation citation(PrivateQuerySource.Source s,DerivedSegment d){var e=s.expected();return new KnowledgeQueryResult.Citation(e.noteId(),e.attachmentId(),d==null?null:new KnowledgeQueryResult.Location(d.kind(),d.start(),d.end(),d.page(),d.timeStart(),d.timeEnd(),d.x(),d.y(),d.width(),d.height()));}
+    static KnowledgeQueryResult.Location location(DerivedSegment d){return new KnowledgeQueryResult.Location(d.kind(),d.start(),d.end(),d.page(),d.timeStart(),d.timeEnd(),d.x(),d.y(),d.width(),d.height());}
+    static KnowledgeQueryResult.Citation citation(PrivateQuerySource.Source s,DerivedSegment d){var e=s.expected();return new KnowledgeQueryResult.Citation(e.noteId(),e.attachmentId(),d==null?null:location(d));}
     static Generated empty(List<KnowledgeQueryResult.DeterministicItem> deterministic,String degraded,boolean insufficient){return new Generated(new KnowledgeQueryResult(deterministic,null,List.of(),new KnowledgeQueryResult.Coverage("bounded",0,false,false,false,false,false),degraded,insufficient),List.of(),java.util.Map.of());}
     static String safeReason(DerivationFailure failure){return switch(failure.category){case POLICY_BLOCKED->"processingPolicyRequired";case INVALID_SOURCE->"sourceChanged";case INVALID_OUTPUT->"invalidProviderOutput";case LINEAGE_OBSOLETE->"representationUnavailable";case BUDGET_EXCEEDED->"budgetExceeded";default->"providerUnavailable";};}
 }

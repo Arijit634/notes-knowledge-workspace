@@ -91,6 +91,23 @@ class GoogleDerivationAdaptersTest {
         new GeminiTextEmbeddings(sdk,config("gemini-embedding-001"),false).embed(List.of("Synthetic"),()->{});
         assertThat(requests.getFirst()).contains("models/gemini-embedding-001","Synthetic").doesNotContain("title: none | text:");
     }
+    @Test @SuppressWarnings("unchecked")
+    void packagedAcceptanceTransportSpeaksTheRealEmbeddingAndMediaSdkContracts()throws Exception {
+        try(var controlled=new PackagedMultimediaSearchAcceptance.ControlledGemini();var ownClient=Client.builder().apiKey("synthetic-not-a-provider-key")
+                .httpOptions(HttpOptions.builder().baseUrl("http://127.0.0.1:"+controlled.server.getAddress().getPort()).timeout(10000)
+                    .retryOptions(HttpRetryOptions.builder().attempts(1).build()).build()).build()){
+            ObjectProvider<Client> ownClients=mock(ObjectProvider.class);when(ownClients.getIfAvailable()).thenReturn(ownClient);
+            var c=new AiDerivationProperties(true,false,"gemini","gemini-embedding-2","gemini-3.8-flash","synthetic-v1","global","unpaid","synthetic-qualification-v1","google-v2",8,"cosine","none","a".repeat(64));
+            var vector=adapters.googleTextEmbeddingPort(c,ownClients).embed(sourcePermit(),List.of("Aster fictional fact"));
+            assertThat(vector).hasSize(1);assertThat(vector.getFirst()).hasSize(8);
+            byte[] bytes={1,2,3};var segment=new DerivedSegment("Aster synthetic caption","whole_image","",null,null,null,null,null,null,null,null,null);
+            controlled.media(bytes,List.of(segment));
+            try {
+                assertThat(adapters.googleMediaUnderstandingPort(c,ownClients,json).describe(sourcePermit(),bytes,new MediaUnderstandingRequest("image/png",null,null,null))).containsExactly(segment);
+            }catch(DerivationFailure failure){throw new AssertionError("controlled_media_contract_"+failure.category+"_"+(failure.diagnostic==null?"none":failure.diagnostic.kind())+"_"+controlled.failureCode);}
+            assertThat(controlled.failureCode).isEqualTo("none");
+        }
+    }
     @Test void eachEmbeddingDispatchRevalidatesAndStopsBeforeTheNextRequest() {
         var calls=new AtomicInteger();
         assertThatThrownBy(()->new GeminiTextEmbeddings(sdk,config("gemini-embedding-2"),false).embed(List.of("First","Second"),()->{
@@ -115,8 +132,9 @@ class GoogleDerivationAdaptersTest {
     }
     @Test void structuredGenerationIsSchemaBoundWithoutCandidateOverrideToolsOrCache() {
         generated("{\"claims\":[{\"text\":\"The fictional observatory is on Luna.\",\"evidenceIds\":[\"e0\"]}],\"conflicting\":false}");
+        var location=new KnowledgeQueryResult.Location("pdf_text",null,null,7,null,null,null,null,null,null);
         var result=adapters.googleStructuredKnowledgePort(config("gemini-embedding-2"),clients,json).generate(evidence(),query,"answer",
-            List.of(new StructuredKnowledgePort.Evidence("e0","The fictional observatory is on Luna.","note")));
+            List.of(new StructuredKnowledgePort.Evidence("e0","The fictional observatory is on Luna.","pdf",location)));
         assertThat(result.claims()).hasSize(1);assertThat(result.claims().getFirst().evidenceIds()).containsExactly("e0");
         assertThat(requests).hasSize(1);
         var wire=json.readTree(requests.getFirst());
@@ -124,6 +142,11 @@ class GoogleDerivationAdaptersTest {
         assertThat(wire.get("generationConfig").get("responseMimeType").asText()).isEqualTo("application/json");
         assertThat(wire.get("generationConfig").has("responseJsonSchema")).isTrue();
         assertThat(wire.has("tools")).isFalse();assertThat(wire.has("cachedContent")).isFalse();
+        String instruction=wire.get("contents").get(0).get("parts").get(0).get("text").asText();
+        var supplied=json.readTree(instruction.substring(instruction.indexOf('{'))).get("evidence").get(0);
+        assertThat(supplied.get("location").get("page").asInt()).isEqualTo(7);
+        assertThat(supplied.get("location").get("kind").asText()).isEqualTo("pdf_text");
+        assertThat(instruction).doesNotContain(owner.toString(),note.toString());
     }
     @ParameterizedTest @ValueSource(strings={"MAX_TOKENS","SAFETY","RECITATION","OTHER","FINISH_REASON_UNSPECIFIED"})
     void validStructuredJsonWithoutSuccessfulCompletionNeverBecomesGroundedEvidence(String finishReason) {
@@ -350,10 +373,10 @@ class GoogleDerivationAdaptersTest {
             else assertThat(lineage.id()).isNotEqualTo(hash);
         }
     }
-    @Test void acousticPolicyChangesOnlyAudioAndKeepsOtherAcceptedLineagesPinned() {
+    @Test void audioAndTitlePoliciesKeepUnchangedMediaLineagesPinned() {
         var policy=new ProcessingPolicyService.AcknowledgedProcessingPolicy(new UUID(0,3),1,"a".repeat(64));
         var unchanged=Map.of(
-            "note","c3ddda5ed8a669c8c7be12bbd005dccf9ea0c396b3fb7178a6e101fb3c7d03fc",
+            "note","edb939d1d6a39709a1424e00daa33be2bc0a91f0d15e04a9c3eba0013ba18196",
             "image","0b9549107ca501e284fc534c778cc414c613f2d53b59fecd86a0fabf3e8e1828",
             "video","9d979bbc5cfb02c7cacd73e249ada34577b7dab3e4c0245340e8271b24285365",
             "pdf","06a016fe32a07221a67ba6e1332dff74c121345f3198e674948832e4dc4638df");

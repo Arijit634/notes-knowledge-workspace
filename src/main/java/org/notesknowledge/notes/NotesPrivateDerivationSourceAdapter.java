@@ -65,9 +65,9 @@ class NotesPrivateDerivationSourceAdapter implements PrivateDerivationSource {
     public Material acquire(PrivateAiSourceCurrentness.Expected e) {
         if(!current.matches(e))throw ApiFailureException.of(ApiFailureException.Kind.RESOURCE_NOT_FOUND);
         if(e.attachmentId()==null) {
-            String text=clients.getObject().sql("select markdown from notes.note where note_id=:note and owner_user_id=:owner")
-                .param("note",e.noteId()).param("owner",e.owner()).query(String.class).single();
-            return new Material() { public String markdown(){return text;} public InputStream open(){throw new IllegalStateException("Not media");} };
+            var text=clients.getObject().sql("select title,markdown from notes.note where note_id=:note and owner_user_id=:owner")
+                .param("note",e.noteId()).param("owner",e.owner()).query((r,i)->new String[]{r.getString(1),r.getString(2)}).single();
+            return new Material() { public String title(){return text[0];} public String markdown(){return text[1];} public InputStream open(){throw new IllegalStateException("Not media");} };
         }
         var descriptor=attachments.content(e.owner(),e.noteId(),e.attachmentId()).orElseThrow();
         var used=new AtomicBoolean();

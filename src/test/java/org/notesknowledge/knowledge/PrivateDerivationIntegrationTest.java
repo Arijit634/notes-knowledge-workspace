@@ -103,6 +103,18 @@ class PrivateDerivationIntegrationTest {
     }
     @AfterEach void clear(){SecurityContextHolder.clearContext();}
     @AfterAll static void closeNativePdfQualification(){org.notesknowledge.notes.PdfPageRuntimeFixtures.closeNativeQualification();}
+    @ParameterizedTest @ValueSource(strings={""," \n\t"})
+    void emptyBodyMediaNoteCanBecomeReadyAndRetrieveItsTitleAnchor(String body)throws Exception {
+        jdbc.update("update notes.note set title='Fictional media collection',markdown=? where note_id=?",body,note);
+        var attempt=claim(noteExpected(),"note");executor.execute(attempt);
+        assertThat(state(attempt)).isEqualTo("completed");assertThat(readyCount()).isEqualTo(1);
+        activate();var candidates=search.search(request(),"note",vector(),10);
+        assertThat(candidates).hasSize(1);var segment=candidates.getFirst().segment();
+        assertThat(segment.text()).isEqualTo("Note title: Fictional media collection");
+        assertThat(segment.start()).isZero();assertThat(segment.end()).isZero();
+        var response=mvc.perform(get("/api/notes/"+note+"/ai-processing").cookie(browser.cookie)).andExpect(status().isOk()).andReturn().getResponse();
+        assertThat(json.readTree(response.getContentAsString()).get("note").get("status").asText()).isEqualTo("ready");
+    }
     @AfterAll static void closeNativeVideoQualification()throws Exception{org.notesknowledge.notes.VideoClipRuntimeFixtures.closeNative();}
     @Test void longVideoClipsRequireIndependentApprovalsAndActivateOriginalTimeEvidence()throws Exception {
         var attempt=videoChildAttempt(true);var permits=new ArrayList<AiProcessingGate.SourceAiPermit>();
