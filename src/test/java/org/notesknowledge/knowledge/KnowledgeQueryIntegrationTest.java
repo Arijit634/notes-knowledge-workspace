@@ -155,11 +155,11 @@ class KnowledgeQueryIntegrationTest {
             default->new DerivedSegment("Kyoto repeated fact","image_region","",null,null,null,null,null,.1+i*.5,.1,.2,.2);
         });
         tx(()->{representations.activate(source.expected(),lineage,segments,List.of(vector(),vector()));return null;});
-        when(provider.generate(any(),any(),any(),any())).thenAnswer(call->{
+        doAnswer(call->{
             KnowledgeQueryGate.EvidencePermit permit=call.getArgument(0);permit.requireDispatch();assertOutsideTransaction();
             List<StructuredKnowledgePort.Evidence> supplied=call.getArgument(3);
             return new StructuredKnowledgePort.Output(supplied.stream().map(e->new StructuredKnowledgePort.Claim(e.text(),List.of(e.id()))).toList(),false);
-        });
+        }).when(provider).generate(any(),any(),any(),any());
         var result=json.readTree(query("what about Kyoto").andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
         assertThat(capturedEvidence()).hasSize(2).extracting(StructuredKnowledgePort.Evidence::location)
             .containsExactlyInAnyOrderElementsOf(segments.stream().map(KnowledgeQueryEngine::location).toList());

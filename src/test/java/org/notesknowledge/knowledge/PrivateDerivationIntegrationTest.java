@@ -104,7 +104,7 @@ class PrivateDerivationIntegrationTest {
     @AfterEach void clear(){SecurityContextHolder.clearContext();}
     @AfterAll static void closeNativePdfQualification(){org.notesknowledge.notes.PdfPageRuntimeFixtures.closeNativeQualification();}
     @ParameterizedTest @ValueSource(strings={""," \n\t"})
-    void emptyBodyMediaNoteCanBecomeReadyAndEnterCorpusTraversal(String body)throws Exception {
+    void emptyBodyMediaNoteCanBecomeReadyAndRetrieveItsTitleAnchor(String body)throws Exception {
         jdbc.update("update notes.note set title='Fictional media collection',markdown=? where note_id=?",body,note);
         var attempt=claim(noteExpected(),"note");executor.execute(attempt);
         assertThat(state(attempt)).isEqualTo("completed");assertThat(readyCount()).isEqualTo(1);

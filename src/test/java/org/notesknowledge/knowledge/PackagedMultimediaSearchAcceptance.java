@@ -54,6 +54,7 @@ public final class PackagedMultimediaSearchAcceptance {
     private final List<Map<String,Object>> results=new ArrayList<>();
     private UUID owner;
     private UUID policy;
+    private UUID textNote;
     private Browser browser,other;
     private ConfigurableApplicationContext app;
     private static javax.net.ssl.SSLContext browserTls;
@@ -105,7 +106,7 @@ public final class PackagedMultimediaSearchAcceptance {
             owner=jdbc.queryForObject("select user_id from identity.account where canonical_email='synthetic-media-owner@example.test'",UUID.class);
             policy=jdbc.queryForObject("insert into knowledge.processing_policy(policy_code,policy_version,policy_fingerprint,disclosure_revision,effective_at) values('packaged-synthetic',1,?,'synthetic-1',clock_timestamp()-interval '1 minute') returning processing_policy_id",UUID.class,POLICY);
             acknowledge(browser);acknowledge(other);
-            phase="upload";note("Aster text", "Aster project deadline is 18 November. https://example.test/aster");
+            phase="upload";textNote=note("Aster text", "Aster project deadline is 18 November. https://example.test/aster");
             for(String kind:List.of("image","pdf","scan","mixed","audio","tones","video-short","video-long","seven","jpeg"))upload(kind);
             phase="exact-synthetic-approvals";var approvals=new ArrayList<String>();var children=new ArrayList<String>();
             String pdfTransform,videoTransform;
@@ -179,10 +180,10 @@ public final class PackagedMultimediaSearchAcceptance {
         if(kind.equals("video")){var scratch=Files.createDirectory(local.resolve("video-scratch"));Files.setPosixFilePermissions(scratch,java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));settings.put(prefix+"scratch-directory",scratch.toString());}
     }
     private void configure(String pdf,String video){
-        var values=Map.ofEntries(Map.entry("enabled","true"),Map.entry("provider","gemini"),Map.entry("embedding-model","controlled-embedding"),Map.entry("media-model","controlled-media"),Map.entry("model-revision","v1"),Map.entry("region","global"),Map.entry("tier","unpaid"),Map.entry("configuration-id","controlled-v1"),Map.entry("adapter-version","controlled-v1"),Map.entry("dimension","8"),Map.entry("operator","cosine"),Map.entry("normalization","none"),Map.entry("approved-policy-fingerprint",POLICY),Map.entry("pdf-page-children","true"),Map.entry("video-children","true"),Map.entry("pdf-transform-fingerprint",pdf),Map.entry("video-transform-fingerprint",video),Map.entry("dispatch-policy","unpaid-synthetic-demo"));
+        var values=Map.ofEntries(Map.entry("enabled","true"),Map.entry("provider","gemini"),Map.entry("embedding-model","gemini-embedding-2"),Map.entry("media-model","gemini-3.8-flash"),Map.entry("model-revision","v1"),Map.entry("region","global"),Map.entry("tier","unpaid"),Map.entry("configuration-id","controlled-v1"),Map.entry("adapter-version","controlled-v1"),Map.entry("dimension","8"),Map.entry("operator","cosine"),Map.entry("normalization","none"),Map.entry("approved-policy-fingerprint",POLICY),Map.entry("pdf-page-children","true"),Map.entry("video-children","true"),Map.entry("pdf-transform-fingerprint",pdf),Map.entry("video-transform-fingerprint",video),Map.entry("dispatch-policy","unpaid-synthetic-demo"));
         values.forEach((k,v)->settings.put("knowledge.derivation."+k,v));
     }
-    private static AiDerivationProperties configuration(String pdf,String video){return new AiDerivationProperties(true,true,"gemini","controlled-embedding","controlled-media","v1","global","unpaid","controlled-v1","controlled-v1",8,"cosine","none",POLICY,true,pdf,true,video);}
+    private static AiDerivationProperties configuration(String pdf,String video){return new AiDerivationProperties(true,true,"gemini","gemini-embedding-2","gemini-3.8-flash","v1","global","unpaid","controlled-v1","controlled-v1",8,"cosine","none",POLICY,true,pdf,true,video);}
     private void start(){app=new SpringApplicationBuilder(Application.class,ConfiguredMediaStorageFixtures.class,ControlledRegistrationDelivery.class,ExternalServices.class).run(settings.entrySet().stream().map(e->"--"+e.getKey()+"="+e.getValue()).toArray(String[]::new));}
     private String origin(){return "https://localhost:"+app.getEnvironment().getProperty("local.server.port");}
     private void localTls(Path local)throws Exception {
@@ -275,7 +276,10 @@ public final class PackagedMultimediaSearchAcceptance {
         browser.send("GET",notePath+"/attachments/"+audio.attachment()+"/content",null,Map.of(),200);
         var mixed=uploads.get(3);String mixedPath="/api/notes/"+mixed.note();var before=browser.send("GET",mixedPath,null,Map.of(),200);
         browser.send("PUT",mixedPath,JSON.writeValueAsBytes(Map.of("title","Changed fictional context","markdown","Changed fictional source.")),Map.of("Content-Type","application/json","If-Match",before.headers().firstValue("ETag").orElseThrow()),200);
-        require(query(browser,QUERIES.get(1)).get("citations").valueStream().noneMatch(c->c.get("attachmentId").asText().equals(mixed.attachment().toString())),"source_change_invalidates_media");
+        require(query(browser,QUERIES.get(1)).get("citations").valueStream().anyMatch(c->c.get("attachmentId").asText().equals(mixed.attachment().toString())),"private_save_preserves_unchanged_attachment");
+        String textPath="/api/notes/"+textNote;var oldText=browser.send("GET",textPath,null,Map.of(),200);
+        browser.send("PUT",textPath,JSON.writeValueAsBytes(Map.of("title","Changed private text","markdown","Different fictional context.")),Map.of("Content-Type","application/json","If-Match",oldText.headers().firstValue("ETag").orElseThrow()),200);
+        require(query(browser,QUERIES.get(6)).get("citations").valueStream().noneMatch(c->c.get("noteId").asText().equals(textNote.toString())&&c.get("attachmentId").isNull()),"source_change_invalidates_note_text");
     }
     private void providerFailureAndRecovery()throws Exception{
         require(provider.transientFailures.get()==1,"transient_media_retry_observed");
@@ -299,9 +303,10 @@ public final class PackagedMultimediaSearchAcceptance {
         app.close();app=null;start();browser.origin=origin();other.origin=origin();
         try {
             require(provider.blockEntered.await(30,java.util.concurrent.TimeUnit.SECONDS),"processing_race_dispatch_entered");
-            var before=browser.send("GET","/api/notes/"+note,null,Map.of(),200);String etag=before.headers().firstValue("ETag").orElseThrow();
+            String path="/api/notes/"+note+"/attachments/"+attachment;
+            var before=browser.send("GET",path,null,Map.of(),200);String etag=before.headers().firstValue("ETag").orElseThrow();
             var save=java.util.concurrent.CompletableFuture.runAsync(()->{try{
-                browser.send("PUT","/api/notes/"+note,JSON.writeValueAsBytes(Map.of("title","Changed during processing","markdown","Changed fictional source.")),Map.of("Content-Type","application/json","If-Match",etag),200);
+                browser.send("DELETE",path,null,Map.of("If-Match",etag),204);
             }catch(Exception failure){throw new java.util.concurrent.CompletionException(failure);}});
             var jdbc=app.getBean(JdbcTemplate.class);
             int key=java.nio.ByteBuffer.wrap(java.security.MessageDigest.getInstance("SHA-256").digest(note.toString().getBytes(StandardCharsets.UTF_8))).getInt();
@@ -319,7 +324,7 @@ public final class PackagedMultimediaSearchAcceptance {
             }while(System.nanoTime()<deadline);
             require(state.equals("obsolete"),"processing_race_old_work_obsolete");
             require(jdbc.queryForObject("select count(*) from knowledge.private_derived_representation where owner_user_id=? and source_attachment_id=? and state='ready'",Integer.class,owner,attachment)==0,"processing_race_no_stale_activation");
-            browser.send("GET","/api/notes/"+note+"/attachments/"+attachment+"/content",null,Map.of(),200);
+            browser.get(path,404);browser.get(path+"/content",404);browser.get("/api/notes/"+note,200);
             require(query(browser,QUERIES.get(0)).get("citations").valueStream().noneMatch(c->c.get("attachmentId").asText().equals(attachment.toString())),"processing_race_no_stale_citation");
         }finally{provider.blockRelease.countDown();provider.blockDigest=null;}
     }
@@ -373,7 +378,7 @@ public final class PackagedMultimediaSearchAcceptance {
                 try{require(exchange.getRequestURI().getRawQuery()==null,"no_query_credentials");
                     byte[] input=exchange.getRequestBody().readNBytes(21*1024*1024);var payload=JSON.readTree(input);Arrays.fill(input,(byte)0);requests.incrementAndGet();
                     String path=exchange.getRequestURI().getPath();Object output;
-                    if(path.contains("embed")){
+                    if(path.endsWith(":embedContent")||path.endsWith(":batchEmbedContents")){
                         var rows=new ArrayList<Object>();var texts=payload.has("requests")?payload.get("requests"):JSON.valueToTree(List.of(payload));
                         for(var request:texts){String text=request.get("content").get("parts").get(0).get("text").asText();rows.add(Map.of("values",vector(text)));}
                         output=Map.of("embeddings",rows);

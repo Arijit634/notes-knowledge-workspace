@@ -356,10 +356,10 @@ class GoogleDerivationAdaptersTest {
             else assertThat(lineage.id()).isNotEqualTo(hash);
         }
     }
-    @Test void acousticPolicyChangesOnlyAudioAndKeepsOtherAcceptedLineagesPinned() {
+    @Test void audioAndTitlePoliciesKeepUnchangedMediaLineagesPinned() {
         var policy=new ProcessingPolicyService.AcknowledgedProcessingPolicy(new UUID(0,3),1,"a".repeat(64));
         var unchanged=Map.of(
-            "note","c3ddda5ed8a669c8c7be12bbd005dccf9ea0c396b3fb7178a6e101fb3c7d03fc",
+            "note","edb939d1d6a39709a1424e00daa33be2bc0a91f0d15e04a9c3eba0013ba18196",
             "image","0b9549107ca501e284fc534c778cc414c613f2d53b59fecd86a0fabf3e8e1828",
             "video","9d979bbc5cfb02c7cacd73e249ada34577b7dab3e4c0245340e8271b24285365",
             "pdf","06a016fe32a07221a67ba6e1332dff74c121345f3198e674948832e4dc4638df");
