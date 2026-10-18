@@ -21,7 +21,20 @@ jobs:
       - name: Package actual backend and controlled external transports
         id: package
         run: |
-          ./mvnw --batch-mode --no-transfer-progress '-Dtest=KnowledgeQueryContractsTest,GoogleDerivationAdaptersTest,DerivationConfigurationTest,PrivateDerivationIntegrationTest,KnowledgeQueryIntegrationTest#repeatedMediaFactsKeepTheirDistinctLocationsThroughGenerationAndHttp' package -q
+          result=0
+          ./mvnw --batch-mode --no-transfer-progress '-Dtest=KnowledgeQueryContractsTest,GoogleDerivationAdaptersTest,DerivationConfigurationTest,PrivateDerivationIntegrationTest,KnowledgeQueryIntegrationTest#repeatedMediaFactsKeepTheirDistinctLocationsThroughGenerationAndHttp' package -q > "$RUNNER_TEMP/multimedia-package.log" 2>&1 || result=$?
+          export PACKAGE_EXIT_STATUS="$result"
+          python3 - <<'PY'
+          import glob,json,os,pathlib,xml.etree.ElementTree as ET
+          totals=dict(tests=0,failures=0,errors=0,skipped=0); files=glob.glob('target/surefire-reports/TEST-*.xml'); failed=[]
+          for file in files:
+              root=ET.parse(file).getroot()
+              for key in totals: totals[key]+=int(root.attrib[key])
+              if int(root.attrib['failures'])+int(root.attrib['errors']): failed.append(root.attrib['name'])
+          result=dict(head=os.environ['GITHUB_SHA'],exitStatus=int(os.environ['PACKAGE_EXIT_STATUS']),classes=len(files),failedClasses=failed,**totals)
+          pathlib.Path(os.environ['RUNNER_TEMP'],'multimedia-package-verification.json').write_text(json.dumps(result,indent=2)); print(json.dumps(result))
+          PY
+          if [ "$result" -ne 0 ]; then exit "$result"; fi
           ./mvnw --batch-mode --no-transfer-progress dependency:build-classpath -DincludeScope=test -Dmdep.outputFile=target/qualification-classpath.txt -q
       - name: Demonstrate scheduled ingestion and HTTP search using the production JAR
         id: acceptance
@@ -56,5 +69,6 @@ jobs:
           path: |
             ${{ runner.temp }}/multimedia-search-report/accepted/search-demonstration.json
             ${{ runner.temp }}/multimedia-backend-verification.json
+            ${{ runner.temp }}/multimedia-package-verification.json
           if-no-files-found: warn
           retention-days: 3

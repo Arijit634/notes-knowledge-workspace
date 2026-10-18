@@ -96,7 +96,7 @@ public final class PackagedMultimediaSearchAcceptance {
             settings.put("identity.rate.key-base64",KEY);settings.put("identity.delivery.key-base64",KEY);settings.put("identity.delivery.public-origin","https://example.test");
             settings.put("notes.cursor.active.version","test1");settings.put("notes.cursor.active.key-base64",KEY);
             settings.put("knowledge.operations.handle.key-base64",KEY);settings.put("knowledge.operations.envelope.key-base64",KEY);
-            settings.put("synthetic.media-store",local.resolve("objects").toString());settings.put("knowledge.processing-policy.code","packaged-synthetic");
+            settings.put("synthetic.media-store",Files.createDirectory(local.resolve("objects")).toString());settings.put("knowledge.processing-policy.code","packaged-synthetic");
             settings.put("knowledge.derivation.enabled","false");settings.put("knowledge.derivation.scheduling-enabled","false");
             settings.put("knowledge.operations.scheduling-enabled","false");settings.put("identity.delivery.polling-enabled","false");
             settings.put("identity.delivery.smtp-enabled","false");settings.put("identity.oidc.google.enabled","false");
@@ -107,7 +107,7 @@ public final class PackagedMultimediaSearchAcceptance {
             policy=jdbc.queryForObject("insert into knowledge.processing_policy(policy_code,policy_version,policy_fingerprint,disclosure_revision,effective_at) values('packaged-synthetic',1,?,'synthetic-1',clock_timestamp()-interval '1 minute') returning processing_policy_id",UUID.class,POLICY);
             acknowledge(browser);acknowledge(other);
             phase="upload";textNote=note("Aster text", "Aster project deadline is 18 November. https://example.test/aster");
-            for(String kind:List.of("image","pdf","scan","mixed","audio","tones","video-short","video-long","seven","jpeg"))upload(kind);
+            for(String kind:List.of("image","pdf","scan","mixed","audio","tones","video-short","video-long","seven","jpeg")){phase="upload-"+kind;upload(kind);}
             phase="exact-synthetic-approvals";var approvals=new ArrayList<String>();var children=new ArrayList<String>();
             String pdfTransform,videoTransform;
             try(var child=ConfiguredMediaStorageFixtures.page(app,uploads.get(1).bytes(),1)){pdfTransform=child.transformFingerprint();}
