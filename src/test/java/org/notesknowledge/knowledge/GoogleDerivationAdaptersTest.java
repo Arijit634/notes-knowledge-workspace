@@ -115,8 +115,9 @@ class GoogleDerivationAdaptersTest {
     }
     @Test void structuredGenerationIsSchemaBoundWithoutCandidateOverrideToolsOrCache() {
         generated("{\"claims\":[{\"text\":\"The fictional observatory is on Luna.\",\"evidenceIds\":[\"e0\"]}],\"conflicting\":false}");
+        var location=new KnowledgeQueryResult.Location("pdf_text",null,null,7,null,null,null,null,null,null);
         var result=adapters.googleStructuredKnowledgePort(config("gemini-embedding-2"),clients,json).generate(evidence(),query,"answer",
-            List.of(new StructuredKnowledgePort.Evidence("e0","The fictional observatory is on Luna.","note")));
+            List.of(new StructuredKnowledgePort.Evidence("e0","The fictional observatory is on Luna.","pdf",location)));
         assertThat(result.claims()).hasSize(1);assertThat(result.claims().getFirst().evidenceIds()).containsExactly("e0");
         assertThat(requests).hasSize(1);
         var wire=json.readTree(requests.getFirst());
@@ -124,6 +125,11 @@ class GoogleDerivationAdaptersTest {
         assertThat(wire.get("generationConfig").get("responseMimeType").asText()).isEqualTo("application/json");
         assertThat(wire.get("generationConfig").has("responseJsonSchema")).isTrue();
         assertThat(wire.has("tools")).isFalse();assertThat(wire.has("cachedContent")).isFalse();
+        String instruction=wire.get("contents").get(0).get("parts").get(0).get("text").asText();
+        var supplied=json.readTree(instruction.substring(instruction.indexOf('{'))).get("evidence").get(0);
+        assertThat(supplied.get("location").get("page").asInt()).isEqualTo(7);
+        assertThat(supplied.get("location").get("kind").asText()).isEqualTo("pdf_text");
+        assertThat(instruction).doesNotContain(owner.toString(),note.toString());
     }
     @ParameterizedTest @ValueSource(strings={"MAX_TOKENS","SAFETY","RECITATION","OTHER","FINISH_REASON_UNSPECIFIED"})
     void validStructuredJsonWithoutSuccessfulCompletionNeverBecomesGroundedEvidence(String finishReason) {

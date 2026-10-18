@@ -143,6 +143,32 @@ class KnowledgeQueryIntegrationTest {
         deriveChunks(List.of(DerivedSegment.note("Kyoto supported overlapping evidence one","",0,100),DerivedSegment.note("Kyoto supported overlapping evidence two","",5,105)),List.of(vector(),vector()));
         query("find Kyoto").andExpect(status().isOk());assertThat(capturedEvidence()).hasSize(1);
     }
+    @ParameterizedTest @ValueSource(strings={"pdf","audio","video","image"})
+    void repeatedMediaFactsKeepTheirDistinctLocationsThroughGenerationAndHttp(String modality)throws Exception {
+        UUID attachment=upload(modality);var source=sources.source(owner,note,attachment);
+        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,"a".repeat(64)),modality);
+        var segments=new ArrayList<DerivedSegment>();
+        for(int i=0;i<2;i++)segments.add(switch(modality){
+            case "pdf"->new DerivedSegment("Kyoto repeated fact","pdf_text","",null,null,i+1,null,null,null,null,null,null);
+            case "audio"->new DerivedSegment("Kyoto repeated fact","transcript","",null,null,null,(double)i,i+.5,null,null,null,null);
+            case "video"->new DerivedSegment("Kyoto repeated fact","video_scene","",null,null,null,(double)i,i+.5,null,null,null,null);
+            default->new DerivedSegment("Kyoto repeated fact","image_region","",null,null,null,null,null,.1+i*.5,.1,.2,.2);
+        });
+        tx(()->{representations.activate(source.expected(),lineage,segments,List.of(vector(),vector()));return null;});
+        when(provider.generate(any(),any(),any(),any())).thenAnswer(call->{
+            KnowledgeQueryGate.EvidencePermit permit=call.getArgument(0);permit.requireDispatch();assertOutsideTransaction();
+            List<StructuredKnowledgePort.Evidence> supplied=call.getArgument(3);
+            return new StructuredKnowledgePort.Output(supplied.stream().map(e->new StructuredKnowledgePort.Claim(e.text(),List.of(e.id()))).toList(),false);
+        });
+        var result=json.readTree(query("what about Kyoto").andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(capturedEvidence()).hasSize(2).extracting(StructuredKnowledgePort.Evidence::location)
+            .containsExactlyInAnyOrderElementsOf(segments.stream().map(KnowledgeQueryEngine::location).toList());
+        assertThat(result.get("citations").size()).isEqualTo(2);
+        for(var citation:result.get("citations")){
+            assertThat(citation.get("noteId").asText()).isEqualTo(note.toString());
+            assertThat(citation.get("attachmentId").asText()).isEqualTo(attachment.toString());
+        }
+    }
     @Test void noPositiveSemanticAffinityKeepsDeterministicResultsWithoutDumpingEvidence() throws Exception {
         jdbc.update("update notes.note set title='Kyoto plans' where note_id=?",note);derive(note,"Unrelated synthetic marker",orthogonal());
         var result=json.readTree(query("what about Kyoto").andExpect(status().isOk()).andReturn().getResponse().getContentAsString());

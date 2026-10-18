@@ -4,7 +4,8 @@ import java.util.List;
 
 /** Capability-specific application contract; evidence IDs are ephemeral, never source authority. */
 interface StructuredKnowledgePort {
-    record Evidence(String id,String text,String modality) {
+    record Evidence(String id,String text,String modality,KnowledgeQueryResult.Location location) {
+        Evidence(String id,String text,String modality){this(id,text,modality,null);}
         @Override public String toString(){return "ProviderEvidence[REDACTED]";}
     }
     record Claim(String text,List<String> evidenceIds) {
