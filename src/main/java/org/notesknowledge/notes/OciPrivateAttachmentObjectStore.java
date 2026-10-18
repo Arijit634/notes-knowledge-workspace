@@ -37,8 +37,11 @@ final class OciPrivateAttachmentObjectStore implements PrivateAttachmentObjectSt
     private final S3Client client;
     private final String bucket;
     private final Semaphore admission = new Semaphore(4);
+    private final org.notesknowledge.PublicStorageTelemetry telemetry;
+    private static final org.notesknowledge.PublicStorageTelemetry.ObjectClass KIND=org.notesknowledge.PublicStorageTelemetry.ObjectClass.PRIVATE_ATTACHMENT;
 
-    OciPrivateAttachmentObjectStore(S3Client client, String bucket) { this.client=client; this.bucket=bucket; }
+    OciPrivateAttachmentObjectStore(S3Client client,String bucket){this(client,bucket,null);}
+    OciPrivateAttachmentObjectStore(S3Client client,String bucket,org.notesknowledge.PublicStorageTelemetry telemetry){this.client=client;this.bucket=bucket;this.telemetry=telemetry;}
 
     static S3Client client(PrivateStorageProperties properties, AwsCredentialsProvider credentials, SdkHttpClient transport) {
         properties.requireConfigured();
@@ -58,6 +61,9 @@ final class OciPrivateAttachmentObjectStore implements PrivateAttachmentObjectSt
     }
 
     @Override public void write(String reference, InputStream source, long size) {
+        observe(org.notesknowledge.PublicStorageTelemetry.Operation.WRITE,()->{writeBytes(reference,source,size);return null;});
+    }
+    private void writeBytes(String reference,InputStream source,long size){
         require(reference); if(source==null||size<1||size>MAX_BYTES)throw unavailable(); enter();
         java.nio.file.Path directory=null;
         try {
@@ -85,6 +91,9 @@ final class OciPrivateAttachmentObjectStore implements PrivateAttachmentObjectSt
     }
 
     @Override public InputStream openRange(String reference,long offset,long length) {
+        return telemetry==null?openBytes(reference,offset,length):telemetry.read(KIND,()->openBytes(reference,offset,length));
+    }
+    private InputStream openBytes(String reference,long offset,long length){
         require(reference);if(offset<0||length<1||offset>MAX_READ_BYTES-length||length>MAX_READ_BYTES)throw unavailable();enter();
         ResponseInputStream<GetObjectResponse> input=null;
         try {
@@ -120,6 +129,9 @@ final class OciPrivateAttachmentObjectStore implements PrivateAttachmentObjectSt
     }
 
     @Override public void delete(String reference) {
+        observe(org.notesknowledge.PublicStorageTelemetry.Operation.DELETE,()->{deleteBytes(reference);return null;});
+    }
+    private void deleteBytes(String reference){
         require(reference);enter();
         try{var response=client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(reference).build());
             if(response.sdkHttpResponse().statusCode()!=204)throw unavailable();}
@@ -131,6 +143,9 @@ final class OciPrivateAttachmentObjectStore implements PrivateAttachmentObjectSt
         return scanBefore(cutoff,after,limit).objects();
     }
     @Override public InventoryPage scanBefore(Instant cutoff,String after,int limit) {
+        return observe(org.notesknowledge.PublicStorageTelemetry.Operation.INVENTORY,()->scan(cutoff,after,limit));
+    }
+    private InventoryPage scan(Instant cutoff,String after,int limit){
         outside();if(cutoff==null||limit<1||limit>100)throw unavailable();if(after!=null)require(after);enter();
         try {
             var response=client.listObjectsV2(ListObjectsV2Request.builder().bucket(bucket).prefix(PREFIX).startAfter(after).maxKeys(limit).build());
@@ -145,6 +160,7 @@ final class OciPrivateAttachmentObjectStore implements PrivateAttachmentObjectSt
         }catch(RuntimeException failed){throw unavailable();}finally{admission.release();}
     }
     private void enter(){outside();if(!admission.tryAcquire())throw unavailable();}
+    private <T>T observe(org.notesknowledge.PublicStorageTelemetry.Operation op,java.util.function.Supplier<T> work){return telemetry==null?work.get():telemetry.observe(KIND,op,work);}
     private static void require(String reference){outside();if(reference==null||!reference.matches("private-attachment/[0-9a-f]{64}"))throw unavailable();}
     private static void outside(){if(TransactionSynchronizationManager.isActualTransactionActive())throw unavailable();}
     private static ApiFailureException unavailable(){return ApiFailureException.of(ApiFailureException.Kind.SERVICE_UNAVAILABLE);}

@@ -43,6 +43,8 @@ class KnowledgeOperationService {
     private final ObjectProvider<AccountEligibilityApi> accounts;
     private final ObjectProvider<PlatformTransactionManager> managers;
     private final io.micrometer.core.instrument.MeterRegistry metrics;
+    private RetrievalTelemetry telemetry;
+    @org.springframework.beans.factory.annotation.Autowired void telemetry(RetrievalTelemetry telemetry){this.telemetry=telemetry;}
     KnowledgeOperationService(KnowledgeOperationRepository repository,KnowledgeOperationMaterialCipher cipher,KnowledgeOperationHandleCodec handles,
         PrivateQuerySource sources,KnowledgeQueryEngine engine,KnowledgeQueryGate gate,ObjectMapper json,Clock clock,DatabaseUuidV7Generator ids,
         ObjectProvider<AccountEligibilityApi> accounts,ObjectProvider<PlatformTransactionManager> managers,io.micrometer.core.instrument.MeterRegistry metrics) {
@@ -167,7 +169,14 @@ class KnowledgeOperationService {
                     if(!repository.current(active)||!accounts.getObject().isEligible(active.owner())
                         ||finish&&!provenanceCurrent(active,finalCheckpoint))return repository.terminate(active,"obsolete");
                     if(finish&&!sources.fingerprint(active.owner(),next.boundary(),semantic).equals(finalFingerprint))return repository.terminate(active,"obsolete");
-                    return finish?repository.complete(active,json.writeValueAsString(next),envelope):repository.checkpoint(active,json.writeValueAsString(next),envelope);
+                    boolean committed=finish?repository.complete(active,json.writeValueAsString(next),envelope):repository.checkpoint(active,json.writeValueAsString(next),envelope);
+                    if(committed&&finish){
+                        org.notesknowledge.BackendTelemetry.afterCommit(metrics,org.notesknowledge.BackendTelemetry.Event.WORK,
+                            org.notesknowledge.BackendTelemetry.Operation.QUERY,org.notesknowledge.BackendTelemetry.Outcome.SUCCESS);
+                        if(telemetry!=null)org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                            new org.springframework.transaction.support.TransactionSynchronization(){@Override public void afterCommit(){telemetry.coverage(request.plan(),finalCheckpoint.result().coverage(),finalCheckpoint.result().degraded()!=null);}});
+                    }
+                    return committed;
                 });
                 if(!success||done)return;
                 row=tx(()->repository.owner(active.owner(),active.id()).orElseThrow());
@@ -176,10 +185,15 @@ class KnowledgeOperationService {
             var active=row;tx(()->repository.yield(active));
         } catch(DerivationFailure|ApiFailureException invalid) {
             var active=row;tx(()->repository.terminate(active,invalid instanceof DerivationFailure d&&d.category==KnowledgeWork.Failure.INVALID_SOURCE?"obsolete":"failed"));
-            metrics.counter("notes.workspace.knowledge.operation","outcome","unavailable").increment();
+            unavailableMetric("unavailable");
         } catch(tools.jackson.core.JacksonException invalid) {
-            var active=row;tx(()->repository.terminate(active,"failed"));metrics.counter("notes.workspace.knowledge.operation","outcome","invalidMaterial").increment();
+            var active=row;tx(()->repository.terminate(active,"failed"));unavailableMetric("invalidMaterial");
         }
+    }
+    private void unavailableMetric(String outcome){
+        try{metrics.counter("notes.workspace.knowledge.operation","outcome",outcome).increment();}catch(RuntimeException unavailable){/* diagnostic only */}
+        org.notesknowledge.BackendTelemetry.record(metrics,org.notesknowledge.BackendTelemetry.Event.WORK,org.notesknowledge.BackendTelemetry.Operation.QUERY,
+            org.notesknowledge.BackendTelemetry.Outcome.FAILED,0);
     }
     private boolean exposable(KnowledgeOperationRepository.Row row,KnowledgeQueryResult.Stored stored,Metadata metadata){
         return provenanceCurrent(row,stored)&&sources.fingerprint(row.owner(),metadata.boundary(),"semantic_corpus".equals(row.purpose())).equals(stored.fingerprint());

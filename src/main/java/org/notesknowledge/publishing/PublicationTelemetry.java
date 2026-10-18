@@ -17,12 +17,17 @@ class PublicationTelemetry {
     private void counter(Command command,String outcome){
         try{registry.counter("notes.workspace.publication.command","operation",command.name().toLowerCase(java.util.Locale.ROOT),"outcome",outcome).increment();}
         catch(RuntimeException failure){org.slf4j.LoggerFactory.getLogger(PublicationTelemetry.class).warn("publication_telemetry_deferred");}
+        org.notesknowledge.BackendTelemetry.record(null,org.notesknowledge.BackendTelemetry.Event.PUBLICATION,
+            org.notesknowledge.BackendTelemetry.Operation.valueOf(command.name()),
+            outcome.equals("committed")?org.notesknowledge.BackendTelemetry.Outcome.SUCCESS:org.notesknowledge.BackendTelemetry.Outcome.REJECTED,0);
     }
     void denialAfterCommit(Denial reason) {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization(){
             @Override public void afterCommit(){
                 try{registry.counter("notes.workspace.public.denial","reasonClass",reason.name().toLowerCase(java.util.Locale.ROOT),"outcome","denied").increment();}
                 catch(RuntimeException failure){org.slf4j.LoggerFactory.getLogger(PublicationTelemetry.class).warn("public_denial_telemetry_deferred");}
+                org.notesknowledge.BackendTelemetry.record(null,org.notesknowledge.BackendTelemetry.Event.DENIAL,
+                    org.notesknowledge.BackendTelemetry.Operation.LOGICAL_DENIAL,org.notesknowledge.BackendTelemetry.Outcome.SUCCESS,0);
             }
         });
     }

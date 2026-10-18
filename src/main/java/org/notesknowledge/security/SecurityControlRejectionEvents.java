@@ -19,17 +19,25 @@ public final class SecurityControlRejectionEvents {
     public enum SafeReasonClass { INVALID_CSRF, ACCESS_DENIED, THROTTLED, CONTROL_UNAVAILABLE }
 
     private final Clock clock;
+    private final io.micrometer.core.instrument.MeterRegistry meters;
     private final Instant[][] lastEmitted =
             new Instant[Control.values().length][SafeReasonClass.values().length];
 
     public SecurityControlRejectionEvents(Clock clock) {
+        this(clock,null);
+    }
+    @org.springframework.beans.factory.annotation.Autowired
+    public SecurityControlRejectionEvents(Clock clock,org.springframework.beans.factory.ObjectProvider<io.micrometer.core.instrument.MeterRegistry> registries) {
         this.clock = Objects.requireNonNull(clock);
+        this.meters=registries==null?null:registries.getIfAvailable();
     }
 
     /** At most one event per finite control/reason pair per second, including under concurrency. */
     public synchronized void rejected(Control control, SafeReasonClass reason) {
         Objects.requireNonNull(control);
         Objects.requireNonNull(reason);
+        try{if(meters!=null)meters.counter("notes.workspace.security.control_rejected","control",control.name().toLowerCase(java.util.Locale.ROOT),
+            "reasonClass",reason.name().toLowerCase(java.util.Locale.ROOT)).increment();}catch(RuntimeException unavailable){/* independent of enforcement */}
         Instant now = clock.instant();
         Instant prior = lastEmitted[control.ordinal()][reason.ordinal()];
         if (prior != null && now.isBefore(prior.plusSeconds(1))) {

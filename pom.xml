@@ -57,6 +57,11 @@
     </dependencyManagement>
 
     <dependencies>
+        <!-- Approved Actuator export plumbing; version remains Spring Boot-managed. -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>s3</artifactId>

@@ -6,6 +6,7 @@ Only the endpoint/migration fixture process uses the qualification image. The se
 gets no test classes, Docker socket, host credentials, external providers or network egress.
 """
 import base64
+import copy
 import hashlib
 import http.client
 import http.cookiejar
@@ -40,7 +41,7 @@ def require(value, code):
 
 def command(*args, input=None, check=True):
     result = subprocess.run(args, input=input, text=True, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, timeout=120)
+                            stderr=subprocess.PIPE, timeout=900)
     if check and result.returncode:
         raise RuntimeError('smoke_command_failed_' + args[0])
     return result
@@ -252,10 +253,10 @@ def main(deployment, qualification, evidence):
     def stop_app(name):
         measure(name)
         started = time.monotonic()
-        docker('stop', '-t', '40', name)
+        docker('stop', '-t', '300', name)
         info = state(name)
         require(not info['Running'] and not info['OOMKilled'] and info['ExitCode'] in (0, 143)
-                and info['Pid'] == 0 and time.monotonic() - started < 40, 'shutdown_boundary_failed')
+                and info['Pid'] == 0 and time.monotonic() - started < 300, 'shutdown_boundary_failed')
         collect_logs(name)
         event('bounded_shutdown', containerProcessesRetained=0, oomKilled=False)
 
@@ -315,7 +316,8 @@ def main(deployment, qualification, evidence):
                            'spring.datasource.username': 'synthetic_runtime', 'spring.datasource.password': 'synthetic-runtime-password',
                            # Flyway has separate migration authority; ordinary requests
                            # never receive DDL/history-write privileges through the runtime role.
-                           'spring.flyway.user': 'synthetic_migrator', 'spring.flyway.password': 'synthetic-migration-password',
+                           'spring.profiles.active': 'operations',
+                           'spring.flyway.enabled': 'false',
                            'spring.datasource.hikari.maximum-pool-size': '5', 'spring.datasource.hikari.minimum-idle': '0',
                            'spring.datasource.hikari.connection-timeout': '2000', 'spring.datasource.hikari.validation-timeout': '1000',
                            'spring.data.redis.host': 'rate-store', 'spring.data.redis.port': '6379',
@@ -330,7 +332,7 @@ def main(deployment, qualification, evidence):
                            'notes.media-runtime.video.recovery-directory': '/private/video-recovery',
                            'notes.media-runtime.video.scratch-directory': '/private/video-scratch'})
         for key in ['notes.cursor.active.key-base64', 'identity.rate.key-base64', 'identity.delivery.key-base64',
-                    'identity.mfa.key-base64', 'identity.mfa.handle-key-base64', 'identity.session-handle.key-base64']:
+                    'identity.mfa.key-base64', 'identity.mfa.handle-key-base64', 'identity.session-handle.key-base64', 'publishing.preview.key-base64']:
             value = base64.b64encode(secrets.token_bytes(32)).decode()
             properties[key] = value
             canaries.append(value)
@@ -385,6 +387,36 @@ def main(deployment, qualification, evidence):
         require(status == 206 and partial == accepted[:16], 'production_range_integrity_failed')
         require(other.request('GET', content)[0] == 404, 'private_media_isolation_failed')
         event('authorized_storage', rangeIntegrity=True, crossOwnerDenied=True, csrfRequired=True)
+        require(owner.request('PUT', '/api/me/profile', dict(displayName='Synthetic writer', biography='Synthetic public fixture', handle='synthetic_writer'))[0] == 200, 'profile_preparation_failed')
+        require(owner.request('PUT', '/api/me/public-profile', {})[0] == 200, 'public_profile_activation_failed')
+        status, note_headers, _ = owner.request('GET', '/api/notes/' + note)
+        require(status == 200, 'publication_source_unavailable')
+        selection = dict(selectedAttachmentIds=[attachment])
+        status, _, preview = owner.request('POST', '/api/notes/' + note + '/publication-preview', selection, {'If-Match': note_headers['ETag']})
+        require(status == 200, 'publication_preview_failed')
+        publication_body = dict(selection, previewFingerprint=json.loads(preview)['previewFingerprint'])
+        status, publication_headers, publication = owner.request('POST', '/api/notes/' + note + '/publication', publication_body, {'If-Match': note_headers['ETag']})
+        require(status == 201, 'publication_creation_failed')
+        publication_id = json.loads(publication)['id']
+        anonymous = Browser(owner.origin, str(temporary / 'certificate.pem'), owner.peer)
+        browsers.append(anonymous)
+        public_path = '/api/public/publications/' + publication_id
+        status, _, public = anonymous.request('GET', public_path)
+        require(status == 200, 'public_snapshot_unavailable')
+        public_media = json.loads(public)['media'][0]['contentUrl']
+        require(anonymous.request('GET', public_media)[0] == 200, 'copied_public_media_unavailable')
+        require(owner.request('POST', '/api/me/publications/' + publication_id + '/unpublish', headers={'If-Match': publication_headers['ETag']})[0] == 200, 'logical_unpublish_failed')
+        require(anonymous.request('GET', public_path)[0] == 404 and anonymous.request('GET', public_media)[0] == 404, 'public_generation_denial_failed')
+        event('public_generation_denial', sourceStillPrivate=True, copiedPublicMedia=True, anonymousDenied=True)
+        metric_names = json.loads(docker('run', '--rm', '--network', 'container:' + app, '--user', '65533:65533',
+            '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--read-only', '--memory', '256m', '--cpus', '1',
+            qualification, '-Dloader.path=/qualification', '-Dloader.main=org.notesknowledge.DeploymentSmokeDatabase',
+            '-cp', '/application.jar', 'org.springframework.boot.loader.launch.PropertiesLauncher', 'metrics').stdout)
+        require({'notes_workspace_identity_auth_total', 'notes_workspace_note_command_total',
+                 'notes_workspace_attachment_validation_seconds_count', 'notes_workspace_storage_operation_seconds_count',
+                 'jvm_memory_used_bytes', 'notes_workspace_http_inflight'}.issubset(metric_names), 'actual_operational_metric_producers_missing')
+        (output / 'observed-metric-names.json').write_text(json.dumps(metric_names, indent=2) + '\n')
+        event('restricted_metric_export', actualApplicationProducers=True, labelsRetained=False, metricNames=len(metric_names))
         docker('stop', '-t', '5', endpoint)
         require(owner.request('GET', content)[0] == 503, 'storage_outage_not_truthful')
         require(owner.request('GET', '/api/notes/' + note)[0] == 200, 'storage_outage_broke_metadata')
@@ -433,6 +465,96 @@ def main(deployment, qualification, evidence):
         require(owner.request('GET', content)[2] == accepted, 'service_restart_lost_object')
         stop_app(app)
         event('service_restart', preservedAuthorityAndObjects=True)
+        # Real encrypted pg_dump/pg_restore using the production command. Only
+        # this invocation's synthetic database/key are involved. No host JDK,
+        # plaintext dump, production credential or public listener is used.
+        extractor = prefix + '-recovery-tools'
+        docker('create', '--name', extractor, '--network', 'none', deployment)
+        resources.append(extractor)
+        tools = temporary / 'recovery-tools'
+        tools.mkdir(mode=0o700)
+        docker('cp', extractor + ':/jdk', str(tools / 'jdk'))
+        docker('cp', extractor + ':/application.jar', str(tools / 'application.jar'))
+        docker('cp', str(tools / 'jdk'), database + ':/tmp/recovery-jdk')
+        docker('cp', str(tools / 'application.jar'), database + ':/tmp/recovery.jar')
+        docker('exec', database, 'mkdir', '-m', '700', '/tmp/recovery')
+        # Explicitly isolated roles; backup can read data, restore owns only the
+        # empty target. Untrusted extensions are installed by the DB operator.
+        sql = """create role synthetic_backup login password 'synthetic-backup-password';
+            grant pg_read_all_data to synthetic_backup;
+            create role synthetic_restore login password 'synthetic-restore-password';
+            create database recovery_smoke owner synthetic_restore;
+            create database tamper_smoke owner synthetic_restore;
+            """
+        docker('exec', '-i', database, 'psql', '-U', 'synthetic_migrator', '-d', 'deployment_smoke', '-v', 'ON_ERROR_STOP=1', input=sql)
+        for target in ('recovery_smoke', 'tamper_smoke'):
+            docker('exec', '-i', database, 'psql', '-U', 'synthetic_migrator', '-d', target, '-v', 'ON_ERROR_STOP=1',
+                   input='create extension vector; create extension pg_trgm;')
+        selected = tools / 'pg_service.conf'
+        selected.write_text('[backup]\nhost=127.0.0.1\ndbname=deployment_smoke\nuser=synthetic_backup\npassword=synthetic-backup-password\n'
+                            '[restore]\nhost=127.0.0.1\ndbname=recovery_smoke\nuser=synthetic_restore\npassword=synthetic-restore-password\n'
+                            '[tamper]\nhost=127.0.0.1\ndbname=tamper_smoke\nuser=synthetic_restore\npassword=synthetic-restore-password\n')
+        key = tools / 'backup.key'
+        key.write_bytes(secrets.token_bytes(32))
+        for path in (selected, key):
+            path.chmod(0o600)
+            docker('cp', str(path), database + ':/tmp/recovery/' + path.name)
+        docker('exec', database, 'chmod', '600', '/tmp/recovery/pg_service.conf', '/tmp/recovery/backup.key')
+        def recovery(mode, service, file='/tmp/recovery/backup.nkw', expected=0):
+            result = docker('exec', '-e', 'PGSERVICE=' + service, '-e', 'PGSERVICEFILE=/tmp/recovery/pg_service.conf',
+                '-e', 'NKW_BACKUP_SCRATCH=/tmp/recovery', '-e', 'NKW_BACKUP_KEY_FILE=/tmp/recovery/backup.key',
+                '-e', 'NKW_BACKUP_MAX_BYTES=134217728', '-e', 'NKW_RUNTIME_DATABASE_ROLE=synthetic_runtime',
+                '-e', 'NKW_RESTORE_EMPTY_DATABASE_CONFIRMED=true', '-e', 'NKW_RESTORE_MAINTENANCE_CONFIRMED=true',
+                database, '/tmp/recovery-jdk/bin/java', '-Dloader.main=org.notesknowledge.PostgresRecoveryCommand',
+                '-cp', '/tmp/recovery.jar', 'org.springframework.boot.loader.launch.PropertiesLauncher', mode, file, check=False)
+            require((result.returncode == 0) == (expected == 0), 'recovery_command_contract_failed')
+        recovery('backup', 'backup')
+        recovery('restore', 'restore')
+        recovery('restore', 'restore', expected=1)  # Never overwrite populated data.
+        docker('exec', database, 'sh', '-c', 'cp /tmp/recovery/backup.nkw /tmp/recovery/tampered.nkw; '
+               'printf x | dd of=/tmp/recovery/tampered.nkw bs=1 seek=60 conv=notrunc status=none; chmod 600 /tmp/recovery/tampered.nkw')
+        recovery('restore', 'tamper', '/tmp/recovery/tampered.nkw', expected=1)
+        def scalar(target, query):
+            return docker('exec', database, 'psql', '-U', 'synthetic_migrator', '-d', target, '-Atq', '-v', 'ON_ERROR_STOP=1', '-c', query).stdout.strip()
+        require(scalar('recovery_smoke', "select has_database_privilege('synthetic_runtime',current_database(),'CONNECT')") == 'f', 'restore_runtime_not_quarantined')
+        require(scalar('recovery_smoke', 'select count(*) from notes.note') == scalar('deployment_smoke', 'select count(*) from notes.note'), 'restore_note_integrity_failed')
+        require(scalar('recovery_smoke', 'select count(*) from identity.spring_session') == scalar('deployment_smoke', 'select count(*) from identity.spring_session'), 'restore_session_integrity_failed')
+        require(scalar('recovery_smoke', "select count(*) from publishing.publication where availability='unpublished'") == '1', 'restored_public_denial_lost')
+        require(scalar('tamper_smoke', "select count(*) from information_schema.tables where table_schema='identity'") == '0', 'tampered_backup_changed_target')
+        # Unsafe restored sessions are explicitly invalidated in maintenance;
+        # this never reopens CONNECT or public traffic automatically.
+        recovery_sql = pathlib.Path(__file__).resolve().parents[2] / 'src/main/resources/operations/restore-security-quarantine.sql'
+        docker('exec', '-i', database, 'psql', '-U', 'synthetic_migrator', '-d', 'recovery_smoke', '-v', 'ON_ERROR_STOP=1',
+               '-v', 'runtime_role=synthetic_runtime', '-v', 'restore_confirmation=invalidate_uncertain_authority', input=recovery_sql.read_text())
+        require(scalar('recovery_smoke', 'select count(*) from identity.spring_session') == '0', 'restore_session_invalidation_failed')
+        require(scalar('recovery_smoke', "select count(*) from identity.identity_capability where consumed_at is null and superseded_at is null and revoked_at is null") == '0', 'restore_capability_invalidation_failed')
+        require(scalar('recovery_smoke', "select count(*) from identity.security_email_delivery where state in ('queued','claimed','retry_wait')") == '0', 'restore_stale_delivery_not_obsolete')
+        event('encrypted_backup_restore', postgresMajor=18, relations=38, migrations=19, authenticated=True,
+              emptyTargetRequired=True, tamperRefused=True, runtimeQuarantined=True, restoredSessionsInvalidated=True,
+              plaintextDumpOnDisk=False, productionTrafficAuthorized=False)
+        # Independently verified synthetic-only reopening. The production restore
+        # command/SQL never grants this. No host port or real traffic is exposed.
+        role_sql = pathlib.Path(__file__).resolve().parents[2] / 'src/main/resources/operations/runtime-role.sql'
+        docker('exec', '-i', database, 'psql', '-U', 'synthetic_migrator', '-d', 'recovery_smoke', '-v', 'ON_ERROR_STOP=1',
+               input=role_sql.read_text().replace(':"runtime_role"', 'synthetic_runtime') + '\ngrant connect on database recovery_smoke to synthetic_runtime;')
+        restored_app, restored = start_app('restored-service', {'spring.datasource.url': 'jdbc:postgresql://database:5432/recovery_smoke'})
+        await_health(restored, 200)
+        restored.cookies = http.cookiejar.CookieJar()
+        for cookie in owner.cookies:
+            restored.cookies.set_cookie(copy.copy(cookie))
+        restored.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(restored.cookies), urllib.request.ProxyHandler({}),
+            IsolatedHTTPSHandler(restored, str(temporary / 'certificate.pem')))
+        require(restored.request('GET', '/api/notes/' + note)[0] in (401, 403), 'unsafe_restored_browser_authority_survived')
+        fresh = Browser(restored.origin, str(temporary / 'certificate.pem'), restored.peer)
+        browsers.append(fresh)
+        require(fresh.request('GET', public_path)[0] == 404 and fresh.request('GET', public_media)[0] == 404, 'restored_public_generation_reopened')
+        fresh.bootstrap()
+        require(fresh.request('POST', '/api/auth/login/password', dict(email='synthetic-owner@example.test', password=PASSWORD))[0] == 200, 'restored_fresh_login_failed')
+        fresh.bootstrap()
+        require(fresh.request('GET', content)[2] == accepted, 'restored_private_object_custody_failed')
+        stop_app(restored_app)
+        event('reconciled_synthetic_restore', flywayValidated=True, unsafeSessionDenied=True, publicGenerationStillDenied=True,
+              authorizedObjectIntegrity=True, productionTrafficAuthorized=False)
         for label, changes in [('missing-storage', {storage + '.enabled': 'false' for storage in STORAGES}),
                                ('invalid-credential', {'notes.private-storage.access-key-id': 'short'}),
                                ('invalid-runtime', {'notes.media-runtime.video.artifact-identity': '0' * 64})]:

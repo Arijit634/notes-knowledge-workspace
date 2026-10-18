@@ -32,11 +32,16 @@ final class AttachmentMediaValidator implements AutoCloseable {
     static final int DIMENSION = 4096, PAGES = 100, SECONDS = 300;
     static final long PIXELS = 8_294_400;
     private AttachmentParserRuntime runtime;
+    private final io.micrometer.core.instrument.MeterRegistry meters;
+    AttachmentMediaValidator(){this(null);}
+    AttachmentMediaValidator(io.micrometer.core.instrument.MeterRegistry meters){this.meters=meters;}
 
     record Validated(String kind, String mediaType, long sizeBytes, Integer width, Integer height,
             Double durationSeconds, Integer pageCount) { }
 
     Validated validate(Path custody, String displayFilename, String declaredType) {
+        long started=System.nanoTime();var operation=org.notesknowledge.BackendTelemetry.Operation.UNKNOWN;
+        var outcome=org.notesknowledge.BackendTelemetry.Outcome.REJECTED;
         try {
             long length = Files.size(custody);
             if (length == 0) throw invalid();
@@ -46,22 +51,24 @@ final class AttachmentMediaValidator implements AutoCloseable {
             Validated validated;
             if (signature.length >= 8 && Arrays.equals(Arrays.copyOf(signature, 8),
                     new byte[]{(byte)137, 80, 78, 71, 13, 10, 26, 10})) {
-                bounded(length, IMAGE_BYTES); validated = image(custody, "png");
+                operation=org.notesknowledge.BackendTelemetry.Operation.IMAGE;bounded(length, IMAGE_BYTES); validated = image(custody, "png");
             } else if (signature.length >= 3 && signature[0] == (byte)255
                     && signature[1] == (byte)216 && signature[2] == (byte)255) {
-                bounded(length, IMAGE_BYTES); validated = image(custody, "jpeg");
+                operation=org.notesknowledge.BackendTelemetry.Operation.IMAGE;bounded(length, IMAGE_BYTES); validated = image(custody, "jpeg");
             } else if (signature.length >= 12 && ascii(signature, 0, 4).equals("RIFF")
                     && ascii(signature, 8, 4).equals("WAVE")) {
-                bounded(length, AUDIO_BYTES); validated = audio(custody, length);
+                operation=org.notesknowledge.BackendTelemetry.Operation.AUDIO;bounded(length, AUDIO_BYTES); validated = audio(custody, length);
             } else if (signature.length >= 5 && ascii(signature, 0, 5).equals("%PDF-")) {
-                bounded(length, PDF_BYTES); validated = pdf(custody, length);
+                operation=org.notesknowledge.BackendTelemetry.Operation.PDF;bounded(length, PDF_BYTES); validated = pdf(custody, length);
             } else if (signature.length >= 8 && ascii(signature, 4, 4).equals("ftyp")) {
-                validated = video(custody, length);
+                operation=org.notesknowledge.BackendTelemetry.Operation.VIDEO;validated = video(custody, length);
             } else throw ApiFailureException.of(ApiFailureException.Kind.UNSUPPORTED_MEDIA_TYPE);
             hints(validated.mediaType(), displayFilename, declaredType);
+            outcome=org.notesknowledge.BackendTelemetry.Outcome.SUCCESS;
             return validated;
         } catch (ApiFailureException failure) { throw failure; }
-        catch (IOException failure) { throw unavailable(); }
+        catch (IOException failure) {outcome=org.notesknowledge.BackendTelemetry.Outcome.UNAVAILABLE;throw unavailable();}
+        finally{org.notesknowledge.BackendTelemetry.record(meters,org.notesknowledge.BackendTelemetry.Event.VALIDATION,operation,outcome,System.nanoTime()-started);}
     }
 
     private Validated video(Path path, long size) {

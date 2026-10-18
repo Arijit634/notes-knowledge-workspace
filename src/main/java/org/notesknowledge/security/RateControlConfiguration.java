@@ -11,7 +11,7 @@ class RateControlConfiguration {
     @Bean
     @ConditionalOnMissingBean(RateControlService.class)
     RateControlService rateControlService(RateLimitPort port,
-            SecurityControlRejectionEvents events) {
-        return new RateControlService(port, events);
+            SecurityControlRejectionEvents events,io.micrometer.core.instrument.MeterRegistry meters) {
+        return new RateControlService(port, events,meters);
     }
 }

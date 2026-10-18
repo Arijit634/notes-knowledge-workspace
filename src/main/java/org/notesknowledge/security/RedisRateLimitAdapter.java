@@ -18,15 +18,28 @@ final class RedisRateLimitAdapter implements RateLimitPort {
     private final IdentityRateProperties properties;
     private final NotesRateProperties notes;
     private final DefaultRedisScript<String> script = new DefaultRedisScript<>(LUA, String.class);
+    private final io.micrometer.core.instrument.MeterRegistry meters;
 
     RedisRateLimitAdapter(StringRedisTemplate redis, IdentityRateProperties properties, NotesRateProperties notes) {
+        this(redis,properties,notes,null);
+    }
+    @org.springframework.beans.factory.annotation.Autowired
+    RedisRateLimitAdapter(StringRedisTemplate redis,IdentityRateProperties properties,NotesRateProperties notes,io.micrometer.core.instrument.MeterRegistry meters){
         this.redis = redis;
         this.properties = properties;
         this.notes = notes;
+        this.meters=meters;
     }
 
     @Override
     public Decision evaluate(Request request) {
+        long started=System.nanoTime();Decision result=null;
+        try{return result=evaluateRedis(request);}
+        finally{try{if(meters!=null)meters.timer("notes.workspace.redis.operation","operationClass","rate_control","outcome",
+            result==null||result instanceof ControlUnavailable?"unavailable":"success").record(System.nanoTime()-started,java.util.concurrent.TimeUnit.NANOSECONDS);}
+            catch(RuntimeException unavailable){/* diagnostic only */}}
+    }
+    private Decision evaluateRedis(Request request){
         // The bucket is server-owned, bounded, and never includes raw email, IP, token, or path.
         String control = request.controlClass().value();
         boolean noteControl = java.util.Set.of("REPORT","REPORT_NETWORK","REPORT_GLOBAL","MODERATION_READ","MODERATION_ACTION","MODERATION_GLOBAL","PUBLIC_READ","PUBLIC_SEARCH","PUBLIC_SEARCH_GLOBAL","PUBLIC_LIKE","PUBLIC_LIKE_NETWORK").contains(control) || "NOTE_AI_BULK".equals(control) || "NOTE_AI_BULK_GLOBAL".equals(control)

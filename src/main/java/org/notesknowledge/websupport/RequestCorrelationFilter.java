@@ -28,9 +28,23 @@ public final class RequestCorrelationFilter extends OncePerRequestFilter {
     private static final String UNKNOWN_ROUTE = "UNMATCHED";
 
     private final RequestTraceContext traceContext;
+    private final io.micrometer.core.instrument.MeterRegistry meters;
+    private final java.util.Map<String,java.util.concurrent.atomic.AtomicInteger> inflight=new java.util.HashMap<>();
 
     public RequestCorrelationFilter(RequestTraceContext traceContext) {
+        this(traceContext,null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public RequestCorrelationFilter(RequestTraceContext traceContext,
+            org.springframework.beans.factory.ObjectProvider<io.micrometer.core.instrument.MeterRegistry> registries) {
         this.traceContext = traceContext;
+        this.meters=registries==null?null:registries.getIfAvailable();
+        for(String module:java.util.List.of("identity","profile","notes","knowledge","publishing","discovery","moderation")){
+            var count=new java.util.concurrent.atomic.AtomicInteger();inflight.put(module,count);
+            try{if(meters!=null)io.micrometer.core.instrument.Gauge.builder("notes.workspace.http.inflight",count,java.util.concurrent.atomic.AtomicInteger::get)
+                .tag("module",module).register(meters);}catch(RuntimeException unavailable){/* diagnostic only */}
+        }
     }
 
     @Override
@@ -42,6 +56,7 @@ public final class RequestCorrelationFilter extends OncePerRequestFilter {
         String traceId = traceContext.establish(request);
         boolean failedBeforeResponse = false;
         MDC.put(RequestTraceContext.MDC_KEY, traceId);
+        var count=inflight.get(module(request.getRequestURI()));if(count!=null)count.incrementAndGet();
         try {
             filterChain.doFilter(request, response);
         } catch (ServletException | IOException | RuntimeException exception) {
@@ -51,6 +66,7 @@ public final class RequestCorrelationFilter extends OncePerRequestFilter {
             try {
                 logCompletion(request, response, traceId, startedAt, failedBeforeResponse);
             } finally {
+                if(count!=null)count.decrementAndGet();
                 MDC.remove(RequestTraceContext.MDC_KEY);
                 request.removeAttribute(RequestTraceContext.REQUEST_ATTRIBUTE);
                 request.removeAttribute(ResponseStreamInterruptedException.REQUEST_ATTRIBUTE);
@@ -80,6 +96,48 @@ public final class RequestCorrelationFilter extends OncePerRequestFilter {
                 .addKeyValue("durationMs", durationMs)
                 .addKeyValue("outcome", outcome)
                 .log("request.completed");
+        commandEvent(request,status,System.nanoTime()-startedAt);
+    }
+
+    private void commandEvent(HttpServletRequest request,int status,long nanos){
+        String route=resolvedRoute(request),method=safeMethod(request.getMethod());
+        boolean oidcCallback=method.equals("GET")&&route.contains("/oidc/google/callback");
+        if((method.equals("GET")||method.equals("HEAD"))&&!oidcCallback)return;
+        org.notesknowledge.BackendTelemetry.Event event=null;
+        org.notesknowledge.BackendTelemetry.Operation operation=null;
+        if(route.startsWith("/api/auth/")||route.startsWith("/api/me/security/")){
+            event=org.notesknowledge.BackendTelemetry.Event.AUTH;
+            operation=route.contains("/oidc/")?org.notesknowledge.BackendTelemetry.Operation.OIDC:
+                route.contains("/mfa/")?org.notesknowledge.BackendTelemetry.Operation.MFA:
+                route.contains("/reauth/")?org.notesknowledge.BackendTelemetry.Operation.RECENT_AUTH:
+                route.contains("password-reset")?org.notesknowledge.BackendTelemetry.Operation.RECOVERY:
+                route.contains("registrations")?org.notesknowledge.BackendTelemetry.Operation.REGISTRATION:
+                route.contains("email-verification")?org.notesknowledge.BackendTelemetry.Operation.VERIFICATION:
+                route.contains("login/password")?org.notesknowledge.BackendTelemetry.Operation.PASSWORD_LOGIN:
+                route.contains("logout")?org.notesknowledge.BackendTelemetry.Operation.LOGOUT:org.notesknowledge.BackendTelemetry.Operation.SECURITY_SETTINGS;
+        }else if((route.equals("/api/notes")||route.startsWith("/api/notes/{noteId}"))
+                &&!route.contains("attachments")&&!route.contains("publication")&&!route.endsWith("/related")&&!route.endsWith("/organization-suggestions")){
+            event=org.notesknowledge.BackendTelemetry.Event.NOTE;
+            operation=route.contains("/tags")?org.notesknowledge.BackendTelemetry.Operation.TAGS:
+                route.contains("/pin")?org.notesknowledge.BackendTelemetry.Operation.PIN:
+                route.contains("/versions")?org.notesknowledge.BackendTelemetry.Operation.VERSIONS:
+                route.contains("ai-access")?org.notesknowledge.BackendTelemetry.Operation.AI_ACCESS:
+                route.equals("/api/notes")?org.notesknowledge.BackendTelemetry.Operation.CREATE:
+                method.equals("PUT")?org.notesknowledge.BackendTelemetry.Operation.SAVE:org.notesknowledge.BackendTelemetry.Operation.LIFECYCLE;
+        }
+        if(event!=null)org.notesknowledge.BackendTelemetry.record(meters,event,operation,
+            org.notesknowledge.BackendTelemetry.httpOutcome(status),nanos);
+    }
+
+    private static String module(String path){
+        if(path==null)return "identity";
+        if(path.startsWith("/api/notes"))return "notes";
+        if(path.startsWith("/api/knowledge")||path.startsWith("/api/ai"))return "knowledge";
+        if(path.startsWith("/api/moderation"))return "moderation";
+        if(path.startsWith("/api/me/publications")||path.startsWith("/api/public/publications"))return "publishing";
+        if(path.startsWith("/api/public"))return "discovery";
+        if(path.startsWith("/api/me/profile")||path.startsWith("/api/me/public-profile"))return "profile";
+        return "identity";
     }
 
     private String resolvedRoute(HttpServletRequest request) {

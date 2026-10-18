@@ -19,6 +19,8 @@ final class KnowledgeQueryController {
     private final org.notesknowledge.security.RateKeyDeriver keys;
     private final tools.jackson.databind.ObjectMapper json;
     private final org.notesknowledge.websupport.ApiProblemWriter problems;
+    private RetrievalTelemetry telemetry;
+    @org.springframework.beans.factory.annotation.Autowired void telemetry(RetrievalTelemetry telemetry){this.telemetry=telemetry;}
     KnowledgeQueryController(KnowledgeOperationService operations,KnowledgeQueryEngine engine,NoteKnowledgeService notes,io.micrometer.core.instrument.MeterRegistry metrics,
         org.notesknowledge.security.RateControlService rates,org.notesknowledge.security.RateKeyDeriver keys,tools.jackson.databind.ObjectMapper json,org.notesknowledge.websupport.ApiProblemWriter problems){this.operations=operations;this.engine=engine;this.notes=notes;this.metrics=metrics;this.rates=rates;this.keys=keys;this.json=json;this.problems=problems;}
     @PostMapping(value="/api/knowledge/query",consumes="application/json")
@@ -28,9 +30,15 @@ final class KnowledgeQueryController {
         byte[] bytes=browser.getInputStream().readNBytes(16385);if(bytes.length>16384)throw ApiFailureException.of(ApiFailureException.Kind.REQUEST_TOO_LARGE);
         Map<String,Object> input;try{input=json.readValue(bytes,Map.class);}catch(tools.jackson.core.JacksonException malformed){throw ApiFailureException.of(ApiFailureException.Kind.MALFORMED_REQUEST);}
         var request=KnowledgeQueryRequest.parse(input);
-        metrics.counter("notes.workspace.retrieval.query","queryClass",request.plan().name()).increment();
-        if(request.plan()==KnowledgeQueryRequest.Plan.SEMANTIC_CORPUS||request.plan()==KnowledgeQueryRequest.Plan.DETERMINISTIC_CORPUS){var accepted=operations.accept(owner,request,browser);return ResponseEntity.accepted().cacheControl(CacheControl.noStore()).location(URI.create("/api/knowledge/operations/"+accepted.operationId())).body(accepted);}
-        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(engine.ranked(owner,request).result());
+        long started=System.nanoTime();var outcome=org.notesknowledge.BackendTelemetry.Outcome.UNAVAILABLE;
+        try {
+        try{metrics.counter("notes.workspace.retrieval.query","queryClass",request.plan().name()).increment();}catch(RuntimeException unavailable){/* diagnostic only */}
+        if(request.plan()==KnowledgeQueryRequest.Plan.SEMANTIC_CORPUS||request.plan()==KnowledgeQueryRequest.Plan.DETERMINISTIC_CORPUS){var accepted=operations.accept(owner,request,browser);outcome=org.notesknowledge.BackendTelemetry.Outcome.SUCCESS;return ResponseEntity.accepted().cacheControl(CacheControl.noStore()).location(URI.create("/api/knowledge/operations/"+accepted.operationId())).body(accepted);}
+        var result=engine.ranked(owner,request).result();outcome=result.degraded()==null?org.notesknowledge.BackendTelemetry.Outcome.SUCCESS:org.notesknowledge.BackendTelemetry.Outcome.DEGRADED;
+        if(telemetry!=null)telemetry.coverage(request.plan(),result.coverage(),result.degraded()!=null);
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(result);
+        }finally{org.notesknowledge.BackendTelemetry.record(metrics,org.notesknowledge.BackendTelemetry.Event.RETRIEVAL,
+            org.notesknowledge.BackendTelemetry.Operation.valueOf(request.plan().name()),outcome,System.nanoTime()-started);}
     }
     @GetMapping("/api/knowledge/operations/{operationId}")
     ResponseEntity<?> poll(HttpServletRequest browser,@PathVariable String operationId){rate(operations.browserOwner(browser),true);return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(operations.poll(browser,operationId));}

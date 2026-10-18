@@ -18,7 +18,10 @@ import tools.jackson.databind.ObjectMapper;
 final class PrivateSearchController {
     private final PrivateNoteSearchQuery search;
     private final ObjectMapper json;
-    PrivateSearchController(PrivateNoteSearchQuery search, ObjectMapper json) { this.search = search; this.json = json; }
+    private final io.micrometer.core.instrument.MeterRegistry meters;
+    PrivateSearchController(PrivateNoteSearchQuery search,ObjectMapper json){this(search,json,null);}
+    @org.springframework.beans.factory.annotation.Autowired
+    PrivateSearchController(PrivateNoteSearchQuery search,ObjectMapper json,io.micrometer.core.instrument.MeterRegistry meters){this.search=search;this.json=json;this.meters=meters;}
 
     @PostMapping(value = "/api/notes/search", consumes = "application/json")
     @SuppressWarnings("unchecked")
@@ -31,11 +34,14 @@ final class PrivateSearchController {
         try { input = json.readValue(bytes, Map.class); }
         catch (JacksonException failure) { throw ApiFailureException.of(ApiFailureException.Kind.MALFORMED_REQUEST); }
         var request = PrivateSearchRequest.decode(input);
+        long started=System.nanoTime();var outcome=org.notesknowledge.BackendTelemetry.Outcome.UNAVAILABLE;
         try {
-            return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(search.search(owner, request));
+            var result=search.search(owner,request);outcome=org.notesknowledge.BackendTelemetry.Outcome.SUCCESS;
+            return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(result);
         } catch (DataAccessException | TransactionException failure) {
             // Do not retain database diagnostics: they may contain private bound values.
             throw ApiFailureException.of(ApiFailureException.Kind.SERVICE_UNAVAILABLE);
-        }
+        }finally{org.notesknowledge.BackendTelemetry.record(meters,org.notesknowledge.BackendTelemetry.Event.RETRIEVAL,
+            org.notesknowledge.BackendTelemetry.Operation.ORDINARY,outcome,System.nanoTime()-started);}
     }
 }

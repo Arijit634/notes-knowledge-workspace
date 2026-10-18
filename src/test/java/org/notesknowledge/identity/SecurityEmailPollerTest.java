@@ -25,6 +25,13 @@ import org.junit.jupiter.api.Test;
 @Tag("SECURITY")
 @org.junit.jupiter.api.extension.ExtendWith(org.springframework.boot.test.system.OutputCaptureExtension.class)
 class SecurityEmailPollerTest {
+    @Test void closingContextStopsNewClaimsBeforeExecutorDrain(){
+        var repo=mock(SecurityEmailDeliveryRepository.class);var worker=mock(SecurityEmailWorker.class);
+        var poller=new SecurityEmailPoller(repo,worker,CLOCK,settings(1,1,1));
+        try{poller.stopClaiming(new org.springframework.context.event.ContextClosedEvent(new org.springframework.context.support.GenericApplicationContext()));
+            poller.poll();org.mockito.Mockito.verifyNoInteractions(repo,worker);
+        }finally{poller.stop();}
+    }
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-09-23T00:00:00Z"),
             ZoneOffset.UTC);
 

@@ -12,9 +12,12 @@ import org.springframework.scheduling.annotation.Scheduled;
 class PublicKnowledgeScheduling {
     private final PublicKnowledgeWorker worker;
     private final io.micrometer.core.instrument.MeterRegistry meters;
+    private boolean stopping;
+    @org.springframework.context.event.EventListener
+    synchronized void stopClaiming(org.springframework.context.event.ContextClosedEvent event){stopping=true;}
     PublicKnowledgeScheduling(PublicKnowledgeWorker worker,io.micrometer.core.instrument.MeterRegistry meters){this.worker=worker;this.meters=meters;}
     @Scheduled(fixedDelayString="${knowledge.public.poll-delay-ms:5000}")
-    void poll(){try{worker.poll();}catch(org.springframework.dao.DataAccessException|org.springframework.transaction.TransactionException|org.notesknowledge.websupport.ApiFailureException unavailable){
+    synchronized void poll(){if(stopping)return;try{worker.poll();}catch(org.springframework.dao.DataAccessException|org.springframework.transaction.TransactionException|org.notesknowledge.websupport.ApiFailureException unavailable){
         try {meters.counter("knowledge.public.poll","outcome","unavailable").increment();}
         catch(RuntimeException telemetryUnavailable){org.slf4j.LoggerFactory.getLogger(PublicKnowledgeScheduling.class).warn("public_poll_telemetry_deferred");}
     }}

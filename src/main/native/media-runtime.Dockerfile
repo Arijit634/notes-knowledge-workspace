@@ -80,6 +80,9 @@ RUN /jdk/bin/java -cp '/qualification:/opt/pdf/artifacts/classes:/opt/pdf/artifa
 # A separate runtime image omits the compiler/build tree. Qualification adds
 # only synthetic fixtures/controllers to this same runtime filesystem profile.
 FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS deployment
+ARG SOURCE_SHA=unbound
+LABEL org.opencontainers.image.source="https://github.com/Arijit634/notes-knowledge-workspace" \
+      org.opencontainers.image.revision="$SOURCE_SHA"
 USER root
 RUN apt-get update && apt-get upgrade -y --no-install-recommends && apt-get install -y --no-install-recommends \
     perl-base=5.40.1-6+deb13u1 libpcre2-8-0=10.46-1~deb13u3 \

@@ -21,8 +21,8 @@ class AvatarStorageConfiguration {
 
     @Bean(destroyMethod="close")
     @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(prefix="profile.avatar-storage",name="enabled",havingValue="true")
-    OciPrivateAvatarObjectStore privateAvatarObjectStore(org.springframework.core.env.Environment environment) {
-        return new OciPrivateAvatarObjectStore(AvatarStorageClients.create(environment,"profile.avatar-storage","private-avatar/"));
+    OciPrivateAvatarObjectStore privateAvatarObjectStore(org.springframework.core.env.Environment environment,org.notesknowledge.PublicStorageTelemetry telemetry) {
+        return new OciPrivateAvatarObjectStore(AvatarStorageClients.create(environment,"profile.avatar-storage","private-avatar/"),telemetry);
     }
 
     private static ApiFailureException unavailable() {

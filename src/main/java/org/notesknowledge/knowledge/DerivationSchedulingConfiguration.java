@@ -21,6 +21,9 @@ class DerivationSchedulingConfiguration implements AutoCloseable {
     private final io.micrometer.core.instrument.MeterRegistry metrics;
     private final ThreadPoolTaskExecutor pool=new ThreadPoolTaskExecutor();
     private PrivateDerivationSource.Cursor cursor;
+    private boolean stopping;
+    @org.springframework.context.event.EventListener
+    synchronized void stopClaiming(org.springframework.context.event.ContextClosedEvent event){stopping=true;}
     DerivationSchedulingConfiguration(DerivationReconciler reconciler,KnowledgeWorkService work,DerivationExecutor executor,
             org.springframework.beans.factory.ObjectProvider<TextEmbeddingPort> embeddings,io.micrometer.core.instrument.MeterRegistry metrics) {
         this.reconciler=reconciler;this.work=work;this.executor=executor;this.embeddings=embeddings.getIfAvailable();
@@ -29,7 +32,8 @@ class DerivationSchedulingConfiguration implements AutoCloseable {
         pool.setWaitForTasksToCompleteOnShutdown(true);pool.setAwaitTerminationSeconds(30);pool.initialize();
     }
     @Scheduled(fixedDelayString="${knowledge.derivation.poll-delay-ms:5000}")
-    void poll() {
+    synchronized void poll() {
+        if(stopping)return;
         try {pollAvailable();}
         catch(org.springframework.dao.DataAccessException|org.springframework.transaction.TransactionException|org.notesknowledge.websupport.ApiFailureException unavailable) {
             unavailableMetric();
@@ -61,5 +65,5 @@ class DerivationSchedulingConfiguration implements AutoCloseable {
         try {metrics.counter("knowledge.derivation.poll","outcome","unavailable").increment();}
         catch(RuntimeException unavailable){LOG.warn("knowledge_derivation_telemetry_deferred");}
     }
-    public void close(){pool.shutdown();}
+    public synchronized void close(){stopping=true;pool.shutdown();}
 }

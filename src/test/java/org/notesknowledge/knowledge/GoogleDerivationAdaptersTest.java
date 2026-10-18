@@ -26,7 +26,8 @@ import tools.jackson.databind.ObjectMapper;
 @Tag("FAST") @Tag("SECURITY") @Tag("RETRIEVAL") @Tag("EVALUATION")
 class GoogleDerivationAdaptersTest {
     private final ObjectMapper json=new ObjectMapper();
-    private final GoogleDerivationAdapters adapters=new GoogleDerivationAdapters();
+    private final io.micrometer.core.instrument.simple.SimpleMeterRegistry metrics=new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+    private final GoogleDerivationAdapters adapters=new GoogleDerivationAdapters(metrics);
     private final UUID owner=new UUID(0,1),note=new UUID(0,2);
     private final Expected expected=new Expected(owner,note,null,1,1,null);
     private final String query="Where is the synthetic observatory?";
@@ -58,7 +59,17 @@ class GoogleDerivationAdaptersTest {
             .retryOptions(HttpRetryOptions.builder().attempts(1).build()).build()).build();
         clients=mock(ObjectProvider.class);when(clients.getIfAvailable()).thenReturn(sdk);
     }
-    @AfterEach void stop(){sdk.close();server.stop(0);}
+    @AfterEach void stop(){
+        try{sdk.close();server.stop(0);
+            for(var meter:metrics.getMeters()){
+                assertThat(meter.getId().getName()).isEqualTo("notes.workspace.ai.provider");
+                assertThat(meter.getId().getTags()).allSatisfy(tag->{
+                    assertThat(tag.getKey()).isIn("capability","outcome");
+                    assertThat(tag.getValue()).doesNotContain(query,"synthetic-not-a-provider-key",owner.toString(),note.toString());
+                });
+            }
+        }finally{metrics.close();}
+    }
     private KnowledgeQueryGate gate() {
         var policies=mock(ProcessingPolicyService.class);var sources=mock(PrivateQuerySource.class);
         when(policies.policyPrerequisite(owner)).thenReturn(Optional.of(new ProcessingPolicyService.AcknowledgedProcessingPolicy(new UUID(0,3),1,"a".repeat(64))));
