@@ -78,7 +78,7 @@ public final class PackagedMultimediaSearchAcceptance {
             }
             require(!logs.truncated,"log_inspection_bound");String captured=logs.toString(StandardCharsets.UTF_8);
             require(LOG_CANARIES.stream().noneMatch(value->!value.isEmpty()&&captured.contains(value)),"log_privacy_failure");passed=true;
-        }catch(Throwable failure){if(failure instanceof AssertionError&&failure.getMessage()!=null&&failure.getMessage().matches("[a-z_0-9-]+"))failureCode=failure.getMessage();failureType=failure.getClass().getSimpleName();
+        }catch(Throwable failure){if(failure instanceof AssertionError&&failure.getMessage()!=null&&failure.getMessage().matches("[A-Za-z_0-9-]+"))failureCode=failure.getMessage();failureType=failure.getClass().getSimpleName();
             for(Throwable cause=failure;cause!=null&&failureClasses.size()<10;cause=cause.getCause())failureClasses.add(cause.getClass().getName());
             for(var frame:Arrays.stream(failure.getStackTrace()).limit(8).toList())failureFrames.add(frame.getClassName()+"."+frame.getMethodName());
             if(failure instanceof UnsatisfiedLinkError&&failure.getMessage()!=null){var match=java.util.regex.Pattern.compile("[A-Za-z0-9_]+\\.(?:so|dll|dylib)(?:\\.[0-9]+)*").matcher(failure.getMessage());while(match.find()&&nativeLibraries.size()<8)nativeLibraries.add(match.group());}}
@@ -151,9 +151,17 @@ public final class PackagedMultimediaSearchAcceptance {
             phase="scheduled-processing";start();browser.origin=origin();other.origin=origin();
             for(var uploaded:uploads)awaitReady(uploaded);
             phase="search";for(String query:QUERIES){JsonNode result=query(browser,query);verify(query,result);results.add(Map.of("query",query,"response",result));}
+            var cited=new HashSet<String>();for(var result:results)for(var citation:((JsonNode)result.get("response")).get("citations"))if(!citation.get("attachmentId").isNull())cited.add(citation.get("attachmentId").asText());
+            var matrix=new ArrayList<Map<String,Object>>();
+            for(var uploaded:uploads){
+                boolean indexed=app.getBean(JdbcTemplate.class).queryForObject("select count(*) from knowledge.private_derived_representation r join knowledge.private_derived_segment s on s.parent_id=r.derived_representation_id and s.owner_user_id=r.owner_user_id where r.owner_user_id=? and r.source_attachment_id=? and r.state='ready'",Integer.class,owner,uploaded.attachment())>0;
+                boolean retrieved=cited.contains(uploaded.attachment().toString());require(indexed&&retrieved,"modality_not_demonstrated_"+uploaded.fixture());
+                matrix.add(Map.of("media",uploaded.fixture(),"uploaded",true,"processed",true,"indexed",indexed,"retrieved",retrieved,"answerCited",retrieved,"result","pass"));
+            }
             phase="negative-scenarios";providerFailureAndRecovery();processingChangeRace();isolationAndRevocation();
             Files.writeString(report.resolve("search-demonstration.json"),JSON.writerWithDefaultPrettyPrinter().writeValueAsString(Map.ofEntries(
                 Map.entry("providerEvidence","controlled-real-sdk-not-live-gemini"),Map.entry("packagedApplication",true),Map.entry("scheduledProcessing",true),
+                Map.entry("matrix",matrix),Map.entry("observationOrder","Positive observations precede deliberate negative revocation scenarios; reports are not retained authorization."),
                 Map.entry("uploads",uploads.stream().map(u->Map.of("fixture",u.fixture(),"noteId",u.note(),"attachmentId",u.attachment())).toList()),
                 Map.entry("queries",results),Map.entry("twoUserIsolation",true),Map.entry("aiOffRevocation",true),Map.entry("attachmentDeletion",true),Map.entry("sdkRequests",provider.requests.get()),
                 Map.entry("transientMediaFailuresRecovered",provider.transientFailures.get()),Map.entry("invalidProviderOutputDenied",true),Map.entry("providerOutageAndRecovery",true),Map.entry("sourceChangedDuringProcessing",true))));
@@ -199,11 +207,12 @@ public final class PackagedMultimediaSearchAcceptance {
     private void acknowledge(Browser b)throws Exception{
         JsonNode p=b.get("/api/ai/processing-policy",200);var body=new LinkedHashMap<String,Object>();
         for(String field:List.of("processingPolicyId","policyCode","policyVersion","policyFingerprint","disclosureRevision"))body.put(field,field.equals("policyVersion")?p.get(field).asLong():p.get(field).asText());
+        body.put("confirmAcknowledgement",true);
         b.json("POST","/api/ai/processing-policy/acknowledgements",body,204);
     }
     private UUID note(String title,String text)throws Exception{return UUID.fromString(browser.json("POST","/api/notes",Map.of("title",title,"markdown",text,"aiEnabled",true),201).get("id").asText());}
     private void upload(String kind)throws Exception{
-        UUID note=note("Fictional media "+uploads.size(),"Fictional context only.");
+        UUID note=note("Fictional media "+uploads.size(),"");
         var file=kind.startsWith("video-")?new org.springframework.mock.web.MockMultipartFile("file","fixture.mp4","video/mp4",MeaningfulMediaFixtures.videoSamples(kind.equals("video-long")?20:1,kind.equals("video-long")?2000:2000)):MeaningfulMediaFixtures.media(kind);
         var r=uploadBytes(note,file.getBytes(),file.getContentType(),file.getOriginalFilename());
         UUID attachment=UUID.fromString(JSON.readTree(r.body()).get("id").asText());

@@ -19,6 +19,7 @@ public interface PrivateDerivationSource {
     Material acquire(PrivateAiSourceCurrentness.Expected expected);
     interface Material {
         String markdown();
+        default String title(){return "";}
         default List<PdfPage> pdfPages(byte[] media){return List.of();}
         /** Selected-page transformation needs a separately qualified process runtime.
          * Absence must fail, never fall back to sending the original document. */

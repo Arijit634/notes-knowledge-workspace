@@ -36,6 +36,16 @@ class DerivationConfigurationTest {
         for(float[] bad:new float[][]{{0,0},{Float.NaN,1},{Float.POSITIVE_INFINITY,1},{1}})
             assertThatThrownBy(()->lineage.prepare(bad)).isInstanceOf(DerivationFailure.class);
     }
+    @Test void titleFallbackChangesOnlyNoteLineageAndNeverReinterpretsLegacyVectors()throws Exception {
+        var policy=new ProcessingPolicyService.AcknowledgedProcessingPolicy(new UUID(0,1),1,"a".repeat(64));
+        var note=EmbeddingLineage.create(config("none","synthetic-v1"),policy,"note");
+        String legacy=note.configuration().replace("markdown-weighted-600-900-overlap80-title-fallback-v3","markdown-weighted-600-900-overlap80-v2");
+        String oldId=java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(legacy.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        assertThat(note.id()).isNotEqualTo(oldId);
+        for(String modality:java.util.List.of("image","pdf","audio","video"))
+            assertThat(EmbeddingLineage.create(config("none","synthetic-v1"),policy,modality).configuration())
+                .contains("markdown-weighted-600-900-overlap80-v2").doesNotContain("title-fallback-v3");
+    }
     @Test void pageChildrenDefaultOffAndRequireAProfileIdentityInTheirDistinctLineage() {
         var c=config("none","synthetic-v1");assertThat(c.pdfPageChildren()).isFalse();
         var policy=new ProcessingPolicyService.AcknowledgedProcessingPolicy(new UUID(0,1),1,"a".repeat(64));

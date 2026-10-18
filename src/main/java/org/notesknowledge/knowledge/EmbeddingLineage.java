@@ -12,7 +12,7 @@ record EmbeddingLineage(String id,String configuration,String modality,int dimen
             throw new IllegalArgumentException("Unavailable lineage");
         String normalized=String.join("\n",c.provider(),c.adapterVersion(),c.embeddingModel(),c.mediaModel(),c.modelRevision(),
             GeminiTextEmbeddings.embedding2(c)?GeminiTextEmbeddings.EMBEDDING_2_FORMAT:"document/text-surrogate/float32",c.dimension().toString(),c.operator(),c.normalization(),modality,
-            "markdown-weighted-600-900-overlap80-v2", modality.equals("note")?"media-typed-bounded-v1":
+            modality.equals("note")?"markdown-weighted-600-900-overlap80-title-fallback-v3":"markdown-weighted-600-900-overlap80-v2", modality.equals("note")?"media-typed-bounded-v1":
                 modality.equals("audio")?"audio-speech-acoustic-surrogate-v3":
                 modality.equals("pdf")&&c.pdfPageChildren()?"pdf-page-rgb144-cap2048-v1":"media-scoped-coverage-surrogate-v2",c.configurationId(),c.region(),c.tier(),
             p.policyId().toString(),Long.toString(p.version()),p.fingerprint());

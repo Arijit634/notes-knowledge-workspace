@@ -94,4 +94,21 @@ class KnowledgeQueryContractsTest {
         var expected=new org.notesknowledge.knowledge.spi.PrivateAiSourceCurrentness.Expected(OWNER,WORK,WORK,1,1,1L);
         return new QueryEvidenceRepository.Evidence(segment,WORK,expected,"lineage","pdf",0,value);
     }
+    @ParameterizedTest @ValueSource(strings={""," \n\t"})
+    void titleOnlyNoteProducesRealEvidenceWithoutInventingABodySpan(String body){
+        var segments=DerivationExecutor.noteSegments(material("Fictional media collection",body));
+        assertThat(segments).hasSize(1);var title=segments.getFirst();
+        assertThat(title.text()).isEqualTo("Note title: Fictional media collection");
+        assertThat(title.heading()).isEqualTo("Note title");assertThat(title.start()).isZero();assertThat(title.end()).isZero();
+    }
+    @Test void nonblankMarkdownRetainsItsExistingTextAndExactOffsets(){
+        String body="# Actual heading\nFictional body text";
+        assertThat(DerivationExecutor.noteSegments(material("Separate title",body))).isEqualTo(new MarkdownChunker().chunk(body));
+    }
+    private static org.notesknowledge.knowledge.spi.PrivateDerivationSource.Material material(String title,String body){
+        return new org.notesknowledge.knowledge.spi.PrivateDerivationSource.Material(){
+            public String title(){return title;}public String markdown(){return body;}
+            public java.io.InputStream open(){throw new AssertionError("not_media");}
+        };
+    }
 }

@@ -21,12 +21,13 @@ jobs:
       - name: Package actual backend and controlled external transports
         id: package
         run: |
-          ./mvnw --batch-mode --no-transfer-progress -Dtest=KnowledgeQueryContractsTest,GoogleDerivationAdaptersTest package -q
+          ./mvnw --batch-mode --no-transfer-progress '-Dtest=KnowledgeQueryContractsTest,GoogleDerivationAdaptersTest,DerivationConfigurationTest,PrivateDerivationIntegrationTest,KnowledgeQueryIntegrationTest#repeatedMediaFactsKeepTheirDistinctLocationsThroughGenerationAndHttp' package -q
           ./mvnw --batch-mode --no-transfer-progress dependency:build-classpath -DincludeScope=test -Dmdep.outputFile=target/qualification-classpath.txt -q
       - name: Demonstrate scheduled ingestion and HTTP search using the production JAR
+        id: acceptance
         run: bash .github/scripts/multimedia-search-acceptance.sh
       - name: Verify complete backend on the same source
-        if: always() && matrix.runner == 'ubuntu-24.04' && steps.package.outcome == 'success'
+        if: always() && matrix.runner == 'ubuntu-24.04' && steps.acceptance.outcome == 'success'
         shell: bash
         run: |
           result=0
