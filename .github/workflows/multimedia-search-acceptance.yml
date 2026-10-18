@@ -19,16 +19,41 @@ jobs:
       - name: Install approved checksum-pinned JDK
         run: bash .github/scripts/media-jdk.sh
       - name: Package actual backend and controlled external transports
+        id: package
         run: |
           ./mvnw --batch-mode --no-transfer-progress -Dtest=KnowledgeQueryContractsTest,GoogleDerivationAdaptersTest package -q
           ./mvnw --batch-mode --no-transfer-progress dependency:build-classpath -DincludeScope=test -Dmdep.outputFile=target/qualification-classpath.txt -q
       - name: Demonstrate scheduled ingestion and HTTP search using the production JAR
         run: bash .github/scripts/multimedia-search-acceptance.sh
+      - name: Verify complete backend on the same source
+        if: always() && matrix.runner == 'ubuntu-24.04' && steps.package.outcome == 'success'
+        shell: bash
+        run: |
+          result=0
+          ./mvnw --batch-mode --no-transfer-progress clean verify -q > "$RUNNER_TEMP/multimedia-backend.log" 2>&1 || result=$?
+          export BACKEND_EXIT_STATUS="$result"
+          python3 - <<'PY'
+          import glob,json,os,pathlib,xml.etree.ElementTree as ET
+          files=glob.glob('target/surefire-reports/TEST-*.xml')
+          totals=dict(tests=0,failures=0,errors=0,skipped=0)
+          failed=[]
+          for file in files:
+              root=ET.parse(file).getroot()
+              for key in totals: totals[key]+=int(root.attrib[key])
+              if int(root.attrib['failures'])+int(root.attrib['errors']): failed.append(root.attrib['name'])
+          log=pathlib.Path(os.environ['RUNNER_TEMP'],'multimedia-backend.log').read_text(errors='replace')
+          result=dict(head=os.environ['GITHUB_SHA'],command='./mvnw --batch-mode --no-transfer-progress clean verify -q',exitStatus=int(os.environ['BACKEND_EXIT_STATUS']),classes=len(files),failedClasses=failed,forkShutdownWarning='Timeout occurred in the fork' in log,**totals)
+          pathlib.Path(os.environ['RUNNER_TEMP'],'multimedia-backend-verification.json').write_text(json.dumps(result,indent=2))
+          print(json.dumps(result))
+          PY
+          exit "$result"
       - name: Retain synthetic search responses and citation evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: multimedia-search-${{ matrix.runner }}
-          path: ${{ runner.temp }}/multimedia-search-report/accepted/search-demonstration.json
+          path: |
+            ${{ runner.temp }}/multimedia-search-report/accepted/search-demonstration.json
+            ${{ runner.temp }}/multimedia-backend-verification.json
           if-no-files-found: warn
           retention-days: 3
