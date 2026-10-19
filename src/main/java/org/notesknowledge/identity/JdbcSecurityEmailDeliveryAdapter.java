@@ -28,10 +28,16 @@ class JdbcSecurityEmailDeliveryAdapter implements SecurityEmailDeliveryRepositor
 
     private final JdbcClient jdbc;
     private final SecurityEmailDeliveryProperties properties;
+    private final io.micrometer.core.instrument.MeterRegistry meters;
 
     JdbcSecurityEmailDeliveryAdapter(JdbcClient jdbc, SecurityEmailDeliveryProperties properties) {
+        this(jdbc,properties,null);
+    }
+    @org.springframework.beans.factory.annotation.Autowired
+    JdbcSecurityEmailDeliveryAdapter(JdbcClient jdbc, SecurityEmailDeliveryProperties properties,io.micrometer.core.instrument.MeterRegistry meters) {
         this.jdbc = jdbc;
         this.properties = properties;
+        this.meters=meters;
     }
 
     @Override
@@ -150,7 +156,7 @@ class JdbcSecurityEmailDeliveryAdapter implements SecurityEmailDeliveryRepositor
                     lease_owner = :owner, lease_token = uuidv7(), lease_until = :until,
                     last_attempt_at = :now, updated_at = :now, next_attempt_at = null
                 from candidate where work.security_email_delivery_id = candidate.security_email_delivery_id
-                """ + RETURNING, now, owner, policy, batchSize);
+                """ + RETURNING, now, owner, policy, batchSize,false);
     }
 
     @Override
@@ -169,7 +175,7 @@ class JdbcSecurityEmailDeliveryAdapter implements SecurityEmailDeliveryRepositor
                     lease_owner = :owner, lease_token = uuidv7(), lease_until = :until,
                     last_attempt_at = :now, updated_at = :now, next_attempt_at = null
                 from candidate where work.security_email_delivery_id = candidate.security_email_delivery_id
-                """ + RETURNING, now, owner, policy, batchSize);
+                """ + RETURNING, now, owner, policy, batchSize,true);
     }
 
     @Override
@@ -178,7 +184,7 @@ class JdbcSecurityEmailDeliveryAdapter implements SecurityEmailDeliveryRepositor
         if (batchSize < 1 || batchSize > 1_000) {
             throw new IllegalArgumentException("Invalid cleanup batch");
         }
-        return jdbc.sql("""
+        var kinds=jdbc.sql("""
                 with candidate as (
                     select security_email_delivery_id from identity.security_email_delivery
                     where attempt_count >= :maxAttempts
@@ -197,13 +203,18 @@ class JdbcSecurityEmailDeliveryAdapter implements SecurityEmailDeliveryRepositor
                     submitted_at = null, terminal_at = :now, updated_at = :now,
                     last_failure_code = 'attempt_limit'
                 from candidate where work.security_email_delivery_id = candidate.security_email_delivery_id
+                returning work.delivery_kind
                 """).param("maxAttempts", properties.maxAttempts()).param("now", Timestamp.from(now))
-                .param("batch", batchSize).update();
+                .param("batch", batchSize).query(String.class).list();
+        for(String kind:kinds)org.notesknowledge.BackendTelemetry.afterCommit(meters,org.notesknowledge.BackendTelemetry.Event.EMAIL,
+            "capability_link".equals(kind)?org.notesknowledge.BackendTelemetry.Operation.CAPABILITY_LINK:org.notesknowledge.BackendTelemetry.Operation.SECURITY_NOTICE,
+            org.notesknowledge.BackendTelemetry.Outcome.FAILED);
+        return kinds.size();
     }
 
     private List<Claim> claim(String sql, Instant now, LeaseOwner owner,
-            LeasePolicy policy, int batchSize) {
-        return jdbc.sql(sql)
+            LeasePolicy policy, int batchSize,boolean reclaimed) {
+        var claims=jdbc.sql(sql)
                 .param("now", Timestamp.from(now))
                 .param("until", Timestamp.from(now.plus(policy.leaseDuration())))
                 .param("maxAttempts", properties.maxAttempts())
@@ -228,6 +239,21 @@ class JdbcSecurityEmailDeliveryAdapter implements SecurityEmailDeliveryRepositor
                                 rs.getBytes("sealed_recipient_tag"),
                                 rs.getString("recipient_key_version"))))
                 .list();
+        for(var claim:claims){
+            String kind="capability_link".equals(claim.kind())?"capability_link":"security_notice";
+            var callback=new org.springframework.transaction.support.TransactionSynchronization(){
+                @Override public void afterCommit(){try{
+                    if(meters!=null)meters.counter("notes.workspace.security_email.claim","jobType",kind,"outcome",reclaimed?"reclaimed":"claimed").increment();
+                    org.slf4j.LoggerFactory.getLogger(JdbcSecurityEmailDeliveryAdapter.class).atInfo()
+                        .addKeyValue("event.name","security_email.work.outcome").addKeyValue("module","identity")
+                        .addKeyValue("jobType",kind).addKeyValue("state",reclaimed?"reclaimed":"claimed").log("security_email.work.outcome");
+                }catch(RuntimeException unavailable){/* diagnostic only */}}
+            };
+            if(org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive())
+                org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(callback);
+            else callback.afterCommit();
+        }
+        return claims;
     }
 
     @Override
@@ -261,7 +287,7 @@ class JdbcSecurityEmailDeliveryAdapter implements SecurityEmailDeliveryRepositor
         if (!safeReason.matches("[a-z][a-z0-9_]{0,47}") || !retryAt.isAfter(now)) {
             throw new IllegalArgumentException("Invalid safe defer policy");
         }
-        return jdbc.sql("""
+        boolean changed=jdbc.sql("""
                 update identity.security_email_delivery
                 set state = 'retry_wait', next_attempt_at = :retry,
                     attempt_count = attempt_count - 1, lease_owner = null,
@@ -273,6 +299,8 @@ class JdbcSecurityEmailDeliveryAdapter implements SecurityEmailDeliveryRepositor
                 """).param("id", claim.id()).param("token", claim.token().value())
                 .param("now", Timestamp.from(now)).param("retry", Timestamp.from(retryAt))
                 .param("reason", safeReason).update() == 1;
+        if(changed)emailOutcome(claim,org.notesknowledge.BackendTelemetry.Outcome.RETRY);
+        return changed;
     }
 
     @Override
@@ -297,7 +325,7 @@ class JdbcSecurityEmailDeliveryAdapter implements SecurityEmailDeliveryRepositor
         if (reason != null && !reason.matches("[a-z][a-z0-9_]{0,47}")) {
             throw new IllegalArgumentException("Invalid safe failure code");
         }
-        return jdbc.sql("""
+        int changed=jdbc.sql("""
                 update identity.security_email_delivery
                 set state = :state, next_attempt_at = null,
                     lease_owner = null, lease_token = null, lease_until = null,
@@ -313,6 +341,10 @@ class JdbcSecurityEmailDeliveryAdapter implements SecurityEmailDeliveryRepositor
                 """).param("state", state).param("now", Timestamp.from(now))
                 .param("reason", reason).param("id", claim.id())
                 .param("token", claim.token().value()).update();
+        if(changed==1)org.notesknowledge.BackendTelemetry.afterCommit(meters,org.notesknowledge.BackendTelemetry.Event.EMAIL,
+            "capability_link".equals(claim.kind())?org.notesknowledge.BackendTelemetry.Operation.CAPABILITY_LINK:org.notesknowledge.BackendTelemetry.Operation.SECURITY_NOTICE,
+            switch(state){case "submitted"->org.notesknowledge.BackendTelemetry.Outcome.SUCCESS;case "obsolete"->org.notesknowledge.BackendTelemetry.Outcome.OBSOLETE;default->org.notesknowledge.BackendTelemetry.Outcome.FAILED;});
+        return changed;
     }
 
     @Override
@@ -321,7 +353,7 @@ class JdbcSecurityEmailDeliveryAdapter implements SecurityEmailDeliveryRepositor
         if (!safeReason.matches("[a-z][a-z0-9_]{0,47}")) {
             throw new IllegalArgumentException("Invalid safe failure code");
         }
-        return jdbc.sql("""
+        boolean changed=jdbc.sql("""
                 update identity.security_email_delivery
                 set state = 'retry_wait', next_attempt_at = :retry,
                     lease_owner = null, lease_token = null, lease_until = null,
@@ -331,5 +363,11 @@ class JdbcSecurityEmailDeliveryAdapter implements SecurityEmailDeliveryRepositor
                 """).param("retry", Timestamp.from(retryAt)).param("now", Timestamp.from(now))
                 .param("reason", safeReason).param("id", claim.id())
                 .param("token", claim.token().value()).update() == 1;
+        if(changed)emailOutcome(claim,org.notesknowledge.BackendTelemetry.Outcome.RETRY);
+        return changed;
+    }
+    private void emailOutcome(Claim claim,org.notesknowledge.BackendTelemetry.Outcome outcome){
+        org.notesknowledge.BackendTelemetry.afterCommit(meters,org.notesknowledge.BackendTelemetry.Event.EMAIL,
+            "capability_link".equals(claim.kind())?org.notesknowledge.BackendTelemetry.Operation.CAPABILITY_LINK:org.notesknowledge.BackendTelemetry.Operation.SECURITY_NOTICE,outcome);
     }
 }

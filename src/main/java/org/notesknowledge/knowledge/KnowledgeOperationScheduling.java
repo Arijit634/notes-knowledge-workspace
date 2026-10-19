@@ -15,12 +15,15 @@ class KnowledgeOperationScheduling implements AutoCloseable {
     private final KnowledgeOperationService operations;
     private final io.micrometer.core.instrument.MeterRegistry metrics;
     private final ThreadPoolTaskExecutor pool=new ThreadPoolTaskExecutor();
+    private boolean stopping;
+    @org.springframework.context.event.EventListener
+    synchronized void stopClaiming(org.springframework.context.event.ContextClosedEvent event){stopping=true;}
     KnowledgeOperationScheduling(KnowledgeOperationService operations,io.micrometer.core.instrument.MeterRegistry metrics) {
         this.operations=operations;this.metrics=metrics;pool.setCorePoolSize(2);pool.setMaxPoolSize(2);pool.setQueueCapacity(0);
         pool.setThreadNamePrefix("knowledge-operation-");pool.setWaitForTasksToCompleteOnShutdown(true);pool.setAwaitTerminationSeconds(65);pool.initialize();
     }
     @Scheduled(fixedDelayString="${knowledge.operations.poll-delay-ms:1000}")
-    void poll(){try {
+    synchronized void poll(){if(stopping)return;try {
         if(!operations.databaseAvailable())return;
         int capacity=2-pool.getActiveCount();if(capacity<=0)return;
         for(var row:operations.claim(capacity))try {pool.execute(()->{
@@ -38,5 +41,5 @@ class KnowledgeOperationScheduling implements AutoCloseable {
         try {metrics.counter("notes.workspace.knowledge.operation","outcome",outcome).increment();}
         catch(RuntimeException unavailable){LOG.warn("knowledge_operation_telemetry_deferred");}
     }
-    public void close(){pool.shutdown();}
+    public synchronized void close(){stopping=true;pool.shutdown();}
 }

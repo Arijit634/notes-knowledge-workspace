@@ -16,6 +16,8 @@ class PublicKnowledgeTelemetryTest {
         var worker=new PublicKnowledgeWorker(null,registry);
         assertThatCode(()->{for(String outcome:new String[]{"completed","obsolete","excluded","retry"})worker.metric(outcome);})
             .doesNotThrowAnyException();
-        verify(registry,times(4)).counter(anyString(),org.mockito.ArgumentMatchers.any(String[].class));
+        verify(registry,times(4)).counter(eq("knowledge.public.work"),org.mockito.ArgumentMatchers.any(String[].class));
+        verify(registry,times(4)).counter(eq("notes.workspace.knowledge.work.outcome"),org.mockito.ArgumentMatchers.any(String[].class));
+        verifyNoMoreInteractions(registry);
     }
 }

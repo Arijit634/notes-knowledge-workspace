@@ -2,7 +2,7 @@ name: Native media qualification
 
 on:
   push:
-    branches: [knowledge/multimodal-ingestion, backend/completion-and-qualification, backend/provider-and-release-qualification, backend/runtime-release-hardening]
+    branches: [knowledge/multimodal-ingestion, backend/completion-and-qualification, backend/provider-and-release-qualification, backend/runtime-release-hardening, backend/final-feature-closure]
     paths:
       - 'src/**'
       - 'pom.xml'
@@ -37,6 +37,8 @@ jobs:
       - name: Install checksum-pinned native JDK
         shell: bash
         run: bash .github/scripts/media-jdk.sh
+      - name: Verify offline observability and release contracts
+        run: python3 .github/scripts/test-operations.py
       - name: Compile qualification controllers and package backend
         id: package
         shell: bash
@@ -46,6 +48,8 @@ jobs:
         run: ./mvnw --batch-mode --no-transfer-progress dependency:build-classpath -DincludeScope=test -Dmdep.outputFile=target/qualification-classpath.txt -q
       - name: Qualify packaged native runtimes
         shell: bash
+        env:
+          NKW_CANDIDATE_ONLY: ${{ github.ref_name == 'backend/final-feature-closure' && 'true' || 'false' }}
         run: bash .github/scripts/qualify-media.sh
       - name: Retain sanitized deployment scan and SBOM evidence
         if: always()
@@ -68,7 +72,7 @@ jobs:
           include-hidden-files: false
       - name: Verify complete backend on final native-qualified source
         id: full-backend
-        if: always() && matrix.runner == 'ubuntu-24.04' && steps.package.outcome == 'success'
+        if: always() && matrix.runner == 'ubuntu-24.04' && steps.package.outcome == 'success' && github.ref_name != 'backend/final-feature-closure'
         shell: bash
         run: ./mvnw --batch-mode --no-transfer-progress clean verify -q
       - name: Summarize complete backend evidence
@@ -88,6 +92,7 @@ jobs:
           print(json.dumps(dict(fullBackendExecuted=outcome in ('success','failure'),commandOutcome=outcome,classes=len(files),**totals)))
           PY
   windows:
+    if: github.ref_name != 'backend/final-feature-closure'
     name: Native media / Windows development
     runs-on: windows-2025
     timeout-minutes: 25

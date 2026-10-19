@@ -1,7 +1,7 @@
 name: Packaged multimedia search acceptance
 on:
   push:
-    branches: [knowledge/multimedia-search-completion]
+    branches: [knowledge/multimedia-search-completion, backend/final-feature-closure]
 permissions:
   contents: read
 jobs:

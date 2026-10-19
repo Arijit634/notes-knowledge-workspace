@@ -13,6 +13,9 @@ class ModerationTelemetry {
             @Override public void afterCommit(){
                 try{meters.counter("notes.workspace.moderation.command","operation",operation,"outcome","committed").increment();}
                 catch(RuntimeException unavailable){org.slf4j.LoggerFactory.getLogger(ModerationTelemetry.class).warn("moderation_telemetry_deferred");}
+                org.notesknowledge.BackendTelemetry.record(null,org.notesknowledge.BackendTelemetry.Event.MODERATION,
+                    operation.equals("begin_review")?org.notesknowledge.BackendTelemetry.Operation.BEGIN_REVIEW:org.notesknowledge.BackendTelemetry.Operation.DECISION,
+                    org.notesknowledge.BackendTelemetry.Outcome.SUCCESS,0);
             }
         });
     }

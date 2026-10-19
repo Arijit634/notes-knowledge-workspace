@@ -19,6 +19,16 @@ import org.springframework.test.util.ReflectionTestUtils;
 @Tag("FAST") @Tag("SECURITY")
 @ExtendWith(OutputCaptureExtension.class)
 class KnowledgeSchedulingPrivacyTest {
+    @org.junit.jupiter.api.Test void contextClosingStopsFurtherClaimsBeforeDrain(){
+        var service=mock(KnowledgeOperationService.class);var publicWorker=mock(PublicKnowledgeWorker.class);
+        var registry=new SimpleMeterRegistry();
+        try(var scheduling=new KnowledgeOperationScheduling(service,registry)){
+            var event=new org.springframework.context.event.ContextClosedEvent(new org.springframework.context.support.GenericApplicationContext());
+            scheduling.stopClaiming(event);scheduling.poll();verifyNoInteractions(service);
+            var publicScheduling=new PublicKnowledgeScheduling(publicWorker,registry);
+            publicScheduling.stopClaiming(event);publicScheduling.poll();verifyNoInteractions(publicWorker);
+        }finally{registry.close();}
+    }
     @ParameterizedTest @ValueSource(booleans={false,true})
     void operationWorkerUnexpectedFailureCannotEscapeToRawStderr(boolean telemetryFails,CapturedOutput output)throws Exception {
         var service=mock(KnowledgeOperationService.class);var row=mock(KnowledgeOperationRepository.Row.class);

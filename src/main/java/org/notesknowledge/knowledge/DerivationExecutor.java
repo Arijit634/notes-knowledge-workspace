@@ -147,28 +147,39 @@ class DerivationExecutor {
                 for(float[] vector:output)vectors.add(initial.lineage().prepare(vector));
             }
             budget.check();
-            if(!transactions.activate(claim,initial.lineage(),segments,vectors,List.copyOf(dispatches))){work.obsolete(claim);outcome="obsolete";}
+            if(!transactions.activate(claim,initial.lineage(),segments,vectors,List.copyOf(dispatches))){outcome=work.obsolete(claim)?"obsolete":"rejected";}
             else outcome="activated";
         } catch(DerivationFailure failure) {
             switch(failure.category) {
-                case TRANSIENT_DEPENDENCY,QUOTA,PROVIDER_UNAVAILABLE -> {work.retry(claim);outcome="retry";}
-                case INVALID_SOURCE,POLICY_BLOCKED,LINEAGE_OBSOLETE -> {work.obsolete(claim);outcome="obsolete";}
-                default -> {work.fail(claim,failure.category);outcome="failed";}
+                case TRANSIENT_DEPENDENCY,QUOTA,PROVIDER_UNAVAILABLE -> outcome=work.retry(claim)?"retry":"rejected";
+                case INVALID_SOURCE,POLICY_BLOCKED,LINEAGE_OBSOLETE -> outcome=work.obsolete(claim)?"obsolete":"rejected";
+                default -> outcome=work.fail(claim,failure.category)?"failed":"rejected";
             }
         } catch(org.notesknowledge.websupport.ApiFailureException boundary) {
             // Source/policy adapters expose only registered failures, never parser
             // or storage diagnostics. A missing source cannot be retried as eligible.
             if(boundary.kind()==org.notesknowledge.websupport.ApiFailureException.Kind.RESOURCE_NOT_FOUND
-                    ||boundary.kind()==org.notesknowledge.websupport.ApiFailureException.Kind.INVALID_CREDENTIALS){work.obsolete(claim);outcome="obsolete";}
-            else if(boundary.kind()==org.notesknowledge.websupport.ApiFailureException.Kind.SERVICE_UNAVAILABLE){work.retry(claim);outcome="retry";}
-            else {work.fail(claim,KnowledgeWork.Failure.INVALID_OUTPUT);outcome="failed";}
+                    ||boundary.kind()==org.notesknowledge.websupport.ApiFailureException.Kind.INVALID_CREDENTIALS){outcome=work.obsolete(claim)?"obsolete":"rejected";}
+            else if(boundary.kind()==org.notesknowledge.websupport.ApiFailureException.Kind.SERVICE_UNAVAILABLE){outcome=work.retry(claim)?"retry":"rejected";}
+            else {outcome=work.fail(claim,KnowledgeWork.Failure.INVALID_OUTPUT)?"failed":"rejected";}
         } catch(org.springframework.dao.DataAccessException|org.springframework.transaction.TransactionException unavailable) {
             // No success is reported. The existing expired-claim recovery path
             // owns this attempt if the database cannot perform a safe transition.
             // Do not log an exception which can contain source/SQL diagnostics.
             outcome="deferred";
         }
-        finally {metrics.counter("knowledge.derivation.outcome","outcome",outcome).increment();}
+        finally {
+            try{metrics.counter("knowledge.derivation.outcome","outcome",outcome).increment();}catch(RuntimeException unavailable){/* diagnostic only */}
+            org.notesknowledge.BackendTelemetry.record(metrics,org.notesknowledge.BackendTelemetry.Event.WORK,
+                org.notesknowledge.BackendTelemetry.Operation.DERIVATION,switch(outcome){
+                    case "activated"->org.notesknowledge.BackendTelemetry.Outcome.SUCCESS;
+                    case "retry"->org.notesknowledge.BackendTelemetry.Outcome.RETRY;
+                    case "obsolete"->org.notesknowledge.BackendTelemetry.Outcome.OBSOLETE;
+                    case "failed"->org.notesknowledge.BackendTelemetry.Outcome.FAILED;
+                    case "rejected"->org.notesknowledge.BackendTelemetry.Outcome.REJECTED;
+                    default->org.notesknowledge.BackendTelemetry.Outcome.UNAVAILABLE;
+                },0);
+        }
     }
     private List<DerivedSegment> understandChild(KnowledgeWork.Claim claim,List<org.notesknowledge.DispatchCoordinator.Handle> dispatches,
             MediaUnderstandingPort provider,TransformedMediaIdentity child,byte[] original,byte[] bytes,

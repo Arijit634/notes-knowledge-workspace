@@ -18,7 +18,7 @@ class PublicKnowledgeWorker {
         for(var claim:claims) {
             try {
                 var source=transactions.capture(claim);
-                if(source.isEmpty()){transactions.obsolete(claim);continue;}
+                if(source.isEmpty()){transactions.obsolete(claim);metric("obsolete");continue;}
                 var segments=new MarkdownChunker().chunk(source.get().markdown());
                 boolean completed=transactions.complete(claim,segments);
                 metric(completed?"completed":"obsolete");
@@ -32,5 +32,8 @@ class PublicKnowledgeWorker {
     void metric(String outcome) {
         try {meters.counter("knowledge.public.work","outcome",outcome).increment();}
         catch(RuntimeException unavailable){org.slf4j.LoggerFactory.getLogger(PublicKnowledgeWorker.class).warn("public_work_telemetry_deferred");}
+        org.notesknowledge.BackendTelemetry.record(meters,org.notesknowledge.BackendTelemetry.Event.WORK,
+            org.notesknowledge.BackendTelemetry.Operation.PUBLIC_INDEX,switch(outcome){case "completed"->org.notesknowledge.BackendTelemetry.Outcome.SUCCESS;
+                case "retry"->org.notesknowledge.BackendTelemetry.Outcome.RETRY;default->org.notesknowledge.BackendTelemetry.Outcome.OBSOLETE;},0);
     }
 }

@@ -1,0 +1,18 @@
+{
+  "user": "65533:65533",
+  "readOnly": true,
+  "memoryBytes": 2147483648,
+  "nanoCpus": 2000000000,
+  "pidsLimit": 512,
+  "stopTimeoutSeconds": 300,
+  "capDrop": ["ALL"],
+  "securityOpt": ["no-new-privileges"],
+  "logDriver": "json-file",
+  "logOptions": {"mode": "non-blocking", "max-buffer-size": "4m", "max-size": "8m", "max-file": "3"},
+  "tmpfs": {
+    "/tmp": "rw,noexec,nosuid,nodev,size=512m",
+    "/private/pdf-recovery": "rw,noexec,nosuid,nodev,size=4m,uid=65533,gid=65533,mode=0700",
+    "/private/video-recovery": "rw,noexec,nosuid,nodev,size=4m,uid=65533,gid=65533,mode=0700",
+    "/private/video-scratch": "rw,noexec,nosuid,nodev,size=192m,uid=65533,gid=65533,mode=0700"
+  }
+}

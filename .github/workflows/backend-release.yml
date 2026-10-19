@@ -1,0 +1,161 @@
+name: Backend release preparation
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the same qualified ARM64 image only after all gates
+        type: boolean
+        default: false
+      release_version:
+        description: Immutable SemVer tag required for publication
+        type: string
+        default: ''
+      zero_cost_and_public_ghcr_verified:
+        description: Operator reverified no-charge runner and public GHCR entitlement
+        type: boolean
+        default: false
+      redistribution_clearance_verified:
+        description: Operator approved source notices and codec patent redistribution
+        type: boolean
+        default: false
+      whole_product_release_gates_verified:
+        description: Frontend static assets and full product evaluation accepted separately
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: backend-release
+  cancel-in-progress: false
+jobs:
+  candidate:
+    if: github.repository == 'Arijit634/notes-knowledge-workspace' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      checks: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact protected green main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/release-guard.py main --repository "$GITHUB_REPOSITORY" --source "$GITHUB_SHA" --output "$RUNNER_TEMP/protected-main.json"
+      - name: Verify operational and release contracts offline
+        run: python3 .github/scripts/test-operations.py
+      - name: Scan public source with pinned Gitleaks
+        run: |
+          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+            -v "$PWD:/repo:ro" ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            git --config=/repo/.gitleaks.toml --log-opts=HEAD --redact --no-banner --exit-code=1 /repo
+      - name: Install checksum-pinned native Java
+        run: bash .github/scripts/media-jdk.sh
+      - name: Verify complete backend and package one candidate JAR
+        run: |
+          ./mvnw --batch-mode --no-transfer-progress clean verify -q
+          ./mvnw --batch-mode --no-transfer-progress dependency:build-classpath -DincludeScope=test -Dmdep.outputFile=target/qualification-classpath.txt -q
+      - name: Build and qualify the exact native deployment image
+        env:
+          NKW_CANDIDATE_ONLY: 'true'
+        run: bash .github/scripts/qualify-media.sh
+      - name: Enforce publication gates
+        id: gate
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.release_version }}
+          ZERO_COST: ${{ inputs.zero_cost_and_public_ghcr_verified }}
+          REDISTRIBUTION: ${{ inputs.redistribution_clearance_verified }}
+          WHOLE_PRODUCT: ${{ inputs.whole_product_release_gates_verified }}
+        run: |
+          test "$ZERO_COST" = true && test "$REDISTRIBUTION" = true && test "$WHOLE_PRODUCT" = true
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          # Publication remains blocked until the separately accepted frontend
+          # is packaged. This workflow never installs or builds the frontend.
+          "$JAVA_HOME/bin/jar" tf target/notes-knowledge-workspace-0.0.1-SNAPSHOT.jar | grep -Fx 'BOOT-INF/classes/static/index.html'
+          python3 .github/scripts/release-guard.py main --repository "$GITHUB_REPOSITORY" --source "$GITHUB_SHA" --output "$RUNNER_TEMP/main-before-publication.json"
+          image="$(tail -n 1 "$RUNNER_TEMP/media-deployment-image")"
+          python3 .github/scripts/release-guard.py candidate --source "$GITHUB_SHA" --image "$image" \
+            --security "$RUNNER_TEMP/media-security-readiness/security-readiness.json" \
+            --sbom "$RUNNER_TEMP/media-security-readiness/sbom-receipt.json" \
+            --smoke "$RUNNER_TEMP/media-deployment-smoke/deployment-smoke.json" --output "$RUNNER_TEMP/release-candidate.json"
+      - name: Publish the same image without rebuilding
+        if: inputs.publish && steps.gate.outcome == 'success'
+        id: publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.release_version }}
+        run: |
+          set -euo pipefail
+          repository="ghcr.io/${GITHUB_REPOSITORY,,}"
+          image="$(tail -n 1 "$RUNNER_TEMP/media-deployment-image")"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin >/dev/null
+          trap 'docker logout ghcr.io >/dev/null 2>&1' EXIT
+          # Reject reuse of either convenience tag; no latest, force or overwrite.
+          if docker manifest inspect "$repository:sha-$GITHUB_SHA" >/dev/null 2>&1; then exit 1; fi
+          if docker manifest inspect "$repository:v$VERSION" >/dev/null 2>&1; then exit 1; fi
+          docker tag "$image" "$repository:sha-$GITHUB_SHA"
+          docker tag "$image" "$repository:v$VERSION"
+          docker push "$repository:sha-$GITHUB_SHA"
+          docker push "$repository:v$VERSION"
+          canonical="$(docker image inspect --format '{{index .RepoDigests 0}}' "$repository:sha-$GITHUB_SHA")"
+          [[ "$canonical" =~ ^ghcr.io/arijit634/notes-knowledge-workspace@sha256:[0-9a-f]{64}$ ]]
+          docker pull "$canonical" >/dev/null
+          test "$(docker image inspect --format '{{.Id}}' "$canonical")" = "$image"
+          printf 'name=%s\ndigest=%s\n' "$repository" "${canonical#*@}" >> "$GITHUB_OUTPUT"
+      - name: Attest canonical image provenance
+        if: steps.publication.outcome == 'success'
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-name: ${{ steps.publication.outputs.name }}
+          subject-digest: ${{ steps.publication.outputs.digest }}
+          push-to-registry: true
+      - name: Attest matching CycloneDX SBOM
+        if: steps.publication.outcome == 'success'
+        uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3
+        with:
+          subject-name: ${{ steps.publication.outputs.name }}
+          subject-digest: ${{ steps.publication.outputs.digest }}
+          sbom-path: ${{ runner.temp }}/media-security-readiness/deployment.cdx.json
+          push-to-registry: true
+      - name: Verify source digest workflow and SBOM attestations before release eligibility
+        if: steps.publication.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SUBJECT: ${{ steps.publication.outputs.name }}@${{ steps.publication.outputs.digest }}
+          PUBLISHED_DIGEST: ${{ steps.publication.outputs.digest }}
+          VERSION: ${{ inputs.release_version }}
+        run: |
+          workflow="$GITHUB_REPOSITORY/.github/workflows/backend-release.yml"
+          gh attestation verify "oci://$SUBJECT" --repo "$GITHUB_REPOSITORY" --signer-workflow "$workflow" --source-ref refs/heads/main --source-digest "$GITHUB_SHA" --format json > "$RUNNER_TEMP/provenance-verification.json"
+          gh attestation verify "oci://$SUBJECT" --repo "$GITHUB_REPOSITORY" --signer-workflow "$workflow" --source-ref refs/heads/main --source-digest "$GITHUB_SHA" --predicate-type https://cyclonedx.org/bom --format json > "$RUNNER_TEMP/sbom-verification.json"
+          python3 - <<'PY'
+          import json,os,pathlib
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])
+          result=json.loads((root/'release-candidate.json').read_text())
+          result.update(publishedDigest=os.environ['PUBLISHED_DIGEST'],version=os.environ['VERSION'],registryPublished=True,
+              attestationVerified=True,releaseEligible=True,productionAuthorized=False,workflow='backend-release.yml')
+          (root/'release-manifest.json').write_text(json.dumps(result,indent=2)+'\n')
+          PY
+      - name: Retain bounded nonsecret qualification evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: backend-release-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/protected-main.json
+            ${{ runner.temp }}/release-candidate.json
+            ${{ runner.temp }}/release-manifest.json
+            ${{ runner.temp }}/provenance-verification.json
+            ${{ runner.temp }}/sbom-verification.json
+            ${{ runner.temp }}/media-security-readiness/*.json
+            ${{ runner.temp }}/media-deployment-smoke/*.json
+            ${{ runner.temp }}/media-runtime-provenance/*
+          if-no-files-found: warn
+          retention-days: 3

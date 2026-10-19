@@ -45,6 +45,15 @@ public final class DependencyHealthTracker {
         }
     }
 
+    @org.springframework.beans.factory.annotation.Autowired
+    void metrics(io.micrometer.core.instrument.MeterRegistry meters){
+        for(var dependency:Dependency.values())try{
+            io.micrometer.core.instrument.Gauge.builder("notes.workspace.dependency.available",this,tracker->{
+                var current=tracker.status(dependency).state();return current==State.UNKNOWN?Double.NaN:current==State.UP?1:0;
+            }).tag("dependency",dependency.name().toLowerCase(java.util.Locale.ROOT)).register(meters);
+        }catch(RuntimeException unavailable){/* diagnostic only */}
+    }
+
     public synchronized Status status(Dependency dependency) {
         return statuses.get(Objects.requireNonNull(dependency));
     }

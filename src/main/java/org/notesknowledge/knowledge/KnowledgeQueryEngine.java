@@ -24,12 +24,16 @@ class KnowledgeQueryEngine {
     private final ObjectProvider<StructuredKnowledgePort> providers;
     private final DispatchCoordinator coordination;
     private final ObjectProvider<PlatformTransactionManager> managers;
+    private RetrievalTelemetry telemetry;
+    @org.springframework.beans.factory.annotation.Autowired
+    void telemetry(RetrievalTelemetry telemetry){this.telemetry=telemetry;}
     KnowledgeQueryEngine(PrivateLexicalSearch lexical,PrivateQuerySource sources,ExactPrivateVectorSearch vectors,QueryEvidenceRepository evidence,
         KnowledgeQueryGate gate,ObjectProvider<StructuredKnowledgePort> providers,DispatchCoordinator coordination,ObjectProvider<PlatformTransactionManager> managers) {
         this.lexical=lexical;this.sources=sources;this.vectors=vectors;this.evidence=evidence;this.gate=gate;this.providers=providers;this.coordination=coordination;this.managers=managers;
     }
     private <T>T tx(java.util.function.Supplier<T> work){var t=new TransactionTemplate(managers.getObject());t.setTimeout(3);return t.execute(s->work.get());}
     Generated ranked(UUID owner,KnowledgeQueryRequest request) {
+        long started=System.nanoTime();
         var signals=new ArrayList<List<UUID>>();var sourceMap=new LinkedHashMap<UUID,PrivateQuerySource.Source>();
         for(String lifecycle:request.lifecycles()) {
             var rows=tx(()->lexical.search(new PrivateLexicalSearch.Query(request.query(),PrivateKnowledgeSource.Lifecycle.valueOf(lifecycle.toUpperCase(java.util.Locale.ROOT)),List.of())));
@@ -38,6 +42,7 @@ class KnowledgeQueryEngine {
             signals.add(ids);
         }
         var selected=new ArrayList<QueryEvidenceRepository.Evidence>();String degraded=null;KnowledgeQueryGate.QueryPermit permit=null;
+        if(telemetry!=null)telemetry.candidates(request.plan(),RetrievalTelemetry.Stage.LEXICAL,sourceMap.size());
         var relevant=new LinkedHashMap<UUID,ExactPrivateVectorSearch.Candidate>();
         var lexicalNotes=sourceMap.values().stream().filter(PrivateQuerySource.Source::aiEnabled).map(s->s.expected().noteId()).toList();
         var provider=providers.getIfAvailable();
@@ -61,6 +66,7 @@ class KnowledgeQueryEngine {
                 if(candidate.expected().equals(sourceMap.get(candidate.expected().noteId()).expected()))relevant.putIfAbsent(candidate.segmentId(),candidate);
         } catch(DerivationFailure failure){degraded=safeReason(failure);}
         var order=ReciprocalRankFusion.fuse(signals,50);
+        if(telemetry!=null)telemetry.candidates(request.plan(),RetrievalTelemetry.Stage.EXACT,relevant.size());
         if(permit!=null&&degraded==null) {
             var qp=permit;
             int characters=0;
@@ -82,6 +88,7 @@ class KnowledgeQueryEngine {
         }
         var deterministic=order.stream().map(sourceMap::get).filter(s->sources.matches(s,false))
             .map(s->new KnowledgeQueryResult.DeterministicItem("note",s.title(),List.of(citation(s,null)),s.aiEnabled())).toList();
+        if(telemetry!=null){telemetry.candidates(request.plan(),RetrievalTelemetry.Stage.CONTEXT,selected.size());telemetry.preGeneration(request.plan(),System.nanoTime()-started);}
         Generated answer=selected.isEmpty()?empty(List.of(),degraded,degraded==null&&request.plan()==KnowledgeQueryRequest.Plan.FOCUSED):generate(owner,request.query(),"answer",selected,()->true);
         var r=answer.result();return new Generated(new KnowledgeQueryResult(deterministic,r.aiAnswer(),r.citations(),new KnowledgeQueryResult.Coverage("bounded",sourceMap.size(),false,false,false,false,false),degraded!=null?degraded:r.degraded(),r.insufficientEvidence()),answer.provenance(),answer.lineages());
     }

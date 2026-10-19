@@ -64,6 +64,14 @@ final class ManagedEmailDeliveryAdapter implements SecurityEmailProviderPort {
 
     @Override
     public Outcome submit(String recipient, SecurityEmailMessageRenderer.Message message) {
+        long started=System.nanoTime();Outcome outcome=Outcome.AMBIGUOUS;
+        try{return outcome=send(recipient,message);}
+        finally{try{if(meters!=null)meters.timer("notes.workspace.security_email.provider","outcome",outcome.name().toLowerCase(java.util.Locale.ROOT))
+            .record(System.nanoTime()-started,java.util.concurrent.TimeUnit.NANOSECONDS);}catch(RuntimeException unavailable){/* diagnostic only */}}
+    }
+    private io.micrometer.core.instrument.MeterRegistry meters;
+    @org.springframework.beans.factory.annotation.Autowired void metrics(io.micrometer.core.instrument.MeterRegistry meters){this.meters=meters;}
+    private Outcome send(String recipient,SecurityEmailMessageRenderer.Message message){
         var mail = new SimpleMailMessage();
         mail.setFrom(from);
         mail.setTo(recipient);

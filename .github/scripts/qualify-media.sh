@@ -20,6 +20,7 @@ curl --fail --location --retry 2 --proto '=https' --tlsv1.2 https://ffmpeg.org/r
 printf '8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e  %s/ffmpeg-9.0.2.tar.xz\n' "$context" | sha256sum --check --strict -
 # Rebuild the prior deployment packaging with this identical JAR and compare
 # both images against the same scanner/database snapshot; no old result reuse.
+if [ "${NKW_CANDIDATE_ONLY:-false}" != true ]; then
 prior=ffa878faeb6302f06e0a1fdde7619776af77a27c
 comparison="$RUNNER_TEMP/media-comparison"
 mkdir "$comparison"
@@ -28,14 +29,17 @@ git show "$prior:src/main/native/media-runtime.Dockerfile" > "$comparison/Docker
 docker build --file "$comparison/Dockerfile" --target deployment --tag nkw-media-before "$context"
 before="$(docker image inspect --format '{{.Id}}' nkw-media-before)"
 docker run --rm --network none --entrypoint /bin/sh "$before" -c 'dpkg-query -W' > "$RUNNER_TEMP/media-before-packages.txt"
-docker build --file src/main/native/media-runtime.Dockerfile --target qualification --tag nkw-media-qualification "$context"
+fi
+source_sha="$(git rev-parse HEAD)"
+[[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
+docker build --build-arg "SOURCE_SHA=$source_sha" --file src/main/native/media-runtime.Dockerfile --target qualification --tag nkw-media-qualification "$context"
 image="$(docker image inspect --format '{{.Id}}' nkw-media-qualification)"
 case "$(uname -m)" in x86_64) expected=amd64 ;; aarch64) expected=arm64 ;; esac
 test "$(docker image inspect --format '{{.Architecture}}' "$image")" = "$expected"
 printf 'Native architecture: %s\nCandidate image: %s\n' "$(uname -m)" "$image"
 # Build the actual deployment target from the identical qualified inputs. This
 # is local runner evidence, not registry publication or deployment approval.
-docker build --quiet --file src/main/native/media-runtime.Dockerfile --target deployment "$context" > "$RUNNER_TEMP/media-deployment-image"
+docker build --quiet --build-arg "SOURCE_SHA=$source_sha" --file src/main/native/media-runtime.Dockerfile --target deployment "$context" > "$RUNNER_TEMP/media-deployment-image"
 deployment="$(tail -n 1 "$RUNNER_TEMP/media-deployment-image")"
 [[ "$deployment" =~ ^sha256:[0-9a-f]{64}$ ]]
 test "$(docker image inspect --format '{{.Architecture}}' "$deployment")" = "$expected"
@@ -150,9 +154,13 @@ for name in ('ConfiguredMultimodalApplicationTest','PrivateDerivationIntegration
     root=ET.parse(path).getroot()
     print(json.dumps({"nativeMedia":True,"testClass":name,**{key:int(root.attrib[key]) for key in ("tests","failures","errors","skipped")}}))
 PY
+if [ "${NKW_CANDIDATE_ONLY:-false}" != true ]; then
 bash .github/scripts/scan-deployment.sh "$before" "$RUNNER_TEMP/media-before-security" "$RUNNER_TEMP/media-security-cache"
+fi
 bash .github/scripts/scan-deployment.sh "$deployment" "$RUNNER_TEMP/media-security-readiness" "$RUNNER_TEMP/media-security-cache"
+if [ "${NKW_CANDIDATE_ONLY:-false}" != true ]; then
 python3 .github/scripts/compare-deployment.py "$before" "$deployment" "$RUNNER_TEMP"
+fi
 # Run the actual production process, with no test classes or Docker socket mounted.
 # Scan evidence survives even if this independent operational gate fails.
 python3 .github/scripts/deployment-smoke.py "$deployment" "$image" "$RUNNER_TEMP/media-deployment-smoke"

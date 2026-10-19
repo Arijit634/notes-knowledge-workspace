@@ -33,6 +33,9 @@ final class SecurityEmailPoller {
     private final ThreadPoolExecutor executor;
     private final Semaphore admission;
     private boolean reclaimFirst;
+    private boolean stopping;
+    @org.springframework.context.event.EventListener
+    synchronized void stopClaiming(org.springframework.context.event.ContextClosedEvent event){stopping=true;}
 
     SecurityEmailPoller(SecurityEmailDeliveryRepository delivery, SecurityEmailWorker worker,
             Clock clock, SecurityEmailDeliveryProperties settings) {
@@ -55,6 +58,7 @@ final class SecurityEmailPoller {
 
     @Scheduled(fixedDelayString = "${identity.delivery.poll-delay}")
     synchronized void poll() {
+        if(stopping)return;
         try {
             pollAvailable();
         } catch (org.springframework.dao.DataAccessException | org.springframework.transaction.TransactionException unavailable) {
@@ -125,7 +129,8 @@ final class SecurityEmailPoller {
     }
 
     @PreDestroy
-    void stop() {
+    synchronized void stop() {
+        stopping=true;
         executor.shutdown();
         try {
             if (!executor.awaitTermination(settings.providerTimeout().toMillis(),
