@@ -16,7 +16,17 @@ export const SECURITY_ROUTES = ['/settings/security', '/settings/security/mfa',
   '/settings/security/sessions'] as const
 export const NOTES_ROUTES = ['/notes', '/notes/new', '/notes/:id'] as const
 export const PRIVATE_WORKSPACE_ROUTES = ['/ask', '/settings/profile', '/settings/privacy'] as const
-export const PRODUCT_ROUTES = [...AUTH_ROUTES, ...SECURITY_ROUTES, ...NOTES_ROUTES, ...PRIVATE_WORKSPACE_ROUTES] as const
+export const PUBLIC_EXPERIENCE_ROUTES = ['/publications', '/publications/:publicationId', '/settings/public-profile', '/explore', '/explore/search', '/profile/:handle', '/publication/:publicationId', '/moderation/reports', '/moderation/reports/:reportId'] as const
+export const PRODUCT_ROUTES = [...AUTH_ROUTES, ...SECURITY_ROUTES, ...NOTES_ROUTES, ...PRIVATE_WORKSPACE_ROUTES, ...PUBLIC_EXPERIENCE_ROUTES] as const
+const OwnerPublicationsPage = lazy(() => import('../features/publishing/OwnerPublicationPages').then(m => ({ default: m.OwnerPublicationsPage })))
+const OwnerPublicationPage = lazy(() => import('../features/publishing/OwnerPublicationPages').then(m => ({ default: m.OwnerPublicationPage })))
+const PublicProfileSettingsPage = lazy(() => import('../features/profile/PublicProfileSettingsPage').then(m => ({ default: m.PublicProfileSettingsPage })))
+const ExplorePage = lazy(() => import('../features/discovery/DiscoveryPages').then(m => ({ default: m.ExplorePage })))
+const AuthorPage = lazy(() => import('../features/discovery/DiscoveryPages').then(m => ({ default: m.AuthorPage })))
+const PublicReaderPage = lazy(() => import('../features/discovery/DiscoveryPages').then(m => ({ default: m.PublicReaderPage })))
+const PublicationAlias = lazy(() => import('../features/discovery/DiscoveryPages').then(m => ({ default: m.PublicationAlias })))
+const ModerationQueuePage = lazy(() => import('../features/moderation/ModerationPages').then(m => ({ default: m.ModerationQueuePage })))
+const ModerationReportPage = lazy(() => import('../features/moderation/ModerationPages').then(m => ({ default: m.ModerationReportPage })))
 const SecuritySettingsPage = lazy(() => import('../features/security/SecuritySettingsPages')
   .then(module => ({ default: module.SecuritySettingsPage })))
 const MfaSettingsPage = lazy(() => import('../features/security/SecuritySettingsPages')
@@ -260,6 +270,16 @@ function AuthRoutes() {
     <Route path="/ask" element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<p role="status">Loading knowledge…</p>}><AskKnowledgePage auth={auth} /></Suspense></Gate>} />
     <Route path="/settings/profile" element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<p role="status">Loading profile…</p>}><ProfileSettingsPage auth={auth} /></Suspense></Gate>} />
     <Route path="/settings/privacy" element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<p role="status">Loading privacy…</p>}><PrivacySettingsPage auth={auth} /></Suspense></Gate>} />
+    <Route path="/publications" element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<p role="status">Loading publications…</p>}><OwnerPublicationsPage auth={auth} /></Suspense></Gate>} />
+    <Route path="/publications/:publicationId" element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<p role="status">Loading publication…</p>}><OwnerPublicationPage key={location.pathname} auth={auth} /></Suspense></Gate>} />
+    <Route path="/settings/public-profile" element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<p role="status">Loading public profile settings…</p>}><PublicProfileSettingsPage auth={auth} /></Suspense></Gate>} />
+    <Route path="/explore" element={<Suspense fallback={<p role="status">Loading public library…</p>}><ExplorePage auth={auth} /></Suspense>} />
+    <Route path="/explore/search" element={<Suspense fallback={<p role="status">Loading public search…</p>}><ExplorePage key="search" auth={auth} searching /></Suspense>} />
+    <Route path="/profile/:handle" element={<Suspense fallback={<p role="status">Loading author…</p>}><AuthorPage key={location.pathname} auth={auth} /></Suspense>} />
+    <Route path="/publication/:publicationId" element={<Suspense fallback={<p role="status">Loading article…</p>}><PublicReaderPage key={location.pathname} auth={auth} /></Suspense>} />
+    <Route path="/p/:publicationId" element={<Suspense fallback={<p role="status">Opening public link…</p>}><PublicationAlias /></Suspense>} />
+    <Route path="/moderation/reports" element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<p role="status">Loading review queue…</p>}><ModerationQueuePage auth={auth} /></Suspense></Gate>} />
+    <Route path="/moderation/reports/:reportId" element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<p role="status">Loading report…</p>}><ModerationReportPage key={location.pathname} auth={auth} /></Suspense></Gate>} />
     <Route path="*" element={<Shell title="Page not found"><p>That page is unavailable.</p><Link to="/">Go home</Link></Shell>} />
   </Routes>
 }

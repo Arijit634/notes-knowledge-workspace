@@ -353,7 +353,12 @@ for (const width of [360, 390, 768, 1280, 1440]) {
     await expect(page.getByRole('main')).toBeFocused()
     await noPageOverflow(page)
     expect(await page.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('link').allTextContents())
-      .toEqual(['All notes', 'Search & Ask', 'Profile', 'AI & Privacy', 'Security settings'])
+      .toEqual(width <= 600 ? ['All notes', 'Search & Ask', 'Publications', 'Explore'] : ['All notes', 'Search & Ask', 'Publications', 'Explore', 'Profile', 'AI & Privacy', 'Security settings'])
+    if (width <= 600) {
+      await page.locator('.workspace-more > summary').click()
+      await expect(page.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('link', { name: 'Public profile', exact: true })).toBeVisible()
+      await page.locator('.workspace-more > summary').click()
+    }
     await expect(page.getByRole('searchbox')).toHaveCount(0)
     await page.getByRole('link', { name: 'New note', exact: true }).click()
     await page.getByLabel('Title', { exact: true }).fill('Small things worth keeping')

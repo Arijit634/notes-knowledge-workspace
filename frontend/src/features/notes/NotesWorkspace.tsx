@@ -28,9 +28,14 @@ export function NotesWorkspace({ children, modalOpen = false, auth }: { children
         <nav aria-label="Workspace navigation">
           <Link to="/notes" aria-current={location.pathname.startsWith('/notes') ? 'page' : undefined}><Icon name="notes" />All notes</Link>
           <Link to="/ask" aria-current={location.pathname === '/ask' ? 'page' : undefined}><Icon name="ask" />Search &amp; Ask</Link>
+          <Link to="/publications" aria-current={location.pathname.startsWith('/publications') ? 'page' : undefined}><Icon name="notes" />Publications</Link>
+          <Link to="/explore"><Icon name="search" />Explore</Link>
           <Link to="/settings/profile" aria-current={location.pathname === '/settings/profile' ? 'page' : undefined}><Icon name="profile" />Profile</Link>
           <Link to="/settings/privacy" aria-current={location.pathname === '/settings/privacy' ? 'page' : undefined}><Icon name="settings" />AI &amp; Privacy</Link>
           <Link to="/settings/security" aria-current={location.pathname.startsWith('/settings/security') ? 'page' : undefined}><Icon name="shield" />Security settings</Link>
+          <details className="workspace-more"><summary><Icon name="settings" />More</summary><div>
+            <Link to="/settings/profile">Profile</Link><Link to="/settings/public-profile">Public profile</Link><Link to="/settings/privacy">AI &amp; Privacy</Link><Link to="/settings/security">Security settings</Link>
+          </div></details>
         </nav>
         <Link to="/notes/new" className="studio-new-note"><Icon name="plus" />New note</Link>
         <p className="notes-sidebar-foot">Your private workspace</p>

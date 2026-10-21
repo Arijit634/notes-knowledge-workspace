@@ -7,6 +7,7 @@ import { profileApi, type PrivateProfile } from './ProfileApi'
 import { Icon } from '../../app/ui/Icon'
 import { featureError } from '../../app/ui/featureError'
 import { usePrivateScope } from '../../app/security/usePrivateScope'
+import { Link } from 'react-router'
 
 export function ProfileSettingsPage({ auth }: { auth: AuthRuntime }) {
   const key = ['profile', auth.session.viewerScope, 'private'] as const
@@ -37,7 +38,7 @@ export function ProfileSettingsPage({ auth }: { auth: AuthRuntime }) {
     try { await profileApi.removeAvatar(auth); if (current()) { await profile.refetch(); setStatus('Avatar removed.') } }
     catch (e) { if (current()) setError(featureError(e)) } finally { if (current()) setBusy(false) }
   }
-  return <NotesWorkspace auth={auth}><div className="settings-card"><h1>Your profile</h1><p>Make this space yours. Your private profile is not a public profile.</p>
+  return <NotesWorkspace auth={auth}><div className="settings-card"><h1>Your profile</h1><p>Make this space yours. Your private profile is not a public profile.</p><Link to="/settings/public-profile">Public profile &amp; publishing identity</Link>
     {profile.isPending ? <p role="status">Loading profile…</p> : profile.isError ? <p role="alert">{featureError(profile.error)} <button onClick={() => void profile.refetch()}>Retry</button></p> : profile.data && <>
       <div className="studio-profile-avatar"><span className="studio-avatar-symbol"><Icon name="profile" /></span><div>
         <strong>{profile.data.avatar ? 'Avatar is configured' : 'No avatar yet'}</strong><p>PNG or JPEG · validated by the server</p>

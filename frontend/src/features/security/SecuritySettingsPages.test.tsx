@@ -65,7 +65,9 @@ describe('security settings browser journey', () => {
     expect(PRODUCT_ROUTES).toEqual(['/', '/signup', '/verify-email', '/login', '/mfa',
       '/forgot-password', '/reset-password', '/auth/complete', '/reauth',
       '/settings/security', '/settings/security/mfa', '/settings/security/sessions',
-      '/notes', '/notes/new', '/notes/:id', '/ask', '/settings/profile', '/settings/privacy'])
+      '/notes', '/notes/new', '/notes/:id', '/ask', '/settings/profile', '/settings/privacy',
+      '/publications', '/publications/:publicationId', '/settings/public-profile', '/explore', '/explore/search',
+      '/profile/:handle', '/publication/:publicationId', '/moderation/reports', '/moderation/reports/:reportId'])
   })
 
   it.each(['/settings/security', '/settings/security/mfa', '/settings/security/sessions'])(
