@@ -8,13 +8,15 @@ import { canEnterRoute, type RouteAccess } from './security/RouteGate'
 import { AuthRuntime } from '../features/auth/AuthRuntime'
 import { navigateToGoogle } from '../features/auth/OidcNavigationCoordinator'
 import { securityKeys, securitySummary } from '../features/security/SecurityApi'
+import { safeDestination } from '../features/auth/SafeDestination'
 
 export const AUTH_ROUTES = ['/', '/signup', '/verify-email', '/login', '/mfa',
   '/forgot-password', '/reset-password', '/auth/complete', '/reauth'] as const
 export const SECURITY_ROUTES = ['/settings/security', '/settings/security/mfa',
   '/settings/security/sessions'] as const
 export const NOTES_ROUTES = ['/notes', '/notes/new', '/notes/:id'] as const
-export const PRODUCT_ROUTES = [...AUTH_ROUTES, ...SECURITY_ROUTES, ...NOTES_ROUTES] as const
+export const PRIVATE_WORKSPACE_ROUTES = ['/ask', '/settings/profile', '/settings/privacy'] as const
+export const PRODUCT_ROUTES = [...AUTH_ROUTES, ...SECURITY_ROUTES, ...NOTES_ROUTES, ...PRIVATE_WORKSPACE_ROUTES] as const
 const SecuritySettingsPage = lazy(() => import('../features/security/SecuritySettingsPages')
   .then(module => ({ default: module.SecuritySettingsPage })))
 const MfaSettingsPage = lazy(() => import('../features/security/SecuritySettingsPages')
@@ -25,6 +27,10 @@ const NotesListPage = lazy(() => import('../features/notes/NotesPages')
   .then(module => ({ default: module.NotesListPage })))
 const NoteEditorPage = lazy(() => import('../features/notes/NotesPages')
   .then(module => ({ default: module.NoteEditorPage })))
+const AskKnowledgePage = lazy(() => import('../features/knowledge/AskKnowledgePage').then(m => ({ default: m.AskKnowledgePage })))
+const ProfileSettingsPage = lazy(() => import('../features/profile/ProfileSettingsPage').then(m => ({ default: m.ProfileSettingsPage })))
+const PrivacySettingsPage = lazy(() => import('../features/knowledge/PrivacySettingsPage').then(m => ({ default: m.PrivacySettingsPage })))
+import { NotesWorkspace } from '../features/notes/NotesWorkspace'
 const Context = createContext<{ auth: AuthRuntime; version: number } | null>(null)
 const useAuth = () => {
   const value = useContext(Context)
@@ -59,14 +65,17 @@ function Shell({ title, eyebrow, children }: { title: string; eyebrow?: string; 
   </section></main>
 }
 function Gate({ access, children }: { access: RouteAccess; children: ReactNode }) {
-  const auth = useAuth()
+  const auth = useAuth(), location = useLocation()
+  useEffect(() => {
+    if (access === 'FULL_AUTHENTICATED' && auth.state !== 'authenticated' && auth.state !== 'unknown') auth.signInDestination.remember(location.pathname)
+  }, [access, auth, auth.state, location.pathname])
   if (auth.state === 'unknown') return <Shell title="Checking your session"><p role="status">Please wait…</p></Shell>
   if (auth.state === 'mfaRequired' && !auth.continuation.challengeId && access !== 'PUBLIC') return <RestartLogin />
   if (canEnterRoute(auth.state, access)) {
     return <>{children}</>
   }
-  if (auth.state === 'mfaRequired' && auth.continuation.challengeId) return <Navigate to="/mfa" replace />
-  return <Navigate to={auth.state === 'authenticated' ? '/' : '/login'} replace />
+  if (auth.state === 'mfaRequired' && auth.continuation.challengeId) return <Navigate to="/mfa" state={{ from: safeDestination(location.pathname) ?? safeDestination(location.state?.from) }} replace />
+  return <Navigate to={auth.state === 'authenticated' ? safeDestination(location.state?.from) ?? '/notes' : '/login'} state={{ from: safeDestination(location.pathname) }} replace />
 }
 function RestartLogin() {
   const auth = useAuth(), navigate = useNavigate()
@@ -75,17 +84,11 @@ function RestartLogin() {
   return <Shell title="Restart sign in"><p>Your verification session is no longer available.</p>{error && <Alert>{error}</Alert>}<button onClick={restart}>Restart sign in</button></Shell>
 }
 function Landing() {
-  const auth = useAuth(), navigate = useNavigate()
-  const [error, setError] = useState('')
-  async function logout() { try { await auth.logout(); navigate('/') } catch (e) { setError(message(e)) } }
+  const auth = useAuth()
+  if (auth.state === 'authenticated') return <Navigate to="/notes" replace />
   return <Shell title="A quieter place for what you need to remember" eyebrow="Your workspace starts here">
     <p className="lead">Keep your notes and knowledge together. Sign in to continue when your workspace is ready.</p>
-    {error && <Alert>{error}</Alert>}
-    {auth.state === 'authenticated' ? <><p role="status">You are signed in.</p>
-      <Link className="button" to="/notes">Your notes</Link>
-      <Link className="button button-secondary" to="/settings/security">Security settings</Link>
-      <button onClick={logout}>Log out</button></>
-      : auth.state === 'mfaRequired' ? <Link className="button" to={auth.continuation.challengeId ? '/mfa' : '/login'}>{auth.continuation.challengeId ? 'Continue verification' : 'Restart sign in'}</Link>
+    {auth.state === 'mfaRequired' ? <Link className="button" to={auth.continuation.challengeId ? '/mfa' : '/login'}>{auth.continuation.challengeId ? 'Continue verification' : 'Restart sign in'}</Link>
         : <nav className="actions" aria-label="Get started"><Link className="button" to="/signup">Create an account</Link><Link className="button button-secondary" to="/login">Log in</Link></nav>}
   </Shell>
 }
@@ -134,15 +137,15 @@ function VerifyEmail() {
   </Shell>
 }
 function Login() {
-  const auth = useAuth(), navigate = useNavigate()
+  const auth = useAuth(), navigate = useNavigate(), location = useLocation()
   const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<Credentials>()
   const [error, setError] = useState(''), [googleBusy, setGoogleBusy] = useState(false)
   const submit = handleSubmit(async values => {
     setError('')
     try {
       const result = await auth.api.request<{ state?: unknown; challengeId?: unknown }>('POST', '/api/auth/login/password', { json: values })
-      if (result.metadata.status === 202 && result.body?.state === 'mfaRequired') { await auth.establish('mfaRequired', result.body.challengeId); navigate('/mfa', { replace: true }) }
-      else if (result.metadata.status === 200 && result.body?.state === 'authenticated') { await auth.establish('authenticated'); navigate('/', { replace: true }) }
+      if (result.metadata.status === 202 && result.body?.state === 'mfaRequired') { const destination = safeDestination(location.state?.from) ?? auth.signInDestination.consume(); await auth.establish('mfaRequired', result.body.challengeId); auth.signInDestination.remember(destination); navigate('/mfa', { replace: true, state: { from: destination } }) }
+      else if (result.metadata.status === 200 && result.body?.state === 'authenticated') { const destination = safeDestination(location.state?.from) ?? auth.signInDestination.consume(); await auth.establish('authenticated'); navigate(destination, { replace: true }) }
       else setError('Sign in could not be completed safely.')
     } catch (e) { setError(message(e)) }
   })
@@ -152,7 +155,7 @@ function Login() {
     <p className="footnote"><Link to="/forgot-password">Forgot password?</Link></p><p className="footnote">New here? <Link to="/signup">Create an account</Link></p></Shell>
 }
 function Mfa() {
-  const auth = useAuth(), navigate = useNavigate()
+  const auth = useAuth(), navigate = useNavigate(), location = useLocation()
   const [method, setMethod] = useState<'totp' | 'recovery-code'>('totp'), [code, setCode] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('')
   async function submit(event: FormEvent) {
     event.preventDefault(); const challenge = auth.continuation.challengeId
@@ -161,7 +164,7 @@ function Mfa() {
     try {
       const result = await auth.api.request<{ state?: unknown }>('POST', `/api/auth/mfa/challenges/${challenge}/${method}`, { json: { code } })
       if (result.body?.state !== 'authenticated') throw new Error('Unexpected response')
-      await auth.establish('authenticated'); navigate('/', { replace: true })
+      const destination = safeDestination(location.state?.from) ?? auth.signInDestination.consume(); await auth.establish('authenticated'); navigate(destination, { replace: true })
     } catch (e) {
       if (e instanceof ApiProblemError && [404, 409, 410].includes(e.problem.status)) {
         auth.continuation.clear()
@@ -210,7 +213,8 @@ function AuthComplete() {
   useEffect(() => { let active = true; auth.refreshSession().then(() => {
     if (!active) return
     if (auth.state === 'mfaRequired') { if (auth.continuation.challengeId) navigate('/mfa', { replace: true }); else setResult('unsuccessful') }
-    else setResult(auth.state === 'authenticated' ? 'signedIn' : 'unsuccessful')
+    else if (auth.state === 'authenticated') navigate(auth.signInDestination.consume(), { replace: true })
+    else setResult('unsuccessful')
   }).catch(() => { if (active) setResult('unsuccessful') }); return () => { active = false } }, [auth, navigate])
   return <Shell title="Completing sign in" eyebrow="Authentication">{result === 'checking' && <p role="status">Checking your session…</p>}{result === 'signedIn' && <><p role="status">You are signed in.</p><Link to="/">Continue</Link></>}{result === 'unsuccessful' && <><p role="status">This sign-in could not be completed. Try again.</p><Link to="/login">Log in</Link></>}</Shell>
 }
@@ -247,20 +251,26 @@ function AuthRoutes() {
     <Route path={AUTH_ROUTES[6]} element={<Gate access="PUBLIC"><ResetPassword /></Gate>} />
     <Route path={AUTH_ROUTES[7]} element={<Gate access="PUBLIC"><AuthComplete /></Gate>} />
     <Route path={AUTH_ROUTES[8]} element={<Gate access="FULL_AUTHENTICATED"><RecentAuth /></Gate>} />
-    <Route path={SECURITY_ROUTES[0]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<Shell title="Loading security settings"><p role="status">Please wait…</p></Shell>}><SecuritySettingsPage auth={auth} /></Suspense></Gate>} />
-    <Route path={SECURITY_ROUTES[1]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<Shell title="Loading MFA settings"><p role="status">Please wait…</p></Shell>}><MfaSettingsPage auth={auth} /></Suspense></Gate>} />
-    <Route path={SECURITY_ROUTES[2]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<Shell title="Loading sessions"><p role="status">Please wait…</p></Shell>}><SessionsSettingsPage auth={auth} /></Suspense></Gate>} />
+    <Route path={SECURITY_ROUTES[0]} element={<Gate access="FULL_AUTHENTICATED"><NotesWorkspace auth={auth}><Suspense fallback={<p role="status">Loading security settings…</p>}><SecuritySettingsPage auth={auth} /></Suspense></NotesWorkspace></Gate>} />
+    <Route path={SECURITY_ROUTES[1]} element={<Gate access="FULL_AUTHENTICATED"><NotesWorkspace auth={auth}><Suspense fallback={<p role="status">Loading MFA settings…</p>}><MfaSettingsPage auth={auth} /></Suspense></NotesWorkspace></Gate>} />
+    <Route path={SECURITY_ROUTES[2]} element={<Gate access="FULL_AUTHENTICATED"><NotesWorkspace auth={auth}><Suspense fallback={<p role="status">Loading sessions…</p>}><SessionsSettingsPage auth={auth} /></Suspense></NotesWorkspace></Gate>} />
     <Route path={NOTES_ROUTES[0]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<Shell title="Loading notes"><p role="status">Please wait…</p></Shell>}><NotesListPage auth={auth} /></Suspense></Gate>} />
     <Route path={NOTES_ROUTES[1]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<Shell title="Loading editor"><p role="status">Please wait…</p></Shell>}><NoteEditorPage auth={auth} creating /></Suspense></Gate>} />
     <Route path={NOTES_ROUTES[2]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<Shell title="Loading editor"><p role="status">Please wait…</p></Shell>}><NoteEditorPage key={location.pathname} auth={auth} /></Suspense></Gate>} />
+    <Route path="/ask" element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<p role="status">Loading knowledge…</p>}><AskKnowledgePage auth={auth} /></Suspense></Gate>} />
+    <Route path="/settings/profile" element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<p role="status">Loading profile…</p>}><ProfileSettingsPage auth={auth} /></Suspense></Gate>} />
+    <Route path="/settings/privacy" element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<p role="status">Loading privacy…</p>}><PrivacySettingsPage auth={auth} /></Suspense></Gate>} />
     <Route path="*" element={<Shell title="Page not found"><p>That page is unavailable.</p><Link to="/">Go home</Link></Shell>} />
   </Routes>
+}
+function SafeRouteError() {
+  return <main className="auth-layout"><section className="auth-card" role="alert"><h1>This view is unavailable</h1><p>It could not be displayed safely. Unsaved work is not guaranteed after a rendering failure.</p><a href="/notes">Return to notes</a></section></main>
 }
 const defaultRuntime = new AuthRuntime()
 export function App({ auth = defaultRuntime }: { auth?: AuthRuntime }) {
   const [version, rerender] = useState(0), [startupError, setStartupError] = useState(false)
-  const [router] = useState(() => createBrowserRouter([{ path: '*', element: <AuthRoutes /> }]))
+  const [router] = useState(() => createBrowserRouter([{ path: '*', element: <AuthRoutes />, errorElement: <SafeRouteError /> }]))
   useEffect(() => auth.subscribe(() => rerender(value => value + 1)), [auth])
   useEffect(() => { auth.bootstrap().catch(() => setStartupError(true)) }, [auth])
-  return <Context.Provider value={{ auth, version }}>{startupError ? <Shell title="Session unavailable"><Alert>We could not check your session safely. Refresh to try again.</Alert></Shell> : <RouterProvider router={router} />}</Context.Provider>
+  return <Context.Provider value={{ auth, version }}>{startupError ? <Shell title="Session unavailable"><Alert>We could not check your session safely. Refresh to try again.</Alert></Shell> : <RouterProvider router={router} onError={() => { /* Never report raw route errors or private props. */ }} />}</Context.Provider>
 }

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { App } from '../../app/App'
 import { AuthRuntime } from '../auth/AuthRuntime'
@@ -6,6 +6,15 @@ import type { NoteCore } from './NotesApi'
 import { noteKeys } from './NotesKeys'
 
 const id = '01990a55-9e12-7ac4-8f5b-31aa4a91d401'
+function markdownField() {
+  openTools()
+  if (!document.getElementById('note-markdown')) fireEvent.click(screen.getByRole('button', { name: 'Markdown source' }))
+  return screen.getByLabelText('Markdown')
+}
+function openTools() {
+  const button = screen.queryByRole('button', { name: 'Note tools' })
+  if (button?.getAttribute('aria-expanded') === 'false') fireEvent.click(button)
+}
 const initial: NoteCore = { id, title: 'Saved title', markdown: 'Saved body', lifecycle: 'active',
   pinned: false, tags: [], aiEnabled: false, createdAt: '2026-09-30T00:00:00Z',
   updatedAt: '2026-09-30T00:00:00Z' }
@@ -17,6 +26,7 @@ const problem = (status: number, code: string) => json({ type: 'about:blank', ti
 
 async function readyButton(name: string): Promise<HTMLButtonElement> {
   return waitFor(() => {
+    openTools()
     const button = screen.getByRole('button', { name }) as HTMLButtonElement
     expect(button.disabled).toBe(false)
     return button
@@ -48,17 +58,50 @@ function mount(path: string, state: 'authenticated' | 'anonymous' | 'mfaRequired
 
 // Compile the lazy route module before measuring DOM-state transitions. Cold
 // Vite transformation is not part of the simulated request/authority lifecycle.
-beforeAll(async () => { await import('./NotesPages') })
+beforeAll(async () => { await Promise.all([import('./NotesPages'), import('./MarkdownEditorAdapter')]) }, 60_000)
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); window.history.replaceState(null, '', '/') })
 
 describe('private Notes browser journey', () => {
+  it('protects a new Note whose only unsaved change is AI permission', async () => {
+    mount('/notes/new')
+    const choice = await screen.findByRole('checkbox', { name: 'Use this note with AI' })
+    fireEvent.click(choice)
+    expect((choice as HTMLInputElement).checked).toBe(true)
+    fireEvent.click(screen.getByRole('link', { name: 'All notes' }))
+    await screen.findByRole('dialog', { name: 'Leave with unsaved changes?' })
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+    expect((choice as HTMLInputElement).checked).toBe(true)
+    fireEvent.click(screen.getByRole('link', { name: 'All notes' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Discard changes and leave' }))
+    await screen.findByRole('heading', { name: 'No notes yet' })
+    fireEvent.click(screen.getAllByRole('link', { name: 'New note' })[0])
+    expect((await screen.findByRole('checkbox', { name: 'Use this note with AI' }) as HTMLInputElement).checked).toBe(false)
+  })
+  it.each([200, 412])('discards a late Save %s after the authenticated viewer epoch ends', async status => {
+    const { auth } = mount(`/notes/${id}`)
+    await screen.findByDisplayValue('Saved title')
+    let complete!: (response: Response) => void
+    const pending = new Promise<Response>(resolve => { complete = resolve })
+    const original = vi.mocked(fetch).getMockImplementation()!
+    vi.mocked(fetch).mockImplementation((input, init) => init?.method === 'PUT' ? pending : original(input, init))
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Old private draft' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save note' }))
+    await screen.findByText('Saving…')
+    await act(async () => { await auth.establish('anonymous') })
+    await screen.findByRole('heading', { name: 'Welcome back' })
+    const reads = vi.mocked(fetch).mock.calls.length
+    await act(async () => { complete(status === 200 ? json({ ...initial, title: 'Old private draft' }, 200, { ETag: '"e2"' }) : problem(412, 'stale_write')); await pending })
+    expect(auth.queries.getQueryCache().getAll()).toHaveLength(0)
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(reads)
+    expect(screen.queryByDisplayValue('Old private draft')).toBeNull()
+  })
   it('presents a Notes library with landmarks, real navigation, tag chips and pinned metadata', async () => {
     mount('/notes', 'authenticated', (method, path) => method === 'GET' && path === '/api/notes'
       ? json({ items: [{ ...initial, pinned: true, tags: ['Ideas', 'Watch later'] }], nextCursor: null }) : undefined)
     await screen.findByRole('link', { name: /Saved title/ })
     expect(screen.getAllByRole('main')).toHaveLength(1)
     const nav = screen.getByRole('navigation', { name: 'Workspace navigation' })
-    expect(within(nav).getAllByRole('link').map(link => link.getAttribute('href'))).toEqual(['/notes', '/settings/security'])
+    expect(within(nav).getAllByRole('link').map(link => link.getAttribute('href'))).toEqual(['/notes', '/ask', '/settings/profile', '/settings/privacy', '/settings/security'])
     expect(within(nav).getByRole('link', { name: 'All notes' }).getAttribute('aria-current')).toBe('page')
     expect(screen.getByRole('link', { name: 'Skip to Notes content' }).getAttribute('href')).toBe('#notes-content')
     expect(screen.getByRole('list', { name: 'Tags' }).textContent).toBe('IdeasWatch later')
@@ -82,13 +125,15 @@ describe('private Notes browser journey', () => {
   it('groups tools separately from authoring and labels the explicit-save shortcut', async () => {
     mount(`/notes/${id}`)
     await screen.findByDisplayValue('Saved title')
+    openTools()
     expect(screen.getByRole('complementary', { name: 'Note tools' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Read' }))
     expect(screen.getByRole('region', { name: 'Markdown preview' })).toBeTruthy()
-    expect(screen.getByLabelText('Markdown').getAttribute('aria-describedby')).toBe('markdown-help')
+    expect(markdownField().getAttribute('aria-describedby')).toBe('markdown-help')
     expect(screen.getByText(/Ctrl\/Cmd \+ S/)).toBeTruthy()
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Unsaved title' } })
-    expect(screen.getByRole('status').textContent).toBe('Unsaved changes')
-    fireEvent.click(screen.getByRole('button', { name: 'Hide preview' }))
+    expect(screen.getByRole('status', { name: 'Save status' }).textContent).toBe('Unsaved changes')
+    fireEvent.click(screen.getByRole('button', { name: 'Markdown source' }))
     expect(screen.queryByRole('region', { name: 'Markdown preview' })).toBeNull()
   })
 
@@ -109,12 +154,13 @@ describe('private Notes browser journey', () => {
       return historyResponse(method, path)
     })
     await screen.findByDisplayValue('Saved title')
+    openTools()
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Unsaved title' } })
-    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: ' Exact draft\n ' } })
+    fireEvent.change(markdownField(), { target: { value: ' Exact draft\n ' } })
     fireEvent.click(screen.getByRole('button', { name: 'Show version history' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Inspect Historical title' }))
     await screen.findByRole('region', { name: 'Selected checkpoint' })
-    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe(' Exact draft\n ')
+    expect((markdownField() as HTMLTextAreaElement).value).toBe(' Exact draft\n ')
     fireEvent.click(await readyButton('Restore this checkpoint'))
     await screen.findByRole('dialog', { name: 'Restore saved checkpoint?' })
     expect(screen.getByText(/draft will be discarded, not saved/)).toBeTruthy()
@@ -128,7 +174,7 @@ describe('private Notes browser journey', () => {
     fireEvent.click(await readyButton('Restore this checkpoint'))
     fireEvent.click(await screen.findByRole('button', { name: 'Restore and discard draft' }))
     await screen.findByDisplayValue('Historical title')
-    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe('Historical body')
+    expect((markdownField() as HTMLTextAreaElement).value).toBe('Historical body')
     expect(screen.getByText('Saved')).toBeTruthy()
     expect(calls.filter(call => call.method === 'POST')).toEqual([{ method: 'POST',
       path: `/api/notes/${id}/versions/${versionId}/restore`, body: { confirmRestore: true }, ifMatch: '"e1"' }])
@@ -147,13 +193,14 @@ describe('private Notes browser journey', () => {
       return historyResponse(method, path)
     })
     await screen.findByDisplayValue('Saved title')
-    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: ' Exact unsaved\n**body** ' } })
+    openTools()
+    fireEvent.change(markdownField(), { target: { value: ' Exact unsaved\n**body** ' } })
     fireEvent.click(screen.getByRole('button', { name: 'Show version history' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Inspect Historical title' }))
     fireEvent.click(await readyButton('Restore this checkpoint'))
     fireEvent.click(await screen.findByRole('button', { name: 'Restore and discard draft' }))
     await screen.findByRole('region', { name: 'Save conflict' })
-    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe(' Exact unsaved\n**body** ')
+    expect((markdownField() as HTMLTextAreaElement).value).toBe(' Exact unsaved\n**body** ')
     expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Saved title')
     expect(calls.filter(call => call.method === 'POST')).toHaveLength(1)
     expect(calls.some(call => call.method === 'PUT')).toBe(false)
@@ -167,6 +214,7 @@ describe('private Notes browser journey', () => {
       return historyResponse(method, path)
     })
     await screen.findByDisplayValue('Saved title')
+    openTools()
     fireEvent.click(screen.getByRole('button', { name: 'Show version history' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Inspect Historical title' }))
     await screen.findByText('Historical body')
@@ -182,6 +230,7 @@ describe('private Notes browser journey', () => {
       return undefined
     })
     await screen.findByDisplayValue('Saved title')
+    openTools()
     fireEvent.click(screen.getByRole('button', { name: 'Show version history' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Load older checkpoints' }))
     await screen.findByRole('button', { name: 'Inspect Older checkpoint' })
@@ -200,15 +249,16 @@ describe('private Notes browser journey', () => {
       return undefined
     })
     await screen.findByDisplayValue('Saved title')
+    openTools()
     expect(screen.getByText(/Normal note use remains available/)).toBeTruthy()
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: ' Exact title ' } })
-    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: 'Exact\n**draft** ' } })
+    fireEvent.change(markdownField(), { target: { value: 'Exact\n**draft** ' } })
     fireEvent.click(await readyButton('Enable AI'))
     await readyButton('Disable AI')
     expect(screen.getByText('AI access is ON.')).toBeTruthy()
     expect(screen.getByText(/once all processing permissions/)).toBeTruthy()
     expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(' Exact title ')
-    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe('Exact\n**draft** ')
+    expect((markdownField() as HTMLTextAreaElement).value).toBe('Exact\n**draft** ')
     expect(screen.getByText('Unsaved changes')).toBeTruthy()
     expect(calls.filter(call => call.method === 'PUT')).toEqual([
       { method: 'PUT', path: `/api/notes/${id}/ai-access`, body: { aiEnabled: true }, ifMatch: '"e1"' },
@@ -228,10 +278,11 @@ describe('private Notes browser journey', () => {
       return undefined
     })
     await screen.findByDisplayValue('Saved title')
-    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: ' Exact draft\n ' } })
+    openTools()
+    fireEvent.change(markdownField(), { target: { value: ' Exact draft\n ' } })
     fireEvent.click(await readyButton('Enable AI'))
     await screen.findByRole('region', { name: 'Save conflict' })
-    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe(' Exact draft\n ')
+    expect((markdownField() as HTMLTextAreaElement).value).toBe(' Exact draft\n ')
     expect((screen.getByRole('button', { name: 'Save note' }) as HTMLButtonElement).disabled).toBe(true)
     expect(calls.filter(call => call.method === 'PUT')).toHaveLength(1)
     expect(calls.some(call => call.path === '/api/notes/ai-access-bulk')).toBe(false)
@@ -244,6 +295,7 @@ describe('private Notes browser journey', () => {
       return undefined
     })
     await screen.findByDisplayValue('Saved title')
+    openTools()
     fireEvent.click(await readyButton('Disable AI'))
     await readyButton('Enable AI')
     expect(screen.getByText('AI access is OFF.')).toBeTruthy()
@@ -257,6 +309,7 @@ describe('private Notes browser journey', () => {
     mount(`/notes/${id}`, 'authenticated', (method, path) => method === 'GET' && path === `/api/notes/${id}`
       ? json({ ...initial, lifecycle }, 200, { ETag: '"e1"' }) : undefined)
     await screen.findByDisplayValue('Saved title')
+    openTools()
     expect(screen.queryByRole('button', { name: 'Permanent delete' })).toBeNull()
   })
 
@@ -267,12 +320,13 @@ describe('private Notes browser journey', () => {
       return undefined
     })
     await screen.findByDisplayValue('Saved title')
+    openTools()
     const scope = auth.session.viewerScope
     for (const lifecycle of ['active', 'archived', 'trashed']) auth.queries.setQueryData(
       noteKeys.list(scope, { lifecycle, sort: 'updatedAtDesc' }),
       { pages: [{ items: [initial], nextCursor: null }], pageParams: [null] })
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: ' Exact unsaved title ' } })
-    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: 'Exact\n**draft** ' } })
+    fireEvent.change(markdownField(), { target: { value: 'Exact\n**draft** ' } })
     fireEvent.click(await readyButton('Permanent delete'))
     expect(screen.getByText(/Unlike Trash, permanent deletion cannot be undone/)).toBeTruthy()
     expect(screen.getByText(/Your unsaved title and Markdown will be discarded, not saved/)).toBeTruthy()
@@ -305,6 +359,7 @@ describe('private Notes browser journey', () => {
       return undefined
     })
     await screen.findByDisplayValue('Saved title')
+    openTools()
     fireEvent.click(await readyButton('Permanent delete'))
     fireEvent.click(screen.getByRole('button', { name: 'Permanently delete' }))
     await screen.findByRole('dialog', { name: 'Unpublish and permanently delete?' })
@@ -326,11 +381,12 @@ describe('private Notes browser journey', () => {
       return undefined
     })
     await screen.findByDisplayValue('Saved title')
-    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: 'Exact dirty draft' } })
+    openTools()
+    fireEvent.change(markdownField(), { target: { value: 'Exact dirty draft' } })
     fireEvent.click(await readyButton('Permanent delete'))
     fireEvent.click(screen.getByRole('button', { name: 'Permanently delete and discard draft' }))
     await screen.findByRole('dialog', { name: 'Confirm your identity before deleting' })
-    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe('Exact dirty draft')
+    expect((markdownField() as HTMLTextAreaElement).value).toBe('Exact dirty draft')
     expect(auth.continuation.returnIntent).toBeNull()
     expect(window.location.pathname).toBe(`/notes/${id}`)
     fireEvent.click(await readyButton('Discard draft and confirm identity'))
@@ -339,6 +395,7 @@ describe('private Notes browser journey', () => {
     fireEvent.change(await screen.findByLabelText('Password'), { target: { value: 'Synthetic-password-123!' } })
     fireEvent.click(screen.getByRole('button', { name: 'Confirm with password' }))
     await screen.findByDisplayValue('Saved title')
+    openTools()
     expect(auth.continuation.returnIntent).toBeNull()
     expect(calls.filter(call => call.method === 'DELETE')).toHaveLength(1)
     expect(calls.some(call => call.method === 'PUT')).toBe(false)
@@ -357,6 +414,7 @@ describe('private Notes browser journey', () => {
       return undefined
     })
     await screen.findByDisplayValue('Saved title')
+    openTools()
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: ' Exact unsaved title ' } })
     fireEvent.click(await readyButton('Permanent delete'))
     fireEvent.click(screen.getByRole('button', { name: 'Permanently delete and discard draft' }))
@@ -376,11 +434,12 @@ describe('private Notes browser journey', () => {
       return undefined
     })
     await screen.findByDisplayValue('Saved title')
+    openTools()
     for (const lifecycle of ['active', 'archived', 'trashed']) auth.queries.setQueryData(
       noteKeys.list(auth.session.viewerScope, { lifecycle, sort: 'updatedAtDesc' }),
       { pages: [{ items: [], nextCursor: null }], pageParams: [null] })
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: ' Exact title ' } })
-    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: 'Exact\n**draft** ' } })
+    fireEvent.change(markdownField(), { target: { value: 'Exact\n**draft** ' } })
     fireEvent.click(screen.getByRole('button', { name: 'Trash' }))
     const confirmation = screen.getByRole('button', { name: 'Trash and keep draft' })
     expect(document.activeElement).toBe(confirmation)
@@ -400,7 +459,7 @@ describe('private Notes browser journey', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Restore' }))
     await readyButton('Trash')
     expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(' Exact title ')
-    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe('Exact\n**draft** ')
+    expect((markdownField() as HTMLTextAreaElement).value).toBe('Exact\n**draft** ')
     expect(screen.getByText('Unsaved changes')).toBeTruthy()
     expect(calls.filter(call => call.method === 'POST')).toEqual([
       { method: 'POST', path: `/api/notes/${id}/trash`, body: null, ifMatch: '"e1"' },
@@ -422,6 +481,7 @@ describe('private Notes browser journey', () => {
       return undefined
     })
     await screen.findByDisplayValue('Saved title')
+    openTools()
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: ' Unsaved ' } })
     fireEvent.click(screen.getByRole('button', { name: 'Trash' }))
     fireEvent.click(screen.getByRole('button', { name: 'Trash and keep draft' }))
@@ -451,6 +511,7 @@ describe('private Notes browser journey', () => {
       return undefined
     })
     await screen.findByDisplayValue('Saved title')
+    openTools()
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Exact stale draft' } })
     fireEvent.click(screen.getByRole('button', { name: command === 'trash' ? 'Trash' : 'Restore' }))
     if (command === 'trash') fireEvent.click(screen.getByRole('button', { name: 'Trash and keep draft' }))
@@ -480,16 +541,17 @@ describe('private Notes browser journey', () => {
       return undefined
     })
     await screen.findByDisplayValue('Saved title', {}, { timeout: 5000 })
+    openTools()
     for (const lifecycle of ['active', 'archived']) auth.queries.setQueryData(
       noteKeys.list(auth.session.viewerScope, { lifecycle, sort: 'updatedAtDesc' }),
       { pages: [{ items: [initial], nextCursor: null }], pageParams: [null] })
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: ' Exact title ' } })
-    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: 'Exact\n**draft** ' } })
+    fireEvent.change(markdownField(), { target: { value: 'Exact\n**draft** ' } })
     fireEvent.click(screen.getByRole('button', { name: 'Pin' }))
     fireEvent.click(await readyButton('Unpin'))
     await readyButton('Pin')
     expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(' Exact title ')
-    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe('Exact\n**draft** ')
+    expect((markdownField() as HTMLTextAreaElement).value).toBe('Exact\n**draft** ')
     expect(screen.getByText('Unsaved changes')).toBeTruthy()
     expect(calls.filter(call => call.path.endsWith('/pin'))).toEqual([
       { method: 'PUT', path: `/api/notes/${id}/pin`, body: null, ifMatch: '"e1"' },
@@ -511,8 +573,9 @@ describe('private Notes browser journey', () => {
       return undefined
     })
     await screen.findByDisplayValue('Saved title', {}, { timeout: 5000 })
+    openTools()
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: ' Unsaved title ' } })
-    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: 'Unsaved\nbody ' } })
+    fireEvent.change(markdownField(), { target: { value: 'Unsaved\nbody ' } })
     fireEvent.click(screen.getByRole('button', { name: 'Archive' }))
     const confirm = await screen.findByRole('button', { name: 'Archive and keep draft' })
     expect(document.activeElement).toBe(confirm)
@@ -529,11 +592,11 @@ describe('private Notes browser journey', () => {
     fireEvent.keyDown(document, { key: 's', ctrlKey: true })
     expect(calls.some(call => call.method === 'PUT' && call.path === `/api/notes/${id}`)).toBe(false)
     expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(' Unsaved title ')
-    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe('Unsaved\nbody ')
+    expect((markdownField() as HTMLTextAreaElement).value).toBe('Unsaved\nbody ')
     fireEvent.click(screen.getByRole('button', { name: 'Return from archive' }))
     await readyButton('Archive')
     expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(' Unsaved title ')
-    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe('Unsaved\nbody ')
+    expect((markdownField() as HTMLTextAreaElement).value).toBe('Unsaved\nbody ')
     fireEvent.click(screen.getByRole('button', { name: 'Save note' }))
     await screen.findByText('Saved')
     expect(calls.filter(call => call.method === 'POST').map(call => [call.path, call.ifMatch]))
@@ -549,11 +612,12 @@ describe('private Notes browser journey', () => {
       return undefined
     })
     await screen.findByDisplayValue('Saved title', {}, { timeout: 5000 })
-    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: ' Exact\nlocal draft ' } })
+    openTools()
+    fireEvent.change(markdownField(), { target: { value: ' Exact\nlocal draft ' } })
     fireEvent.click(screen.getByRole('button', { name: action === 'pin' ? 'Pin' : action === 'archive' ? 'Archive' : 'Return from archive' }))
     if (action === 'archive') fireEvent.click(screen.getByRole('button', { name: 'Archive and keep draft' }))
     await screen.findByRole('heading', { name: 'Another version was saved' })
-    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe(' Exact\nlocal draft ')
+    expect((markdownField() as HTMLTextAreaElement).value).toBe(' Exact\nlocal draft ')
     expect(screen.getByRole('button', { name: 'Save note' }).hasAttribute('disabled')).toBe(true)
     expect(calls.filter(call => call.method !== 'GET' && call.path.startsWith(`/api/notes/${id}`))).toHaveLength(1)
   })
@@ -562,6 +626,7 @@ describe('private Notes browser journey', () => {
     const { calls } = mount(`/notes/${id}`, 'authenticated', (method, path) =>
       method === 'PUT' && path === `/api/notes/${id}/pin` ? problem(status, 'invalid_lifecycle_transition') : undefined)
     await screen.findByDisplayValue('Saved title', {}, { timeout: 5000 })
+    openTools()
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: ' Exact draft ' } })
     fireEvent.click(screen.getByRole('button', { name: 'Pin' }))
     await screen.findByRole('alert')
@@ -585,6 +650,7 @@ describe('private Notes browser journey', () => {
     await screen.findByText('Saved title')
     fireEvent.click(screen.getByRole('link', { name: /Saved title/ }))
     await screen.findByDisplayValue('Saved title', {}, { timeout: 5000 })
+    openTools()
     fireEvent.click(screen.getByRole('button', { name: 'Archive' }))
     await readyButton('Return from archive')
     expect(screen.queryByRole('dialog')).toBeNull()
@@ -610,16 +676,17 @@ describe('private Notes browser journey', () => {
       return undefined
     })
     await screen.findByDisplayValue('Saved title', {}, { timeout: 5000 })
+    openTools()
     auth.queries.setQueryData(noteKeys.list(auth.session.viewerScope,
       { lifecycle: 'active', sort: 'updatedAtDesc' }), { pages: [{ items: [initial], nextCursor: null }], pageParams: [null] })
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: ' Exact title ' } })
-    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: 'Exact\n**draft** ' } })
+    fireEvent.change(markdownField(), { target: { value: 'Exact\n**draft** ' } })
     fireEvent.click(screen.getByRole('button', { name: 'Edit tags' }))
     fireEvent.change(screen.getByLabelText('Tags, one per line'), { target: { value: 'Films\nWatch-later' } })
     fireEvent.click(screen.getByRole('button', { name: 'Apply tags' }))
     await screen.findByText('Films')
     expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(' Exact title ')
-    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe('Exact\n**draft** ')
+    expect((markdownField() as HTMLTextAreaElement).value).toBe('Exact\n**draft** ')
     expect(screen.getByText('Unsaved changes')).toBeTruthy()
     expect(screen.queryByText(/changed on the server/)).toBeNull()
     expect(calls.filter(call => call.method === 'PUT')).toEqual([
@@ -638,15 +705,16 @@ describe('private Notes browser journey', () => {
     const { calls } = mount(`/notes/${id}`, 'authenticated', (method, path) =>
       method === 'PUT' && path === `/api/notes/${id}/tags` ? problem(status, status === 412 ? 'stale_write' : 'invalid_input') : undefined)
     await screen.findByDisplayValue('Saved title', {}, { timeout: 5000 })
+    openTools()
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: ' My title ' } })
-    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: 'My\ndraft ' } })
+    fireEvent.change(markdownField(), { target: { value: 'My\ndraft ' } })
     fireEvent.click(screen.getByRole('button', { name: 'Edit tags' }))
     fireEvent.change(screen.getByLabelText('Tags, one per line'), { target: { value: 'Films' } })
     fireEvent.click(screen.getByRole('button', { name: 'Apply tags' }))
     if (status === 412) await screen.findByRole('heading', { name: 'Another version was saved' })
     else await screen.findByRole('alert')
     expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(' My title ')
-    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe('My\ndraft ')
+    expect((markdownField() as HTMLTextAreaElement).value).toBe('My\ndraft ')
     expect(screen.getByText('No tags')).toBeTruthy()
     expect(calls.filter(call => call.method === 'PUT')).toHaveLength(1)
   })
@@ -669,7 +737,7 @@ describe('private Notes browser journey', () => {
     expect(screen.queryByRole('button', { name: 'Edit tags' })).toBeNull()
     expect(calls.filter(call => call.path === '/api/notes' && call.method === 'POST')).toHaveLength(0)
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Created' } })
-    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: '**Content**' } })
+    fireEvent.change(markdownField(), { target: { value: '**Content**' } })
     fireEvent.click(screen.getByLabelText('Use this note with AI'))
     expect(calls.filter(call => call.path === '/api/notes' && call.method === 'POST')).toHaveLength(0)
     fireEvent.click(screen.getByRole('button', { name: 'Create note' }))
@@ -689,8 +757,9 @@ describe('private Notes browser journey', () => {
       return undefined
     })
     await screen.findByDisplayValue('Saved title', {}, { timeout: 5000 })
+    openTools()
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Local draft' } })
-    expect(screen.getByRole('status', { name: '' }).textContent).not.toBe('Saved')
+    expect(screen.getByRole('status', { name: 'Save status' }).textContent).not.toBe('Saved')
     fireEvent.keyDown(document, { key: 's', ctrlKey: true })
     await screen.findByRole('button', { name: 'Retry save' })
     expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Local draft')
@@ -704,7 +773,8 @@ describe('private Notes browser journey', () => {
       method === 'PUT' && path === `/api/notes/${id}` ? problem(412, 'stale_write')
         : undefined)
     await screen.findByDisplayValue('Saved title', {}, { timeout: 5000 })
-    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: 'Unsaved local text' } })
+    openTools()
+    fireEvent.change(markdownField(), { target: { value: 'Unsaved local text' } })
     const unload = new Event('beforeunload', { cancelable: true })
     window.dispatchEvent(unload)
     expect(unload.defaultPrevented).toBe(true)
@@ -712,10 +782,10 @@ describe('private Notes browser journey', () => {
     await screen.findByRole('dialog', { name: 'Leave with unsaved changes?' })
     expect(window.location.pathname).toBe(`/notes/${id}`)
     fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }))
-    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe('Unsaved local text')
+    expect((markdownField() as HTMLTextAreaElement).value).toBe('Unsaved local text')
     fireEvent.click(screen.getByRole('button', { name: 'Save note' }))
     await screen.findByRole('heading', { name: 'Another version was saved' })
-    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe('Unsaved local text')
+    expect((markdownField() as HTMLTextAreaElement).value).toBe('Unsaved local text')
   })
 
   it('keeps accumulated cursor pages in the one Query-owned Notes collection', async () => {
@@ -753,6 +823,7 @@ describe('private Notes browser journey', () => {
     await screen.findByText('Saved title')
     fireEvent.click(screen.getByRole('link', { name: /Saved title/ }))
     await screen.findByDisplayValue('Saved title', {}, { timeout: 5000 })
+    openTools()
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Updated title' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save note' }))
     await screen.findByText('Saved')
@@ -777,15 +848,16 @@ describe('private Notes browser journey', () => {
       return undefined
     })
     await screen.findByDisplayValue('Saved title', {}, { timeout: 5000 })
-    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: 'Exact local draft' } })
+    openTools()
+    fireEvent.change(markdownField(), { target: { value: 'Exact local draft' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save note' }))
     await screen.findByText('The current saved version could not be loaded. Your draft is unchanged.')
-    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe('Exact local draft')
+    expect((markdownField() as HTMLTextAreaElement).value).toBe('Exact local draft')
     expect(screen.getByRole('button', { name: 'Save note' }).hasAttribute('disabled')).toBe(true)
     expect(screen.queryByRole('button', { name: /use current version as save base/ })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Retry loading saved version' }))
     await screen.findByText('Server title')
-    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toBe('Exact local draft')
+    expect((markdownField() as HTMLTextAreaElement).value).toBe('Exact local draft')
     expect(calls.filter(call => call.method === 'PUT' && call.path === `/api/notes/${id}`)).toHaveLength(1)
     fireEvent.click(screen.getByRole('button', { name: 'Keep my draft and use current version as save base' }))
     expect(screen.getByRole('button', { name: 'Save note' }).hasAttribute('disabled')).toBe(false)

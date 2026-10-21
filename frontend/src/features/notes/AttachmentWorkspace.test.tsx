@@ -8,6 +8,12 @@ import { AttachmentMediaViewer } from './AttachmentMediaViewer'
 import { AttachmentXhrDouble } from './AttachmentUpload.test-support'
 import { noteKeys } from './NotesKeys'
 import type { AttachmentCore } from './AttachmentsApi'
+function markdownField() {
+  const button = screen.queryByRole('button', { name: 'Note tools' })
+  if (button?.getAttribute('aria-expanded') === 'false') fireEvent.click(button)
+  if (!document.getElementById('note-markdown')) fireEvent.click(screen.getByRole('button', { name: 'Markdown source' }))
+  return screen.getByLabelText('Markdown')
+}
 
 const noteId = '01990a55-9e12-7ac4-8f5b-31aa4a91d401', id = '01990a55-9e12-7ac4-8f5b-31aa4a91d402'
 const file: AttachmentCore = { id, noteId, mediaKind: 'image', mediaType: 'image/png', displayFilename: 'synthetic.png',
@@ -52,7 +58,7 @@ function pick(size = 1) {
   return selected
 }
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); window.history.replaceState(null, '', '/') })
-beforeAll(async () => { await import('./NotesPages') })
+beforeAll(async () => { await Promise.all([import('./NotesPages'), import('./MarkdownEditorAdapter')]) }, 60_000)
 
 describe('Attachment panel', () => {
   it('shows loading, an empty state and safe labelled file input', async () => {
@@ -147,7 +153,7 @@ describe('Attachment panel', () => {
     expect(screen.getByRole('progressbar').getAttribute('value')).toBe('42')
     act(() => state.uploads[0].uploaded())
     expect(screen.getByText('Validating file…')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Stop upload' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Stop upload' }).hasAttribute('disabled')).toBe(false)
     resolve(json(file, 201, { ETag: '"a1"', Location: `/api/notes/${noteId}/attachments/${id}` })); await screen.findByText('File added.')
   })
   it('stops only the client upload and refetches files that may have committed on the server', async () => {
@@ -251,7 +257,8 @@ describe('Attachment viewer and editor integration', () => {
       if (call.method === 'POST') return json(file, 201, { ETag: '"a1"', Location: `/api/notes/${noteId}/attachments/${id}` })
     })
     render(<App auth={auth} />)
-    const body = await screen.findByLabelText('Markdown', { exact: true })
+    await screen.findByLabelText('Title', { exact: true })
+    const body = markdownField()
     fireEvent.change(body, { target: { value: 'Exact conflicted draft' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save note' }))
     await screen.findByText('The current saved version could not be loaded. Your draft is unchanged.')
@@ -303,7 +310,7 @@ describe('Attachment viewer and editor integration', () => {
     expect(screen.getByText('PDF · 1.0 KB · 3 pages')).toBeTruthy()
     expect(view.container.querySelector('iframe,object,embed')).toBeNull()
     const open = screen.getByRole('link', { name: 'Open PDF' })
-    expect(open.getAttribute('href')).toBe(`/api/notes/${encodeURIComponent(noteId)}/attachments/${encodeURIComponent(id)}/content`)
+    expect(open.getAttribute('href')).toBe(`/api/notes/${encodeURIComponent(noteId)}/attachments/${encodeURIComponent(id)}/content#page=1`)
     expect(open.getAttribute('target')).toBe('_blank')
     expect(open.getAttribute('rel')).toBe('noopener noreferrer')
     expect(calls.some(call => call.path.endsWith('/content'))).toBe(false)
@@ -327,7 +334,7 @@ describe('Attachment viewer and editor integration', () => {
       if (removed && call.path.endsWith('/attachments')) return json({ items: [], nextCursor: null })
     })
     render(<App auth={auth} />)
-    const title = await screen.findByLabelText('Title', { exact: true }), body = screen.getByLabelText('Markdown', { exact: true })
+    const title = await screen.findByLabelText('Title', { exact: true }), body = markdownField()
     await waitFor(() => expect((title as HTMLInputElement).value).toBe('Saved'))
     fireEvent.change(title, { target: { value: ' Exact dirty title ' } }); fireEvent.change(body, { target: { value: ' Exact draft\n ' } })
     pick(); await screen.findByText('File added.')

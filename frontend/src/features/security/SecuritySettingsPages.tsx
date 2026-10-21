@@ -61,14 +61,14 @@ function useAction(auth: AuthRuntime, route: SecurityRoute) {
 }
 
 function Page({ title, children }: { title: string; children: ReactNode }) {
-  return <main className="settings-layout"><div className="settings-card">
+  return <div className="settings-layout"><div className="settings-card">
     <nav aria-label="Security settings" className="settings-nav">
       <Link to="/">Home</Link><Link to="/settings/security">Security</Link>
       <Link to="/settings/security/mfa">MFA</Link>
       <Link to="/settings/security/sessions">Sessions</Link>
     </nav>
     <h1>{title}</h1>{children}
-  </div></main>
+  </div></div>
 }
 
 function Status({ children }: { children: ReactNode }) { return <p role="status" className="success">{children}</p> }
