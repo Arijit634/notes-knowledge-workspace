@@ -7,11 +7,13 @@ import { SensitiveStateRegistry } from '../../app/security/SensitiveStateRegistr
 import { SessionCoordinator, type LocalSessionState } from '../../app/security/SessionCoordinator'
 import { AuthContinuationState, validChallenge } from './AuthContinuationState'
 import { captureSecurityLink } from './SecurityLinkIngress'
+import { SignInDestination } from './SafeDestination'
 
 type SessionProjection = { state?: unknown; challengeId?: unknown }
 
 export class AuthRuntime {
   readonly continuation = new AuthContinuationState()
+  readonly signInDestination = new SignInDestination()
   readonly sensitive = new SensitiveStateRegistry()
   readonly queries = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   readonly csrf: CsrfManager
@@ -29,7 +31,17 @@ export class AuthRuntime {
       if (typeof result.body?.csrfToken !== 'string') throw new ApiProtocolError()
       return result.body.csrfToken
     })
-    client = new ApiClient(this.csrf)
+    client = new ApiClient(this.csrf, fetch, path => {
+      const admittedScope = this.session?.viewerScope
+      return failure => {
+        // Auth proof failures may be invalid passwords/MFA, not session loss.
+        // A late response from a previous viewer must never evict a new viewer.
+        if (!path.startsWith('/api/auth/') && failure.problem.status === 401
+            && this.state === 'authenticated' && this.session.viewerScope === admittedScope) {
+          this.session.markIneligible(); this.notify()
+        }
+      }
+    })
     this.api = client
     this.session = new SessionCoordinator(this.csrf, this.sensitive, endingScope => {
       if (endingScope.kind === 'authenticated') {
@@ -65,7 +77,7 @@ export class AuthRuntime {
       this.continuation.challengeId = null
     }
     if (!this.registered) {
-      this.sensitive.register(() => this.continuation.clear())
+      this.sensitive.register(() => { this.continuation.clear(); this.signInDestination.clear() })
       this.registered = true
     }
     // A changed authority invalidates the old proof; fetch for the new session.

@@ -13,6 +13,18 @@ function problem(status: number, code: string, extra: Record<string, unknown> = 
 }
 
 describe('ApiClient transport', () => {
+  it('sends one CSRF-protected multipart body without inventing a Content-Type boundary', async () => {
+    const csrf = new CsrfManager(); csrf.set('synthetic-proof')
+    const fetcher = vi.fn(async () => new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    const multipart = new FormData(); multipart.append('file', new File(['synthetic'], 'avatar.png', { type: 'image/png' }))
+    await new ApiClient(csrf, fetcher as typeof fetch).request('PUT', '/api/me/profile/avatar', { multipart, retryOnCsrfInvalid: false })
+    const init = (fetcher.mock.calls as unknown as Array<[string, RequestInit]>)[0][1]
+    expect(init.body).toBe(multipart); expect(new Headers(init.headers).has('Content-Type')).toBe(false)
+    expect(new Headers(init.headers).get('X-CSRF-TOKEN')).toBe('synthetic-proof')
+    expect(init.credentials).toBe('same-origin'); expect(init.redirect).toBe('error')
+    await expect(new ApiClient(csrf).request('PUT', '/api/me/profile/avatar', { multipart, json: {} })).rejects.toBeInstanceOf(ApiProtocolError)
+    await expect(new ApiClient(csrf).request('GET', '/api/me/profile/avatar', { multipart })).rejects.toBeInstanceOf(ApiProtocolError)
+  })
   it('uses same-origin credentials and captures protocol metadata without a success wrapper', async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({ id: 'synthetic' }), {
       status: 200, headers: { 'Content-Type': 'application/json', ETag: '"revision-1"',

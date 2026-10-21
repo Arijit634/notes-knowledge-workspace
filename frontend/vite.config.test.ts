@@ -12,6 +12,20 @@ async function config(command: 'serve' | 'build') {
 afterEach(() => { vi.unstubAllEnvs() })
 
 describe('development-only backend proxy', () => {
+  it('denies the optional editor-launch middleware before Vite can process any file argument', async () => {
+    const selected = await config('serve')
+    const server = await createServer({ configFile: false, plugins: selected.plugins,
+      optimizeDeps: { noDiscovery: true, include: [] }, server: { host: '127.0.0.1', port: 0 } })
+    try {
+      await server.listen()
+      const origin = `http://127.0.0.1:${(server.httpServer!.address() as AddressInfo).port}`
+      for (const method of ['GET', 'POST']) for (const path of ['/__open-in-editor', '/__open-in-editor?file=package.json', '/__open-in-editor/nested?file=package.json']) {
+        const response = await fetch(`${origin}${path}`, { method })
+        expect(response.status).toBe(404)
+        expect(await response.text()).toBe('')
+      }
+    } finally { await server.close() }
+  }, 20_000)
   it('defaults to local Spring Boot and matches only the /api namespace', async () => {
     vi.stubEnv('NKW_BACKEND_ORIGIN', undefined)
     const proxy = (await config('serve')).server!.proxy!

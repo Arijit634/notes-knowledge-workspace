@@ -8,9 +8,12 @@ import { attachmentsApi, attachmentDescription, attachmentIssue, type Attachment
 import { noteKeys } from './NotesKeys'
 import { AttachmentMediaViewer } from './AttachmentMediaViewer'
 import { uploadAttachment } from './AttachmentUploadTransport'
+import { attachmentPreflight } from './AttachmentAcceptance'
+import { restoreFocus } from '../../app/ui/ConfirmDialog'
 
-export function AttachmentPanel({ auth, noteId, lifecycle, onModalChange }: {
+export function AttachmentPanel({ auth, noteId, lifecycle, onModalChange, initialAttachmentId, sourceIntentKey, sourceLocation }: {
   auth: AuthRuntime; noteId: string; lifecycle: string; onModalChange: (open: boolean) => void
+  initialAttachmentId?: string; sourceIntentKey?: string; sourceLocation?: unknown
 }) {
   const scope = auth.session.viewerScope
   const list = useInfiniteQuery({ queryKey: noteKeys.attachments(scope, noteId),
@@ -22,6 +25,7 @@ export function AttachmentPanel({ auth, noteId, lifecycle, onModalChange }: {
   const [error, setError] = useState(''), [status, setStatus] = useState('')
   const [confirmation, setConfirmation] = useState<Etagged<AttachmentCore> | null>(null)
   const [viewing, setViewing] = useState<string | null>(null)
+  useEffect(() => { if (initialAttachmentId) setViewing(initialAttachmentId) }, [initialAttachmentId, sourceIntentKey])
   const [progress, setProgress] = useState<number | null>(null)
   const [validating, setValidating] = useState(false)
   const input = useRef<HTMLInputElement>(null), cancel = useRef<HTMLButtonElement>(null)
@@ -29,10 +33,11 @@ export function AttachmentPanel({ auth, noteId, lifecycle, onModalChange }: {
   const dialog = useRef<HTMLDivElement>(null)
   const viewerClose = useRef<HTMLButtonElement>(null)
   const controller = useRef<AbortController | null>(null), alive = useRef(false)
+  const retryFile = useRef<File | null>(null)
   const current = () => alive.current && auth.session.viewerScope === scope
   useEffect(() => {
     alive.current = true
-    const clear = () => { alive.current = false; controller.current?.abort() }
+    const clear = () => { alive.current = false; controller.current?.abort(); retryFile.current = null }
     const unregister = auth.sensitive.register(clear)
     return () => { clear(); unregister() }
   }, [auth])
@@ -41,7 +46,7 @@ export function AttachmentPanel({ auth, noteId, lifecycle, onModalChange }: {
     return () => onModalChange(false) }, [confirmation, viewing, onModalChange])
   useEffect(() => { if (busy === 'remove') dialog.current?.focus() }, [busy])
   function close() { onModalChange(false); setConfirmation(null); setViewing(null); requestAnimationFrame(() => {
-    if (invoker.current?.isConnected) invoker.current.focus(); else panel.current?.focus()
+    restoreFocus(invoker.current, panel.current)
   }) }
   async function invalidate(id?: string, removed = false) {
     if (id) auth.queries.removeQueries({ queryKey: noteKeys.attachment(scope, noteId, id), exact: true })
@@ -55,13 +60,16 @@ export function AttachmentPanel({ auth, noteId, lifecycle, onModalChange }: {
   }
   async function upload(file: File) {
     if (busy || lifecycle === 'trashed') return
-    if (file.size > 25 * 1024 * 1024) { setError('That file is too large. Choose a file up to 25 MiB.'); if (input.current) input.current.value = ''; return }
+    const invalid = attachmentPreflight(file)
+    if (invalid) { setError(invalid); retryFile.current = null; if (input.current) input.current.value = ''; return }
+    retryFile.current = file
     const signal = begin('upload')
     try {
       const entry = await uploadAttachment(auth.csrf, noteId, file, { signal,
         onProgress: value => { if (current() && !signal.aborted) setProgress(value) },
         onUploadComplete: () => { if (current() && !signal.aborted) setValidating(true) } })
       if (!current() || signal.aborted) return
+      retryFile.current = null
       auth.queries.setQueryData(noteKeys.attachment(scope, noteId, entry.value.id), entry)
       await invalidate()
       if (current()) setStatus('File added.')
@@ -114,8 +122,14 @@ export function AttachmentPanel({ auth, noteId, lifecycle, onModalChange }: {
       } else setError(attachmentIssue(failure))
     } finally { if (current()) setBusy(null) }
   }
-  return <><section ref={panel} tabIndex={-1} className="notes-tool notes-attachments" aria-label="Attachments" inert={!!confirmation || !!viewing}>
+  return <><section ref={panel} tabIndex={-1} className="notes-tool notes-attachments" aria-label="Attachments" inert={!!confirmation || !!viewing}
+    onDragOver={event => { if (event.dataTransfer.types.includes('Files')) event.preventDefault() }}
+    onDrop={event => { event.preventDefault(); if (busy || lifecycle === 'trashed' || unavailable) return
+      if (event.dataTransfer.files.length !== 1) { setError('Add one file at a time.'); return }
+      void upload(event.dataTransfer.files[0])
+    }}>
     <h2>Attachments</h2><p>Adding or removing files does not save your note text.</p>
+    <p>Drop one file here, or choose below. PNG/JPEG ≤ 5 MiB; PDF/PCM WAV ≤ 10 MiB; video-only AVC MP4 ≤ 20,000,000 bytes. PDF ≤ 100 pages; audio/video ≤ 5 minutes. Server validation is final.</p>
     <label htmlFor="note-attachment-file">Add file</label>
     <input ref={input} id="note-attachment-file" type="file" accept=".png,.jpg,.jpeg,.wav,.mp4,.pdf"
       disabled={busy !== null || lifecycle === 'trashed' || unavailable} onChange={event => {
@@ -123,10 +137,11 @@ export function AttachmentPanel({ auth, noteId, lifecycle, onModalChange }: {
       }} />
     {lifecycle === 'trashed' && <p>Restore this note before adding more files.</p>}
     {busy === 'upload' && <div role="status">{validating ? 'Validating file…' : `Uploading…${progress === null ? '' : ` ${progress}%`}`}
-      {!validating && <><progress aria-label="Uploading file" max={100} value={progress ?? undefined} />
-        <button type="button" className="button-secondary" onClick={() => controller.current?.abort()}>Stop upload</button></>}</div>}
+      {!validating && <progress aria-label="Uploading file" max={100} value={progress ?? undefined} />}
+      <button type="button" className="button-secondary" onClick={() => controller.current?.abort()}>Stop upload</button></div>}
     {busy === 'detail' && <p role="status">Checking file…</p>}
     {status && <p role="status">{status}</p>}{error && <p role="alert">{error}</p>}
+    {!busy && retryFile.current && (error || status) && <><p>Refresh files first if the request may already have finished on the server.</p><button type="button" className="button-secondary" onClick={() => { if (retryFile.current) void upload(retryFile.current) }}>Retry selected file</button></>}
     {list.isPending && <p role="status">Loading attachments…</p>}
     {list.isError && <p role="alert">{attachmentIssue(list.error)} <button type="button" onClick={() => void list.refetch()}>Retry files</button></p>}
     {!list.isPending && !list.isError && files.length === 0 && <p>No attachments yet.</p>}
@@ -148,14 +163,14 @@ export function AttachmentPanel({ auth, noteId, lifecycle, onModalChange }: {
         if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); event.stopPropagation() }
         if (event.key === 'Escape' && busy !== 'remove') close()
         if (event.key === 'Tab') { event.preventDefault()
-          const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], audio[controls], video[controls]'))
+          const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), a[href], audio[controls], video[controls]'))
           if (buttons.length === 0) { event.currentTarget.focus(); return }
           const index = buttons.indexOf(document.activeElement as HTMLElement)
           buttons[(index + (event.shiftKey ? buttons.length - 1 : 1)) % buttons.length]?.focus()
         }
       }}>
       {viewing ? <><button ref={viewerClose} type="button" className="button-secondary" onClick={close}>Close attachment</button>
-        <AttachmentMediaViewer key={viewing} auth={auth} noteId={noteId} attachmentId={viewing} /></>
+        <AttachmentMediaViewer key={viewing} auth={auth} noteId={noteId} attachmentId={viewing} sourceLocation={viewing === initialAttachmentId ? sourceLocation : undefined} /></>
         : confirmation && <><h2 id="attachment-remove-title">Remove attachment?</h2><p id="attachment-remove-help">“{confirmation.value.displayFilename}” will no longer be available from this note.</p>
       <button type="button" ref={cancel} className="button-secondary" disabled={busy === 'remove'} onClick={close}>Keep file</button>
       <button type="button" disabled={busy === 'remove'} onClick={() => void remove()}>{busy === 'remove' ? 'Removing…' : 'Remove file'}</button>

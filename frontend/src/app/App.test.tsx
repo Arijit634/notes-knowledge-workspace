@@ -1,10 +1,11 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { App, AUTH_ROUTES } from './App'
 import { AuthRuntime } from '../features/auth/AuthRuntime'
 import { approvedGoogleNavigation } from '../features/auth/OidcNavigationCoordinator'
 
 const challenge = 'A'.repeat(43)
+beforeAll(async () => { await import('../features/notes/NotesPages') })
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status, headers: { 'Content-Type': 'application/json' },
 })
@@ -23,6 +24,7 @@ function mount(path: string, state: 'anonymous' | 'mfaRequired' | 'authenticated
     if (target === '/api/auth/session') return json(sessionBody ?? (state === 'mfaRequired' ? { state, challengeId: challenge } : { state }))
     if (target === '/api/auth/csrf') return json({ csrfToken: 'synthetic-proof' })
     if (target === '/api/me/security') return json(securityBody)
+    if (target === '/api/notes' && method === 'GET') return json({ items: [], nextCursor: null })
     return handler?.(method, target, body) ?? noContent()
   })
   vi.stubGlobal('fetch', fetcher)
@@ -56,8 +58,8 @@ describe('authentication browser journey', () => {
     expect(window.location.pathname).toBe('/login')
     cleanup()
     mount('/login', 'authenticated')
-    await screen.findByRole('heading', { name: /quieter place/i })
-    expect(window.location.pathname).toBe('/')
+    await screen.findByRole('heading', { name: 'Notes' })
+    expect(window.location.pathname).toBe('/notes')
     cleanup()
     mount('/reauth', 'mfaRequired')
     await screen.findByRole('heading', { name: 'Verify it’s you' })
@@ -102,7 +104,7 @@ describe('authentication browser journey', () => {
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'person@example.test' } })
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'Synthetic-password-123!' } })
     fireEvent.click(screen.getByRole('button', { name: 'Log in' }))
-    await screen.findByText('You are signed in.')
+    await screen.findByRole('heading', { name: 'Notes' })
     expect(auth.state).toBe('authenticated')
     expect(calls.filter(call => call.path === '/api/auth/csrf').length).toBeGreaterThanOrEqual(2)
   })
@@ -119,7 +121,7 @@ describe('authentication browser journey', () => {
     expect(window.location.href).not.toContain(challenge)
     fireEvent.change(screen.getByLabelText('Authenticator code'), { target: { value: '123456' } })
     fireEvent.click(screen.getByRole('button', { name: 'Verify and continue' }))
-    await screen.findByText('You are signed in.')
+    await screen.findByRole('heading', { name: 'Notes' })
     expect(calls.some(call => call.path === `/api/auth/mfa/challenges/${challenge}/totp`)).toBe(true)
     expect(auth.continuation.challengeId).toBeNull()
   })
@@ -178,9 +180,10 @@ describe('authentication browser journey', () => {
 
   it('clears the authenticated viewer on logout', async () => {
     const { auth } = mount('/', 'authenticated')
-    await screen.findByText('You are signed in.')
+    await screen.findByRole('heading', { name: 'Notes' })
     const oldScope = auth.session.viewerScope
     fireEvent.click(screen.getByRole('button', { name: 'Log out' }))
+    fireEvent.click(screen.getByRole('dialog').querySelector('button:not(.button-secondary)')!)
     await waitFor(() => expect(auth.state).toBe('anonymous'))
     expect(auth.session.viewerScope.kind).toBe('anonymous')
     expect(oldScope.kind).toBe('authenticated')
@@ -188,7 +191,7 @@ describe('authentication browser journey', () => {
 
   it('completes an authenticated callback through session and CSRF rebootstrap', async () => {
     const { calls } = mount('/auth/complete', 'authenticated')
-    await screen.findByText('You are signed in.')
+    await screen.findByRole('heading', { name: 'Notes' })
     expect(calls.filter(call => call.path === '/api/auth/session').length).toBeGreaterThanOrEqual(2)
     expect(calls.filter(call => call.path === '/api/auth/csrf').length).toBeGreaterThanOrEqual(2)
   })

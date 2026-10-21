@@ -1,7 +1,7 @@
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
-function safeLink(value: string): string {
+export function safeLink(value: string): string {
   try {
     const parsed = new URL(value, 'https://notes.invalid')
     if (!['https:', 'http:', 'mailto:'].includes(parsed.protocol)) return ''

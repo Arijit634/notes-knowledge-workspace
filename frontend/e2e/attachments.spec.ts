@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { sourceEditor, openTools } from './editor-support'
 
 const noteId = '01990a55-9e12-7ac4-8f5b-31aa4a91d401', first = '01990a55-9e12-7ac4-8f5b-31aa4a91d402', second = '01990a55-9e12-7ac4-8f5b-31aa4a91d403'
 // Reserved synthetic pixel; no personal or provider media is used by the browser double.
@@ -40,19 +41,23 @@ async function backend(page: Page, pdf = false) {
   })
   return { mutations, finishUpload }
 }
-for (const phone of [false, true]) test(`Attachment workspace preserves dirty drafts and uses private viewer (${phone ? 'phone' : 'desktop'})`, async ({ page }) => {
+for (const phone of [false, true]) test(`Attachment workspace preserves dirty drafts and uses private viewer (${phone ? 'phone' : 'desktop'})`, async ({ page }, testInfo) => {
+  // Includes cold lazy-editor startup, upload, two dialogs, deletion and explicit Save.
+  // Keep per-action assertions bounded; do not spend their budget on Vite transformation.
+  test.setTimeout(60_000)
   if (phone) await page.setViewportSize({ width: 390, height: 844 })
   const { mutations, finishUpload } = await backend(page)
   await page.goto(`/notes/${noteId}`)
+  await openTools(page)
   await expect(page.getByRole('button', { name: 'Open first.png' })).toBeVisible()
   await page.getByLabel('Title', { exact: true }).fill(' Exact unsaved title ')
-  await page.getByLabel('Markdown', { exact: true }).fill(' Exact unsaved draft\n ')
+  await (await sourceEditor(page)).fill(' Exact unsaved draft\n ')
   await page.getByLabel('Add file').setInputFiles({ name: 'second.png', mimeType: 'image/png', buffer: png })
   await expect(page.getByText(/Uploading…|Validating file…/)).toBeVisible()
   await expect(page.getByLabel('Add file')).toBeDisabled()
   finishUpload()
   await expect(page.getByText('File added.', { exact: true })).toBeVisible()
-  await expect(page.getByLabel('Markdown', { exact: true })).toHaveValue(' Exact unsaved draft\n ')
+  await expect((await sourceEditor(page))).toHaveValue(' Exact unsaved draft\n ')
   expect(mutations).toEqual([`POST /api/notes/${noteId}/attachments`])
   await page.getByRole('button', { name: 'Open second.png' }).click()
   const viewer = page.getByRole('dialog', { name: 'second.png' })
@@ -62,16 +67,18 @@ for (const phone of [false, true]) test(`Attachment workspace preserves dirty dr
   const image = viewer.getByRole('img', { name: 'second.png' })
   await expect(image).toHaveAttribute('src', `/api/notes/${noteId}/attachments/${second}/content`)
   await expect(image).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath(`image-viewer-${phone ? 'phone' : 'desktop'}.png`), animations: 'disabled' })
   const close = page.getByRole('button', { name: 'Close attachment' })
   await expect(close).toBeFocused()
-  await page.keyboard.press('Shift+Tab'); await expect(close).toBeFocused()
+  await page.keyboard.press('Shift+Tab'); await expect(viewer.getByRole('link', { name: 'Download original' })).toBeFocused()
+  await page.keyboard.press('Tab'); await expect(close).toBeFocused()
   await page.keyboard.press('ControlOrMeta+s')
   expect(mutations).toEqual([`POST /api/notes/${noteId}/attachments`])
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
   await page.keyboard.press('Escape')
   await expect(viewer).not.toBeVisible()
   await expect(page.getByRole('button', { name: 'Open second.png' })).toBeFocused()
-  await expect(page.getByLabel('Markdown', { exact: true })).toHaveValue(' Exact unsaved draft\n ')
+  await expect((await sourceEditor(page))).toHaveValue(' Exact unsaved draft\n ')
   await page.getByRole('button', { name: 'Remove second.png' }).click()
   const dialog = page.getByRole('dialog', { name: 'Remove attachment?' })
   await expect(dialog).toBeVisible(); await expect(page.getByRole('button', { name: 'Keep file' })).toBeFocused()
@@ -85,18 +92,20 @@ for (const phone of [false, true]) test(`Attachment workspace preserves dirty dr
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
   await expect(page.getByLabel('Title', { exact: true })).toHaveValue(' Exact unsaved title ')
   expect(mutations).toEqual([`POST /api/notes/${noteId}/attachments`, `DELETE /api/notes/${noteId}/attachments/${second}`])
-  await expect(page.getByLabel('Markdown', { exact: true })).toHaveValue(' Exact unsaved draft\n ')
+  await expect((await sourceEditor(page))).toHaveValue(' Exact unsaved draft\n ')
   // Explicit Save still uses the original Note validator after independent media actions.
   await page.getByRole('button', { name: 'Save note', exact: true }).click()
   await expect(page.getByText('Saved', { exact: true })).toBeVisible()
   expect(mutations).toEqual([`POST /api/notes/${noteId}/attachments`, `DELETE /api/notes/${noteId}/attachments/${second}`, `PUT /api/notes/${noteId}`])
 })
 
-test('PDF metadata opens inside the Note without framed content or a new route', async ({ page }) => {
+test('PDF metadata opens inside the Note without framed content or a new route', async ({ page }, testInfo) => {
   await backend(page, true)
   const byteRequests: string[] = []
   page.on('request', request => { if (new URL(request.url()).pathname.endsWith('/content')) byteRequests.push(request.url()) })
   await page.goto(`/notes/${noteId}`)
+  await expect(page.getByLabel('Title', { exact: true })).toBeVisible()
+  await openTools(page)
   await page.getByRole('button', { name: 'Open synthetic.pdf' }).click()
   const viewer = page.getByRole('dialog', { name: 'synthetic.pdf' })
   await expect(viewer).toBeVisible()
@@ -104,10 +113,11 @@ test('PDF metadata opens inside the Note without framed content or a new route',
   await expect(viewer.getByText(/PDF.*3 pages/)).toBeVisible()
   await expect(page.locator('iframe,object,embed')).toHaveCount(0)
   const open = viewer.getByRole('link', { name: 'Open PDF' })
-  await expect(open).toHaveAttribute('href', `/api/notes/${noteId}/attachments/${first}/content`)
+  await expect(open).toHaveAttribute('href', `/api/notes/${noteId}/attachments/${first}/content#page=1`)
   await expect(open).toHaveAttribute('target', '_blank')
   await expect(open).toHaveAttribute('rel', 'noopener noreferrer')
   expect(byteRequests).toEqual([])
+  await page.screenshot({ path: testInfo.outputPath('pdf-viewer.png'), animations: 'disabled' })
   await page.getByRole('button', { name: 'Close attachment' }).click()
   await expect(viewer).not.toBeVisible()
   await expect(page.getByRole('button', { name: 'Open synthetic.pdf' })).toBeFocused()

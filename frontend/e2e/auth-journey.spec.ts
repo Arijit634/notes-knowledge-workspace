@@ -4,6 +4,7 @@ const challenge = 'B'.repeat(43)
 async function fakeBackend(page: Page, initial: 'anonymous' | 'mfaRequired' | 'authenticated' = 'anonymous',
   passwordConfigured = true) {
   let state = initial
+  await page.route('**/api/notes', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [], nextCursor: null }) }))
   await page.route('**/api/me/security', route => route.fulfill({ status: 200,
     contentType: 'application/json', body: JSON.stringify({ email: 'person@example.test',
       passwordConfigured, mfaState: 'disabled', oidcLinks: [] }) }))
@@ -49,14 +50,14 @@ test('verification fragment is scrubbed and confirmation succeeds', async ({ pag
   await expect(page.getByText(/Email confirmed/i)).toBeVisible()
 })
 
-test('password login without MFA reaches authenticated landing', async ({ page }) => {
+test('password login without MFA reaches the Notes library', async ({ page }) => {
   await fakeBackend(page)
   await page.goto('/login')
   await page.getByLabel('Email').fill('person@example.test')
   await page.getByLabel('Password').fill('Synthetic-password-123!')
   await page.getByRole('button', { name: 'Log in', exact: true }).click()
-  await expect(page.getByText('You are signed in.')).toBeVisible()
-  await expect(page).toHaveURL(/\/$/)
+  await expect(page.getByRole('heading', { name: 'Notes', exact: true })).toBeVisible()
+  await expect(page).toHaveURL(/\/notes$/)
 })
 
 test('password login with MFA and recovery-code continuation reaches full authority', async ({ page }) => {
@@ -69,7 +70,7 @@ test('password login with MFA and recovery-code continuation reaches full author
   await page.getByRole('button', { name: 'Recovery code' }).click()
   await page.getByLabel('Recovery code').fill('synthetic-recovery-code')
   await page.getByRole('button', { name: 'Verify and continue' }).click()
-  await expect(page.getByText('You are signed in.')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Notes', exact: true })).toBeVisible()
   expect(page.url()).not.toContain(challenge)
 })
 
@@ -120,6 +121,6 @@ test('passwordless recent authentication guides to existing recovery', async ({ 
 test('authenticated authority cannot remain on login', async ({ page }) => {
   await fakeBackend(page, 'authenticated')
   await page.goto('/login')
-  await expect(page).toHaveURL(/\/$/)
-  await expect(page.getByText('You are signed in.')).toBeVisible()
+  await expect(page).toHaveURL(/\/notes$/)
+  await expect(page.getByRole('heading', { name: 'Notes', exact: true })).toBeVisible()
 })

@@ -15,7 +15,21 @@ function backendOrigin(): string {
 }
 
 export default defineConfig(({ command }) => ({
-  plugins: [react()],
+  plugins: [react(), {
+    name: 'disable-development-editor-launch',
+    apply: 'serve',
+    configureServer(server) {
+      // Vite 8.2.2 bundles affected launch-editor code (GHSA-587h-7wmj-h5pm).
+      // This optional development convenience must never reach an OS command.
+      // Register before Vite's own middleware; production output is unaffected.
+      server.middlewares.use('/__open-in-editor', (_request, response) => {
+        response.statusCode = 404
+        response.end()
+      })
+    },
+  }],
+  // Crepe uses Vue internally for editor controls, not application state/routing.
+  define: { __VUE_OPTIONS_API__: false, __VUE_PROD_DEVTOOLS__: false, __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: false },
   // Dev only. Keep browser /api calls and cookies on the frontend origin;
   // preserve Host/Origin and never turn the proxy into an external relay.
   server: command === 'serve' ? {

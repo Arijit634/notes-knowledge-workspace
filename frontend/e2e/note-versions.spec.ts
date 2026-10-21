@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { sourceEditor } from './editor-support'
 
 const id = '01990a55-9e12-7ac4-8f5b-31aa4a91d401'
 const versionId = '01990a55-9e12-7ac4-8f5b-31aa4a91d402'
@@ -46,10 +47,10 @@ test('history inspect and accessible confirmation deliberately replace a dirty d
   const mutations = await backend(page, false)
   await page.goto(`/notes/${id}`)
   await expect(page.getByLabel('Title', { exact: true })).toHaveValue('Current title')
-  await page.getByLabel('Markdown', { exact: true }).fill(' Exact unsaved draft\n ')
+  await (await sourceEditor(page)).fill(' Exact unsaved draft\n ')
   await page.getByRole('button', { name: 'Show version history' }).click()
   await page.getByRole('button', { name: 'Inspect Historical title' }).click()
-  await expect(page.getByLabel('Markdown', { exact: true })).toHaveValue(' Exact unsaved draft\n ')
+  await expect((await sourceEditor(page))).toHaveValue(' Exact unsaved draft\n ')
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
   await page.screenshot({ path: testInfo.outputPath('phone-history.png'), fullPage: true })
   await page.getByRole('button', { name: 'Restore this checkpoint' }).click()
@@ -62,11 +63,11 @@ test('history inspect and accessible confirmation deliberately replace a dirty d
   expect(mutations).toEqual([])
   await page.keyboard.press('Escape')
   await expect(page.getByRole('button', { name: 'Restore this checkpoint' })).toBeFocused()
-  await expect(page.getByLabel('Markdown', { exact: true })).toHaveValue(' Exact unsaved draft\n ')
+  await expect((await sourceEditor(page))).toHaveValue(' Exact unsaved draft\n ')
   await page.getByRole('button', { name: 'Restore this checkpoint' }).click()
   await page.getByRole('button', { name: 'Restore and discard draft' }).click()
   await expect(page.getByLabel('Title', { exact: true })).toHaveValue('Historical title')
-  await expect(page.getByLabel('Markdown', { exact: true })).toHaveValue('**Historical body**')
+  await expect((await sourceEditor(page))).toHaveValue('**Historical body**')
   await expect(page.getByRole('button', { name: 'Save note', exact: true })).toBeDisabled()
   await expect(dialog).not.toBeVisible()
   expect(mutations).toEqual([`POST /api/notes/${id}/versions/${versionId}/restore`])
@@ -76,13 +77,13 @@ test('stale history restore keeps the exact dirty draft and requires reconciliat
   const mutations = await backend(page, true)
   await page.goto(`/notes/${id}`)
   await expect(page.getByLabel('Title', { exact: true })).toHaveValue('Current title')
-  await page.getByLabel('Markdown', { exact: true }).fill(' Exact dirty draft\n ')
+  await (await sourceEditor(page)).fill(' Exact dirty draft\n ')
   await page.getByRole('button', { name: 'Show version history' }).click()
   await page.getByRole('button', { name: 'Inspect Historical title' }).click()
   await page.getByRole('button', { name: 'Restore this checkpoint' }).click()
   await page.getByRole('button', { name: 'Restore and discard draft' }).click()
   await expect(page.getByRole('region', { name: 'Save conflict' })).toBeVisible()
-  await expect(page.getByLabel('Markdown', { exact: true })).toHaveValue(' Exact dirty draft\n ')
+  await expect((await sourceEditor(page))).toHaveValue(' Exact dirty draft\n ')
   await expect(page.getByRole('button', { name: 'Restore this checkpoint' })).toBeDisabled()
   await page.screenshot({ path: testInfo.outputPath('desktop-conflict.png'), fullPage: true })
   expect(mutations).toEqual([`POST /api/notes/${id}/versions/${versionId}/restore`])
