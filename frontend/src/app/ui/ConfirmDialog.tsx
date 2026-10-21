@@ -9,7 +9,13 @@ export function restoreFocus(opener: HTMLElement | null, fallback: HTMLElement |
   }
   const valid = opener?.isConnected && !opener.closest('[inert],[hidden]')
     && !opener.matches(':disabled') && !hidden
-  ;(valid ? opener : fallback)?.focus({ preventScroll: true })
+  let target = valid ? opener : fallback
+  const activeModal = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"]')).at(-1)
+  // A closing/nested dialog must never steal focus from a newly opened modal.
+  if (activeModal && (!target || !activeModal.contains(target))) {
+    target = activeModal.querySelector<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled)') ?? activeModal
+  }
+  target?.focus({ preventScroll: true })
 }
 export function ConfirmDialog({ title, children, onCancel, onConfirm, confirmText, busy = false, opener }: {
   title: string; children: ReactNode; onCancel: () => void; onConfirm: () => void; confirmText: string; busy?: boolean; opener?: HTMLElement | null

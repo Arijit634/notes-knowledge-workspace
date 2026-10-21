@@ -1,0 +1,50 @@
+import { useRef, useState } from 'react'
+import { Link, useParams } from 'react-router'
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import type { AuthRuntime } from '../auth/AuthRuntime'
+import { NotesWorkspace } from '../notes/NotesWorkspace'
+import { notesApi } from '../notes/NotesApi'
+import { MarkdownView } from '../notes/MarkdownView'
+import { PublicMediaList, dateLabel } from '../discovery/PublicUi'
+import { ConfirmDialog } from '../../app/ui/ConfirmDialog'
+import { FormDialog } from '../../app/ui/FormDialog'
+import { featureError } from '../../app/ui/featureError'
+import { usePrivateScope } from '../../app/security/usePrivateScope'
+import { publicationChanged, publicationKeys, sourceLinks } from './PublicationCache'
+import { publishingApi, validId } from './PublishingApi'
+import { PublicationComposer } from './PublicationComposer'
+
+export function OwnerPublicationsPage({ auth }: { auth: AuthRuntime }) {
+  const result = useInfiniteQuery({ queryKey: [...publicationKeys.owner(auth), 'list'], queryFn: ({ pageParam, signal }) => publishingApi.list(auth, pageParam, signal), initialPageParam: null as string | null, getNextPageParam: p => p.nextCursor ?? undefined, retry: false }, auth.queries)
+  const items = [...new Map(result.data?.pages.flatMap(p => p.items).map(p => [p.id, p] as const) ?? []).values()]
+  return <NotesWorkspace auth={auth}><div className="owner-publications"><header className="notes-heading"><div><p className="studio-section-label">Your public shelf</p><h1>Publications</h1><p>Deliberate public copies. Your private Notes stay private.</p></div><Link to="/settings/public-profile">Public profile</Link></header>
+    {result.isPending ? <p role="status">Loading publications…</p> : result.isError ? <p role="alert">{featureError(result.error)} <button onClick={() => void result.refetch()}>Retry</button></p> : !items.length ? <div className="public-state"><h2>Something worth sharing?</h2><p>Open a saved Note and choose Publish from its tools.</p><Link to="/notes">Back to your notes</Link></div> : <ul className="owner-publication-list">{items.map(p => <li key={p.id}><div><span className="public-availability">{p.availability}</span><h2><Link to={`/publications/${p.id}`}>{p.title}</Link></h2><ul className="notes-tags">{p.tags.map(t => <li key={t}>{t}</li>)}</ul><p className="notes-help">Published {dateLabel(p.publishedAt)} · Updated {dateLabel(p.updatedAt)}</p></div><div className="actions"><Link to={`/publications/${p.id}`}>Inspect &amp; manage</Link>{p.availability === 'active' && <Link to={`/publication/${p.id}`}>Read public copy ↗</Link>}</div></li>)}</ul>}
+    {result.hasNextPage && !result.isError && <button disabled={result.isFetchingNextPage} onClick={() => void result.fetchNextPage()}>More publications</button>}<details className="public-safety-tools"><summary>Public safety tools</summary><p>For explicitly authorized reviewers only. No private resources are accessible through this workflow.</p><Link to="/moderation/reports">Review public reports (permission required)</Link></details></div></NotesWorkspace>
+}
+export function OwnerPublicationPage({ auth }: { auth: AuthRuntime }) {
+  const { publicationId: id = '' } = useParams(), current = usePrivateScope(auth)
+  const owner = useQuery({ queryKey: publicationKeys.detail(auth, id), queryFn: ({ signal }) => publishingApi.owner(auth, id, signal), enabled: validId(id), retry: false }, auth.queries)
+  const status = useQuery({ queryKey: publicationKeys.status(auth, id), queryFn: ({ signal }) => publishingApi.status(auth, id, signal), enabled: validId(id), retry: false, staleTime: 0 }, auth.queries)
+  const [unpublish, setUnpublish] = useState(false), [choosing, setChoosing] = useState(false), [composing, setComposing] = useState(false)
+  const opener = useRef<HTMLElement | null>(null)
+  const [noteId, setNoteId] = useState(() => [...sourceLinks(auth)].find(([, p]) => p === id)?.[0] ?? ''), [busy, setBusy] = useState(false), [error, setError] = useState('')
+  const sources = useInfiniteQuery({ queryKey: ['publication-source-picker', auth.session.viewerScope], queryFn: ({ pageParam }) => notesApi.list(auth, pageParam, 'active'), enabled: choosing, initialPageParam: null as string | null, getNextPageParam: p => p.nextCursor ?? undefined, retry: false }, auth.queries)
+  const source = useQuery({ queryKey: ['publication-saved-source', auth.session.viewerScope, noteId], queryFn: () => notesApi.get(auth, noteId), enabled: !!noteId && (choosing || composing), staleTime: 0, retry: false }, auth.queries)
+  async function remove() {
+    if (!owner.data || busy) return
+    setBusy(true); setError('')
+    try { const p = await publishingApi.unpublish(auth, id, owner.data.etag); if (!current()) return
+      publicationChanged(auth, id); auth.queries.setQueryData(publicationKeys.detail(auth, id), p); setUnpublish(false)
+    } catch (e) { if (current()) { setError(featureError(e)); setUnpublish(false); void owner.refetch() } } finally { if (current()) setBusy(false) }
+  }
+  const p = owner.data?.value, modal = unpublish || choosing || composing
+  return <NotesWorkspace auth={auth} modalOpen={modal}><div className="owner-publication-detail" inert={modal}><Link to="/publications">← Your publications</Link>
+    {!validId(id) ? <h1>Publication unavailable</h1> : owner.isPending ? <p role="status">Loading public copy…</p> : owner.isError ? <p role="alert">{featureError(owner.error)} <button onClick={() => void owner.refetch()}>Refresh</button></p> : p && <><header className="public-heading"><div><span className="public-availability">{p.availability}</span><h1>{p.title}</h1><p>Updated {dateLabel(p.updatedAt)}. This is the public snapshot, not your private editor.</p></div>{p.availability === 'active' && <Link to={`/publication/${id}`}>Read public article ↗</Link>}</header>
+      <section className="public-sync" aria-label="Source synchronization"><h2>Source synchronization</h2>{status.isPending ? <p role="status">Checking saved source…</p> : status.isError ? <p role="alert">{featureError(status.error)}</p> : status.data && <><p>{!status.data.sourceExists ? 'The source is unavailable.' : !status.data.sourceUsable ? 'The source is not currently usable for publishing.' : status.data.driftedSincePublication ? 'Private changes are waiting. Readers still see the existing public copy.' : 'The snapshot matches its saved source.'}</p><p>{status.data.updatePublicCopyReady ? 'A fresh preview can be requested.' : 'Updating and republishing are unavailable until the source is eligible.'}</p></>}
+      <div className="actions"><button className="button-secondary" disabled={status.isFetching} onClick={() => void status.refetch()}>Refresh source status</button>{noteId && <Link to={`/notes/${noteId}`}>Open selected source Note</Link>}{p.availability !== 'removed' && <button disabled={busy || !status.data?.updatePublicCopyReady || status.isError} onClick={e => { opener.current = e.currentTarget; setChoosing(true) }}>{p.availability === 'unpublished' ? 'Republish' : 'Update public copy'}</button>}{p.availability === 'active' && <button className="button-secondary notes-danger" disabled={busy} onClick={e => { opener.current = e.currentTarget; setUnpublish(true) }}>Unpublish</button>}</div></section>
+      <ul className="notes-tags">{p.tags.map(t => <li key={t}>{t}</li>)}</ul><MarkdownView markdown={p.markdown} />{p.availability === 'active' ? <PublicMediaList media={p.media} /> : !!p.media.length && <p>Public media is unavailable while this copy is not active.</p>}</>}{error && <p role="alert">{error} Refresh and review before retrying.</p>}</div>
+    {unpublish && <ConfirmDialog title="Unpublish this public copy?" opener={opener.current} confirmText="Confirm unpublish" onConfirm={() => void remove()} onCancel={() => setUnpublish(false)} busy={busy}><p>Readers lose access to the article and its public media. Your private Note is unchanged.</p></ConfirmDialog>}
+    {choosing && <FormDialog opener={opener.current} title="Choose the original saved Note" onClose={() => setChoosing(false)}><p>The API does not return the private source link. Choose the original active Note explicitly; the server verifies the relationship before any update. No content matching is used.</p>{sources.isPending ? <p role="status">Loading your active Notes…</p> : sources.isError ? <p role="alert">{featureError(sources.error)}</p> : <><label htmlFor="publication-source">Original Note</label><select id="publication-source" value={noteId} onChange={e => setNoteId(e.target.value)}><option value="">Choose a Note</option>{[...new Map(sources.data?.pages.flatMap(p => p.items).map(n => [n.id, n] as const) ?? []).values()].map(n => <option key={n.id} value={n.id}>{n.title}</option>)}</select>{sources.hasNextPage && <button className="button-secondary" disabled={sources.isFetchingNextPage} onClick={() => void sources.fetchNextPage()}>More Notes</button>}<p>No unsaved content is used. Updating replaces all selected public media.</p><button disabled={!source.data || source.isFetching || source.isError || source.data.value.lifecycle !== 'active'} onClick={() => { setChoosing(false); setComposing(true) }}>Choose media and preview</button></>}{source.isError && <p role="alert">{featureError(source.error)}</p>}</FormDialog>}
+    {composing && source.data && owner.data && <PublicationComposer auth={auth} noteId={noteId} noteEtag={source.data.etag} eligible={source.data.value.lifecycle === 'active' && !!status.data?.updatePublicCopyReady} publication={owner.data} opener={opener.current} onRefresh={() => Promise.all([source.refetch({ throwOnError: true }), owner.refetch({ throwOnError: true }), status.refetch({ throwOnError: true })])} onClose={() => setComposing(false)} onComplete={() => { setComposing(false); void status.refetch() }} />}
+  </NotesWorkspace>
+}

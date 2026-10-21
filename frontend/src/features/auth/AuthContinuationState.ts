@@ -4,7 +4,7 @@ export class AuthContinuationState {
   resetToken: string | null = null
   emailChangeToken: string | null = null
   challengeId: string | null = null
-  returnIntent: '/settings/security' | '/settings/security/mfa' | '/settings/security/sessions' | `/notes/${string}` | null = null
+  returnIntent: '/settings/security' | '/settings/security/mfa' | '/settings/security/sessions' | `/notes/${string}` | `/publications/${string}` | '/moderation/reports' | `/moderation/reports/${string}` | null = null
 
   clear(): void {
     this.verificationToken = null

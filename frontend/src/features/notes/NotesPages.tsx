@@ -7,6 +7,8 @@ import { ApiProblemError } from '../../app/api/ProblemDetailsDecoder'
 import { MarkdownView } from './MarkdownView'
 import { PrivateSearchPanel } from './PrivateSearchPanel'
 import { NoteProcessingPanel } from '../knowledge/NoteProcessingPanel'
+import { NotePublicationPanel } from '../publishing/NotePublicationPanel'
+import { sourceChanged } from '../publishing/PublicationCache'
 import { NoteVersionPanel } from './NoteVersionPanel'
 import { AttachmentPanel } from './AttachmentPanel'
 import { NotesWorkspace } from './NotesWorkspace'
@@ -173,6 +175,7 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
         : await notesApi.save(auth, session.id!, session.etag!, title, markdown)
       if (!current()) return
       dispatch({ type: 'saved', server: result })
+      sourceChanged(auth, result.value.id)
       if (origin === 'leave' && blocker.state === 'blocked') { allowNavigation.current = true; blocker.proceed() }
       else if (creating) { allowNavigation.current = true; navigate(`/notes/${result.value.id}`, { replace: true }) }
       else auth.queries.setQueryData(noteKeys.core(scope, session.id!), result)
@@ -199,6 +202,7 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
       dispatch({ type: 'coreCommandSucceeded', server: result })
       auth.queries.setQueryData(noteKeys.core(scope, session.id), result)
       setTagsEditing(false)
+      sourceChanged(auth, session.id)
       await auth.queries.invalidateQueries({ queryKey: noteKeys.lists(scope) })
     } catch (failure) {
       if (!current()) return
@@ -227,6 +231,7 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
       if (!current()) return
       // This replacement is deliberate: the confirmation explicitly includes discarding a dirty draft.
       dispatch({ type: 'load', server: result })
+      sourceChanged(auth, session.id)
       auth.queries.setQueryData(noteKeys.core(scope, session.id), result)
       setTagsEditing(false)
       await Promise.all([
@@ -264,6 +269,7 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
     try {
       const result = await notesApi.organize(auth, session.id, session.etag, command)
       if (!current()) return
+      sourceChanged(auth, session.id)
       dispatch({ type: 'coreCommandSucceeded', server: result })
       auth.queries.setQueryData(noteKeys.core(scope, session.id), result)
       await auth.queries.invalidateQueries({ queryKey: noteKeys.lists(scope) })
@@ -289,6 +295,7 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
     try {
       const result = await notesApi.lifecycle(auth, session.id, etag, command, confirmPublicationUnpublish)
       if (!current()) return
+      sourceChanged(auth, session.id, command === 'trash')
       dispatch({ type: 'coreCommandSucceeded', server: result })
       auth.queries.setQueryData(noteKeys.core(scope, session.id), result)
       setTrashConfirmation(null)
@@ -322,6 +329,7 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
     try {
       await notesApi.permanentlyDelete(auth, noteId, deleteEtag, confirmPublicationUnpublish)
       if (!current()) return
+      sourceChanged(auth, noteId, true)
       await auth.queries.cancelQueries({ queryKey: noteKeys.core(scope, noteId) })
       await auth.queries.cancelQueries({ queryKey: noteKeys.history(scope, noteId) })
       await auth.queries.cancelQueries({ queryKey: noteKeys.lists(scope) })
@@ -463,6 +471,8 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
             <button type="button" className="button-secondary" aria-expanded={processingOpen} onClick={() => setProcessingOpen(value => !value)}>{processingOpen ? 'Hide processing status' : 'Show processing status'}</button>
             {processingOpen && session.id && <NoteProcessingPanel auth={auth} noteId={session.id} dirty={dirty} />}
           </section>
+          {session.id && session.etag && <NotePublicationPanel auth={auth} noteId={session.id} etag={session.etag}
+            eligible={!dirty && !busy && !archived && !trashed && session.phase === 'Clean' && !session.serverChangedWhileDirty} onModalChange={changeAttachmentModal} />}
           {session.id && <div className="notes-tool notes-history-tool">
             <button type="button" className="button-secondary" aria-expanded={historyOpen}
               aria-controls="note-history" onClick={() => setHistoryOpen(value => !value)}>

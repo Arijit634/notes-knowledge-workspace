@@ -19,8 +19,8 @@ export default defineConfig(({ command }) => ({
     name: 'disable-development-editor-launch',
     apply: 'serve',
     configureServer(server) {
-      // Vite 8.2.2 bundles affected launch-editor code (GHSA-587h-7wmj-h5pm).
-      // This optional development convenience must never reach an OS command.
+      // Keep this optional editor/OS-command surface disabled as defense in depth,
+      // including after the narrowly qualified Vite security patch.
       // Register before Vite's own middleware; production output is unaffected.
       server.middlewares.use('/__open-in-editor', (_request, response) => {
         response.statusCode = 404

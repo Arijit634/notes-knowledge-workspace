@@ -1,0 +1,17 @@
+export const noteId = '01990a55-9e12-7ac4-8f5b-31aa4a91d401'
+export const pubId = '01990a55-9e12-7ac4-8f5b-31aa4a91d402'
+export const mediaId = '01990a55-9e12-7ac4-8f5b-31aa4a91d403'
+export const reportId = '01990a55-9e12-7ac4-8f5b-31aa4a91d404'
+export const timestamp = '2026-10-21T00:00:00Z'
+export const author = { handle: 'synthetic_writer', displayName: 'The Synthetic Writer', biography: 'A fictional author for qualification.', avatarUrl: null, links: { publications: '/api/public/profiles/synthetic_writer/publications' } }
+export const media = { id: mediaId, mediaKind: 'image', mediaType: 'image/png', displayName: 'Synthetic landscape.png', sizeBytes: 68, width: 1, height: 1, durationSeconds: null, pageCount: null, contentUrl: `/api/public/publications/${pubId}/media/${mediaId}/content` }
+export const owner = { id: pubId, title: 'A field guide to paying attention', markdown: '## The small things\n\nA synthetic public snapshot.\n\n- Notice the light\n- Keep a thought\n\n> Perspective grows with practice.\n', tags: ['Ideas', 'Everyday'], availability: 'active', publicUrl: `/p/${pubId}`, media: [media], publishedAt: timestamp, updatedAt: timestamp }
+export const article = { id: pubId, title: owner.title, markdown: owner.markdown, tags: owner.tags, author, media: [media], publishedAt: timestamp, engagement: { likeCount: 4, approximateViewCount: 120 }, viewerLiked: false }
+export const card = { id: pubId, title: owner.title, tags: owner.tags, author, publishedAt: timestamp, engagement: article.engagement }
+export const preview = { title: owner.title, markdown: owner.markdown, tags: owner.tags, sourceRevision: 1, media: [], warnings: ['Only selected media will be copied.'], previewFingerprint: 'synthetic-preview-proof' }
+export const status = { sourceExists: true, sourceUsable: true, driftedSincePublication: false, updatePublicCopyReady: true }
+export const profile = { displayName: author.displayName, biography: author.biography, handle: author.handle, updatedAt: timestamp, avatar: null }
+export const note = { id: noteId, title: owner.title, markdown: owner.markdown, tags: owner.tags, lifecycle: 'active', pinned: false, aiEnabled: false, createdAt: timestamp, updatedAt: timestamp }
+export const report = { id: reportId, publicationId: pubId, generation: 1, category: 'spam', description: 'Synthetic report text for public-only review.', status: 'open', submittedAt: timestamp, reviewedAt: null, resolvedAt: null }
+export const detail = { report, publicEvidence: { publicationId: pubId, generation: 1, title: owner.title, markdown: owner.markdown }, targetAvailable: true, decision: null, audit: [] }
+export const attachment = { id: mediaId, noteId, mediaKind: 'image', mediaType: 'image/png', displayFilename: media.displayName, sizeBytes: 68, width: 1, height: 1, durationSeconds: null, pageCount: null, storageState: 'stored', validationState: 'accepted', cleanupState: 'retained', createdAt: timestamp, updatedAt: timestamp }

@@ -1096,3 +1096,14 @@ summary:focus-visible {
     scroll-behavior: auto!important;
   }
 }
+/* Public navigation grows without squeezing the five mobile destinations. */
+.workspace-more{display:none}
+@media(min-width:601px){.notes-sidebar{overflow-y:auto}}
+@media(max-width:600px){
+  .notes-sidebar nav>a:nth-of-type(n+5){display:none}
+  .workspace-more{display:block;flex:1;min-width:0;position:relative}
+  .workspace-more summary{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:4px;min-height:50px;padding:5px 1px;font-size:9px;color:#c5ccdc;list-style:none;cursor:pointer}
+  .workspace-more summary svg{width:20px;height:20px}
+  .workspace-more>div{position:absolute;right:0;bottom:calc(100% + 16px);width:210px;background:var(--rail);border:1px solid #485068;border-radius:12px;padding:12px;box-shadow:0 12px 32px #0003}
+  .notes-sidebar nav .workspace-more>div>a{display:flex;flex-direction:row;justify-content:flex-start;font-size:14px;min-height:44px;padding:10px}
+}
