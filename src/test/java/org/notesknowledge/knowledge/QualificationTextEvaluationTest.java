@@ -61,7 +61,7 @@ class QualificationTextEvaluationTest {
         }
     }
     private int run(String mode)throws Exception {
-        var builder=new ProcessBuilder(Path.of(System.getProperty("java.home"),"bin","java").toString(),"-cp",System.getProperty("java.class.path"),QueryRestartProbe.class.getName(),directory.toString(),mode)
+        var builder=new ProcessBuilder(Path.of(System.getProperty("java.home"),"bin","java").toString(),QualificationChildClasspath.argument(directory),QueryRestartProbe.class.getName(),directory.toString(),mode)
             .redirectOutput(ProcessBuilder.Redirect.DISCARD).redirectError(ProcessBuilder.Redirect.DISCARD);
         builder.environment().keySet().removeIf(k->k.startsWith("SPRING_AI_")||k.startsWith("SPRING_CONFIG_"));
         var child=builder.start();if(!child.waitFor(30,TimeUnit.SECONDS)){child.destroyForcibly();throw new AssertionError("Offline probe timed out");}return child.exitValue();

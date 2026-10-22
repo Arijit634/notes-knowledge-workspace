@@ -83,12 +83,16 @@ public class SecurityConfiguration {
             HttpSessionCsrfTokenRepository csrfTokenRepository,
             SecurityContextRepository securityContextRepository,
             ObjectProvider<IdentityEligibilityFilter> eligibilityFilter,
+            ObjectProvider<org.notesknowledge.websupport.ApplicationStaticController> frontend,
             ApiProblemWriter problemWriter) throws Exception {
         IdentityEligibilityFilter identityCore = eligibilityFilter.getIfAvailable();
         http
                 .csrf(csrf -> csrf.csrfTokenRepository(csrfTokenRepository))
                 .securityContext(context -> context.securityContextRepository(securityContextRepository))
                 .authorizeHttpRequests(authorize -> authorize
+                        .requestMatchers((org.springframework.security.web.util.matcher.RequestMatcher) request ->
+                                frontend.getIfAvailable() != null && frontend.getObject().matches(request))
+                        .permitAll()
                         .requestMatchers(HttpMethod.GET, "/actuator/health", "/actuator/health/**")
                         .permitAll()
                         .requestMatchers(HttpMethod.HEAD, "/actuator/health", "/actuator/health/**")

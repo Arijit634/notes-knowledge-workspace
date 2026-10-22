@@ -1,6 +1,16 @@
 import { expect, test, type Page } from '@playwright/test'
 
 const challenge = 'B'.repeat(43)
+function observeFragmentAtAuthRequests(page: Page) {
+  const scrubbed: boolean[] = []
+  page.on('request', request => {
+    if (new URL(request.url()).pathname.startsWith('/api/auth/')) {
+      // Keep evidence boolean-only; never capture the security-link fragment.
+      scrubbed.push(new URL(page.url()).hash === '')
+    }
+  })
+  return scrubbed
+}
 async function fakeBackend(page: Page, initial: 'anonymous' | 'mfaRequired' | 'authenticated' = 'anonymous',
   passwordConfigured = true) {
   let state = initial
@@ -43,11 +53,18 @@ test('anonymous landing to signup uses generic accepted copy', async ({ page }) 
 })
 
 test('verification fragment is scrubbed and confirmation succeeds', async ({ page }) => {
+  const scrubbed = observeFragmentAtAuthRequests(page)
   await fakeBackend(page)
   await page.goto('/verify-email#token=synthetic.verify-token')
+  const confirm = page.getByRole('button', { name: 'Confirm email' })
+  // Cold dev-module loading precedes synchronous ingress; wait for app readiness,
+  // not an arbitrary five-second bundle-load deadline. No auth request may race ingress.
+  await expect(confirm).toBeVisible({ timeout: 20_000 })
   await expect(page).toHaveURL(/\/verify-email$/)
-  await page.getByRole('button', { name: 'Confirm email' }).click()
+  await confirm.click()
   await expect(page.getByText(/Email confirmed/i)).toBeVisible()
+  expect(scrubbed.length).toBeGreaterThan(0)
+  expect(scrubbed.every(Boolean)).toBe(true)
 })
 
 test('password login without MFA reaches the Notes library', async ({ page }) => {
@@ -83,14 +100,18 @@ test('forgotten password request is enumeration-safe', async ({ page }) => {
 })
 
 test('reset fragment is scrubbed and successful reset leads to login CTA', async ({ page }) => {
+  const scrubbed = observeFragmentAtAuthRequests(page)
   await fakeBackend(page)
   await page.goto('/reset-password#token=synthetic.reset-token')
+  await expect(page.getByLabel('New password', { exact: true })).toBeVisible({ timeout: 20_000 })
   await expect(page).toHaveURL(/\/reset-password$/)
   await page.getByLabel('New password', { exact: true }).fill('New-synthetic-password-123!')
   await page.getByLabel('Confirm new password', { exact: true }).fill('New-synthetic-password-123!')
   await page.getByRole('button', { name: 'Set new password' }).click()
   await expect(page.getByText(/password was reset/i)).toBeVisible()
   await expect(page.getByRole('link', { name: 'Log in' })).toBeVisible()
+  expect(scrubbed.length).toBeGreaterThan(0)
+  expect(scrubbed.every(Boolean)).toBe(true)
 })
 
 test('anonymous and pre-MFA authority cannot enter recent authentication', async ({ page }) => {

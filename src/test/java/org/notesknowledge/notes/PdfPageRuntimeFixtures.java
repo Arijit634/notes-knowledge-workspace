@@ -29,18 +29,26 @@ public class PdfPageRuntimeFixtures {
         } catch(Exception failure){throw new AssertionError("Synthetic worker failed",failure);}
     }
     static Process start(boolean loggingConfiguration)throws java.io.IOException {
+        Path launchDirectory=AttachmentParserRuntime.privateDirectory();
+        try {
             var command=new ArrayList<String>();
             command.add(Path.of(System.getProperty("java.home"),"bin",System.getProperty("os.name").startsWith("Windows")?"java.exe":"java").toString());
             command.addAll(java.util.List.of("-Xmx192m","-XX:MaxDirectMemorySize=32m","-XX:ActiveProcessorCount=2","-Djava.awt.headless=true"));
             if(loggingConfiguration)command.addAll(java.util.List.of(
                 "-Dlogback.configurationFile="+Path.of("src/main/resources/attachments/logback.xml").toAbsolutePath(),
                 "-Dlog4j.configurationFile="+Path.of("src/main/resources/attachments/log4j2.xml").toAbsolutePath()));
-            command.addAll(java.util.List.of("-cp",System.getProperty("java.class.path"),PdfPageRasterWorker.class.getName()));
+            command.addAll(java.util.List.of("-cp",AttachmentParserRuntime.compactClasspath(launchDirectory,
+                System.getProperty("java.class.path")),PdfPageRasterWorker.class.getName()));
             var builder=new ProcessBuilder(command).redirectError(ProcessBuilder.Redirect.DISCARD);
             var environment=builder.environment();var bootstrap=new java.util.HashMap<String,String>();
             for(String name:java.util.List.of("SystemRoot","WINDIR","TEMP","TMP"))if(environment.containsKey(name))bootstrap.put(name,environment.get(name));
             environment.clear();environment.putAll(bootstrap);
-            return builder.start();
+            Process process=builder.start();
+            process.onExit().thenRun(()->AttachmentParserRuntime.removeDirectory(launchDirectory));
+            return process;
+        } catch(java.io.IOException|RuntimeException failure) {
+            AttachmentParserRuntime.removeDirectory(launchDirectory);throw failure;
+        }
     }
     public static String transformFingerprint() {
         if(nativeQualificationRequested())return PdfChild.transformFingerprint(PdfPageRasterWorker.PROFILE,"controlled-linux-custody-v1",

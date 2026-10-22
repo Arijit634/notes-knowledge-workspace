@@ -65,6 +65,8 @@ jobs:
           npm ci --ignore-scripts
           git diff --exit-code -- package.json package-lock.json
           git diff --exit-code
+      - name: Verify packaging process boundaries
+        run: node --test .github/scripts/package-application.test.mjs
 
   fast:
     name: MAIN / FAST
