@@ -9,6 +9,8 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.LinkOption;
+import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -116,7 +118,7 @@ public final class BrowserIntegrationServer {
                 require(runtime.queryForObject("select count(*) from information_schema.tables where table_schema in ('identity','profile','notes','knowledge','publishing','discovery','moderation') and table_type='BASE TABLE'", Integer.class) == 38);
                 for (String kind : java.util.List.of("image", "pdf", "audio", "video")) {
                     var media = MeaningfulMediaFixtures.media(kind);
-                    Files.write(root.resolve("fixtures").resolve(media.getOriginalFilename()), media.getBytes());
+                    writeFixture(root.resolve("fixtures"), media);
                 }
                 Files.writeString(root.resolve("ready.json"), json.writeValueAsString(Map.of(
                     "backendOrigin", "http://127.0.0.1:18080", "postgresVersion", runtime.queryForObject("show server_version", String.class),
@@ -155,6 +157,21 @@ public final class BrowserIntegrationServer {
             }
         }
         Files.writeString(root.resolve("stopped.json"), json.writeValueAsString(Map.of("applicationClosed", true, "disposableServicesClosed", true)));
+    }
+
+    static void writeFixture(Path directory, org.springframework.mock.web.MockMultipartFile media) throws java.io.IOException {
+        // Multipart filenames are untrusted even in a controlled transport. Select
+        // literal fixture paths, and never replace an existing file or follow a link.
+        String name = media.getOriginalFilename();
+        Path destination = switch (name == null ? "" : name) {
+            case "scene.png" -> directory.resolve("scene.png");
+            case "fictional.pdf" -> directory.resolve("fictional.pdf");
+            case "aster.wav" -> directory.resolve("aster.wav");
+            case "scene.mp4" -> directory.resolve("scene.mp4");
+            default -> throw new IllegalArgumentException("Unapproved browser fixture filename");
+        };
+        Files.write(destination, media.getBytes(), StandardOpenOption.CREATE_NEW,
+            StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
     }
 
     private static void verifyRegistration(org.springframework.context.ApplicationContext app, ObjectMapper json) throws Exception {
