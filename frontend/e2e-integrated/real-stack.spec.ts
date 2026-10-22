@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page, type TestInfo } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { openTools, sourceEditor } from '../e2e/editor-support'
@@ -109,27 +109,7 @@ test('real storage validates four media kinds, serves bytes/ranges and denies re
   await page.screenshot({ path: info.outputPath('real-image-viewer.png'), animations: 'disabled' })
   await page.keyboard.press('Escape'); await expect(viewer).not.toBeVisible()
   for (const [name, element] of [['aster.wav', 'audio'], ['scene.mp4', 'video']] as const) {
-    await page.getByRole('button', { name: `Open ${name}`, exact: true }).click()
-    const dialog = page.getByRole('dialog', { name, exact: true }), player = dialog.locator(element)
-    await expect(player).toBeVisible()
-    try {
-      await expect.poll(() => player.evaluate((media: HTMLMediaElement) =>
-        media.readyState >= 1 && Number.isFinite(media.duration) && media.duration > 0)).toBe(true)
-    } catch (failure) {
-      const state = await page.evaluate(() => {
-        const dialog = document.querySelector('[role="dialog"]'), media = dialog?.querySelector<HTMLMediaElement>('audio, video')
-        return media ? { element: media.tagName, readyState: media.readyState, networkState: media.networkState,
-          errorCode: media.error?.code ?? null, finitePositiveDuration: Number.isFinite(media.duration) && media.duration > 0 }
-          : { mediaRemoved: true, safeFailureVisible: dialog?.textContent?.includes('This attachment could not be loaded.') ?? false }
-      }).catch(() => ({ observerUnavailable: true }))
-      await observation(info, 'native-media-state', { name, ...state })
-      throw failure
-    }
-    // Frozen clips are short; looping avoids racing natural end against play().
-    // Actual advancing playback is still required, never just an accepted HTTP byte stream.
-    await player.evaluate(async (media: HTMLMediaElement) => { media.muted = true; media.loop = true; await media.play() })
-    await expect.poll(() => player.evaluate((media: HTMLMediaElement) => media.currentTime)).toBeGreaterThan(0)
-    await page.keyboard.press('Escape'); await expect(dialog).not.toBeVisible()
+    await nativePlayback(page, info, name, element)
   }
   const image = files.find(f => f.mediaKind === 'image')!
   await page.getByRole('button', { name: 'Remove scene.png', exact: true }).click()
@@ -143,6 +123,72 @@ test('real storage validates four media kinds, serves bytes/ranges and denies re
   expect([415, 422]).toContain(broken.status())
   await noOverflow(page)
 })
+
+// Keep the original four-kind journey, including its failing WAV assertion.
+// A separate video journey prevents a WAV decoder failure from masking MP4.
+for (const fixture of ['scene.mp4', 'multiframe.mp4']) test(`real native ${fixture} playback qualifies independently from WAV`, async ({ page }, info) => {
+  await register(page); await page.goto('/notes/new')
+  await page.getByLabel('Title', { exact: true }).fill('Independent synthetic video')
+  await page.getByRole('button', { name: 'Create note', exact: true }).click()
+  await expect(page).toHaveURL(/\/notes\/[0-9a-f-]{36}$/)
+  const noteId = new URL(page.url()).pathname.split('/').at(-1)!
+  await openTools(page)
+  await page.getByLabel('Add file', { exact: true }).setInputFiles(resolve(runtime(), 'fixtures', fixture))
+  await expect(page.getByRole('button', { name: `Open ${fixture}`, exact: true })).toBeVisible({ timeout: 45_000 })
+  const metadata = await page.request.get(`/api/notes/${noteId}/attachments`)
+  expect(metadata.status()).toBe(200)
+  const file = (await metadata.json()).items[0] as { id: string; mediaKind: string }
+  expect(file.mediaKind).toBe('video')
+  const path = `/api/notes/${noteId}/attachments/${file.id}/content`
+  const range = await page.request.get(path, { headers: { Range: 'bytes=0-31' } })
+  expect(range.status()).toBe(206); expect((await range.body()).length).toBe(32)
+  await nativePlayback(page, info, fixture, 'video')
+  await page.getByRole('button', { name: `Remove ${fixture}`, exact: true }).click()
+  await page.getByRole('button', { name: 'Remove file', exact: true }).click()
+  await expect(page.getByRole('button', { name: `Open ${fixture}`, exact: true })).toHaveCount(0)
+  expect((await page.request.get(path)).status()).toBe(404)
+})
+
+async function nativePlayback(page: Page, info: TestInfo, name: string, element: 'audio' | 'video') {
+  // Capture native error codes before React removes the failed player. Only a
+  // bounded enum/numeric record, never URLs, bytes, cookies or exception text.
+  await page.evaluate(() => {
+    const state = window as typeof window & { nativeObserverInstalled?: boolean; nativeMediaFailure?: Record<string, string | number | null> }
+    state.nativeMediaFailure = undefined
+    if (state.nativeObserverInstalled) return
+    state.nativeObserverInstalled = true
+    document.addEventListener('error', event => {
+      const media = event.target
+      if (media instanceof HTMLMediaElement) state.nativeMediaFailure = {
+        element: media.tagName, errorCode: media.error?.code ?? null,
+        readyState: media.readyState, networkState: media.networkState,
+      }
+    }, true)
+  })
+  await page.getByRole('button', { name: `Open ${name}`, exact: true }).click()
+  const dialog = page.getByRole('dialog', { name, exact: true }), player = dialog.locator(element)
+  try {
+    await expect(player).toBeVisible()
+    await expect.poll(() => player.evaluate((media: HTMLMediaElement) =>
+      media.readyState >= 1 && Number.isFinite(media.duration) && media.duration > 0)).toBe(true)
+    // Loop short frozen clips; still require real, advancing native playback.
+    await player.evaluate(async (media: HTMLMediaElement) => { media.muted = true; media.loop = true; await media.play() })
+    await expect.poll(() => player.evaluate((media: HTMLMediaElement) => media.currentTime)).toBeGreaterThan(0)
+  } catch (failure) {
+    const state = await page.evaluate(() => {
+      const dialog = document.querySelector('[role="dialog"]'), media = dialog?.querySelector<HTMLMediaElement>('audio, video')
+      return { mediaRemoved: !media, safeFailureVisible: dialog?.textContent?.includes('This attachment could not be loaded.') ?? false,
+        nativeFailure: (window as typeof window & { nativeMediaFailure?: Record<string, string | number | null> }).nativeMediaFailure ?? null,
+        ...(media ? { element: media.tagName, readyState: media.readyState, networkState: media.networkState,
+          errorCode: media.error?.code ?? null, finitePositiveDuration: Number.isFinite(media.duration) && media.duration > 0,
+          currentTime: media.currentTime, paused: media.paused, ended: media.ended, loop: media.loop,
+          bufferedRanges: media.buffered.length } : {}) }
+    }).catch(() => ({ observerUnavailable: true }))
+    await observation(info, 'native-media-state', { name, ...state })
+    throw failure
+  }
+  await page.keyboard.press('Escape'); await expect(dialog).not.toBeVisible()
+}
 
 test('real publication snapshots, public engagement and protected moderation stay separate', async ({ page, browser }, info) => {
   const owner = await register(page)

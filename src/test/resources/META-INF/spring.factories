@@ -1,0 +1,2 @@
+# Test-only: release resources tied to class-owned ephemeral containers.
+org.springframework.test.context.TestExecutionListener=org.notesknowledge.ContainerContextLifecycleListener
