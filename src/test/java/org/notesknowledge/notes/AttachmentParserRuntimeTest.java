@@ -31,6 +31,30 @@ import org.junit.jupiter.params.provider.ValueSource;
 class AttachmentParserRuntimeTest {
     @TempDir Path temporary;
 
+    @Test
+    void longTrustedClasspathUsesManifestUrisWithoutWindowsCommandLineExpansion() throws Exception {
+        Path classes = Files.createDirectories(temporary.resolve("classes with spaces \u03bb"));
+        Path libraries = Files.createDirectories(temporary.resolve("libraries"));
+        Path dependency = libraries.resolve("trusted.jar");
+        try (var jar = new java.util.jar.JarOutputStream(Files.newOutputStream(dependency))) { }
+        String entry = classes.toString();
+        String longClasspath = String.join(java.io.File.pathSeparator,
+                java.util.Collections.nCopies(400, entry)) + java.io.File.pathSeparator + libraries + "/*";
+        assertThat(longClasspath.length()).isGreaterThan(16_000);
+        Path launch = Path.of(AttachmentParserRuntime.compactClasspath(temporary, longClasspath));
+        assertThat(launch.getParent()).isEqualTo(temporary.toAbsolutePath());
+        assertThat(launch.toString().length()).isLessThan(16_000);
+        try (var jar = new java.util.jar.JarFile(launch.toFile())) {
+            String manifest = jar.getManifest().getMainAttributes().getValue("Class-Path");
+            assertThat(manifest.split(" ")).hasSize(401);
+            assertThat(manifest).contains(classes.toUri().toASCIIString(), dependency.toUri().toASCIIString())
+                    .doesNotContain(" λ", "/*");
+            assertThat(jar.stream().map(JarEntry::getName)).containsExactly("META-INF/MANIFEST.MF");
+        }
+        assertThat(AttachmentParserRuntime.compactClasspath(temporary, "short-trusted-path"))
+                .isEqualTo("short-trusted-path");
+    }
+
     @ParameterizedTest
     @ValueSource(strings={"META-INF/tika/parsers.idx","BOOT-INF/classes/META-INF/tika/parsers.idx"})
     void copiesFixedRegistryFromBootRootOrClassesLayout(String path) throws Exception {

@@ -48,6 +48,9 @@ for (const phone of [false, true]) test(`Attachment workspace preserves dirty dr
   if (phone) await page.setViewportSize({ width: 390, height: 844 })
   const { mutations, finishUpload } = await backend(page)
   await page.goto(`/notes/${noteId}`)
+  // Cold Vite transforms/lazy editor imports are a distinct readiness boundary.
+  // Keep the subsequent interaction/focus assertions at their normal budgets.
+  await expect(page.getByLabel('Title', { exact: true })).toBeVisible({ timeout: 20_000 })
   await openTools(page)
   await expect(page.getByRole('button', { name: 'Open first.png' })).toBeVisible()
   await page.getByLabel('Title', { exact: true }).fill(' Exact unsaved title ')

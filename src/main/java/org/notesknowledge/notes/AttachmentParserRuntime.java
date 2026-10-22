@@ -18,6 +18,9 @@ import java.util.List;
 import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
+import java.util.jar.Attributes;
+import java.util.jar.JarOutputStream;
+import java.util.jar.Manifest;
 import org.apache.tika.config.TimeoutLimits;
 import org.apache.tika.metadata.Metadata;
 import org.apache.tika.metadata.PDF;
@@ -51,7 +54,7 @@ final class AttachmentParserRuntime implements AutoCloseable {
                     "-XX:ActiveProcessorCount=2", "-Djava.awt.headless=true",
                     "-Djava.io.tmpdir=" + created,
                     "-Dlogback.configurationFile=" + logback, "-Dlog4j.configurationFile=" + log4j,
-                    "-cp", childClasspath(created)));
+                    "-cp", compactClasspath(created, childClasspath(created))));
             var configuration = new PipesForkParserConfig().setUserConfigPath(json)
                     .setPluginsDir(created.resolve("plugins"))
                     .setJavaPath(Path.of(System.getProperty("java.home"), "bin",
@@ -206,6 +209,32 @@ final class AttachmentParserRuntime implements AutoCloseable {
             }
         }
         return classpath;
+    }
+
+    static String compactClasspath(Path directory, String classpath) throws IOException {
+        // A development dependency graph can exceed Windows' CreateProcess limit.
+        // A manifest-only JAR preserves the trusted classpath without copying code,
+        // changing parser permissions, or exposing document-selected launch options.
+        if (classpath.length() <= 16_000) return classpath;
+        var entries = new ArrayList<String>();
+        for (String entry : classpath.split(java.util.regex.Pattern.quote(File.pathSeparator), -1)) {
+            if (entry.endsWith(File.separator + "*") || entry.endsWith("/*")) {
+                Path libraries = Path.of(entry.substring(0, entry.length() - 1));
+                try (var paths = Files.list(libraries)) {
+                    for (Path path : paths.filter(Files::isRegularFile)
+                            .filter(p -> p.getFileName().toString().endsWith(".jar")).sorted().toList()) {
+                        entries.add(path.toAbsolutePath().toUri().toASCIIString());
+                    }
+                }
+            } else entries.add(Path.of(entry).toAbsolutePath().toUri().toASCIIString());
+        }
+        var manifest = new Manifest();
+        manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
+        manifest.getMainAttributes().put(Attributes.Name.CLASS_PATH, String.join(" ", entries));
+        Path launchJar = directory.resolve("parser-classpath.jar");
+        try (var output = new JarOutputStream(Files.newOutputStream(launchJar,
+                java.nio.file.StandardOpenOption.CREATE_NEW), manifest)) { }
+        return launchJar.toAbsolutePath().toString();
     }
 
     static void copyParserRegistry(JarFile jar,Path trustedClasses) throws IOException {

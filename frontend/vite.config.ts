@@ -37,6 +37,6 @@ export default defineConfig(({ command }) => ({
   } : undefined,
   test: {
     environment: 'jsdom',
-    exclude: ['e2e/**', 'node_modules/**', 'dist/**'],
+    exclude: ['e2e/**', 'e2e-integrated/**', 'node_modules/**', 'dist/**'],
   },
 }))

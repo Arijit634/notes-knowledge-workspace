@@ -226,7 +226,7 @@ class PrivateDerivationIntegrationTest {
                         assertThat(representations.ready(expected,lineageForPolicy(policy,1,"note"))).isFalse();
                         int spent=journal.get().reservations("embedding");journal.get().close();
                         // A separate process opens the SAME forced journal, not an in-memory marker.
-                        var probe=new ProcessBuilder(java.nio.file.Path.of(System.getProperty("java.home"),"bin","java").toString(),"-Duser.timezone=UTC","-cp",System.getProperty("java.class.path"),
+                        var probe=new ProcessBuilder(java.nio.file.Path.of(System.getProperty("java.home"),"bin","java").toString(),"-Duser.timezone=UTC",QualificationChildClasspath.argument(checkpoint),
                             QualificationRecoveryProbe.class.getName(),checkpoint.toString(),Integer.toString(spent))
                             .redirectOutput(ProcessBuilder.Redirect.DISCARD).redirectError(ProcessBuilder.Redirect.DISCARD).start();
                         assertThat(probe.waitFor(30,TimeUnit.SECONDS)).isTrue();assertThat(probe.exitValue()).isZero();
@@ -241,7 +241,7 @@ class PrivateDerivationIntegrationTest {
             assertThat(readyCount()).isEqualTo(80);assertThat(journal.get().reservations("embedding")).isEqualTo(expectedSegments);
             int spent=journal.get().reservations("embedding");journal.get().close();
             var probeEvidence=checkpoint.resolve("probe-safe.txt");
-            var probe=new ProcessBuilder(java.nio.file.Path.of(System.getProperty("java.home"),"bin","java").toString(),"-Duser.timezone=UTC","-cp",System.getProperty("java.class.path"),
+            var probe=new ProcessBuilder(java.nio.file.Path.of(System.getProperty("java.home"),"bin","java").toString(),"-Duser.timezone=UTC",QualificationChildClasspath.argument(checkpoint),
                 QualificationRecoveryProbe.class.getName(),checkpoint.toString(),Integer.toString(spent),postgres.getJdbcUrl(),owner.toString())
                 .redirectOutput(probeEvidence.toFile()).redirectError(ProcessBuilder.Redirect.DISCARD).start();
             assertThat(probe.waitFor(30,TimeUnit.SECONDS)).isTrue();assertThat(probe.exitValue()).as(java.nio.file.Files.readString(probeEvidence)).isZero();

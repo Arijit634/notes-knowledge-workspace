@@ -35,7 +35,7 @@ class QualificationProcessRestartTest {
         Files.writeString(report,json.writeValueAsString(java.util.Map.of("abruptExit",77,"resumed",resumed,"restartedAgain",verified,"fixtureLeaseExpiry",true,"firstQuery",firstQuery,"cachedQueryAfterRestart",cachedQuery)));
     }
     private int run(String mode)throws Exception {
-        var builder=new ProcessBuilder(Path.of(System.getProperty("java.home"),"bin","java").toString(),"-Duser.timezone=UTC","-cp",System.getProperty("java.class.path"),
+        var builder=new ProcessBuilder(Path.of(System.getProperty("java.home"),"bin","java").toString(),"-Duser.timezone=UTC",QualificationChildClasspath.argument(directory),
             QualificationProcessHarness.class.getName(),postgres.getJdbcUrl(),directory.toString(),mode)
             .redirectOutput(directory.resolve(mode+"-safe.txt").toFile()).redirectError(ProcessBuilder.Redirect.DISCARD);
         builder.environment().keySet().removeIf(key->key.startsWith("SPRING_AI_")||key.startsWith("SPRING_CONFIG_")||key.startsWith("GOOGLE_OIDC_")||key.startsWith("SPRING_MAIL_"));

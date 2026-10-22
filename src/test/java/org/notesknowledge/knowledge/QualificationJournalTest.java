@@ -59,8 +59,8 @@ class QualificationJournalTest {
         }
     }
     @Test void abruptChildJvmTerminationDoesNotRefundAnUncertainCall()throws Exception {
-        var child=new ProcessBuilder(Path.of(System.getProperty("java.home"),"bin","java").toString(),"-Duser.timezone=UTC","-cp",
-            System.getProperty("java.class.path"),QualificationRecoveryProbe.class.getName(),directory.toString(),"interrupt")
+        var child=new ProcessBuilder(Path.of(System.getProperty("java.home"),"bin","java").toString(),"-Duser.timezone=UTC",
+            QualificationChildClasspath.argument(directory),QualificationRecoveryProbe.class.getName(),directory.toString(),"interrupt")
             .redirectOutput(ProcessBuilder.Redirect.DISCARD).redirectError(ProcessBuilder.Redirect.DISCARD).start();
         assertThat(child.waitFor(30,java.util.concurrent.TimeUnit.SECONDS)).isTrue();assertThat(child.exitValue()).isEqualTo(77);
         try(var journal=new QualificationJournal(directory,"offline-recovery-v1")) {

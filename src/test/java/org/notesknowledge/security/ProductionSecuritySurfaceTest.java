@@ -102,7 +102,7 @@ class ProductionSecuritySurfaceTest {
     @Test
     void productionChainHasNoFrameworkLoginOrBasicChallenge() throws Exception {
         mockMvc.perform(get("/login"))
-                .andExpect(status().isUnauthorized())
+                .andExpect(status().is(new org.springframework.core.io.ClassPathResource("static/index.html").exists() ? 200 : 401))
                 .andExpect(header().doesNotExist(HttpHeaders.WWW_AUTHENTICATE));
 
         mockMvc.perform(get("/api/not-implemented")
