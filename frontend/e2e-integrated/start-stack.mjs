@@ -20,7 +20,7 @@ const complete = [resolve(repo, 'target/test-classes'), resolve(repo, 'target/cl
 const java = process.env.NKW_INTEGRATION_JAVA ?? (process.env.JAVA_HOME ? resolve(process.env.JAVA_HOME, 'bin', process.platform === 'win32' ? 'java.exe' : 'java') : 'java')
 const argfile = resolve(repo, 'target/browser-integration.args')
 const quote = value => `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`
-await writeFile(argfile, `-Xmx768m\n-XX:MaxDirectMemorySize=128m\n-XX:ActiveProcessorCount=2\n-Duser.timezone=UTC\n${quote('-Djava.io.tmpdir=' + (process.env.TEMP ?? process.env.TMP ?? resolve(repo, 'target')))}\n-cp\n${quote(complete)}\norg.notesknowledge.BrowserIntegrationServer\n${quote(runtime)}\n`)
+await writeFile(argfile, `-Xmx768m\n-XX:MaxDirectMemorySize=128m\n-XX:ActiveProcessorCount=2\n${quote('-XX:ErrorFile=' + resolve(runtime, 'hs_err_pid%p.log'))}\n-Duser.timezone=UTC\n${quote('-Djava.io.tmpdir=' + (process.env.TEMP ?? process.env.TMP ?? resolve(repo, 'target')))}\n-cp\n${quote(complete)}\norg.notesknowledge.BrowserIntegrationServer\n${quote(runtime)}\n`)
 const environment = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
   !/^(SPRING_|GOOGLE_|GEMINI_|GROQ_|AWS_|OCI_|IDENTITY_|KNOWLEDGE_)/i.test(key)))
 const log = createWriteStream(resolve(repo, 'target', basename(runtime) + '.log'), { flags: 'wx' })

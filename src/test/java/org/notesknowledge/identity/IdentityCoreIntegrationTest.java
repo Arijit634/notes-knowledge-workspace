@@ -766,6 +766,52 @@ class IdentityCoreIntegrationTest {
     }
 
     @Test
+    void concurrentPasswordLoginsUseTheApplicationEncoderAndKeepOwnersSeparate() throws Exception {
+        String[] emails={"parallel-one-"+UUID.randomUUID()+"@example.test",
+                "parallel-two-"+UUID.randomUUID()+"@example.test"};
+        String[] proofs={"Synthetic-parallel-one-2026!", "Synthetic-parallel-two-2026-\u03bb!"};
+        Browser[] browsers={bootstrap(),bootstrap()};
+        for(int i=0;i<2;i++) {
+            registrationService.begin(emails[i],proofs[i]);
+            verificationService.confirm(currentToken(emails[i]));
+        }
+        var start=new java.util.concurrent.CyclicBarrier(2);
+        try(var executor=Executors.newFixedThreadPool(2)) {
+            var tasks=new java.util.ArrayList<java.util.concurrent.Callable<UUID>>();
+            for(int i=0;i<2;i++) {
+                final int lane=i;
+                tasks.add(()->{
+                    start.await(10,TimeUnit.SECONDS);
+                    Browser browser=browsers[lane];
+                    mvc.perform(post("/api/auth/login/password").cookie(browser.cookie())
+                            .header("X-CSRF-TOKEN",browser.csrf()).contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(java.util.Map.of(
+                                    "email",emails[lane],"password",proofs[1-lane]))))
+                            .andExpect(status().isUnauthorized());
+                    var result=mvc.perform(post("/api/auth/login/password").cookie(browser.cookie())
+                            .header("X-CSRF-TOKEN",browser.csrf()).contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(java.util.Map.of(
+                                    "email",emails[lane],"password",proofs[lane]))))
+                            .andExpect(status().isOk()).andReturn();
+                    Cookie session=result.getResponse().getCookie("SESSION");
+                    assertThat(session).isNotNull();
+                    mvc.perform(get("/api/auth/session").cookie(session)).andExpect(status().isOk());
+                    return jdbc.queryForObject("""
+                            select d.user_id from identity.application_session_descriptor d
+                            join identity.spring_session s on s.primary_id=d.session_primary_id
+                            where s.session_id=?
+                            """,UUID.class,new String(java.util.Base64.getDecoder().decode(session.getValue()),
+                                    java.nio.charset.StandardCharsets.UTF_8));
+                });
+            }
+            var results=executor.invokeAll(tasks,60,TimeUnit.SECONDS);
+            for(int i=0;i<2;i++)assertThat(results.get(i).get()).isEqualTo(jdbc.queryForObject(
+                    "select user_id from identity.account where canonical_email=?",UUID.class,emails[i]));
+            assertThat(results.get(0).get()).isNotEqualTo(results.get(1).get());
+        }
+    }
+
+    @Test
     void canonicalEmailRaceCommitsExactlyOneCompleteRegistration() throws Exception {
         String email = "wp3a-unique-" + UUID.randomUUID() + "@example.test";
         var start = new CountDownLatch(1);

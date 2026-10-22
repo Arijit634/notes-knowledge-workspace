@@ -12,6 +12,31 @@ import org.junit.jupiter.api.*;
  * No password, salt or encoded hash is emitted as diagnostic evidence. */
 @Tag("FAST") @Tag("SECURITY")
 class Argon2VerificationQualificationTest {
+    @Test void dependencyMatchesThePublishedRfc9106Argon2idVector() {
+        // RFC 9106 section 5.3: an independent known answer, not a value computed
+        // by the same dependency under test. These small parameters belong ONLY
+        // to the published vector; the application parameters stay unchanged.
+        byte[] password=repeated(32,1),salt=repeated(16,2);
+        byte[] secret=repeated(8,3),associated=repeated(12,4),actual=new byte[32];
+        var generator=new Argon2BytesGenerator();
+        var parameters=new Argon2Parameters.Builder(Argon2Parameters.ARGON2_id)
+                .withVersion(Argon2Parameters.ARGON2_VERSION_13).withMemoryAsKB(32)
+                .withIterations(3).withParallelism(4).withSalt(salt)
+                .withSecret(secret).withAdditional(associated).build();
+        try {
+            generator.init(parameters);generator.generateBytes(password,actual);
+            byte[] expected=HexFormat.of().parseHex(
+                    "0d640df58d78766c08c037a34a8b53c9d01ef0452d75b65eb52520e96b01e659");
+            assertThat(java.security.MessageDigest.isEqual(actual,expected))
+                    .as("published Argon2id known answer").isTrue();
+        } finally {
+            parameters.clear();
+            for(byte[] value:List.of(password,salt,secret,associated,actual))Arrays.fill(value,(byte)0);
+        }
+    }
+    private static byte[] repeated(int size,int value) {
+        byte[] result=new byte[size];Arrays.fill(result,(byte)value);return result;
+    }
     @Test void eachFreshSpringHashAgreesWithDirectDependencyOnItsActualEncodedSalt(){
         var encoder=new IdentityPasswordConfiguration().identityPasswordEncoder();
         // Bounded diagnostic, not rerun-until-green. Verify ALL hashes with both paths.

@@ -120,6 +120,10 @@ public final class BrowserIntegrationServer {
                     var media = MeaningfulMediaFixtures.media(kind);
                     writeFixture(root.resolve("fixtures"), media);
                 }
+                // Keep the original single-sample clip as an edge case, and
+                // qualify sustained playback independently with eight samples.
+                writeFixture(root.resolve("fixtures"), new org.springframework.mock.web.MockMultipartFile(
+                    "file", "multiframe.mp4", "video/mp4", MeaningfulMediaFixtures.videoSamples(8, 250)));
                 Files.writeString(root.resolve("ready.json"), json.writeValueAsString(Map.of(
                     "backendOrigin", "http://127.0.0.1:18080", "postgresVersion", runtime.queryForObject("show server_version", String.class),
                     "relations", 38, "runtimeRoleRestricted", true, "externalMailControlled", true,
@@ -168,6 +172,7 @@ public final class BrowserIntegrationServer {
             case "fictional.pdf" -> directory.resolve("fictional.pdf");
             case "aster.wav" -> directory.resolve("aster.wav");
             case "scene.mp4" -> directory.resolve("scene.mp4");
+            case "multiframe.mp4" -> directory.resolve("multiframe.mp4");
             default -> throw new IllegalArgumentException("Unapproved browser fixture filename");
         };
         Files.write(destination, media.getBytes(), StandardOpenOption.CREATE_NEW,

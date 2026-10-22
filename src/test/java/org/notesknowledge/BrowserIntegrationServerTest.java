@@ -19,7 +19,8 @@ class BrowserIntegrationServerTest {
     @ParameterizedTest
     @NullAndEmptySource
     @ValueSource(strings = {"../outside.txt", "..\\outside.txt", "/outside.txt", "C:\\outside.txt",
-        "sub/scene.png", "sub\\scene.png", "scene.png/../outside.txt", "scene.png:stream", "other.png"})
+        "sub/scene.png", "sub\\scene.png", "scene.png/../outside.txt", "scene.png:stream", "other.png",
+        "multiframe.mp4/../outside.txt"})
     void rejectsUntrustedNamesWithoutWritingAnything(String name) throws Exception {
         Path directory = Files.createDirectory(root.resolve("fixtures"));
         Path outside = Files.writeString(root.resolve("outside.txt"), "unchanged");
@@ -30,7 +31,7 @@ class BrowserIntegrationServerTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"scene.png", "fictional.pdf", "aster.wav", "scene.mp4"})
+    @ValueSource(strings = {"scene.png", "fictional.pdf", "aster.wav", "scene.mp4", "multiframe.mp4"})
     void writesOnlyApprovedLiteralNamesAndNeverOverwrites(String name) throws Exception {
         Path directory = Files.createDirectory(root.resolve("fixtures"));
         byte[] bytes = {1, 2, 3};
