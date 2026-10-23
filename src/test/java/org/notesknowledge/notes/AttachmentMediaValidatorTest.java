@@ -144,6 +144,21 @@ class AttachmentMediaValidatorTest {
                             var form = new org.apache.pdfbox.pdmodel.interactive.form.PDAcroForm(document);
                             var field = new org.apache.pdfbox.pdmodel.interactive.form.PDTextField(form);
                             field.setPartialName("syntheticField"); form.getFields().add(field);
+                            // Supply the standard resources instead of making PDFBox repair this
+                            // fixture via host font discovery inside the bounded parser child.
+                            var resources = new org.apache.pdfbox.pdmodel.PDResources();
+                            var fonts = new org.apache.pdfbox.cos.COSDictionary();
+                            for (var font : java.util.Map.of(org.apache.pdfbox.cos.COSName.HELV, "Helvetica",
+                                    org.apache.pdfbox.cos.COSName.ZA_DB, "ZapfDingbats").entrySet()) {
+                                var dictionary = new org.apache.pdfbox.cos.COSDictionary();
+                                dictionary.setItem(org.apache.pdfbox.cos.COSName.TYPE, org.apache.pdfbox.cos.COSName.FONT);
+                                dictionary.setItem(org.apache.pdfbox.cos.COSName.SUBTYPE, org.apache.pdfbox.cos.COSName.TYPE1);
+                                dictionary.setName(org.apache.pdfbox.cos.COSName.BASE_FONT, font.getValue());
+                                fonts.setItem(font.getKey(), dictionary);
+                            }
+                            resources.getCOSObject().setItem(org.apache.pdfbox.cos.COSName.FONT, fonts);
+                            form.setDefaultResources(resources);
+                            form.setDefaultAppearance("/Helv 0 Tf 0 g");
                             document.getDocumentCatalog().setAcroForm(form);
                         }
                         case "embedded" -> {
@@ -160,10 +175,16 @@ class AttachmentMediaValidatorTest {
                     }
                     document.save(path.toFile());
                 }
-                invalid(() -> validator.validate(path, "synthetic.pdf", "application/pdf"));
+                if (kind.equals("form")) {
+                    try (var runtime = new AttachmentParserRuntime()) {
+                        assertThat(runtime.parse(path).get(org.apache.tika.metadata.PDF.HAS_ACROFORM_FIELDS))
+                                .as("Synthetic form remains a real form-bearing PDF").isEqualTo("true");
+                    }
+                }
+                invalid(kind, () -> validator.validate(path, "synthetic.pdf", "application/pdf"));
             }
             Path malformed = Files.writeString(directory.resolve("malformed.pdf"), "%PDF-1.4\nsynthetic incomplete document");
-            invalid(() -> validator.validate(malformed, "synthetic.pdf", "application/pdf"));
+            invalid("malformed", () -> validator.validate(malformed, "synthetic.pdf", "application/pdf"));
         }
     }
 
@@ -189,7 +210,12 @@ class AttachmentMediaValidatorTest {
     }
 
     private void invalid(org.assertj.core.api.ThrowableAssert.ThrowingCallable action) {
+        invalid("media", action);
+    }
+
+    private void invalid(String fixture, org.assertj.core.api.ThrowableAssert.ThrowingCallable action) {
         assertThatThrownBy(action).isInstanceOfSatisfying(ApiFailureException.class,
-                failure -> assertThat(failure.kind()).isEqualTo(ApiFailureException.Kind.INVALID_INPUT));
+                failure -> assertThat(failure.kind()).as("Synthetic %s rejection", fixture)
+                        .isEqualTo(ApiFailureException.Kind.INVALID_INPUT));
     }
 }
