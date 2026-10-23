@@ -1,6 +1,7 @@
 package org.notesknowledge.profile;
 
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import org.notesknowledge.websupport.ApiFailureException;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.CacheControl;
@@ -8,6 +9,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.TransactionException;
 import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -18,7 +20,14 @@ import org.springframework.web.util.WebUtils;
 @RequestMapping("/api/me/profile/avatar")
 class AvatarController {
     private final AvatarService avatars;
-    AvatarController(AvatarService avatars) { this.avatars = avatars; }
+    private final PrivateAvatarReader reader;
+    AvatarController(AvatarService avatars,PrivateAvatarReader reader) { this.avatars = avatars;this.reader=reader; }
+
+    @GetMapping("/content")
+    void content(HttpServletRequest request,HttpServletResponse response) {
+        if(!request.getParameterMap().isEmpty())throw ApiFailureException.of(ApiFailureException.Kind.MALFORMED_REQUEST);
+        reader.read(ProfileController.owner(),request,response);
+    }
 
     @PutMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     ResponseEntity<ProfileView> replace(HttpServletRequest request) {

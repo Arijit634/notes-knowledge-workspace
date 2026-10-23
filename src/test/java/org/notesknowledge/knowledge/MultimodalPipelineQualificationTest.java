@@ -58,6 +58,7 @@ class MultimodalPipelineQualificationTest {
     @MockitoBean AiDerivationProperties config; @MockitoBean KnowledgePolicyProperties policyConfig;
     @MockitoBean TextEmbeddingPort embeddings; @MockitoBean MediaUnderstandingPort media;
     @MockitoBean StructuredKnowledgePort answer; @MockitoBean RateLimitPort rates;
+    @MockitoBean ProcessingDisclosureResolver disclosures;
     UUID owner,note,policy; Cookie cookie;String csrf;
     List<StructuredKnowledgePort.Evidence> selected=List.of();
     static final List<String> FACTS=List.of("The fictional beacon flashes amber at dusk.","The fictional deep vault stores copper keys.",
@@ -82,7 +83,7 @@ class MultimodalPipelineQualificationTest {
             for(var e:selected)if(gold<FACTS.size()&&e.text().contains(FACTS.get(gold)))claims.add(new StructuredKnowledgePort.Claim(FACTS.get(gold),List.of(e.id())));
             return new StructuredKnowledgePort.Output(claims,false);});
         String code="pipeline-"+UUID.randomUUID();when(policyConfig.code()).thenReturn(code);
-        policy=jdbc.queryForObject("insert into knowledge.processing_policy(policy_code,policy_version,policy_fingerprint,disclosure_revision,effective_at) values(?,1,?,'synthetic-1',clock_timestamp()-interval '1 minute') returning processing_policy_id",UUID.class,code,"a".repeat(64));
+        policy=new ProcessingDisclosureFixtures(disclosures,config).insert(jdbc,code,1,true);
         owner=jdbc.queryForObject("select uuidv7()",UUID.class);String email="fictional-"+owner+"@example.test";
         jdbc.update("insert into identity.account(user_id,canonical_email,display_email,email_verified_at,account_state,created_at,updated_at) values(?,?,?,now(),'active',now(),now())",owner,email,email);
         jdbc.update("insert into knowledge.processing_policy_acknowledgement(user_id,processing_policy_id,disclosure_revision) values(?,?,'synthetic-1')",owner,policy);
@@ -240,7 +241,7 @@ class MultimodalPipelineQualificationTest {
     @Test void nonSpeechAudioReindexesWithoutLegacyReuseAndRetainsQualifiedTemporalEvidence()throws Exception {
         UUID attachment=upload("tones");
         var expected=new Expected(owner,note,attachment,1,1,1L);
-        var current=EmbeddingLineage.create(config,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,"a".repeat(64)),"audio");
+        var current=EmbeddingLineage.create(config,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,config.approvedPolicyFingerprint()),"audio");
         String legacyConfiguration=current.configuration().replace("audio-speech-acoustic-surrogate-v3","media-scoped-coverage-surrogate-v2");
         var legacy=new EmbeddingLineage(java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
             .digest(legacyConfiguration.getBytes(StandardCharsets.UTF_8))),legacyConfiguration,"audio",8,"cosine",policy,"none");
@@ -312,7 +313,7 @@ class MultimodalPipelineQualificationTest {
     }
     private UUID upload(String kind)throws Exception {var r=mvc.perform(multipart("/api/notes/"+note+"/attachments").file(MeaningfulMediaFixtures.media(kind)).cookie(cookie).header("X-CSRF-TOKEN",csrf)).andExpect(status().isCreated()).andReturn().getResponse();return UUID.fromString(json.readTree(r.getContentAsString()).get("id").asText());}
     private KnowledgeWork.Claim derive(UUID attachment,String modality) {
-        var expected=new Expected(owner,note,attachment,1,1,attachment==null?null:1L);var lineage=EmbeddingLineage.create(config,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,"a".repeat(64)),modality);
+        var expected=new Expected(owner,note,attachment,1,1,attachment==null?null:1L);var lineage=EmbeddingLineage.create(config,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,config.approvedPolicyFingerprint()),modality);
         new TransactionTemplate(transactions).execute(s->rows.enqueue(attachment==null?KnowledgeWork.Kind.NOTE:KnowledgeWork.Kind.ATTACHMENT,expected,lineage.id()));
         var claim=work.claim(new LeaseOwner("fictional-pipeline"),10).stream().filter(c->c.intent().expected().equals(expected)).findFirst().orElseThrow();executor.execute(claim);
         return claim;

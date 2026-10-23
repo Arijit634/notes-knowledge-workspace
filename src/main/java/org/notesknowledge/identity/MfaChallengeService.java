@@ -78,19 +78,31 @@ final class MfaChallengeService {
     }
 
     String begin(UUID userId, HttpServletRequest request, String primaryMethod) {
+        return begin(userId,request,primaryMethod,null,null);
+    }
+
+    String beginOidc(UUID userId,HttpServletRequest request,String destination,Instant oidcExpiry) {
+        return begin(userId,request,"oidc",destination,oidcExpiry);
+    }
+
+    private String begin(UUID userId,HttpServletRequest request,String primaryMethod,String destination,Instant oidcExpiry) {
         MfaRepository.Configuration config = activeConfiguration(userId);
         byte[] randomId = new byte[32];
         random.nextBytes(randomId);
         String id = Base64.getUrlEncoder().withoutPadding().encodeToString(randomId);
+        Instant challengeExpiry=clock.instant().plus(policy.challengeLifetime());
+        Instant targetExpiry=oidcExpiry==null||challengeExpiry.isBefore(oidcExpiry)?challengeExpiry:oidcExpiry;
+        var intent="oidc".equals(primaryMethod)?new OidcReturnIntent(OidcProtocolPort.Action.LOGIN,userId,
+            request.getSession().getId(),id,targetExpiry,OidcIntendedDestination.safe(destination)):null;
         request.getSession().setAttribute(IdentitySessionState.CHALLENGE_ATTRIBUTE,
                 new IdentitySessionState.Challenge(id, userId, config.activatedAt(),
-                        clock.instant().plus(policy.challengeLifetime()), 0, primaryMethod));
+                        challengeExpiry,0,primaryMethod,intent));
         return id;
     }
 
-    void completeTotp(UUID userId, String id, String proof, HttpServletRequest request,
+    String completeTotp(UUID userId, String id, String proof, HttpServletRequest request,
             HttpServletResponse response) {
-        complete(userId, id, request, response, "totp_accepted", config -> {
+        return complete(userId, id, request, response, "totp_accepted", config -> {
             byte[] seed = cipher.open(userId, config.seed());
             long step;
             try {
@@ -102,13 +114,13 @@ final class MfaChallengeService {
         });
     }
 
-    void completeRecovery(UUID userId, String id, String code, HttpServletRequest request,
+    String completeRecovery(UUID userId, String id, String code, HttpServletRequest request,
             HttpServletResponse response) {
-        complete(userId, id, request, response, "recovery_accepted", config ->
+        return complete(userId, id, request, response, "recovery_accepted", config ->
                 repository.consumeRecovery(userId, recovery.digest(code), clock.instant()));
     }
 
-    private void complete(UUID userId, String id, HttpServletRequest request,
+    private String complete(UUID userId, String id, HttpServletRequest request,
             HttpServletResponse response, String acceptedOutcome,
             java.util.function.Predicate<MfaRepository.Configuration> consume) {
         HttpSession requestSession = request.getSession(false);
@@ -117,8 +129,15 @@ final class MfaChallengeService {
         checkpoint.beforeChallengeLock(request);
         boolean[] mutatedRequestSession = {false};
         Outcome outcome;
+        String[] intendedDestination={null};
         try {
             outcome = transactions.execute(status -> {
+                // Account -> session order also serializes this elevation with suspension/revocation.
+                if(!identity.lockActiveAccount(userId)) {
+                    requestSession.removeAttribute(IdentitySessionState.CHALLENGE_ATTRIBUTE);
+                    mutatedRequestSession[0]=true;
+                    return Outcome.MISSING;
+                }
                 IdentitySessionState.Challenge current = challenges.lockAndRead(
                         requestSession.getId(), userId);
                 if (current == null) {
@@ -160,6 +179,8 @@ final class MfaChallengeService {
                     return Outcome.DENIED;
                 }
                 identity.audit(userId, "mfa_challenge", acceptedOutcome, now);
+                if("oidc".equals(current.primaryMethod()))intendedDestination[0]=current.returnIntent()==null?"/notes":
+                    current.returnIntent().resolve(userId,requestSession.getId(),current.id(),now);
                 var passwordProof = IdentitySessionState.passwordProof(
                         requestSession.getAttribute(IdentitySessionState.RECENT_ATTRIBUTE), userId);
                 sessions.establish(userId, true, request, response, passwordProof);
@@ -179,6 +200,7 @@ final class MfaChallengeService {
         }
         if (outcome == Outcome.MISSING) missing();
         if (outcome == Outcome.DENIED) deny();
+        return intendedDestination[0];
     }
 
     private MfaRepository.Configuration activeConfiguration(UUID userId) {

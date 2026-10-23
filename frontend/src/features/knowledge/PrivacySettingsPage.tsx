@@ -4,7 +4,8 @@ import type { AuthRuntime } from '../auth/AuthRuntime'
 import { NotesWorkspace } from '../notes/NotesWorkspace'
 import { notesApi } from '../notes/NotesApi'
 import { notePreferenceKeys, noteKeys } from '../notes/NotesKeys'
-import { processingPolicyApi } from './ProcessingPolicyApi'
+import { processingPolicyApi, processingCategories } from './ProcessingPolicyApi'
+import { ApiProblemError } from '../../app/api/ProblemDetailsDecoder'
 import { ConfirmDialog } from '../../app/ui/ConfirmDialog'
 import { featureError } from '../../app/ui/featureError'
 import { usePrivateScope } from '../../app/security/usePrivateScope'
@@ -29,6 +30,21 @@ export function PrivacySettingsPage({ auth }: { auth: AuthRuntime }) {
     const saved = await notesApi.setPreference(auth, value)
     if (current()) auth.queries.setQueryData(notePreferenceKeys.current(scope), saved)
   }
+  async function acknowledge() {
+    const displayed = policy.data
+    if (busy || !displayed || policy.isFetching || displayed.acknowledged) return
+    setBusy(true); setError(''); setStatus('')
+    try {
+      await processingPolicyApi.acknowledge(auth, displayed)
+      if (current()) { await policy.refetch(); setStatus('Disclosure acknowledged. No Note AI choice was changed.') }
+    } catch (e) {
+      if (current()) {
+        if (e instanceof ApiProblemError && e.problem.code === 'processing_policy_changed') {
+          await policy.refetch(); setError('The processing policy changed. Review the current disclosure and acknowledge it deliberately.')
+        } else setError(featureError(e))
+      }
+    } finally { if (current()) setBusy(false) }
+  }
   return <NotesWorkspace auth={auth} modalOpen={confirmation !== null}><div className="settings-card" inert={confirmation !== null}>
     <h1>AI &amp; Privacy</h1><p>Your notes, your choice. Ordinary writing and search work with AI off.</p>
     <section className="studio-setting"><h2>Default AI access for new notes</h2><p>This only initializes the choice when creating a note. Existing notes keep their own AI state.</p>
@@ -39,7 +55,10 @@ export function PrivacySettingsPage({ auth }: { auth: AuthRuntime }) {
       <p>AI ON is permission to participate, not proof that processing has happened. Acknowledging this disclosure does not turn any note ON. AI OFF excludes a note from AI processing; it is not encryption and does not change who can see it.</p>
       {policy.isPending ? <p role="status">Loading current disclosure…</p> : policy.isError ? <p role="alert">{featureError(policy.error)} <button onClick={() => void policy.refetch()}>Retry disclosure</button></p> : policy.data && <>
         <p>Disclosure revision: {policy.data.disclosureRevision} · Policy version {policy.data.policyVersion}</p>
-        {policy.data.acknowledged ? <p role="status">The server records acknowledgement of the current policy.</p> : <p className="alert" role="status">The server has not supplied the current disclosure text or provider-processing summary. Acknowledgement is unavailable until that information can be displayed. Your notes remain usable, and AI ON does not bypass this requirement.</p>}</>}
+        <div aria-label="Current approved processing disclosure" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{policy.data.disclosureContent}</div>
+        <h3>Processing covered by this disclosure</h3><ul>{policy.data.providerProcessingCategories.map(category => <li key={category}>{processingCategories[category]}</li>)}</ul>
+        {policy.data.acknowledged ? <p role="status">The server records acknowledgement of the current policy.</p>
+          : <button disabled={busy || policy.isFetching} onClick={() => void acknowledge()}>I acknowledge this processing disclosure</button>}</>}
     </section><section className="studio-setting"><h2>Change existing notes</h2><p>A separate explicit action changes AI access on existing notes. It does not change the default above.</p>
       <div className="actions"><button className="button-secondary" disabled={busy} onClick={event => confirm(event, true)}>Enable AI on existing notes</button>
         <button className="button-secondary" disabled={busy} onClick={event => confirm(event, false)}>Disable AI on existing notes</button></div></section>

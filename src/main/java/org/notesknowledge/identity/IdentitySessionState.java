@@ -17,9 +17,14 @@ final class IdentitySessionState {
     static final String RECENT_ATTRIBUTE = "IDENTITY_RECENT_AUTH";
 
     record Challenge(String id, UUID userId, Instant activation, Instant expiresAt,
-            int failedAttempts, String primaryMethod)
+            int failedAttempts, String primaryMethod,OidcReturnIntent returnIntent)
             implements Serializable {
-        @Serial private static final long serialVersionUID = 1L;
+        @Serial private static final long serialVersionUID = 2L;
+
+        Challenge(String id,UUID userId,Instant activation,Instant expiresAt,int failedAttempts,String primaryMethod) {
+            this(id,userId,activation,expiresAt,failedAttempts,primaryMethod,null);
+        }
+        @Override public String toString(){return "MfaChallenge[REDACTED]";}
 
         Challenge {
             if (failedAttempts < 0 || failedAttempts > 8) {
@@ -32,7 +37,7 @@ final class IdentitySessionState {
 
         Challenge failed() {
             return new Challenge(id, userId, activation, expiresAt, failedAttempts + 1,
-                    primaryMethod);
+                    primaryMethod,returnIntent);
         }
     }
 

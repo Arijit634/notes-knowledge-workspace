@@ -46,9 +46,9 @@ final class MfaController {
         UUID userId = IdentitySessionState.principal("ROLE_MFA_PENDING");
         rates.check("MFA_TOTP", userId, request);
         if (input == null) throw ApiFailureException.of(ApiFailureException.Kind.INVALID_INPUT);
-        challenges.completeTotp(userId, challengeId, input.code(), request, response);
+        var destination=challenges.completeTotp(userId, challengeId, input.code(), request, response);
         return ResponseEntity.ok().cacheControl(CacheControl.noStore())
-                .body(Map.of("state", "authenticated"));
+                .body(completion(destination));
     }
 
     @PostMapping("/api/auth/mfa/challenges/{challengeId}/recovery-code")
@@ -57,9 +57,14 @@ final class MfaController {
         UUID userId = IdentitySessionState.principal("ROLE_MFA_PENDING");
         rates.check("MFA_RECOVERY", userId, request);
         if (input == null) throw ApiFailureException.of(ApiFailureException.Kind.INVALID_INPUT);
-        challenges.completeRecovery(userId, challengeId, input.code(), request, response);
+        var destination=challenges.completeRecovery(userId, challengeId, input.code(), request, response);
         return ResponseEntity.ok().cacheControl(CacheControl.noStore())
-                .body(Map.of("state", "authenticated"));
+                .body(completion(destination));
+    }
+
+    private static Map<String,String> completion(String destination) {
+        return destination==null?Map.of("state","authenticated"):
+            Map.of("state","authenticated","intendedDestination",OidcIntendedDestination.safe(destination));
     }
 
     @PostMapping("/api/me/security/mfa/totp/enrollments")

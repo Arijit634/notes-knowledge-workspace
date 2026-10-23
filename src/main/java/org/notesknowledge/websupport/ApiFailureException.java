@@ -9,6 +9,8 @@ public final class ApiFailureException extends RuntimeException {
                 "malformed_request", "Malformed request"),
         INVALID_INPUT(HttpStatus.UNPROCESSABLE_CONTENT,
                 "validation_failed", "Request validation failed"),
+        INVALID_CONTRACT_INPUT(HttpStatus.UNPROCESSABLE_CONTENT,
+                "invalid_input", "Request validation failed"),
         INVALID_CREDENTIALS(HttpStatus.UNAUTHORIZED,
                 "invalid_credentials", "Authentication failed"),
         RECENT_AUTHENTICATION_REQUIRED(HttpStatus.FORBIDDEN,

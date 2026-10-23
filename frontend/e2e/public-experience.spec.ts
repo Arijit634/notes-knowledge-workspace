@@ -5,8 +5,7 @@ import { openTools, sourceEditor } from './editor-support'
 async function ownerPreview(page: Page, republish = false, beforePreview?: () => Promise<void>) {
   await page.goto(`/publications/${f.pubId}`)
   await page.getByRole('button', { name: republish ? 'Republish' : 'Update public copy', exact: true }).click()
-  const choose = page.getByRole('dialog'); await choose.getByLabel('Original Note').selectOption(f.noteId)
-  await choose.getByRole('button', { name: 'Choose media and preview' }).click()
+  await expect(page.getByRole('dialog')).toBeVisible()
   if (beforePreview) { await page.getByRole('dialog').getByRole('checkbox', { name: /Synthetic landscape/ }).check(); await beforePreview() }
   await page.getByRole('dialog').getByRole('button', { name: 'Preview public copy' }).click()
   await expect(page.getByRole('region', { name: 'Authoritative publication preview' })).toBeVisible()

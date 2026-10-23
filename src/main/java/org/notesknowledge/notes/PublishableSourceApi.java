@@ -63,6 +63,15 @@ public class PublishableSourceApi {
         return current==null?new Status(false,null,false,false):new Status(true,current.lifecycle(),
             current.revision()!=publishedRevision,"active".equals(current.lifecycle()));
     }
+
+    /** Caller holds current owner Account/session authority in this short transaction.
+     * Owner lifecycle commands use that same Account boundary before changing Notes.
+     * Navigation never grants publishing authority and loads no private content.
+     */
+    public java.util.Set<UUID> existingNavigationSources(UUID owner,List<UUID> noteIds) {
+        if(noteIds.size()>100)throw new IllegalArgumentException("Source navigation batch exceeds bound");
+        return notes.existingNavigationSources(owner,noteIds.stream().distinct().toList());
+    }
     private NoteRecord require(UUID owner,UUID note) {
         var current=notes.lock(owner,note).orElseThrow(()->ApiFailureException.of(ApiFailureException.Kind.RESOURCE_NOT_FOUND));
         if(!"active".equals(current.lifecycle()))throw ApiFailureException.of(ApiFailureException.Kind.INVALID_LIFECYCLE_TRANSITION);

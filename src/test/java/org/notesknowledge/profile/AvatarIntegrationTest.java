@@ -96,6 +96,77 @@ class AvatarIntegrationTest {
         store.reset();
     }
 
+    @ParameterizedTest @ValueSource(strings={"png","jpeg"})
+    void privateReadIsOwnerScopedFullBoundedAndNoStore(String format)throws Exception {
+        var owner=browser(account(),"ROLE_USER");upload(owner,image(format)).andExpect(status().isOk());
+        byte[] stored=store.bytes.get(selectedReference(owner.user()));
+        var result=mvc.perform(get("/api/me/profile/avatar/content").cookie(owner.cookie()).header("Range","bytes=0-1"))
+            .andExpect(status().isOk()).andReturn().getResponse();
+        assertThat(result.getContentAsByteArray()).isEqualTo(stored);
+        assertThat(result.getContentType()).isEqualTo("image/"+format);
+        assertThat(result.getHeader("Content-Length")).isEqualTo(Integer.toString(stored.length));
+        assertThat(result.getHeader("Content-Disposition")).isEqualTo("inline; filename=\"avatar\"");
+        assertThat(result.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
+        assertThat(result.getHeader("Cache-Control")).contains("no-store");
+        assertThat(result.getHeader("ETag")).isNull();assertThat(result.getHeader("Content-Range")).isNull();
+        assertThat(store.closes).isEqualTo(1);assertThat(store.sawTransaction).isFalse();
+        mvc.perform(get("/api/me/profile/avatar/content").cookie(browser(account(),"ROLE_USER").cookie())).andExpect(status().isNotFound());
+    }
+
+    @Test void privateReadRejectsMissingAuthorityParametersMissingAndCorruptBytes()throws Exception {
+        var owner=browser(account(),"ROLE_USER");
+        mvc.perform(get("/api/me/profile/avatar/content")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/me/profile/avatar/content").cookie(owner.cookie())).andExpect(status().isNotFound());
+        upload(owner,image("png")).andExpect(status().isOk());
+        mvc.perform(get("/api/me/profile/avatar/content").cookie(owner.cookie()).param("assetId","synthetic")).andExpect(status().isBadRequest());
+        store.bytes.put(selectedReference(owner.user()),new byte[]{1,2,3});
+        var failure=mvc.perform(get("/api/me/profile/avatar/content").cookie(owner.cookie())).andExpect(status().isServiceUnavailable()).andReturn();
+        assertThat(body(failure)).doesNotContain(selectedReference(owner.user()),"SYNTHETIC_PRIVATE_DIAGNOSTIC");
+        jdbc.update("update identity.account set account_state='suspended' where user_id=?",owner.user());
+        mvc.perform(get("/api/me/profile/avatar/content").cookie(owner.cookie())).andExpect(status().isUnauthorized());
+    }
+
+    @ParameterizedTest @ValueSource(strings={"remove","replace","suspend","revoke"})
+    void changedCustodyOrAuthorityWinningDuringPrivateStorageReadPreventsByteAdmission(String change)throws Exception {
+        var owner=browser(account(),"ROLE_USER");upload(owner,image("png")).andExpect(status().isOk());
+        var entered=new java.util.concurrent.CountDownLatch(1);var release=new java.util.concurrent.CountDownLatch(1);
+        store.beforeRead=()->{entered.countDown();try{if(!release.await(15,TimeUnit.SECONDS))throw new AssertionError("Synthetic read timeout");}
+            catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new AssertionError(interrupted);}};
+        try(var pool=Executors.newSingleThreadExecutor()) {
+            var read=pool.submit(()->mvc.perform(get("/api/me/profile/avatar/content").cookie(owner.cookie())).andReturn());
+            try {
+                assertThat(entered.await(10,TimeUnit.SECONDS)).isTrue();
+                switch(change){
+                    case "remove"->mvc.perform(delete("/api/me/profile/avatar").cookie(owner.cookie()).header("X-CSRF-TOKEN",owner.csrf())).andExpect(status().isNoContent());
+                    case "replace"->upload(owner,image("jpeg")).andExpect(status().isOk());
+                    case "suspend"->jdbc.update("update identity.account set account_state='suspended' where user_id=?",owner.user());
+                    case "revoke"->sessions.deleteById(new String(Base64.getDecoder().decode(owner.cookie().getValue()),StandardCharsets.UTF_8));
+                    default->throw new AssertionError();
+                }
+            }finally{release.countDown();}
+            var response=read.get(20,TimeUnit.SECONDS).getResponse();assertThat(response.getStatus()).isEqualTo(change.equals("remove")||change.equals("replace")?404:401);
+            assertThat(response.getContentType()).contains("application/problem+json");assertThat(store.closes).isEqualTo(1);
+        }
+    }
+
+    @Test void privateReaderCapacityIsBoundedAndReleasedAfterConcurrentReads()throws Exception {
+        var owner=browser(account(),"ROLE_USER");upload(owner,image("png")).andExpect(status().isOk());
+        var entered=new java.util.concurrent.CountDownLatch(2);var release=new java.util.concurrent.CountDownLatch(1);
+        store.beforeRead=()->{entered.countDown();try{if(!release.await(15,TimeUnit.SECONDS))throw new AssertionError("Synthetic capacity timeout");}
+            catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new AssertionError(interrupted);}};
+        try(var pool=Executors.newFixedThreadPool(2)) {
+            var first=pool.submit(()->mvc.perform(get("/api/me/profile/avatar/content").cookie(owner.cookie())).andReturn());
+            var second=pool.submit(()->mvc.perform(get("/api/me/profile/avatar/content").cookie(owner.cookie())).andReturn());
+            try {
+                assertThat(entered.await(10,TimeUnit.SECONDS)).isTrue();
+                mvc.perform(get("/api/me/profile/avatar/content").cookie(owner.cookie())).andExpect(status().isServiceUnavailable());
+            }finally{release.countDown();}
+            assertThat(first.get(15,TimeUnit.SECONDS).getResponse().getStatus()).isEqualTo(200);
+            assertThat(second.get(15,TimeUnit.SECONDS).getResponse().getStatus()).isEqualTo(200);
+            mvc.perform(get("/api/me/profile/avatar/content").cookie(owner.cookie())).andExpect(status().isOk());
+        }finally{release.countDown();}
+    }
+
     @ParameterizedTest @ValueSource(strings = {"png", "jpeg"})
     void validUploadCreatesAbsentRootAndReturnsOnlySafeCanonicalMetadata(String format) throws Exception {
         UUID user = account(); Browser owner = browser(user, "ROLE_USER");
@@ -403,8 +474,15 @@ class AvatarIntegrationTest {
         final ConcurrentHashMap<String,byte[]> bytes=new ConcurrentHashMap<>();
         final ConcurrentHashMap<String,Instant> created=new ConcurrentHashMap<>();
         volatile boolean failWrite,failDelete,sawTransaction;
-        volatile int deletes,lastLimit;
-        void reset() {bytes.clear();created.clear();failWrite=false;failDelete=false;sawTransaction=false;deletes=0;lastLimit=0;}
+        volatile int deletes,lastLimit,closes;
+        volatile Runnable beforeRead;
+        void reset() {bytes.clear();created.clear();failWrite=false;failDelete=false;sawTransaction=false;deletes=0;lastLimit=0;closes=0;beforeRead=null;}
+        public java.io.InputStream open(String reference,long expected) {
+            outside();var data=bytes.get(reference);
+            if(data==null)throw new IllegalStateException("SYNTHETIC_PRIVATE_DIAGNOSTIC");
+            var input=new java.io.ByteArrayInputStream(data.clone()){@Override public void close()throws java.io.IOException{super.close();closes++;}};
+            if(beforeRead!=null)beforeRead.run();return input;
+        }
         private void outside() {
             if(TransactionSynchronizationManager.isActualTransactionActive()) {sawTransaction=true;throw new AssertionError("Storage I/O inside database transaction");}
         }

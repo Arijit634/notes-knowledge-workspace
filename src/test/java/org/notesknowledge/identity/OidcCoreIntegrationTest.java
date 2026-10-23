@@ -96,6 +96,7 @@ class OidcCoreIntegrationTest {
     @Autowired MfaSecretCipher cipher;
     @Autowired PasswordEncoder passwordEncoder;
     @Autowired TotpEngine totp;
+    @Autowired RecoveryCodeService recoveryCodes;
     @Autowired org.springframework.session.jdbc.JdbcIndexedSessionRepository sessionRepository;
     @Autowired org.springframework.session.web.http.DefaultCookieSerializer cookieSerializer;
     @Autowired SecurityEmailDeliveryRepository delivery;
@@ -568,6 +569,26 @@ class OidcCoreIntegrationTest {
         ((SessionRepository) sessionRepository).save(session);
     }
 
+    @Test void intendedDestinationIsServerBoundAndMalformedStartDoesNotReplaceIt()throws Exception {
+        UUID user=account();String subject="synthetic-return-"+UUID.randomUUID();link(user,subject);Browser anonymous=csrf(null);
+        String state=startWithDestination(anonymous,"/ask");
+        mvc.perform(post("/api/auth/oidc/google/authorizations").cookie(anonymous.cookie()).header("X-CSRF-TOKEN",anonymous.csrf())
+            .contentType(MediaType.APPLICATION_JSON).content("{\"intendedDestination\":\"//example.test\"}"))
+            .andExpect(status().isUnprocessableContent());
+        var result=callback(anonymous,state,protocol.accept(subject,email(user),true),false,-1);
+        assertThat(result.getResponse().getStatus()).isEqualTo(303);assertThat(result.getResponse().getHeader("Location")).isEqualTo("/ask");
+        assertThat(sessionState(csrf(result.getResponse().getCookie("SESSION")))).isEqualTo("authenticated");
+        callback(anonymous,state,protocol.accept(subject,email(user),true),false,401);
+    }
+
+    @Test void replacedStartCannotConsumeCurrentTabTransaction()throws Exception {
+        UUID user=account();String subject="synthetic-tabs-"+UUID.randomUUID();link(user,subject);Browser anonymous=csrf(null);
+        String old=startWithDestination(anonymous,"/ask"),current=startWithDestination(anonymous,"/settings/profile");
+        callback(anonymous,old,protocol.accept(subject,email(user),true),false,401);
+        var winner=callback(anonymous,current,protocol.accept(subject,email(user),true),false,-1);
+        assertThat(winner.getResponse().getStatus()).isEqualTo(303);assertThat(winner.getResponse().getHeader("Location")).isEqualTo("/settings/profile");
+    }
+
     @Test void verifiedNewPrincipalCreatesOnePasswordlessAccountAndRotatesSession() throws Exception {
         Browser anonymous = csrf(null);
         String subject = "sub-" + UUID.randomUUID();
@@ -615,7 +636,8 @@ class OidcCoreIntegrationTest {
                 "unverified-" + UUID.randomUUID() + "@example.test", false), false, 409);
     }
 
-    @Test void linkedLoginRequiresApplicationMfaAndOldCsrfIsNotAuthority() throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(strings={"totp","recovery","expired-target"})
+    void linkedLoginRequiresApplicationMfaAndOldCsrfIsNotAuthority(String completion) throws Exception {
         UUID user = account();
         String subject = "sub-" + UUID.randomUUID();
         link(user, subject);
@@ -630,7 +652,12 @@ class OidcCoreIntegrationTest {
                 """, user, sealed.ciphertext(), sealed.nonce(), sealed.tag(), sealed.keyVersion(),
                 java.sql.Timestamp.from(clock.instant()), java.sql.Timestamp.from(clock.instant()));
         Browser anonymous = csrf(null);
-        MvcResult primary = callback(anonymous, start(anonymous, false),
+        String state=startWithDestination(anonymous,"/ask");
+        if(completion.equals("expired-target"))clock.advanceSeconds(240);
+        String recovery="A".repeat(43);
+        if(completion.equals("recovery"))jdbc.update("insert into identity.mfa_recovery_code(recovery_code_id,user_id,set_generation,verifier_digest,issued_at) values(uuidv7(),?,1,?,?)",
+            user,recoveryCodes.digest(recovery),java.sql.Timestamp.from(clock.instant()));
+        MvcResult primary = callback(anonymous, state,
                 protocol.accept(subject, email(user), true), false, 202);
         Cookie preCookie = primary.getResponse().getCookie("SESSION");
         assertThat(preCookie).isNotNull();
@@ -646,14 +673,21 @@ class OidcCoreIntegrationTest {
                 .andExpect(status().isOk()).andReturn();
         String challenge = json(projected, "challengeId");
         assertThat(challenge).isEqualTo(preChallenge.id());
-        String code = totp.codeAt(seed, clock.instant().getEpochSecond() / 30);
-        MvcResult elevated = mvc.perform(post("/api/auth/mfa/challenges/" + challenge + "/totp")
+        if(completion.equals("expired-target"))clock.advanceSeconds(61);
+        String code = completion.equals("recovery")?recovery:totp.codeAt(seed, clock.instant().getEpochSecond() / 30);
+        String proofPath="/api/auth/mfa/challenges/"+challenge+(completion.equals("recovery")?"/recovery-code":"/totp");
+        MvcResult elevated = mvc.perform(post(proofPath)
                 .cookie(pre.cookie()).header("X-CSRF-TOKEN", pre.csrf())
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"code\":\"" + code + "\"}"))
                 .andExpect(status().isOk()).andReturn();
         assertThat(sessionState(csrf(elevated.getResponse().getCookie("SESSION"))))
                 .isEqualTo("authenticated");
+        assertThat(json(elevated,"intendedDestination")).isEqualTo(completion.equals("expired-target")?"/notes":"/ask");
+        if(completion.equals("recovery"))assertThat(jdbc.queryForObject("select count(*) from identity.mfa_recovery_code where user_id=? and consumed_at is not null",Integer.class,user)).isEqualTo(1);
+        int replay=mvc.perform(post(proofPath).cookie(pre.cookie()).header("X-CSRF-TOKEN",pre.csrf())
+            .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(Map.of("code",code)))).andReturn().getResponse().getStatus();
+        assertThat(replay).isIn(401,403,404);
         assertThat(sessionState(pre)).isEqualTo("anonymous");
         assertThat(mapper.readTree(mvc.perform(get("/api/auth/session")
                 .cookie(pre.cookie())).andExpect(status().isOk()).andReturn()
@@ -943,6 +977,13 @@ class OidcCoreIntegrationTest {
         return new Browser(current == null ? cookie : current, json(result, "csrfToken"));
     }
 
+    private String startWithDestination(Browser browser,String destination)throws Exception {
+        var result=mvc.perform(post("/api/auth/oidc/google/authorizations").cookie(browser.cookie()).header("X-CSRF-TOKEN",browser.csrf())
+            .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(java.util.Map.of("intendedDestination",destination))))
+            .andExpect(status().isOk()).andReturn();
+        return UriComponentsBuilder.fromUri(URI.create(json(result,"authorizationUrl"))).build().getQueryParams().getFirst("state");
+    }
+
     private String start(Browser browser, boolean recent) throws Exception {
         assertThat(recent).isFalse();
         MvcResult result = mvc.perform(post("/api/auth/oidc/google/authorizations")
@@ -972,7 +1013,7 @@ class OidcCoreIntegrationTest {
                     ? 303 : expected;
             assertThat(result.getResponse().getStatus()).isEqualTo(actualExpected);
             if (actualExpected == 303) {
-                assertThat(result.getResponse().getHeader("Location")).isEqualTo("/auth/complete");
+                assertThat(result.getResponse().getHeader("Location")).isEqualTo(expected==202?"/auth/complete":"/notes");
                 assertThat(result.getResponse().getHeader("Cache-Control")).contains("no-store");
             }
         }

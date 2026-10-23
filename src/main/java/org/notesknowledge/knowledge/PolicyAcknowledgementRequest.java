@@ -15,13 +15,14 @@ record PolicyAcknowledgementRequest(UUID processingPolicyId,String policyCode,lo
                 ||!(input.get("policyFingerprint") instanceof String fingerprint)||!fingerprint.matches("[0-9a-f]{64}")
                 ||!(input.get("disclosureRevision") instanceof String revision)||!revision.matches("[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
                 ||!(input.get("policyVersion") instanceof Integer||input.get("policyVersion") instanceof Long)
-                ||((Number)input.get("policyVersion")).longValue()<1) throw invalid();
+                ||((Number)input.get("policyVersion")).longValue()<1
+                ||((Number)input.get("policyVersion")).longValue()>ProcessingDisclosure.MAX_VERSION) throw invalid();
         try {
             UUID uuid=UUID.fromString(id);
             if(!uuid.toString().equals(id)) throw invalid();
             return new PolicyAcknowledgementRequest(uuid,code,((Number)input.get("policyVersion")).longValue(),fingerprint,revision);
         } catch(IllegalArgumentException bad) { throw invalid(); }
     }
-    private static ApiFailureException invalid() { return ApiFailureException.of(ApiFailureException.Kind.INVALID_INPUT); }
+    private static ApiFailureException invalid() { return ApiFailureException.of(ApiFailureException.Kind.INVALID_CONTRACT_INPUT); }
     @Override public String toString() { return "PolicyAcknowledgementRequest[REDACTED]"; }
 }

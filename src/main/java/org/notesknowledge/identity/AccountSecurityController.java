@@ -44,6 +44,7 @@ final class AccountSecurityController {
 
     @PostMapping("/oidc/google/link-authorizations")
     ResponseEntity<Map<String, String>> beginGoogleLink(HttpServletRequest request) {
+        OidcAuthorizationInput.read(request,false);
         return ResponseEntity.ok().cacheControl(CacheControl.noStore())
                 .body(Map.of("authorizationUrl",
                         oidc.begin(OidcProtocolPort.Action.LINK, request)));

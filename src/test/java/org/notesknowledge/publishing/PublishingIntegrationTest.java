@@ -53,7 +53,7 @@ class PublishingIntegrationTest {
     @Autowired SessionRepository<? extends Session> sessions;@Autowired Clock clock;@Autowired MemoryStore store;
     @Autowired PublicationAttachmentFixtures.SourceObjects sourceObjects;@Autowired PlatformTransactionManager manager;
     @Autowired PublicationAttachmentFixtures.RetentionFixture retention;
-    @Autowired PublicationService service;@Autowired PublishableSourceApi notes;@Autowired AccountDeletionPublishingConsequence deletion;
+    @Autowired PublicationService service;@MockitoSpyBean PublishableSourceApi notes;@Autowired AccountDeletionPublishingConsequence deletion;
     @Autowired PublicMediaService mediaDelivery;
     @Autowired org.notesknowledge.PublicExposureCoordinator exposure;
     @MockitoBean org.notesknowledge.security.RateLimitPort rates;
@@ -225,6 +225,58 @@ class PublishingIntegrationTest {
         mvc.perform(get("/api/public/profiles/"+handle(other)+"/publications").param("cursor",publicTree.get("nextCursor").asText())).andExpect(status().isBadRequest());
         mvc.perform(post(ownerPath(first)+"/unpublish").cookie(b.cookie).header("X-CSRF-TOKEN",b.csrf).header("If-Match",first.getResponse().getHeader("ETag"))).andExpect(status().isOk());
         assertThat(json.readTree(body(mvc.perform(get("/api/public/profiles/"+handle(b)+"/publications")).andReturn())).get("items")).hasSize(1);
+    }
+
+    @Test void retiredOwnerSourceChangesWholeRepresentationValidatorWithoutPublicationWrite()throws Exception {
+        var b=ready();UUID note=note(b);var p=publish(b,note,List.of());
+        assertThat(json.readTree(body(p)).get("sourceNoteId").asText()).isEqualTo(note.toString());
+        assertThat(body(mvc.perform(get("/api/public/publications/"+id(p))).andExpect(status().isOk()).andReturn())).doesNotContain("sourceNoteId",note.toString());
+        mvc.perform(post("/api/notes/"+note+"/trash").cookie(b.cookie).header("X-CSRF-TOKEN",b.csrf).header("If-Match",noteTag(b,note))
+            .contentType("application/json").content("{\"confirmPublicationUnpublish\":true}")).andExpect(status().isOk());
+        var before=mvc.perform(get(ownerPath(p)).cookie(b.cookie)).andExpect(status().isOk()).andReturn();
+        assertThat(json.readTree(body(before)).get("sourceNoteId").asText()).isEqualTo(note.toString());
+        var version=jdbc.queryForMap("select snapshot_revision,publication_generation from publishing.publication where publication_id=?",id(p));
+        mvc.perform(delete("/api/notes/"+note).cookie(b.cookie).header("X-CSRF-TOKEN",b.csrf).header("If-Match",noteTag(b,note))
+            .contentType("application/json").content("{\"confirmPermanentDelete\":true}")).andExpect(status().isNoContent());
+        var after=mvc.perform(get(ownerPath(p)).cookie(b.cookie)).andExpect(status().isOk()).andReturn();
+        assertThat(json.readTree(body(after)).get("sourceNoteId").isNull()).isTrue();
+        assertThat(after.getResponse().getHeader("ETag")).isNotEqualTo(before.getResponse().getHeader("ETag"));
+        assertThat(jdbc.queryForMap("select snapshot_revision,publication_generation from publishing.publication where publication_id=?",id(p))).isEqualTo(version);
+        mvc.perform(post(ownerPath(p)+"/unpublish").cookie(b.cookie).header("X-CSRF-TOKEN",b.csrf).header("If-Match",before.getResponse().getHeader("ETag"))).andExpect(status().isPreconditionFailed());
+        var list=mvc.perform(get("/api/me/publications").cookie(b.cookie)).andExpect(status().isOk()).andReturn();
+        assertThat(json.readTree(body(list)).get("items").get(0).get("sourceNoteId").isNull()).isTrue();
+    }
+
+    @Test void ownerRepresentationAndValidatorHoldTheSharedOwnerBoundaryUntilSourceResolutionCompletes()throws Exception {
+        var b=ready();UUID note=note(b);var p=publish(b,note,List.of());
+        mvc.perform(post("/api/notes/"+note+"/trash").cookie(b.cookie).header("X-CSRF-TOKEN",b.csrf).header("If-Match",noteTag(b,note))
+            .contentType("application/json").content("{\"confirmPublicationUnpublish\":true}")).andExpect(status().isOk());
+        String noteEtag=noteTag(b,note),path=ownerPath(p);
+        var entered=new CountDownLatch(1);var release=new CountDownLatch(1);
+        new TransactionTemplate(manager).executeWithoutResult(t->org.mockito.Mockito.doAnswer(call->{var result=call.callRealMethod();entered.countDown();await(release);return result;})
+            .when(notes).existingNavigationSources(org.mockito.ArgumentMatchers.eq(b.user),any()));
+        try(var pool=Executors.newSingleThreadExecutor()) {
+            var read=pool.submit(()->mvc.perform(get(path).cookie(b.cookie)).andExpect(status().isOk()).andReturn());
+            try {
+                assertThat(entered.await(10,TimeUnit.SECONDS)).isTrue();
+                // NOWAIT proves a competing source mutation cannot acquire the owner
+                // row while the source identity and full representation are selected.
+                assertThatThrownBy(()->new TransactionTemplate(manager).executeWithoutResult(t->
+                    jdbc.queryForObject("select user_id from identity.account where user_id=? for update nowait",UUID.class,b.user)))
+                    .isInstanceOfSatisfying(org.springframework.dao.DataAccessException.class,failure->
+                        assertThat(failure.getMostSpecificCause()).isInstanceOfSatisfying(java.sql.SQLException.class,
+                            sql->assertThat(sql.getSQLState()).isEqualTo("55P03")));
+            }finally{release.countDown();}
+            var before=read.get(15,TimeUnit.SECONDS);org.mockito.Mockito.reset(notes);
+            assertThat(json.readTree(body(before)).get("sourceNoteId").asText()).isEqualTo(note.toString());
+            mvc.perform(delete("/api/notes/"+note).cookie(b.cookie).header("X-CSRF-TOKEN",b.csrf).header("If-Match",noteEtag)
+                .contentType("application/json").content("{\"confirmPermanentDelete\":true}")).andExpect(status().isNoContent());
+            var after=mvc.perform(get(path).cookie(b.cookie)).andExpect(status().isOk()).andReturn();
+            assertThat(json.readTree(body(after)).get("sourceNoteId").isNull()).isTrue();
+            assertThat(after.getResponse().getHeader("ETag")).isNotEqualTo(before.getResponse().getHeader("ETag"));
+            mvc.perform(post(path+"/unpublish").cookie(b.cookie).header("X-CSRF-TOKEN",b.csrf).header("If-Match",before.getResponse().getHeader("ETag")))
+                .andExpect(status().isPreconditionFailed());
+        }finally{release.countDown();}
     }
 
     @Test void confirmedPermanentSourceDeletionDeniesPublicationBeforeLogicalDeleteSuccess()throws Exception {

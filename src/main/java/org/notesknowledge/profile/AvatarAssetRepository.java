@@ -11,6 +11,9 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 class AvatarAssetRepository {
+    record Read(UUID id, String reference, String state, String type, long size, int width, int height) {
+        @Override public String toString() { return "PrivateAvatarRead[REDACTED]"; }
+    }
     private final ObjectProvider<JdbcClient> jdbc;
     AvatarAssetRepository(ObjectProvider<JdbcClient> jdbc) { this.jdbc = jdbc; }
 
@@ -44,6 +47,16 @@ class AvatarAssetRepository {
                 where p.profile_id=:profile
                 """).param("profile", profile).query((row, index) ->
                     new AvatarAsset(row.getObject(1, UUID.class), row.getString(2))).optional().orElse(null);
+    }
+
+    Read selectedForRead(UUID profile) {
+        return jdbc.getObject().sql("""
+                select a.avatar_asset_id,a.object_reference,a.state,a.media_type,a.byte_size,a.width,a.height
+                from profile.profile p join profile.avatar_asset a
+                  on a.profile_id=p.profile_id and a.avatar_asset_id=p.selected_avatar_id
+                where p.profile_id=:profile
+                """).param("profile",profile).query((r,i)->new Read(r.getObject(1,UUID.class),r.getString(2),
+                    r.getString(3),r.getString(4),r.getLong(5),r.getInt(6),r.getInt(7))).optional().orElse(null);
     }
 
     void create(UUID id, UUID profile, String reference, AvatarValidator.Canonical image, Instant now) {

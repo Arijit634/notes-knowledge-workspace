@@ -45,6 +45,7 @@ import tools.jackson.databind.ObjectMapper;
 @Testcontainers @SpringBootTest(properties="knowledge.operations.scheduling-enabled=false") @AutoConfigureMockMvc
 @org.springframework.context.annotation.Import(org.notesknowledge.notes.DerivationMediaFixtures.class)
 class KnowledgeQueryIntegrationTest {
+    private ProcessingDisclosureFixtures disclosureFixtures;
     @Container static final PostgreSQLContainer postgres=new PostgreSQLContainer("pgvector/pgvector:0.8.6-pg18-trixie")
         .withDatabaseName("query_contracts").withUsername("synthetic_migrator").withPassword("synthetic-query-password");
     @DynamicPropertySource static void properties(DynamicPropertyRegistry r){
@@ -63,6 +64,7 @@ class KnowledgeQueryIntegrationTest {
     @MockitoBean AiDerivationProperties configuration; @MockitoBean ProviderDispatchProperties dispatch;
     @MockitoBean KnowledgePolicyProperties policyConfiguration; @MockitoBean StructuredKnowledgePort provider;
     @MockitoBean RateLimitPort rates;
+    @MockitoBean ProcessingDisclosureResolver disclosures;
     UUID owner,note,policy; Browser browser;
     @BeforeEach void prepare() throws Exception {
         reset(configuration,dispatch,policyConfiguration,provider,rates,operationRows,sources,currentSources);
@@ -74,7 +76,8 @@ class KnowledgeQueryIntegrationTest {
         when(configuration.approvedPolicyFingerprint()).thenReturn("a".repeat(64));
         when(provider.available()).thenReturn(true);when(rates.evaluate(any())).thenReturn(new RateLimitPort.Allowed());
         String code="synthetic-"+UUID.randomUUID();when(policyConfiguration.code()).thenReturn(code);
-        policy=jdbc.queryForObject("insert into knowledge.processing_policy(policy_code,policy_version,policy_fingerprint,disclosure_revision,effective_at) values(?,1,?,'synthetic-1',clock_timestamp()-interval '1 minute') returning processing_policy_id",UUID.class,code,"a".repeat(64));
+        disclosureFixtures=new ProcessingDisclosureFixtures(disclosures,configuration);
+        policy=disclosureFixtures.insert(jdbc,code,1,true);
         owner=account();ack(owner);note=note(owner,true,"Synthetic ordinary note","Synthetic ordinary body");browser=browser(owner);
         when(provider.embedQuery(any(),any())).thenAnswer(call->{KnowledgeQueryGate.QueryPermit permit=call.getArgument(0);permit.requireDispatch();assertOutsideTransaction();return vector();});
         when(provider.generate(any(),any(),any(),any())).thenAnswer(call->{KnowledgeQueryGate.EvidencePermit permit=call.getArgument(0);permit.requireDispatch();assertOutsideTransaction();
@@ -105,6 +108,8 @@ class KnowledgeQueryIntegrationTest {
     void unpaidGoogleQueryAndSourceApprovalAreIndependentAtTheProviderBoundary(String approval) throws Exception {
         String query="find synthetic plans";
         when(configuration.provider()).thenReturn("gemini");when(configuration.tier()).thenReturn("unpaid");when(configuration.region()).thenReturn("global");
+        String code="synthetic-"+UUID.randomUUID();when(policyConfiguration.code()).thenReturn(code);
+        policy=disclosureFixtures.insert(jdbc,code,1,true);ack(owner);
         when(dispatch.dispatchPolicy()).thenReturn("unpaid-synthetic-demo");
         when(dispatch.approvedQueryFingerprints()).thenReturn(approval.equals("query-only")||approval.equals("both")?List.of(ProviderDispatchPolicy.queryFingerprint(query)):List.of());
         String sourceFingerprint=ProviderDispatchPolicy.fingerprint(sources.note(owner,note).expected());
@@ -130,7 +135,7 @@ class KnowledgeQueryIntegrationTest {
     void independentlyRelevantEvidenceNeverDumpsOtherMaterialFromItsParent(String relevant) throws Exception {
         derive(note,relevant.equals("note")?"Kyoto supported text":"UNRELATED_NOTE_SYNTHETIC_SECRET_MARKER",relevant.equals("note")?vector():orthogonal());
         UUID attachment=upload("image");var source=sources.source(owner,note,attachment);
-        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,"a".repeat(64)),"image");
+        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),"image");
         var segment=new DerivedSegment(relevant.equals("media")?"Kyoto supported image":"UNRELATED_MEDIA_SYNTHETIC_SECRET_MARKER","whole_image","",null,null,null,null,null,null,null,null,null);
         tx(()->{representations.activate(source.expected(),lineage,List.of(segment),List.of(relevant.equals("media")?vector():orthogonal()));return null;});
         var t=json.readTree(query("what about Kyoto").andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
@@ -146,7 +151,7 @@ class KnowledgeQueryIntegrationTest {
     @ParameterizedTest @ValueSource(strings={"pdf","audio","video","image"})
     void repeatedMediaFactsKeepTheirDistinctLocationsThroughGenerationAndHttp(String modality)throws Exception {
         UUID attachment=upload(modality);var source=sources.source(owner,note,attachment);
-        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,"a".repeat(64)),modality);
+        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),modality);
         var segments=new ArrayList<DerivedSegment>();
         for(int i=0;i<2;i++)segments.add(switch(modality){
             case "pdf"->new DerivedSegment("Kyoto repeated fact","pdf_text","",null,null,i+1,null,null,null,null,null,null);
@@ -257,7 +262,7 @@ class KnowledgeQueryIntegrationTest {
     }
 
     @Test void rankedEvidencePacksCharacterBudgetInsteadOfLosingEveryUsefulMediaResult() throws Exception {
-        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,"a".repeat(64)),"image");
+        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),"image");
         for(int i=0;i<5;i++){
             UUID attachment=upload("image");var source=sources.source(owner,note,attachment);
             var segment=new DerivedSegment("Frozen image "+i+" "+"x".repeat(11970),"whole_image","",null,null,null,null,null,null,null,null,null);
@@ -338,7 +343,7 @@ class KnowledgeQueryIntegrationTest {
                 """,owner,modality);
             for(int i=0;i<targets.size();i++) {
                 var target=targets.get(i);UUID n=(UUID)target.get("source_note_id"),a=(UUID)target.get("source_attachment_id");
-                var source=sources.source(owner,n,a);var l=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,"a".repeat(64)),modality);
+                var source=sources.source(owner,n,a);var l=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),modality);
                 float[] v=new float[8];var seed=new Random(20261009L+List.of("note","image","audio","video","pdf").indexOf(modality)*17L+i);
                 for(int component=0;component<7;component++)v[component]=2*seed.nextFloat()-1;
                 var s=switch(modality) {
@@ -421,7 +426,7 @@ class KnowledgeQueryIntegrationTest {
     }
 
     private void writeScalePlan(int count)throws Exception {
-        var l=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,"a".repeat(64)),"note");
+        var l=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),"note");
         var named=new org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate(jdbc);
         var roots=jdbc.query("select derived_representation_id,source_note_id,source_revision,processing_generation from knowledge.private_derived_representation where owner_user_id=? and state='ready' and modality='note' order by derived_representation_id limit 256",
             (r,i)->new ExactPrivateVectorSearch.Root(r.getObject(1,UUID.class),new PrivateAiSourceCurrentness.Expected(owner,r.getObject(2,UUID.class),null,r.getLong(3),r.getLong(4),null)),owner);
@@ -459,7 +464,7 @@ class KnowledgeQueryIntegrationTest {
         var directory=java.nio.file.Path.of("target","retrieval-evaluation");java.nio.file.Files.createDirectories(directory);
         java.nio.file.Files.writeString(directory.resolve(name+".json"),json.writerWithDefaultPrettyPrinter().writeValueAsString(report));
     }
-    private void deriveChunks(List<DerivedSegment> segments,List<float[]> embeddings){var source=sources.note(owner,note);var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,"a".repeat(64)),"note");
+    private void deriveChunks(List<DerivedSegment> segments,List<float[]> embeddings){var source=sources.note(owner,note);var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),"note");
         tx(()->{representations.activate(source.expected(),lineage,segments,embeddings);return null;});}
 
     @Test void suggestionMutationWinningBeforeFinalLockCannotInsertOrReturnStaleProposal() throws Exception {
@@ -556,7 +561,7 @@ class KnowledgeQueryIntegrationTest {
         jdbc.update("update notes.note set title='PlayStation login' where note_id=?",note);derive(note,"PlayStation synthetic login");
         switch(outcome){
             case "unavailable"->when(provider.available()).thenReturn(false);
-            case "policy"->jdbc.update("insert into knowledge.processing_policy(policy_code,policy_version,policy_fingerprint,disclosure_revision,effective_at) select policy_code,2,policy_fingerprint,'synthetic-2',clock_timestamp() from knowledge.processing_policy where processing_policy_id=?",policy);
+            case "policy"->disclosureFixtures.insert(jdbc,policyConfiguration.code(),2,true);
             case "lineage"->when(configuration.configurationId()).thenReturn("synthetic-v2");
             case "invalid-output"->doReturn(new StructuredKnowledgePort.Output(List.of(new StructuredKnowledgePort.Claim("Invented",List.of("foreign"))),false)).when(provider).generate(any(),any(),any(),any());
             case "empty"->doReturn(new StructuredKnowledgePort.Output(List.of(),false)).when(provider).generate(any(),any(),any(),any());
@@ -686,7 +691,7 @@ class KnowledgeQueryIntegrationTest {
     @ParameterizedTest @ValueSource(strings={"image","audio","video","pdf"})
     void currentMediaEvidenceUsesTypedProvenanceWithoutOpeningBytesForAi(String kind) throws Exception {
         UUID attachment=upload(kind);var source=sources.source(owner,note,attachment);
-        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,"a".repeat(64)),kind);
+        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),kind);
         DerivedSegment segment=switch(kind){case "image"->new DerivedSegment("Synthetic image temple","whole_image","",null,null,null,null,null,null,null,null,null);
             case "audio","video"->new DerivedSegment("Synthetic recorded temple","transcript","",null,null,null,0.0,0.5,null,null,null,null);
             default->new DerivedSegment("Synthetic PDF temple","pdf_text","",null,null,1,null,null,null,null,null,null);};
@@ -714,7 +719,7 @@ class KnowledgeQueryIntegrationTest {
         doAnswer(call->{KnowledgeQueryGate.EvidencePermit permit=call.getArgument(0);permit.requireDispatch();int revision=count.incrementAndGet()+1;
             // Synthetic fixture mutation simulates a committed source change at the result-currentness boundary.
             jdbc.update("update notes.note set revision=? where note_id=?",revision,note);
-            var source=sources.note(owner,note);var l=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,"a".repeat(64)),"note");
+            var source=sources.note(owner,note);var l=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),"note");
             tx(()->{representations.activate(source.expected(),l,List.of(new DerivedSegment("Synthetic new evidence","note_text","",0,22,null,null,null,null,null,null,null)),List.of(vector()));return null;});
             return new StructuredKnowledgePort.Output(List.of(new StructuredKnowledgePort.Claim("Changed synthetic result",List.of("e0"))),false);}).when(provider).generate(any(),any(),eq("extract"),any());
         operations.execute(claim());var t=poll(handle);assertThat(t.get("status").asText()).isEqualTo("completed");var result=t.get("result");
@@ -790,7 +795,7 @@ class KnowledgeQueryIntegrationTest {
     private static class SyntheticWorkerLoss extends RuntimeException { }
     private void derive(UUID id,String text){derive(id,text,vector());}
     private void derive(UUID id,String text,float[] embedding){UUID user=jdbc.queryForObject("select owner_user_id from notes.note where note_id=?",UUID.class,id);var e=new PrivateAiSourceCurrentness.Expected(user,id,null,1,1,null);
-        var l=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,"a".repeat(64)),"note");tx(()->{representations.activate(e,l,List.of(new DerivedSegment(text,"note_text","",0,text.length(),null,null,null,null,null,null,null)),List.of(embedding));return null;});}
+        var l=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),"note");tx(()->{representations.activate(e,l,List.of(new DerivedSegment(text,"note_text","",0,text.length(),null,null,null,null,null,null,null)),List.of(embedding));return null;});}
     private <T>T tx(java.util.function.Supplier<T> fn){return new TransactionTemplate(transactions).execute(s->fn.get());}
     private org.springframework.test.web.servlet.ResultActions query(String q)throws Exception{return mvc.perform(post("/api/knowledge/query").cookie(browser.cookie).header("X-CSRF-TOKEN",browser.csrf).contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(Map.of("query",q))));}
     private String accept(String q)throws Exception{var response=query(q).andExpect(status().isAccepted()).andReturn().getResponse();String handle=json.readTree(response.getContentAsString()).get("operationId").asText();assertThat(response.getHeader("Location")).isEqualTo("/api/knowledge/operations/"+handle);return handle;}

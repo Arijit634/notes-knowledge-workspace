@@ -140,7 +140,7 @@ for (const width of [1440, 1024, 834, 390, 320]) test(`private workspace is usab
   await page.getByRole('link', { name: 'Profile', exact: true }).click(); await expect(page.getByLabel('Display name')).toHaveValue('Synthetic writer')
   await page.screenshot({ path: testInfo.outputPath(`profile-${width}.png`), fullPage: true })
   if (width <= 600) await page.locator('.workspace-more > summary').click()
-  await page.getByRole('link', { name: 'AI & Privacy', exact: true }).click(); await expect(page.getByText(/server has not supplied the current disclosure/)).toBeVisible()
+  await page.getByRole('link', { name: 'AI & Privacy', exact: true }).click(); await expect(page.getByRole('button', { name: 'Retry disclosure' })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath(`privacy-${width}.png`), fullPage: true })
   await page.getByRole('link', { name: 'Search & Ask', exact: true }).click()
   await page.getByLabel('What would you like to find?').fill('A synthetic question about saved knowledge')

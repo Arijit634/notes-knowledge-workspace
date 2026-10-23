@@ -17,8 +17,10 @@ import tools.jackson.databind.ObjectMapper;
 @RestController
 final class ProcessingPolicyController {
     private final ProcessingPolicyService policies;
-    private final ObjectMapper json;
-    ProcessingPolicyController(ProcessingPolicyService policies,ObjectMapper json) { this.policies=policies;this.json=json; }
+    private final ObjectMapper json=tools.jackson.databind.json.JsonMapper.builder()
+        .enable(tools.jackson.core.StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+        .enable(tools.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS).build();
+    ProcessingPolicyController(ProcessingPolicyService policies) { this.policies=policies; }
     @GetMapping("/api/ai/processing-policy")
     ResponseEntity<ProcessingPolicyService.View> read(HttpServletRequest browser) {
         try { return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(policies.read(browser)); }

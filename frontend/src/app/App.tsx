@@ -1,5 +1,6 @@
 import { createContext, lazy, Suspense, useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { createBrowserRouter, Link, Navigate, Route, RouterProvider, Routes, useLocation, useNavigate } from 'react-router'
+import { createBrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router'
+import { RouterProvider } from 'react-router/dom'
 import { useForm } from 'react-hook-form'
 import { useQuery } from '@tanstack/react-query'
 import { ApiProblemError } from './api/ProblemDetailsDecoder'
@@ -41,11 +42,19 @@ const AskKnowledgePage = lazy(() => import('../features/knowledge/AskKnowledgePa
 const ProfileSettingsPage = lazy(() => import('../features/profile/ProfileSettingsPage').then(m => ({ default: m.ProfileSettingsPage })))
 const PrivacySettingsPage = lazy(() => import('../features/knowledge/PrivacySettingsPage').then(m => ({ default: m.PrivacySettingsPage })))
 import { NotesWorkspace } from '../features/notes/NotesWorkspace'
-const Context = createContext<{ auth: AuthRuntime; version: number } | null>(null)
+const Context = createContext<{ auth: AuthRuntime; version: number;
+  completeNavigation: (destination: string, from?: string) => Promise<void> } | null>(null)
 const useAuth = () => {
   const value = useContext(Context)
   if (!value) throw new Error('Auth runtime unavailable')
   return value.auth
+}
+function useSignInNavigation() {
+  const value = useContext(Context)
+  if (!value) throw new Error('Auth runtime unavailable')
+  // Navigate through the root data router: useNavigate inside our descendant
+  // Routes is declarative and does not await a committed router update.
+  return value.completeNavigation
 }
 
 function message(error: unknown): string {
@@ -147,34 +156,36 @@ function VerifyEmail() {
   </Shell>
 }
 function Login() {
-  const auth = useAuth(), navigate = useNavigate(), location = useLocation()
+  const auth = useAuth(), location = useLocation()
+  const completeNavigation = useSignInNavigation()
   const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<Credentials>()
   const [error, setError] = useState(''), [googleBusy, setGoogleBusy] = useState(false)
   const submit = handleSubmit(async values => {
     setError('')
     try {
       const result = await auth.api.request<{ state?: unknown; challengeId?: unknown }>('POST', '/api/auth/login/password', { json: values })
-      if (result.metadata.status === 202 && result.body?.state === 'mfaRequired') { const destination = safeDestination(location.state?.from) ?? auth.signInDestination.consume(); await auth.establish('mfaRequired', result.body.challengeId); auth.signInDestination.remember(destination); navigate('/mfa', { replace: true, state: { from: destination } }) }
-      else if (result.metadata.status === 200 && result.body?.state === 'authenticated') { const destination = safeDestination(location.state?.from) ?? auth.signInDestination.consume(); await auth.establish('authenticated'); navigate(destination, { replace: true }) }
+      if (result.metadata.status === 202 && result.body?.state === 'mfaRequired') { const destination = safeDestination(location.state?.from) ?? auth.signInDestination.consume(); await auth.establish('mfaRequired', result.body.challengeId, () => { auth.signInDestination.remember(destination); return completeNavigation('/mfa', destination) }) }
+      else if (result.metadata.status === 200 && result.body?.state === 'authenticated') { const destination = safeDestination(location.state?.from) ?? auth.signInDestination.consume(); await auth.establish('authenticated', undefined, () => completeNavigation(destination)) }
       else setError('Sign in could not be completed safely.')
     } catch (e) { setError(message(e)) }
   })
-  async function google() { setGoogleBusy(true); setError(''); try { const r = await auth.api.request<{ authorizationUrl?: unknown }>('POST', '/api/auth/oidc/google/authorizations'); navigateToGoogle(r.body?.authorizationUrl) } catch (e) { setError(message(e)) } finally { setGoogleBusy(false) } }
+  async function google() { setGoogleBusy(true); setError(''); try { const intendedDestination = safeDestination(location.state?.from) ?? auth.signInDestination.consume(); const r = await auth.api.request<{ authorizationUrl?: unknown }>('POST', '/api/auth/oidc/google/authorizations', { json: { intendedDestination }, retryOnCsrfInvalid: false }); navigateToGoogle(r.body?.authorizationUrl) } catch (e) { setError(message(e)) } finally { setGoogleBusy(false) } }
   return <Shell title="Welcome back" eyebrow="Log in"><form onSubmit={submit} noValidate><CredentialsFields register={register} errors={errors} />{error && <Alert>{error}</Alert>}<button disabled={isSubmitting || googleBusy}>Log in</button></form>
     <div className="divider" aria-hidden="true">or</div><button className="button-secondary" onClick={google} disabled={isSubmitting || googleBusy}>Continue with Google</button>
     <p className="footnote"><Link to="/forgot-password">Forgot password?</Link></p><p className="footnote">New here? <Link to="/signup">Create an account</Link></p></Shell>
 }
 function Mfa() {
   const auth = useAuth(), navigate = useNavigate(), location = useLocation()
+  const completeNavigation = useSignInNavigation()
   const [method, setMethod] = useState<'totp' | 'recovery-code'>('totp'), [code, setCode] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('')
   async function submit(event: FormEvent) {
     event.preventDefault(); const challenge = auth.continuation.challengeId
     if (!challenge) { navigate('/login', { replace: true }); return }
     setBusy(true); setError('')
     try {
-      const result = await auth.api.request<{ state?: unknown }>('POST', `/api/auth/mfa/challenges/${challenge}/${method}`, { json: { code } })
+      const result = await auth.api.request<{ state?: unknown; intendedDestination?: unknown }>('POST', `/api/auth/mfa/challenges/${challenge}/${method}`, { json: { code } })
       if (result.body?.state !== 'authenticated') throw new Error('Unexpected response')
-      const destination = safeDestination(location.state?.from) ?? auth.signInDestination.consume(); await auth.establish('authenticated'); navigate(destination, { replace: true })
+      const destination = Object.hasOwn(result.body, 'intendedDestination') ? safeDestination(result.body.intendedDestination) ?? '/notes' : safeDestination(location.state?.from) ?? auth.signInDestination.consume(); await auth.establish('authenticated', undefined, () => completeNavigation(destination))
     } catch (e) {
       if (e instanceof ApiProblemError && [404, 409, 410].includes(e.problem.status)) {
         auth.continuation.clear()
@@ -292,5 +303,5 @@ export function App({ auth = defaultRuntime }: { auth?: AuthRuntime }) {
   const [router] = useState(() => createBrowserRouter([{ path: '*', element: <AuthRoutes />, errorElement: <SafeRouteError /> }]))
   useEffect(() => auth.subscribe(() => rerender(value => value + 1)), [auth])
   useEffect(() => { auth.bootstrap().catch(() => setStartupError(true)) }, [auth])
-  return <Context.Provider value={{ auth, version }}>{startupError ? <Shell title="Session unavailable"><Alert>We could not check your session safely. Refresh to try again.</Alert></Shell> : <RouterProvider router={router} onError={() => { /* Never report raw route errors or private props. */ }} />}</Context.Provider>
+  return <Context.Provider value={{ auth, version, completeNavigation: (destination, from) => router.navigate(destination, { replace: true, flushSync: true, state: from ? { from } : undefined }) }}>{startupError ? <Shell title="Session unavailable"><Alert>We could not check your session safely. Refresh to try again.</Alert></Shell> : <RouterProvider router={router} onError={() => { /* Never report raw route errors or private props. */ }} />}</Context.Provider>
 }

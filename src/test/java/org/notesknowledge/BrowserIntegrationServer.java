@@ -69,14 +69,13 @@ public final class BrowserIntegrationServer {
             postgres.start(); redis.start();
             var admin = new JdbcTemplate(new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword()));
             Flyway.configure().dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword()).load().migrate();
-            // Identity only: deliberately no displayable consent text or acknowledgement.
-            admin.update("insert into knowledge.processing_policy(policy_code,policy_version,policy_fingerprint,disclosure_revision,effective_at) values('synthetic_browser',1,?,'synthetic-no-legal-approval',clock_timestamp())", "a".repeat(64));
             admin.execute("create role synthetic_browser_runtime login password 'synthetic-browser-runtime-password' nosuperuser nocreatedb nocreaterole noreplication");
             try (var resource = BrowserIntegrationServer.class.getResourceAsStream("/operations/runtime-role.sql")) {
                 if (resource == null) throw new IllegalStateException("Runtime grants unavailable");
                 admin.execute(new String(resource.readAllBytes(), StandardCharsets.UTF_8).replace(":\"runtime_role\"", "synthetic_browser_runtime"));
             }
             var values = new LinkedHashMap<String, String>();
+            org.notesknowledge.knowledge.ProcessingDisclosureFixtures.install(admin,root.resolve("synthetic-disclosure.json"),"synthetic_browser","synthetic","synthetic","synthetic",values);
             values.put("server.address", "127.0.0.1"); values.put("server.port", "18080");
             values.put("spring.datasource.url", postgres.getJdbcUrl());
             values.put("spring.datasource.username", "synthetic_browser_runtime");

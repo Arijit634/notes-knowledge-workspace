@@ -43,7 +43,7 @@ class ConfiguredMultimodalApplicationTest {
     @Container static final PostgreSQLContainer postgres = new PostgreSQLContainer("pgvector/pgvector:0.8.6-pg18-trixie")
             .withDatabaseName("configured_multimodal").withUsername("synthetic_migrator").withPassword("synthetic-multimodal-password");
     @org.junit.jupiter.api.io.TempDir Path store;
-    private static final String POLICY = "a".repeat(64);
+    private String policyFingerprint;
     record Source(String kind, UUID attachment, byte[] bytes, String type, PrivateAiSourceCurrentness.Expected expected) { }
 
     @Test void configuredApplicationStoresDerivesAndRetrievesWithoutCrossUserOrAiOffLeakage() throws Exception {
@@ -78,7 +78,8 @@ class ConfiguredMultimodalApplicationTest {
                     .contentType("application/json").content("{\"title\":\"Synthetic application journey\",\"markdown\":\"Fictional content only\",\"aiEnabled\":true}"))
                     .andExpect(status().isCreated()).andReturn().getResponse();
             note = UUID.fromString(application.getBean(ObjectMapper.class).readTree(created.getContentAsString()).get("id").asText());
-            policy = jdbc.queryForObject("insert into knowledge.processing_policy(policy_code,policy_version,policy_fingerprint,disclosure_revision,effective_at) values('configured-synthetic',1,?,'synthetic-1',clock_timestamp()-interval '1 minute') returning processing_policy_id", UUID.class, POLICY);
+            policy=ProcessingDisclosureFixtures.install(jdbc,store.resolve("synthetic-disclosure.json"),"configured-synthetic","gemini","unpaid","global",settings);
+            policyFingerprint=settings.get("knowledge.processing-disclosure.approved-fingerprint");
             jdbc.update("insert into knowledge.processing_policy_acknowledgement(user_id,processing_policy_id,disclosure_revision) values(?,?,'synthetic-1')",owner,policy);
             // The server may have stored a write before its response was lost.
             // No Attachment is accepted, and DB-aware orphan reconciliation
@@ -130,7 +131,7 @@ class ConfiguredMultimodalApplicationTest {
                             byte[] payload = child.bytes();
                             approvals.add(new TransformedMediaIdentity(source.expected(),TransformedMediaIdentity.digest(source.bytes()),source.bytes().length,source.type(),
                                     child.profile(),child.implementationVersion(),child.artifactSha256(),child.configurationSha256(),TransformedMediaIdentity.digest(payload),payload.length,"image/png",
-                                    new TransformedMediaIdentity.Scope("pdf_pages",page,page,0,0,0),lineage.id(),"gemini","controlled-media","media-understanding",POLICY).approvalFingerprint());
+                                    new TransformedMediaIdentity.Scope("pdf_pages",page,page,0,0,0),lineage.id(),"gemini","controlled-media","media-understanding",policyFingerprint).approvalFingerprint());
                             Arrays.fill(payload,(byte)0);
                         }
                     }
@@ -146,7 +147,7 @@ class ConfiguredMultimodalApplicationTest {
                                 byte[] payload=child.bytes();
                                 approvals.add(new TransformedMediaIdentity(source.expected(),TransformedMediaIdentity.digest(source.bytes()),source.bytes().length,source.type(),
                                         child.profile(),child.implementationVersion(),child.artifactSha256(),child.configurationSha256(),TransformedMediaIdentity.digest(payload),payload.length,"video/mp4",
-                                        new TransformedMediaIdentity.Scope("video_samples",first,last,plan.timescale(),plan.tick(first),plan.tick(last)),lineage.id(),"gemini","controlled-media","media-understanding",POLICY).approvalFingerprint());
+                                        new TransformedMediaIdentity.Scope("video_samples",first,last,plan.timescale(),plan.tick(first),plan.tick(last)),lineage.id(),"gemini","controlled-media","media-understanding",policyFingerprint).approvalFingerprint());
                                 Arrays.fill(payload,(byte)0);
                             }
                             first=last;
@@ -241,19 +242,19 @@ class ConfiguredMultimodalApplicationTest {
         settings.put(prefix+"version",kind.equals("pdf")?"native-pdf-v1":"ffmpeg-9.0.2-profile-v1");
         if(kind.equals("video")){var scratch=Files.createDirectory(store.resolve("video-scratch"));Files.setPosixFilePermissions(scratch,java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));settings.put(prefix+"scratch-directory",scratch.toString());}
     }
-    private static void configure(Map<String,String> settings,boolean nativeMedia,String pdf,String video) {
+    private void configure(Map<String,String> settings,boolean nativeMedia,String pdf,String video) {
         String prefix="knowledge.derivation.";
         Map.ofEntries(Map.entry("enabled","true"),Map.entry("provider","gemini"),Map.entry("embedding-model","controlled-embedding"),Map.entry("media-model","controlled-media"),
                 Map.entry("model-revision","v1"),Map.entry("region","global"),Map.entry("tier","unpaid"),Map.entry("configuration-id","controlled-v1"),
                 Map.entry("adapter-version","controlled-v1"),Map.entry("dimension","8"),Map.entry("operator","cosine"),Map.entry("normalization","none"),
-                Map.entry("approved-policy-fingerprint",POLICY),Map.entry("pdf-page-children",Boolean.toString(nativeMedia)),Map.entry("video-children",Boolean.toString(nativeMedia)))
+                Map.entry("approved-policy-fingerprint",policyFingerprint),Map.entry("pdf-page-children",Boolean.toString(nativeMedia)),Map.entry("video-children",Boolean.toString(nativeMedia)))
                 .forEach((key,value)->settings.put(prefix+key,value));
         if(nativeMedia){settings.put(prefix+"pdf-transform-fingerprint",pdf);settings.put(prefix+"video-transform-fingerprint",video);}
     }
-    private static AiDerivationProperties configuration(Map<String,String> ignored,boolean nativeMedia,String pdf,String video) {
-        return new AiDerivationProperties(true,false,"gemini","controlled-embedding","controlled-media","v1","global","unpaid","controlled-v1","controlled-v1",8,"cosine","none",POLICY,nativeMedia,pdf,nativeMedia,video);
+    private AiDerivationProperties configuration(Map<String,String> ignored,boolean nativeMedia,String pdf,String video) {
+        return new AiDerivationProperties(true,false,"gemini","controlled-embedding","controlled-media","v1","global","unpaid","controlled-v1","controlled-v1",8,"cosine","none",policyFingerprint,nativeMedia,pdf,nativeMedia,video);
     }
-    private static EmbeddingLineage lineage(AiDerivationProperties configuration,UUID policy,String kind) {return EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,POLICY),kind);}
+    private EmbeddingLineage lineage(AiDerivationProperties configuration,UUID policy,String kind) {return EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,policyFingerprint),kind);}
     private static MockMvc mvc(ConfigurableApplicationContext app) {return org.springframework.test.web.servlet.setup.MockMvcBuilders.webAppContextSetup((WebApplicationContext)app)
             .addFilters(app.getBean("springSessionRepositoryFilter",jakarta.servlet.Filter.class))
             .apply(org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity()).build();}
