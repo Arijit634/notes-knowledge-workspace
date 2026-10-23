@@ -14,7 +14,7 @@ const noContent = () => new Response(null, { status: 204 })
 function mount(path: string, state: 'anonymous' | 'mfaRequired' | 'authenticated' = 'anonymous',
   handler?: (method: string, path: string, body: unknown) => Response,
   sessionBody?: object, securityBody: object = { email: 'person@example.test', passwordConfigured: true,
-    mfaState: 'disabled', oidcLinks: [] }) {
+    mfaState: 'disabled', oidcLinks: [] }, csrfHandler?: () => Response | Promise<Response>) {
   window.history.replaceState(null, '', path)
   const calls: Array<{ method: string; path: string; body: unknown }> = []
   const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -22,7 +22,7 @@ function mount(path: string, state: 'anonymous' | 'mfaRequired' | 'authenticated
     const body: unknown = init?.body ? JSON.parse(String(init.body)) : null
     calls.push({ method, path: target, body })
     if (target === '/api/auth/session') return json(sessionBody ?? (state === 'mfaRequired' ? { state, challengeId: challenge } : { state }))
-    if (target === '/api/auth/csrf') return json({ csrfToken: 'synthetic-proof' })
+    if (target === '/api/auth/csrf') return csrfHandler?.() ?? json({ csrfToken: 'synthetic-proof' })
     if (target === '/api/me/security') return json(securityBody)
     if (target === '/api/notes' && method === 'GET') return json({ items: [], nextCursor: null })
     return handler?.(method, target, body) ?? noContent()
@@ -136,22 +136,81 @@ describe('authentication browser journey', () => {
   })
 
   it('does not navigate to an unapproved Google start destination', async () => {
-    mount('/login', 'anonymous', (_method, path) => path === '/api/auth/oidc/google/authorizations'
+    const { calls } = mount('/login', 'anonymous', (_method, path) => path === '/api/auth/oidc/google/authorizations'
       ? json({ authorizationUrl: 'https://accounts.google.com.evil.test/o/oauth2/v2/auth' }) : noContent())
     await screen.findByRole('heading', { name: 'Welcome back' })
     fireEvent.click(screen.getByRole('button', { name: 'Continue with Google' }))
     await screen.findByText(/Something went wrong/i)
     expect(window.location.pathname).toBe('/login')
+    expect(calls.find(call => call.path === '/api/auth/oidc/google/authorizations')?.body).toEqual({ intendedDestination: '/notes' })
+  })
+
+  it('sends only the safe in-memory intended destination when starting Google login', async () => {
+    const { auth, calls } = mount('/login', 'anonymous', () => json({ authorizationUrl: '/unapproved' }))
+    await screen.findByRole('heading', { name: 'Welcome back' })
+    auth.signInDestination.remember('/settings/security')
+    fireEvent.click(screen.getByRole('button', { name: 'Continue with Google' }))
+    await screen.findByText(/Something went wrong/i)
+    expect(calls.find(call => call.path === '/api/auth/oidc/google/authorizations')?.body).toEqual({ intendedDestination: '/settings/security' })
+    expect(window.localStorage.length).toBe(0); expect(window.sessionStorage.length).toBe(0)
+  })
+
+  it('holds the route gate until post-MFA protection and validated navigation commit', async () => {
+    let elevated = false
+    let releaseProof!: (response: Response) => void
+    const proof = new Promise<Response>(resolve => { releaseProof = resolve })
+    const { auth, calls } = mount('/mfa', 'mfaRequired', () => {
+      elevated = true
+      return json({ state: 'authenticated', intendedDestination: '/settings/security' })
+    }, undefined, undefined, () => elevated ? proof : json({ csrfToken: 'synthetic-proof' }))
+    await screen.findByRole('heading', { name: 'Verify it’s you' })
+    fireEvent.change(screen.getByLabelText('Authenticator code'), { target: { value: '123456' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Verify and continue' }))
+    await waitFor(() => expect(calls.filter(call => call.path === '/api/auth/csrf')).toHaveLength(2))
+    expect(auth.state).toBe('unknown')
+    // Force the guard to observe the in-flight elevation, rather than relying on
+    // how quickly this machine schedules React between the two HTTP responses.
+    fireEvent.popState(window)
+    await screen.findByRole('heading', { name: 'Checking your session' })
+    expect(window.location.pathname).toBe('/mfa')
+    expect(calls.some(call => call.path === '/api/me/security')).toBe(false)
+    releaseProof(json({ csrfToken: 'synthetic-elevated-proof' }))
+    await screen.findByRole('heading', { name: 'Account security' })
+    expect(window.location.pathname).toBe('/settings/security')
+    expect(auth.state).toBe('authenticated')
+    expect(auth.continuation.challengeId).toBeNull()
+    expect(calls.some(call => call.path === '/api/notes')).toBe(false)
+  })
+
+  it.each(['/settings/security', '//evil.test', '/notes%2fnew', null])('validates the server MFA return destination %s after elevation', async destination => {
+    const { auth } = mount('/mfa', 'mfaRequired', () => json({ state: 'authenticated', intendedDestination: destination }))
+    await screen.findByRole('heading', { name: 'Verify it’s you' })
+    fireEvent.change(screen.getByLabelText('Authenticator code'), { target: { value: '123456' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Verify and continue' }))
+    await waitFor(() => expect(window.location.pathname).toBe(destination === '/settings/security' ? destination : '/notes'))
+    expect(auth.state).toBe('authenticated'); expect(auth.continuation.challengeId).toBeNull()
+    expect(window.localStorage.length).toBe(0); expect(window.sessionStorage.length).toBe(0)
   })
 
   it('keeps a completed reset anonymous and scrubs its fragment', async () => {
     const token = 'synthetic.reset-token'
-    const { auth, calls } = mount('/reset-password#token=' + token)
+    let confirmed = false
+    let releaseProof!: (response: Response) => void
+    const proof = new Promise<Response>(resolve => { releaseProof = resolve })
+    const { auth, calls } = mount('/reset-password#token=' + token, 'anonymous', () => {
+      confirmed = true
+      return noContent()
+    }, undefined, undefined, () => confirmed ? proof : json({ csrfToken: 'synthetic-proof' }))
     expect(window.location.hash).toBe('')
     await screen.findByRole('button', { name: 'Set new password' })
     fireEvent.change(screen.getByLabelText('New password'), { target: { value: 'New-synthetic-password-123' } })
     fireEvent.change(screen.getByLabelText('Confirm new password'), { target: { value: 'New-synthetic-password-123' } })
     fireEvent.click(screen.getByRole('button', { name: 'Set new password' }))
+    await waitFor(() => expect(calls.filter(call => call.path === '/api/auth/csrf')).toHaveLength(2))
+    expect(auth.state).toBe('anonymous')
+    fireEvent.popState(window)
+    expect(screen.getByRole('button', { name: 'Set new password' })).toBeTruthy()
+    releaseProof(json({ csrfToken: 'synthetic-reset-proof' }))
     await screen.findByText(/password was reset/i)
     expect(auth.state).toBe('anonymous')
     expect(calls.find(call => call.path === '/api/auth/password-reset/confirmations')?.body).toEqual({ token, newPassword: 'New-synthetic-password-123' })

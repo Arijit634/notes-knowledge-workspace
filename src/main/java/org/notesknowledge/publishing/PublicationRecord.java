@@ -15,11 +15,11 @@ record PublicationRecord(UUID id,UUID owner,UUID note,UUID checkpoint,long sourc
     }
     record MediaView(UUID id,String mediaKind,String mediaType,String displayName,long sizeBytes,Integer width,Integer height,
         Double durationSeconds,Integer pageCount,String contentUrl) { }
-    record OwnerView(UUID id,String title,String markdown,List<String> tags,String availability,String publicUrl,List<MediaView> media,
+    record OwnerView(UUID id,UUID sourceNoteId,String title,String markdown,List<String> tags,String availability,String publicUrl,List<MediaView> media,
         Instant publishedAt,Instant updatedAt) {
         @Override public String toString(){return "OwnerPublicationView[REDACTED]";}
     }
-    record OwnerSummary(UUID id,String title,List<String> tags,String availability,Instant publishedAt,Instant updatedAt) {
+    record OwnerSummary(UUID id,UUID sourceNoteId,String title,List<String> tags,String availability,Instant publishedAt,Instant updatedAt) {
         @Override public String toString(){return "OwnerPublicationSummary[REDACTED]";}
     }
 }

@@ -119,7 +119,16 @@ public final class MediaQualityQualificationCommand {
         if(selection.contains("long-video"))require(c.videoChildren());
         UUID owner=jdbc.queryForObject("select uuidv7()",UUID.class);String email="synthetic-qualification-"+owner+"@example.test";
         jdbc.update("insert into identity.account(user_id,canonical_email,display_email,email_verified_at,account_state,created_at,updated_at) values(?,?,?,now(),'active',now(),now())",owner,email,email);
-        UUID policy=jdbc.queryForObject("insert into knowledge.processing_policy(policy_code,policy_version,policy_fingerprint,disclosure_revision,effective_at) values(?,1,?,'synthetic-1',clock_timestamp()-interval '1 minute') returning processing_policy_id",UUID.class,POLICY,c.approvedPolicyFingerprint());
+        // Even this opt-in harness needs an explicitly supplied approved deployment
+        // bundle. It must not fabricate provider disclosure or silently approve it.
+        var disclosureProperties=context.getBean(ProcessingDisclosureProperties.class);
+        require(disclosureProperties.path()!=null);
+        var disclosure=ProcessingDisclosure.decode(Files.readAllBytes(Path.of(disclosureProperties.path())));
+        require(disclosure.code().equals(POLICY)&&disclosure.version()==1&&disclosure.revision().equals("synthetic-1")
+            &&disclosure.fingerprint().equals(c.approvedPolicyFingerprint()));
+        context.getBean(ProcessingDisclosureResolver.class).require(new ProcessingPolicyRepository.Policy(disclosure.id(),disclosure.code(),disclosure.version(),disclosure.fingerprint(),disclosure.revision(),disclosure.effectiveAt()));
+        UUID policy=disclosure.id();
+        jdbc.update("insert into knowledge.processing_policy(processing_policy_id,policy_code,policy_version,policy_fingerprint,disclosure_revision,effective_at) values(?,?,1,?,'synthetic-1',?)",policy,POLICY,c.approvedPolicyFingerprint(),java.sql.Timestamp.from(disclosure.effectiveAt()));
         jdbc.update("insert into knowledge.processing_policy_acknowledgement(user_id,processing_policy_id,disclosure_revision) values(?,?,'synthetic-1')",owner,policy);
         var mvc=MockMvcBuilders.webAppContextSetup((org.springframework.web.context.WebApplicationContext)context)
             .addFilters(context.getBean(org.springframework.session.web.http.SessionRepositoryFilter.class)).apply(springSecurity()).build();

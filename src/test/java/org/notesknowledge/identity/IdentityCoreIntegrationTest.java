@@ -146,7 +146,7 @@ class IdentityCoreIntegrationTest {
                 "/api/me/security/sessions/{sessionHandle}",
                 "/api/me/security/sessions/revoke-others",
                 "/api/me/security/sessions/revoke-all",
-                "/api/me/account", "/api/me/profile", "/api/me/profile/avatar", "/api/me/note-preferences", "/api/notes", "/api/notes/search",
+                "/api/me/account", "/api/me/profile", "/api/me/profile/avatar", "/api/me/profile/avatar/content", "/api/me/note-preferences", "/api/notes", "/api/notes/search",
                 "/api/notes/{noteId}", "/api/notes/{noteId}/tags", "/api/notes/{noteId}/pin",
                 "/api/notes/{noteId}/archive", "/api/notes/{noteId}/return-from-archive",
                 "/api/notes/{noteId}/trash", "/api/notes/{noteId}/restore",
@@ -167,7 +167,7 @@ class IdentityCoreIntegrationTest {
                 "/api/moderation/reports/{reportId}/decisions");
         assertThat(mappings.getHandlerMethods().keySet().stream()
                 .filter(mapping->mapping.getPatternValues().stream().anyMatch(path->path.startsWith("/api/")))
-                .mapToInt(mapping->mapping.getMethodsCondition().getMethods().size()).sum()).isEqualTo(90);
+                .mapToInt(mapping->mapping.getMethodsCondition().getMethods().size()).sum()).isEqualTo(91);
     }
 
     @Test

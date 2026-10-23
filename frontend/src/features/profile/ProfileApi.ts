@@ -1,5 +1,6 @@
 import type { AuthRuntime } from '../auth/AuthRuntime'
 import { record, text, integer } from '../../app/api/Contract'
+import { ApiProtocolError } from '../../app/api/ProblemDetailsDecoder'
 
 export type PrivateProfile = { displayName: string; biography: string; handle: string | null;
   updatedAt: string | null; avatar: null | { mediaType: string; width: number; height: number; byteSize: number; createdAt: string } }
@@ -10,6 +11,12 @@ export function profileView(value: unknown): PrivateProfile {
     avatar: a && { mediaType: text(a.mediaType, 40), width: integer(a.width), height: integer(a.height), byteSize: integer(a.byteSize), createdAt: text(a.createdAt, 64) } }
 }
 export const profileApi = {
+  avatarContent: async (auth: AuthRuntime, signal?: AbortSignal) => {
+    const r = await auth.api.request<Blob>('GET', '/api/me/profile/avatar/content', { responseType: 'blob', signal })
+    if (r.metadata.status !== 200 || !r.body || !['image/png', 'image/jpeg'].includes(r.body.type)
+        || !r.body.size || r.body.size > 5 * 1024 * 1024) throw new ApiProtocolError()
+    return r.body
+  },
   read: async (auth: AuthRuntime, signal?: AbortSignal) => profileView((await auth.api.request('GET', '/api/me/profile', { signal })).body),
   save: async (auth: AuthRuntime, input: Pick<PrivateProfile, 'displayName' | 'biography' | 'handle'>) =>
     profileView((await auth.api.request('PUT', '/api/me/profile', { json: input, retryOnCsrfInvalid: false })).body),

@@ -26,7 +26,7 @@ final class OidcController {
     @PostMapping("/oidc/google/authorizations")
     ResponseEntity<Map<String, String>> beginLogin(HttpServletRequest request) {
         return ResponseEntity.ok().cacheControl(CacheControl.noStore())
-                .body(Map.of("authorizationUrl", flows.begin(OidcProtocolPort.Action.LOGIN, request)));
+                .body(Map.of("authorizationUrl", flows.begin(OidcProtocolPort.Action.LOGIN, request,OidcAuthorizationInput.read(request,true))));
     }
 
     @GetMapping("/oidc/google/callback")
@@ -35,9 +35,9 @@ final class OidcController {
             @RequestParam(required = false) String iss,
             @RequestParam(required = false) String error,
             HttpServletRequest request, HttpServletResponse response) {
-        flows.complete(OidcProtocolPort.Action.LOGIN, state, iss,
+        var completion=flows.complete(OidcProtocolPort.Action.LOGIN, state, iss,
                 error == null ? code : null, request, response);
-        return ResponseEntity.status(303).location(URI.create("/auth/complete"))
+        return ResponseEntity.status(303).location(URI.create(completion.mfaRequired()?"/auth/complete":OidcIntendedDestination.safe(completion.intendedDestination())))
                 .cacheControl(CacheControl.noStore()).build();
     }
 

@@ -35,7 +35,8 @@ import tools.jackson.databind.ObjectMapper;
  * Not a live-Gemini quality score and never included in the application JAR. */
 public final class PackagedMultimediaSearchAcceptance {
     private static final ObjectMapper JSON=new ObjectMapper();
-    private static final String POLICY="a".repeat(64), PASSWORD="Synthetic-Media-Password-731!";
+    private static final String PASSWORD="Synthetic-Media-Password-731!";
+    private String policyFingerprint;
     private static final String KEY=Base64.getEncoder().encodeToString(new byte[32]);
     private static ControlledGemini provider;
     private static String phase="setup";
@@ -104,12 +105,14 @@ public final class PackagedMultimediaSearchAcceptance {
             settings.put("knowledge.operations.scheduling-enabled","false");settings.put("identity.delivery.polling-enabled","false");
             settings.put("identity.delivery.smtp-enabled","false");settings.put("identity.oidc.google.enabled","false");
             selectRuntime("pdf",pdfRoot,local);selectRuntime("video",videoRoot,local);
+            var fixtureJdbc=new org.springframework.jdbc.core.JdbcTemplate(new org.springframework.jdbc.datasource.DriverManagerDataSource(database.getJdbcUrl(),"synthetic_runtime","synthetic-runtime-password"));
+            policy=ProcessingDisclosureFixtures.install(fixtureJdbc,local.resolve("synthetic-disclosure.json"),"packaged-synthetic","gemini","unpaid","global",settings);
+            policyFingerprint=settings.get("knowledge.processing-disclosure.approved-fingerprint");
             phase="registration";start();browser=register("synthetic-media-owner@example.test");other=register("synthetic-media-other@example.test");
             var jdbc=app.getBean(JdbcTemplate.class);
             require(!jdbc.queryForObject("select rolsuper or rolcreatedb or rolcreaterole or rolreplication from pg_roles where rolname=current_user",Boolean.class)
                 &&!jdbc.queryForObject("select has_schema_privilege(current_user,'notes','CREATE')",Boolean.class),"restricted_runtime_role");
             owner=jdbc.queryForObject("select user_id from identity.account where canonical_email='synthetic-media-owner@example.test'",UUID.class);
-            policy=jdbc.queryForObject("insert into knowledge.processing_policy(policy_code,policy_version,policy_fingerprint,disclosure_revision,effective_at) values('packaged-synthetic',1,?,'synthetic-1',clock_timestamp()-interval '1 minute') returning processing_policy_id",UUID.class,POLICY);
             acknowledge(browser);acknowledge(other);
             phase="upload";textNote=note("Aster text", "Aster project deadline is 18 November. https://example.test/aster");
             for(String kind:List.of("image","pdf","scan","mixed","audio","tones","video-short","video-long","seven","jpeg")){phase="upload-"+kind;upload(kind);}
@@ -129,7 +132,7 @@ public final class PackagedMultimediaSearchAcceptance {
                     approvals.add(ProviderDispatchPolicy.fingerprint(metadata.expected()));
                     if(metadata.expected().attachmentId()==null)continue;
                     var uploaded=uploads.stream().filter(u->u.attachment().equals(metadata.expected().attachmentId())).findFirst().orElseThrow();
-                    var lineage=EmbeddingLineage.create(config,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,POLICY),metadata.modality());
+                    var lineage=EmbeddingLineage.create(config,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,policyFingerprint),metadata.modality());
                     if(metadata.modality().equals("pdf"))for(int p=1;p<=metadata.pages();p++)try(var child=ConfiguredMediaStorageFixtures.page(app,uploaded.bytes(),p)){
                         byte[] bytes=child.bytes();
                         children.add(identity(config,metadata,lineage,uploaded,bytes,child.profile(),child.implementationVersion(),child.artifactSha256(),child.configurationSha256(),"image/png",new TransformedMediaIdentity.Scope("pdf_pages",p,p,0,0,0)).approvalFingerprint());
@@ -200,10 +203,10 @@ public final class PackagedMultimediaSearchAcceptance {
         }
     }
     private void configure(String pdf,String video){
-        var values=Map.ofEntries(Map.entry("enabled","true"),Map.entry("provider","gemini"),Map.entry("embedding-model","gemini-embedding-2"),Map.entry("media-model","gemini-3.8-flash"),Map.entry("model-revision","v1"),Map.entry("region","global"),Map.entry("tier","unpaid"),Map.entry("configuration-id","controlled-v1"),Map.entry("adapter-version","controlled-v1"),Map.entry("dimension","8"),Map.entry("operator","cosine"),Map.entry("normalization","none"),Map.entry("approved-policy-fingerprint",POLICY),Map.entry("pdf-page-children","true"),Map.entry("video-children","true"),Map.entry("pdf-transform-fingerprint",pdf),Map.entry("video-transform-fingerprint",video),Map.entry("dispatch-policy","unpaid-synthetic-demo"));
+        var values=Map.ofEntries(Map.entry("enabled","true"),Map.entry("provider","gemini"),Map.entry("embedding-model","gemini-embedding-2"),Map.entry("media-model","gemini-3.8-flash"),Map.entry("model-revision","v1"),Map.entry("region","global"),Map.entry("tier","unpaid"),Map.entry("configuration-id","controlled-v1"),Map.entry("adapter-version","controlled-v1"),Map.entry("dimension","8"),Map.entry("operator","cosine"),Map.entry("normalization","none"),Map.entry("approved-policy-fingerprint",policyFingerprint),Map.entry("pdf-page-children","true"),Map.entry("video-children","true"),Map.entry("pdf-transform-fingerprint",pdf),Map.entry("video-transform-fingerprint",video),Map.entry("dispatch-policy","unpaid-synthetic-demo"));
         values.forEach((k,v)->settings.put("knowledge.derivation."+k,v));
     }
-    private static AiDerivationProperties configuration(String pdf,String video){return new AiDerivationProperties(true,true,"gemini","gemini-embedding-2","gemini-3.8-flash","v1","global","unpaid","controlled-v1","controlled-v1",8,"cosine","none",POLICY,true,pdf,true,video);}
+    private AiDerivationProperties configuration(String pdf,String video){return new AiDerivationProperties(true,true,"gemini","gemini-embedding-2","gemini-3.8-flash","v1","global","unpaid","controlled-v1","controlled-v1",8,"cosine","none",policyFingerprint,true,pdf,true,video);}
     private void start(){app=new SpringApplicationBuilder(Application.class,ConfiguredMediaStorageFixtures.class,ControlledRegistrationDelivery.class,ExternalServices.class).run(settings.entrySet().stream().map(e->"--"+e.getKey()+"="+e.getValue()).toArray(String[]::new));}
     private String origin(){return "https://localhost:"+app.getEnvironment().getProperty("local.server.port");}
     private void localTls(Path local)throws Exception {
@@ -356,7 +359,7 @@ public final class PackagedMultimediaSearchAcceptance {
             require(query(browser,QUERIES.get(0)).get("citations").valueStream().noneMatch(c->c.get("attachmentId").asText().equals(attachment.toString())),"processing_race_no_stale_citation");
         }finally{provider.blockRelease.countDown();provider.blockDigest=null;}
     }
-    private static TransformedMediaIdentity identity(AiDerivationProperties config,PrivateDerivationSource.Metadata metadata,EmbeddingLineage lineage,Uploaded original,byte[] bytes,String profile,String version,String artifact,String configuration,String type,TransformedMediaIdentity.Scope scope){return new TransformedMediaIdentity(metadata.expected(),TransformedMediaIdentity.digest(original.bytes()),original.bytes().length,original.type(),profile,version,artifact,configuration,TransformedMediaIdentity.digest(bytes),bytes.length,type,scope,lineage.id(),config.provider(),config.mediaModel(),"media-understanding",POLICY);}
+    private TransformedMediaIdentity identity(AiDerivationProperties config,PrivateDerivationSource.Metadata metadata,EmbeddingLineage lineage,Uploaded original,byte[] bytes,String profile,String version,String artifact,String configuration,String type,TransformedMediaIdentity.Scope scope){return new TransformedMediaIdentity(metadata.expected(),TransformedMediaIdentity.digest(original.bytes()),original.bytes().length,original.type(),profile,version,artifact,configuration,TransformedMediaIdentity.digest(bytes),bytes.length,type,scope,lineage.id(),config.provider(),config.mediaModel(),"media-understanding",policyFingerprint);}
     private Uploaded uploaded(String fixture){return uploads.stream().filter(u->u.fixture().equals(fixture)).findFirst().orElseThrow();}
     private static DerivedSegment pdfSegment(String fixture,int page){String text=fixture.equals("scan")||fixture.equals("mixed")&&page==3
         ?"Aster diagram: a blue square left of a red circle":page==7?"Page seven: the Aster invoice total is 730 credits. Payment is due 18 November.":page==3?"The fictional archive opens at dawn; its door is violet.":"Fictional archive ledger page "+page;

@@ -15,7 +15,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 class ProcessingPolicyService {
     record View(UUID processingPolicyId,String policyCode,long policyVersion,String policyFingerprint,
-            String disclosureRevision,Instant effectiveAt,boolean acknowledged,boolean acknowledgementRequired) {
+            String disclosureRevision,Instant effectiveAt,boolean acknowledged,boolean acknowledgementRequired,
+            String disclosureContent,java.util.List<String> providerProcessingCategories) {
         @Override public String toString() { return "ProcessingPolicyView[REDACTED]"; }
     }
     /** One prerequisite only. NOT a SourceAiPermit or provider/content authorization. */
@@ -27,10 +28,13 @@ class ProcessingPolicyService {
     private final ObjectProvider<AccountEligibilityApi> accounts;
     private final org.notesknowledge.DispatchCoordinator coordination;
     private final ObjectProvider<org.springframework.transaction.PlatformTransactionManager> transactions;
+    private final ProcessingDisclosureResolver disclosures;
     ProcessingPolicyService(ProcessingPolicyRepository repository,KnowledgePolicyProperties configuration,ObjectProvider<AccountEligibilityApi> accounts,
-            org.notesknowledge.DispatchCoordinator coordination,ObjectProvider<org.springframework.transaction.PlatformTransactionManager> transactions) {
+            org.notesknowledge.DispatchCoordinator coordination,ObjectProvider<org.springframework.transaction.PlatformTransactionManager> transactions,
+            ProcessingDisclosureResolver disclosures) {
         this.repository=repository;this.configuration=configuration;this.accounts=accounts;
         this.coordination=coordination;this.transactions=transactions;
+        this.disclosures=disclosures;
     }
     private UUID owner(HttpServletRequest browser) {
         UUID user=principal();
@@ -52,8 +56,9 @@ class ProcessingPolicyService {
     }
     @Transactional
     View read(HttpServletRequest browser) {
-        UUID user=owner(browser);var policy=current();boolean ack=repository.acknowledged(user,policy);
-        return new View(policy.id(),policy.code(),policy.version(),policy.fingerprint(),policy.disclosureRevision(),policy.effectiveAt(),ack,!ack);
+        UUID user=owner(browser);var policy=current();var disclosure=disclosures.require(policy);boolean ack=repository.acknowledged(user,policy);
+        return new View(policy.id(),policy.code(),policy.version(),policy.fingerprint(),policy.disclosureRevision(),policy.effectiveAt(),ack,!ack,
+                disclosure.content(),disclosure.categories());
     }
     void acknowledge(HttpServletRequest browser,PolicyAcknowledgementRequest request) {
         UUID user=principal();
@@ -64,6 +69,7 @@ class ProcessingPolicyService {
                 ||policy.version()!=request.policyVersion()||!policy.fingerprint().equals(request.policyFingerprint())
                 ||!policy.disclosureRevision().equals(request.disclosureRevision()))
             throw ApiFailureException.of(ApiFailureException.Kind.PROCESSING_POLICY_CHANGED);
+        disclosures.require(policy);
         repository.acknowledge(user,policy);
         }); }
         if(!handle.safelyReleased())throw unavailable();
@@ -72,6 +78,7 @@ class ProcessingPolicyService {
     Optional<AcknowledgedProcessingPolicy> policyPrerequisite(UUID expectedUser) {
         if(accounts.getIfAvailable()==null||!accounts.getObject().isEligible(expectedUser)) return Optional.empty();
         var policy=current();
+        disclosures.require(policy);
         return repository.acknowledged(expectedUser,policy)
                 ?Optional.of(new AcknowledgedProcessingPolicy(policy.id(),policy.version(),policy.fingerprint())):Optional.empty();
     }

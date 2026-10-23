@@ -22,9 +22,14 @@ public final class QualificationProcessHarness {
         int exit=0;
         try {
             Path directory=Path.of(args[1]);Files.createDirectories(directory);
+            var admin=new JdbcTemplate(new org.springframework.jdbc.datasource.DriverManagerDataSource(args[0],"synthetic_migrator","synthetic-restart-password"));
+            Path disclosureFile=directory.resolve("synthetic-disclosure.json");
+            var disclosure=ProcessingDisclosureFixtures.file(admin,disclosureFile,"offline-restart","gemini","unpaid","global");
+            var disclosureSettings=new LinkedHashMap<String,String>();ProcessingDisclosureFixtures.deployment(disclosure,disclosureFile,disclosureSettings);
             var approvals=new ArrayList<String>();var now=new AtomicReference<>(Instant.now());var calls=new AtomicInteger();
             var ordinal=new AtomicInteger();var label=new AtomicReference<String>();var journal=new AtomicReference<QualificationJournal>();
             var properties=new LinkedHashMap<String,Object>();
+            properties.putAll(disclosureSettings);
             properties.put("spring.datasource.url",args[0]);properties.put("spring.datasource.username","synthetic_migrator");properties.put("spring.datasource.password","synthetic-restart-password");
             properties.put("server.port","0");properties.put("server.address","127.0.0.1");properties.put("spring.main.banner-mode","off");properties.put("logging.level.root","OFF");
             properties.put("identity.rate.key-base64","AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=");
@@ -34,7 +39,7 @@ public final class QualificationProcessHarness {
             properties.put("knowledge.derivation.provider","gemini");properties.put("knowledge.derivation.tier","unpaid");properties.put("knowledge.derivation.region","global");
             properties.put("knowledge.derivation.embedding-model","gemini-embedding-2");properties.put("knowledge.derivation.media-model","gemini-3.8-flash");
             properties.put("knowledge.derivation.model-revision","offline-v1");properties.put("knowledge.derivation.configuration-id","offline-v1");properties.put("knowledge.derivation.adapter-version","google-v2");
-            properties.put("knowledge.derivation.dimension","768");properties.put("knowledge.derivation.operator","cosine");properties.put("knowledge.derivation.normalization","unit");properties.put("knowledge.derivation.approved-policy-fingerprint","a".repeat(64));
+            properties.put("knowledge.derivation.dimension","768");properties.put("knowledge.derivation.operator","cosine");properties.put("knowledge.derivation.normalization","unit");properties.put("knowledge.derivation.approved-policy-fingerprint",disclosure.fingerprint());
             BeanPostProcessor fake=new BeanPostProcessor(){public Object postProcessAfterInitialization(Object bean,String name){
                 if(bean instanceof ProviderDispatchProperties) {
                     var p=mock(ProviderDispatchProperties.class);when(p.dispatchPolicy()).thenReturn("unpaid-synthetic-demo");when(p.approvedSourceFingerprints()).thenAnswer(c->List.copyOf(approvals));
@@ -68,7 +73,8 @@ public final class QualificationProcessHarness {
                         UUID id=jdbc.queryForObject("select uuidv7()",UUID.class);ids.put(n.id(),id);
                         jdbc.update("insert into notes.note(note_id,owner_user_id,title,markdown,lifecycle_state,ai_enabled,revision,ai_generation,created_at,updated_at) values(?,?,?,?,'active',?,1,1,now(),now())",id,owner,n.title(),n.body(),n.aiEnabled());
                     }
-                    UUID policy=jdbc.queryForObject("insert into knowledge.processing_policy(policy_code,policy_version,policy_fingerprint,disclosure_revision,effective_at) values('offline-restart',1,?,'synthetic-1',clock_timestamp()-interval '1 minute') returning processing_policy_id",UUID.class,"a".repeat(64));
+                    UUID policy=disclosure.id();
+                    jdbc.update("insert into knowledge.processing_policy(processing_policy_id,policy_code,policy_version,policy_fingerprint,disclosure_revision,effective_at) values(?,'offline-restart',1,?,'synthetic-1',?)",policy,disclosure.fingerprint(),java.sql.Timestamp.from(disclosure.effectiveAt()));
                     jdbc.update("insert into knowledge.processing_policy_acknowledgement(user_id,processing_policy_id,disclosure_revision) values(?,?,'synthetic-1')",owner,policy);
                     QualificationJournal.forceCreate(map,JSON.writeValueAsBytes(Map.of("owner",owner,"notes",ids)));
                 }else {
@@ -76,7 +82,7 @@ public final class QualificationProcessHarness {
                     for(var n:FrozenQualityCorpus.notes())ids.put(n.id(),UUID.fromString(state.get("notes").get(n.id()).asText()));
                 }
                 UUID policy=jdbc.queryForObject("select processing_policy_id from knowledge.processing_policy where policy_code='offline-restart'",UUID.class);
-                var lineage=EmbeddingLineage.create(context.getBean(AiDerivationProperties.class),new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,"a".repeat(64)),"note");
+                var lineage=EmbeddingLineage.create(context.getBean(AiDerivationProperties.class),new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,disclosure.fingerprint()),"note");
                 var work=context.getBean(KnowledgeWorkService.class);var repository=context.getBean(PrivateRepresentationRepository.class);var tx=new TransactionTemplate(context.getBean(org.springframework.transaction.PlatformTransactionManager.class));
                 try(var state=new QualificationJournal(directory.resolve("journal"),"offline-process/"+policy+"/"+lineage.id());var clock=mockStatic(Instant.class,CALLS_REAL_METHODS)) {
                     journal.set(state);clock.when(Instant::now).thenAnswer(c->now.get());

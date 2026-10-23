@@ -18,7 +18,7 @@ function mount(path: string, state = 'anonymous', handler: (c: Call) => Response
     const custom = await handler(c); if (custom) return custom
     if (c.path.startsWith('/api/public/explore?') || c.path.startsWith('/api/public/search?')) return json({ items: [f.card], nextCursor: null, rankingMode: 'latest', semanticAvailable: false, exhaustive: false })
     if (c.path === `/api/public/publications/${f.pubId}`) return json(state === 'authenticated' ? f.article : { ...f.article, viewerLiked: undefined })
-    if (c.path.startsWith(`/api/public/profiles/${f.author.handle}/publications`)) return json({ items: [{ ...f.owner }], nextCursor: null })
+    if (c.path.startsWith(`/api/public/profiles/${f.author.handle}/publications`)) return json({ items: [{ ...f.card, updatedAt: f.timestamp }], nextCursor: null })
     if (c.path === `/api/public/profiles/${f.author.handle}` || c.path === '/api/me/public-profile') return json(f.author)
     if (c.path === '/api/me/profile') return json(f.profile)
     if (c.path.startsWith('/api/me/publications?')) return json({ items: [f.owner], nextCursor: null })
@@ -38,6 +38,14 @@ beforeAll(async () => { await Promise.all([import('../discovery/DiscoveryPages')
 afterEach(() => { cleanup(); runtimes.splice(0).forEach(a => a.queries.clear()); vi.restoreAllMocks(); vi.unstubAllGlobals(); window.history.replaceState(null, '', '/') })
 
 describe('public routes and boundaries', () => {
+  it('uses only the fresh authoritative owner source identity and denies update after retirement even with stale ready status', async () => {
+    const { calls } = mount(`/publications/${f.pubId}`, 'authenticated', c => c.path === `/api/me/publications/${f.pubId}`
+      ? json({ ...f.owner, sourceNoteId: null }, 200, { ETag: '"p-retired"' }) : undefined)
+    await screen.findByText('The original private Note is no longer available.')
+    expect(screen.queryByRole('link', { name: 'Open source Note' })).toBeNull()
+    expect((screen.getByRole('button', { name: 'Update public copy' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(calls.some(c => c.path.startsWith('/api/notes'))).toBe(false)
+  })
   it('accounts for 27 canonical routes, with one reader implementation', () => { expect(PRODUCT_ROUTES).toHaveLength(27); expect(new Set(PRODUCT_ROUTES).size).toBe(27); expect(PRODUCT_ROUTES).not.toContain('/p/:publicationId') })
   it('opens anonymous Explore without any private/module bootstrap', async () => {
     const { calls } = mount('/explore'); await screen.findByRole('heading', { name: f.owner.title })
@@ -113,8 +121,7 @@ describe('deliberate owner workflow', () => {
   it('requires fresh preview after a rejected fingerprint and never silently retries', async () => {
     const { calls } = mount(`/publications/${f.pubId}`, 'authenticated', c => c.method === 'PUT' ? problem(409, 'invalid_lifecycle_transition') : undefined)
     await screen.findByRole('button', { name: 'Update public copy' }); fireEvent.click(screen.getByRole('button', { name: 'Update public copy' }))
-    const choose = await screen.findByRole('dialog'); fireEvent.change(await within(choose).findByLabelText('Original Note'), { target: { value: f.noteId } })
-    await waitFor(() => expect((within(choose).getByRole('button', { name: 'Choose media and preview' }) as HTMLButtonElement).disabled).toBe(false)); fireEvent.click(within(choose).getByRole('button', { name: 'Choose media and preview' }))
+    await screen.findByRole('dialog')
     await screen.findByRole('button', { name: 'Preview public copy' }); await waitFor(() => expect((screen.getByRole('button', { name: 'Preview public copy' }) as HTMLButtonElement).disabled).toBe(false)); fireEvent.click(screen.getByRole('button', { name: 'Preview public copy' }))
     await screen.findByRole('button', { name: 'Confirm public update' }); fireEvent.click(screen.getByRole('button', { name: 'Confirm public update' })); await screen.findByRole('alert')
     expect(screen.queryByRole('button', { name: 'Confirm public update' })).toBeNull(); expect(calls.filter(c => c.method === 'PUT')).toHaveLength(1)

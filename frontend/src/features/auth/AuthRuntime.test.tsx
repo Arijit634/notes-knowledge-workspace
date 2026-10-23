@@ -30,6 +30,26 @@ function AuthorityGate({ auth, load }: { auth: AuthRuntime; load: () => Promise<
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 describe('authority transition with mounted Query observers', () => {
+  it('does not let a superseded completion expose a newer transition before its proof is ready', async () => {
+    const oldProof = deferred<Response>(), newProof = deferred<Response>()
+    const fetcher = vi.fn().mockReturnValueOnce(oldProof.promise).mockReturnValueOnce(newProof.promise)
+    vi.stubGlobal('fetch', fetcher)
+    const auth = new AuthRuntime()
+    const oldNavigation = vi.fn(), newNavigation = vi.fn()
+    const old = auth.establish('anonymous', undefined, oldNavigation).catch(error => error)
+    const current = auth.establish('authenticated', undefined, newNavigation)
+    oldProof.resolve(json({ csrfToken: 'synthetic-stale-proof' }))
+    expect(await old).toBeInstanceOf(Error)
+    expect(auth.state).toBe('unknown')
+    expect(oldNavigation).not.toHaveBeenCalled()
+    expect(newNavigation).not.toHaveBeenCalled()
+    newProof.resolve(json({ csrfToken: 'synthetic-current-proof' }))
+    await current
+    expect(auth.state).toBe('authenticated')
+    expect(newNavigation).toHaveBeenCalledTimes(1)
+    expect(await auth.csrf.forUnsafeRequest()).toBe('synthetic-current-proof')
+  })
+
   it.each(['anonymous', 'mfaRequired'] as const)(
     'unmounts old observers before eviction on authenticated -> %s, even during CSRF bootstrap', async next => {
       let pendingCsrf: Promise<Response> | undefined

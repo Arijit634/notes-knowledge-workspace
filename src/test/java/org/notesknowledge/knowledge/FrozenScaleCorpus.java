@@ -57,7 +57,7 @@ final class FrozenScaleCorpus {
             modality.equals("image")||modality.equals("video")?32:null,modality.equals("image")||modality.equals("video")?32:null,
             modality.equals("audio")||modality.equals("video")?10.0:null,modality.equals("pdf")?20:null,owner,perMedia);
         for(String modality:List.of("note","image","audio","video","pdf")) {
-            var l=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,"a".repeat(64)),modality);
+            var l=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),modality);
             String from=modality.equals("note")?"select note_id,null::uuid attachment_id,owner_user_id from notes.note where owner_user_id=?"
                 :"select note_id,attachment_id,owner_user_id from notes.attachment where owner_user_id=? and media_kind='"+modality+"'";
             jdbc.update("""

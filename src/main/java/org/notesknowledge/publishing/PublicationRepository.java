@@ -50,14 +50,14 @@ class PublicationRepository {
         .param("owner",owner).query(UUID.class).list();}
     List<PublicationRecord.OwnerSummary> page(UUID owner,Instant before,UUID beforeId,int count){
         var q=jdbc().sql("""
-            select p.publication_id,p.title,p.availability,p.published_at,p.updated_at,
+            select p.publication_id,p.source_note_id,p.title,p.availability,p.published_at,p.updated_at,
                 array(select display_label from publishing.publication_snapshot_tag t where t.publication_id=p.publication_id
                     and t.snapshot_revision=p.snapshot_revision order by normalized_label) as tags
             from publishing.publication p
             """+" where owner_user_id=:owner"+(before==null?"":" and (updated_at,publication_id)<(:before,:beforeId)")
-            +" order by updated_at desc,publication_id desc limit :count").param("owner",owner).param("count",count);
+            +" order by updated_at desc,publication_id desc limit :count for update of p").param("owner",owner).param("count",count);
         if(before!=null)q=q.param("before",Timestamp.from(before)).param("beforeId",beforeId);
-        return q.query((r,i)->new PublicationRecord.OwnerSummary(r.getObject("publication_id",UUID.class),r.getString("title"),
+        return q.query((r,i)->new PublicationRecord.OwnerSummary(r.getObject("publication_id",UUID.class),r.getObject("source_note_id",UUID.class),r.getString("title"),
             Arrays.asList((String[])r.getArray("tags").getArray()),r.getString("availability"),r.getTimestamp("published_at").toInstant(),r.getTimestamp("updated_at").toInstant())).list();
     }
     List<PublicationRecord.Media> media(UUID publication){return jdbc().sql("select * from publishing.publication_public_media where publication_id=:id and state='current' order by media_order")

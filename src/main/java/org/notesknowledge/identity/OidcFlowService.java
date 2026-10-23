@@ -22,7 +22,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Service
 @IdentityCoreEnabled
 final class OidcFlowService {
-    record Completion(boolean mfaRequired, String challengeId) { }
+    record Completion(boolean mfaRequired, String challengeId,String intendedDestination) {
+        @Override public String toString(){return "OidcCompletion[REDACTED]";}
+    }
 
     private enum FailureReason {
         PROTOCOL_STATE_INVALID, PROTOCOL_TRANSACTION_EXPIRED,
@@ -77,6 +79,13 @@ final class OidcFlowService {
     }
 
     String begin(OidcProtocolPort.Action action, HttpServletRequest request) {
+        return begin(action,request,action==OidcProtocolPort.Action.LOGIN?"/notes":null);
+    }
+
+    String begin(OidcProtocolPort.Action action,HttpServletRequest request,String intendedDestination) {
+        if(action==OidcProtocolPort.Action.LOGIN&&!OidcIntendedDestination.allowed(intendedDestination)
+                ||action==OidcProtocolPort.Action.LINK&&intendedDestination!=null)
+            throw ApiFailureException.of(ApiFailureException.Kind.INVALID_CONTRACT_INPUT);
         UUID userId = action != OidcProtocolPort.Action.LOGIN
                 ? IdentitySessionState.principal("ROLE_USER") : null;
         rates.check(switch (action) {
@@ -84,6 +93,7 @@ final class OidcFlowService {
             case LINK -> "OIDC_LINK_START";
         }, userId, request);
         FailureReason[] reason = {FailureReason.ACCOUNT_INELIGIBLE};
+        boolean[] installed={false};
         try {
             if (userId != null && !identity.isActive(userId)) deny();
             if (action == OidcProtocolPort.Action.LINK) {
@@ -95,11 +105,28 @@ final class OidcFlowService {
             reason[0] = FailureReason.INTERNAL_FAILURE;
             HttpSession session = request.getSession();
             Instant now = clock.instant();
-            session.setAttribute(OidcSessionTransaction.ATTRIBUTE,
-                    new OidcSessionTransaction(action, authorization, session.getId(), userId,
-                            now, now.plus(policy.transactionLifetime())));
+            transactions.executeWithoutResult(status->{
+                if(action==OidcProtocolPort.Action.LOGIN) {
+                    if(!transactionsRepository.lockAnonymous(session.getId())) {
+                        transactionsRepository.discardStale(request);deny();
+                    }
+                } else {
+                    if(!links.lockEligibleAccount(userId))deny();
+                    var current=sessionAuthority.lockCurrent(userId,session.getId());
+                    if(current==null){transactionsRepository.discardStale(request);deny();}
+                    IdentitySessionState.requireRecent((Object)current.persisted().getAttribute(
+                        IdentitySessionState.RECENT_ATTRIBUTE),userId,clock.instant(),mfaPolicy);
+                }
+                // IMMEDIATE Spring Session flush participates in this transaction;
+                // concurrent starts install one complete current transaction under the row lock.
+                installed[0]=true;
+                session.setAttribute(OidcSessionTransaction.ATTRIBUTE,
+                    new OidcSessionTransaction(action,authorization,session.getId(),userId,
+                        now,now.plus(policy.transactionLifetime()),intendedDestination));
+            });
             return authorization.getAuthorizationRequestUri();
         } catch (RuntimeException failure) {
+            if(installed[0])transactionsRepository.discardStale(request);
             auditFailure(action, userId, reason[0]);
             throw failure;
         }
@@ -220,7 +247,7 @@ final class OidcFlowService {
                     checkpoint.afterOidcLinkAudit(request);
                     delivery.queueOidcNotice(userId, eventId, "google_oidc_linked", now);
                     checkpoint.afterOidcLinkNotice(request);
-                    return new Completion(false, null);
+                    return new Completion(false, null,null);
                 }
                 var link = links.linkForUpdate(principal.issuer(), principal.subject());
                 UUID authenticatedUser;
@@ -260,9 +287,10 @@ final class OidcFlowService {
                 mutated[0] = true;
                 requestSession.removeAttribute(OidcSessionTransaction.ATTRIBUTE);
                 sessions.establish(authenticatedUser, !mfa, request, response);
-                String challengeId = mfa ? challenges.begin(authenticatedUser, request, "oidc") : null;
+                String destination=OidcIntendedDestination.safe(current.intendedDestination());
+                String challengeId = mfa ? challenges.beginOidc(authenticatedUser,request,destination,current.expiresAt()) : null;
                 checkpoint.afterSessionMutation(request);
-                return new Completion(mfa, challengeId);
+                return new Completion(mfa,challengeId,mfa?null:destination);
             });
             if (completed == null) deny();
             return completed;

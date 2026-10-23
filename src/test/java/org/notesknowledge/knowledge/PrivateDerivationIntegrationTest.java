@@ -74,6 +74,8 @@ class PrivateDerivationIntegrationTest {
     @MockitoBean AiDerivationProperties configuration;
     @MockitoBean ProviderDispatchProperties dispatchConfiguration;
     @MockitoBean KnowledgePolicyProperties policyConfiguration;
+    @MockitoBean ProcessingDisclosureResolver disclosures;
+    ProcessingDisclosureFixtures disclosureFixtures;
     @MockitoBean TextEmbeddingPort embeddings;
     @MockitoBean MediaUnderstandingPort media;
     @MockitoBean RateLimitPort rates;
@@ -99,6 +101,7 @@ class PrivateDerivationIntegrationTest {
         when(rates.evaluate(any())).thenReturn(new RateLimitPort.Allowed());
         jdbc.update("update knowledge.knowledge_work_intent set state='obsolete',lease_owner=null,lease_token=null,lease_until=null,next_attempt_at=null,updated_at=clock_timestamp() where state in ('queued','claimed','retry_wait')");
         code="synthetic-"+UUID.randomUUID();when(policyConfiguration.code()).thenReturn(code);
+        disclosureFixtures=new ProcessingDisclosureFixtures(disclosures,configuration);
         owner=account();note=note(owner,true);browser=browser(owner);policy=policy(1,"a");ack(owner,policy);
     }
     @AfterEach void clear(){SecurityContextHolder.clearContext();}
@@ -187,7 +190,7 @@ class PrivateDerivationIntegrationTest {
             try(var child=org.notesknowledge.notes.VideoClipRuntimeFixtures.render(original,plan,first,last)) {
                 byte[] payload=child.bytes();approvals.add(new TransformedMediaIdentity(expected,TransformedMediaIdentity.digest(original),original.length,"video/mp4",
                     child.profile(),child.implementationVersion(),child.artifactSha256(),child.configurationSha256(),TransformedMediaIdentity.digest(payload),payload.length,"video/mp4",
-                    new TransformedMediaIdentity.Scope("video_samples",first,last,plan.timescale(),plan.tick(first),plan.tick(last)),lineage.id(),"gemini",configuration.mediaModel(),"media-understanding","a".repeat(64)).approvalFingerprint());
+                    new TransformedMediaIdentity.Scope("video_samples",first,last,plan.timescale(),plan.tick(first),plan.tick(last)),lineage.id(),"gemini",configuration.mediaModel(),"media-understanding",configuration.approvedPolicyFingerprint()).approvalFingerprint());
                 java.util.Arrays.fill(payload,(byte)0);
             }
             first=last;
@@ -449,7 +452,7 @@ class PrivateDerivationIntegrationTest {
         // Deliberately no media transform/provider call: this proves only the authorization seam.
         return new TransformedMediaIdentity(permit.source().expected(),TransformedMediaIdentity.digest(original),permit.source().sizeBytes(),"application/pdf",
             "pdf-page-v1","synthetic-v1","a".repeat(64),"a".repeat(64),TransformedMediaIdentity.digest(bytes),bytes.length,"image/png",
-            new TransformedMediaIdentity.Scope("pdf_pages",1,1,0,0,0),permit.lineage().id(),"gemini",configuration.mediaModel(),"media-understanding","a".repeat(64));
+            new TransformedMediaIdentity.Scope("pdf_pages",1,1,0,0,0),permit.lineage().id(),"gemini",configuration.mediaModel(),"media-understanding",configuration.approvedPolicyFingerprint());
     }
     @Test void realPageChildrenReachAuthorizedAdapterPersistAndRetrieveWithOriginalOrdinals()throws Exception {
         byte[] original=org.notesknowledge.notes.MeaningfulMediaFixtures.media("mixed").getBytes();
@@ -530,7 +533,7 @@ class PrivateDerivationIntegrationTest {
             byte[] payload=child.bytes();
             approvals.add(new TransformedMediaIdentity(expected,TransformedMediaIdentity.digest(original),original.length,"application/pdf",child.profile(),child.implementationVersion(),
                 child.artifactSha256(),child.configurationSha256(),TransformedMediaIdentity.digest(payload),payload.length,"image/png",
-                new TransformedMediaIdentity.Scope("pdf_pages",page,page,0,0,0),lineage.id(),"gemini",configuration.mediaModel(),"media-understanding","a".repeat(64)).approvalFingerprint());
+                new TransformedMediaIdentity.Scope("pdf_pages",page,page,0,0,0),lineage.id(),"gemini",configuration.mediaModel(),"media-understanding",configuration.approvedPolicyFingerprint()).approvalFingerprint());
         }
         when(dispatchConfiguration.approvedChildFingerprints()).thenReturn(approveChildren?approvals:List.of());
         return claimWithLineage(expected,lineage);
@@ -569,7 +572,12 @@ class PrivateDerivationIntegrationTest {
             verify(representations,never()).activate(any(),any(),any(),any());
         }
     }
-    private void unpaidGemini(){when(configuration.provider()).thenReturn("gemini");when(configuration.tier()).thenReturn("unpaid");when(configuration.region()).thenReturn("global");}
+    private void unpaidGemini(){
+        when(configuration.provider()).thenReturn("gemini");when(configuration.tier()).thenReturn("unpaid");when(configuration.region()).thenReturn("global");
+        // A changed provider binding needs its own immutable, acknowledged deployment policy.
+        code="synthetic-"+UUID.randomUUID();when(policyConfiguration.code()).thenReturn(code);
+        policy=policy(1,"a");ack(owner,policy);
+    }
     private void approve(PrivateAiSourceCurrentness.Expected e){when(dispatchConfiguration.dispatchPolicy()).thenReturn("unpaid-synthetic-demo");when(dispatchConfiguration.approvedSourceFingerprints()).thenReturn(List.of(ProviderDispatchPolicy.fingerprint(e)));}
     private int ownerWorkCount(){return jdbc.queryForObject("select count(*) from knowledge.knowledge_work_intent where owner_user_id=?",Integer.class,owner);}
     private String assertRestrictedProjection() throws Exception {
@@ -1053,7 +1061,7 @@ class PrivateDerivationIntegrationTest {
     private void reconcileAll(){org.notesknowledge.knowledge.spi.PrivateDerivationSource.Cursor cursor=null;int pages=0;do {cursor=reconciler.page(cursor);assertThat(++pages).isLessThan(100);}while(cursor!=null);}
     private float[] vector(){return new float[]{1,0,0,0,0,0,0,0};}
     private PrivateAiSourceCurrentness.Expected noteExpected(){return new PrivateAiSourceCurrentness.Expected(owner,note,null,1,1,null);}
-    private EmbeddingLineage lineageForPolicy(UUID id,long version,String modality) {return EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(id,version,"a".repeat(64)),modality);}
+    private EmbeddingLineage lineageForPolicy(UUID id,long version,String modality) {return EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(id,version,jdbc.queryForObject("select policy_fingerprint from knowledge.processing_policy where processing_policy_id=?",String.class,id)),modality);}
     private KnowledgeWork.Claim claim(PrivateAiSourceCurrentness.Expected e,String modality) {return claimWithLineage(e,lineageForPolicy(policy,1,modality));}
     private KnowledgeWork.Claim claimWithLineage(PrivateAiSourceCurrentness.Expected e,EmbeddingLineage l) {
         var tx=new TransactionTemplate(transactions);tx.execute(s->workRepository.enqueue(e.attachmentId()==null?KnowledgeWork.Kind.NOTE:KnowledgeWork.Kind.ATTACHMENT,e,l.id()));
@@ -1076,7 +1084,7 @@ class PrivateDerivationIntegrationTest {
     private UUID account(){UUID id=jdbc.queryForObject("select uuidv7()",UUID.class);String email="synthetic-"+id+"@example.test";
         jdbc.update("insert into identity.account(user_id,canonical_email,display_email,email_verified_at,account_state,created_at,updated_at) values(?,?,?,now(),'active',now(),now())",id,email,email);return id;}
     private UUID note(UUID user,boolean enabled){return jdbc.queryForObject("insert into notes.note(note_id,owner_user_id,title,markdown,lifecycle_state,ai_enabled,revision,ai_generation,created_at,updated_at) values(uuidv7(),?,'Synthetic','# Heading\nSynthetic body','active',?,1,1,clock_timestamp(),clock_timestamp()) returning note_id",UUID.class,user,enabled);}
-    private UUID policy(long version,String fingerprint){return jdbc.queryForObject("insert into knowledge.processing_policy(policy_code,policy_version,policy_fingerprint,disclosure_revision,effective_at) values(?,?,?,'synthetic-1',clock_timestamp()-interval '1 minute') returning processing_policy_id",UUID.class,code,version,fingerprint.repeat(64));}
+    private UUID policy(long version,String fingerprint){return disclosureFixtures.insert(jdbc,code,version,fingerprint.equals("a"));}
     private void ack(UUID user,UUID id){jdbc.update("insert into knowledge.processing_policy_acknowledgement(user_id,processing_policy_id,disclosure_revision) values(?,?,'synthetic-1')",user,id);}
     private Browser browser(UUID user) throws Exception {
         Session session=sessions.createSession();var context=SecurityContextHolder.createEmptyContext();context.setAuthentication(UsernamePasswordAuthenticationToken.authenticated(new IdentitySessionPrincipal(user),null,List.of(new SimpleGrantedAuthority("ROLE_USER"))));session.setAttribute("SPRING_SECURITY_CONTEXT",context);save(session);

@@ -13,7 +13,7 @@ const result = { deterministicResults: [{ kind: 'url', value: 'https://example.t
   aiAnswer: { claims: ['A grounded synthetic answer.'], conflicting: false }, citations: [{ noteId: id, attachmentId: null, location }],
   coverage: { boundary: 'acceptedAiSources', inspectedSources: 2, completed: false, corpusChanged: false, truncated: true, retryRequired: false, classificationUncertain: true },
   degraded: null, insufficientEvidence: false }
-const policy = { processingPolicyId: id, policyCode: 'synthetic', policyVersion: 1, policyFingerprint: 'a'.repeat(64), disclosureRevision: 'synthetic-v1', effectiveAt: '2026-10-20T00:00:00Z', acknowledged: false, acknowledgementRequired: true }
+const policy = { processingPolicyId: id, policyCode: 'synthetic', policyVersion: 1, policyFingerprint: 'a'.repeat(64), disclosureRevision: 'synthetic-v1', effectiveAt: '2026-10-20T00:00:00Z', acknowledged: false, acknowledgementRequired: true, disclosureContent: 'SYNTHETIC DISCLOSURE FIXTURE ONLY. No network processing.', providerProcessingCategories: ['groundedGeneration', 'mediaUnderstanding', 'queryEmbedding', 'sourceEmbedding', 'structuredExtraction'] }
 const profile = { displayName: 'Synthetic writer', biography: 'A private profile.', handle: null, avatar: null, updatedAt: null }
 const json = (body: unknown, status = 200, headers = {}) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...headers } })
 const problem = (status: number) => json({ type: 'about:blank', status, title: 'Unavailable', code: 'service_unavailable', instance: '/api/knowledge/query', traceId: `tr_${'a'.repeat(32)}` }, status, { 'Content-Type': 'application/problem+json' })
@@ -207,11 +207,73 @@ describe('real private-workspace transport contracts', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' })); await screen.findByRole('alert')
     expect((screen.getByLabelText('Display name') as HTMLInputElement).value).toBe('Keep this draft')
   })
+  it('displays the exact disclosure and acknowledges deliberately without changing AI choices', async () => {
+    let acknowledged = false
+    const { calls } = mount('/settings/privacy', c => c.path === '/api/ai/processing-policy' ? json({ ...policy, acknowledged, acknowledgementRequired: !acknowledged })
+      : c.path.endsWith('/acknowledgements') ? (acknowledged = true, new Response(null, { status: 204 })) : undefined)
+    await screen.findByText(policy.disclosureContent)
+    expect(calls.some(c => c.method === 'POST')).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: 'I acknowledge this processing disclosure' }))
+    await screen.findByText('Disclosure acknowledged. No Note AI choice was changed.')
+    const posts = calls.filter(c => c.method === 'POST')
+    expect(posts).toHaveLength(1)
+    expect(posts[0].body).toEqual({ processingPolicyId: id, policyCode: policy.policyCode, policyVersion: 1, policyFingerprint: policy.policyFingerprint, disclosureRevision: policy.disclosureRevision, confirmAcknowledgement: true })
+    expect(calls.some(c => /ai-access|note-preferences/.test(c.path) && c.method !== 'GET')).toBe(false)
+  })
+  it('reloads changed disclosure and requires a second explicit action instead of retrying acknowledgement', async () => {
+    let version = 1, attempts = 0
+    const { calls } = mount('/settings/privacy', c => {
+      if (c.path === '/api/ai/processing-policy') return json({ ...policy, policyVersion: version, disclosureRevision: `synthetic-v${version}`, disclosureContent: `SYNTHETIC DISCLOSURE VERSION ${version}.` })
+      if (c.path.endsWith('/acknowledgements')) {
+        attempts++; version = 2
+        return json({ type: 'about:blank', title: 'Changed', status: 409, code: 'processing_policy_changed', instance: c.path, traceId: `tr_${'a'.repeat(32)}` }, 409, { 'Content-Type': 'application/problem+json' })
+      }
+      return undefined
+    })
+    await screen.findByText('SYNTHETIC DISCLOSURE VERSION 1.')
+    fireEvent.click(screen.getByRole('button', { name: 'I acknowledge this processing disclosure' }))
+    await screen.findByText('SYNTHETIC DISCLOSURE VERSION 2.')
+    await screen.findByText(/The processing policy changed/)
+    expect(attempts).toBe(1)
+    expect(calls.filter(c => c.method === 'POST')).toHaveLength(1)
+  })
+  it('reads a private avatar after fresh bootstrap and releases its object URL on removal', async () => {
+    const create = vi.fn(() => 'blob:synthetic-private-avatar'), revoke = vi.fn()
+    const OriginalURL = URL
+    vi.stubGlobal('URL', Object.assign(class extends OriginalURL {}, { createObjectURL: create, revokeObjectURL: revoke }))
+    let avatar: Omit<typeof profile, 'avatar'> & { avatar: object | null } = { ...profile, avatar: { mediaType: 'image/png', width: 1, height: 1, byteSize: 3, createdAt: '2026-10-23T00:00:00Z' } }
+    const { calls } = mount('/settings/profile', c => c.path === '/api/me/profile' ? json(avatar)
+      : c.path === '/api/me/profile/avatar/content' ? new Response(new Blob(['png'], { type: 'image/png' }), { headers: { 'Content-Type': 'image/png' } })
+      : c.path === '/api/me/profile/avatar' && c.method === 'DELETE' ? (avatar = { ...avatar, avatar: null }, new Response(null, { status: 204 })) : undefined)
+    const image = await screen.findByRole('img', { name: 'Your private profile avatar' })
+    expect(image.getAttribute('src')).toBe('blob:synthetic-private-avatar')
+    expect(calls.some(c => c.path === '/api/me/profile/avatar/content' && c.method === 'GET')).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Remove avatar' }))
+    await screen.findByText('Avatar removed.')
+    expect(revoke).toHaveBeenCalledWith('blob:synthetic-private-avatar')
+    expect(screen.queryByRole('img', { name: 'Your private profile avatar' })).toBeNull()
+    expect(localStorage.length + sessionStorage.length).toBe(0)
+  })
   it('does not offer acknowledgement when the backend has supplied only policy identity, not disclosure text', async () => {
-    const { calls } = mount('/settings/privacy')
-    await screen.findByText(/server has not supplied the current disclosure text/)
-    expect(screen.queryByRole('button', { name: 'Acknowledge current disclosure' })).toBeNull()
+    const { disclosureContent: _content, providerProcessingCategories: _categories, ...identityOnly } = policy
+    const { calls } = mount('/settings/privacy', c => c.path === '/api/ai/processing-policy' ? json(identityOnly) : undefined)
+    await screen.findByRole('button', { name: 'Retry disclosure' })
+    expect(screen.queryByRole('button', { name: 'I acknowledge this processing disclosure' })).toBeNull()
     expect(calls.some(c => c.path.includes('acknowledgements'))).toBe(false)
+  })
+  it('aborts an old private-avatar request and ignores its late response after authority loss', async () => {
+    const create = vi.fn(() => 'blob:must-not-be-created'), revoke = vi.fn(), OriginalURL = URL
+    vi.stubGlobal('URL', Object.assign(class extends OriginalURL {}, { createObjectURL: create, revokeObjectURL: revoke }))
+    let release!: (response: Response) => void
+    const { auth, calls } = mount('/settings/profile', c => c.path === '/api/me/profile'
+      ? json({ ...profile, avatar: { mediaType: 'image/png', width: 1, height: 1, byteSize: 3, createdAt: '2026-10-23T00:00:00Z' } })
+      : c.path === '/api/me/profile/avatar/content' ? new Promise<Response>(resolve => { release = resolve }) : undefined)
+    await waitFor(() => expect(calls.some(c => c.path.endsWith('/avatar/content'))).toBe(true))
+    await act(() => auth.establish('anonymous'))
+    expect(calls.find(c => c.path.endsWith('/avatar/content'))?.signal?.aborted).toBe(true)
+    await act(async () => { release(new Response(new Blob(['png'], { type: 'image/png' }), { headers: { 'Content-Type': 'image/png' } })); await Promise.resolve() })
+    expect(create).not.toHaveBeenCalled(); expect(screen.queryByRole('img', { name: 'Your private profile avatar' })).toBeNull()
+    expect(auth.queries.getQueryCache().getAll().every(q => !q.queryKey.includes('profile'))).toBe(true)
   })
   it('separates the future-note preference from a confirmed existing-note bulk change', async () => {
     const { calls } = mount('/settings/privacy', c => c.method === 'PUT' ? json({ defaultAiEnabledForNewNotes: true })
@@ -254,6 +316,7 @@ describe('real private-workspace transport contracts', () => {
 })
 
 describe('bounded decoding and navigation', () => {
+  it.each([`/notes/${id}\n`, `/publication/${id}\r`, '/profile/synthetic_writer\n'])('rejects trailing controls even after a syntactically valid dynamic route %s', target => expect(safeDestination(target)).toBeNull())
   it.each(['https://evil.invalid', '//evil.invalid', '/notes/%2e%2e', '/notes\\evil', '/notes?return=https://evil.invalid', '/ask#private', '/admin', '/notes\n'])('rejects unsafe return target %s', target => expect(safeDestination(target)).toBeNull())
   it('allows only implemented safe destinations', () => { expect(safeDestination(`/notes/${id}`)).toBe(`/notes/${id}`); expect(safeDestination('/ask')).toBe('/ask') })
   it('decodes the backend opaque dotted operation handle without interpreting its authority', () => expect(operation({ operationId: handle, status: 'queued', submittedAt: '2026-10-20T00:00:00Z', result: null }).operationId).toBe(handle))

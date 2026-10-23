@@ -41,15 +41,20 @@ class MediaQualityQualificationCommandIntegrationTest {
                 .withUsername("synthetic_migrator").withPassword("synthetic-qualification-password");
             var redis=new org.testcontainers.containers.GenericContainer<>("redis:8.10.2").withExposedPorts(6379)){
             postgres.start();redis.start();
+            var admin=new JdbcTemplate(new org.springframework.jdbc.datasource.DriverManagerDataSource(postgres.getJdbcUrl(),postgres.getUsername(),postgres.getPassword()));
+            Path disclosureFile=directory.resolve("synthetic-disclosure.json");
+            var disclosure=ProcessingDisclosureFixtures.file(admin,disclosureFile,"synthetic-media-qualification","gemini","unpaid","global");
+            var disclosureSettings=new LinkedHashMap<String,String>();ProcessingDisclosureFixtures.deployment(disclosure,disclosureFile,disclosureSettings);
             String[] args={"--spring.datasource.url="+postgres.getJdbcUrl(),"--spring.datasource.username="+postgres.getUsername(),"--spring.datasource.password="+postgres.getPassword(),
                 "--spring.data.redis.host="+redis.getHost(),"--spring.data.redis.port="+redis.getMappedPort(6379),
                 "--knowledge.derivation.provider=gemini","--knowledge.derivation.embedding-model=gemini-embedding-2","--knowledge.derivation.media-model=gemini-3.8-flash",
                 "--knowledge.derivation.model-revision=synthetic-wire-v1","--knowledge.derivation.region=global","--knowledge.derivation.tier=unpaid",
                 "--knowledge.derivation.configuration-id=synthetic-wire-v1","--knowledge.derivation.adapter-version=google-v2","--knowledge.derivation.dimension=8",
-                "--knowledge.derivation.operator=cosine","--knowledge.derivation.normalization=none","--knowledge.derivation.approved-policy-fingerprint="+"a".repeat(64),
+                "--knowledge.derivation.operator=cosine","--knowledge.derivation.normalization=none","--knowledge.derivation.approved-policy-fingerprint="+disclosure.fingerprint(),
                 "--knowledge.derivation.pdf-page-children="+children,"--knowledge.derivation.video-children="+children,
                 "--knowledge.derivation.pdf-transform-fingerprint="+org.notesknowledge.notes.PdfPageRuntimeFixtures.transformFingerprint(),
                 "--knowledge.derivation.video-transform-fingerprint="+org.notesknowledge.notes.VideoClipRuntimeFixtures.fingerprint()};
+            var arguments=new ArrayList<String>(List.of(args));disclosureSettings.forEach((k,v)->arguments.add("--"+k+"="+v));args=arguments.toArray(String[]::new);
             var selection=children?List.of("mixed","long-video"):failGeneration?List.of("image"):List.of("image","mixed","audio","tones","video","diagram-image","diagram-pdf","text-pdf","scan-pdf");
             Class<?>[] configurations={ControlledProvider.class,org.notesknowledge.notes.PdfPageRuntimeFixtures.class,org.notesknowledge.notes.VideoClipRuntimeFixtures.class};
             try(var context=MediaQualityQualificationCommand.start(directory,null,args,configurations)){

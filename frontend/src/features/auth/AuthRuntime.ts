@@ -22,6 +22,8 @@ export class AuthRuntime {
   private bootPromise: Promise<void> | null = null
   private listeners = new Set<() => void>()
   private registered = false
+  private completingTransition = false
+  private transitionEpoch = 0
 
   constructor() {
     captureSecurityLink(window.location, window.history, this.continuation)
@@ -53,7 +55,7 @@ export class AuthRuntime {
     })
   }
 
-  get state(): LocalSessionState { return this.session.state }
+  get state(): LocalSessionState { return this.completingTransition ? 'unknown' : this.session.state }
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener)
     return () => { this.listeners.delete(listener) }
@@ -84,14 +86,25 @@ export class AuthRuntime {
     try { await this.csrf.refresh() } finally { this.notify() }
   }
 
-  async establish(state: 'anonymous' | 'mfaRequired' | 'authenticated', challengeId?: unknown): Promise<void> {
+  async establish(state: 'anonymous' | 'mfaRequired' | 'authenticated', challengeId?: unknown,
+    afterProtectionReady?: () => void | Promise<void>): Promise<void> {
     if (state === 'mfaRequired' && !validChallenge(challengeId)) throw new ApiProtocolError()
-    this.session.transition(state)
-    this.continuation.clear()
-    if (state === 'mfaRequired') {
-      this.continuation.challengeId = challengeId as string
+    // Sign-in navigation hides intermediate authority until proof and navigation
+    // commit. In-place flows (such as reset success) must not be remounted.
+    // This flag grants no authority.
+    const epoch = ++this.transitionEpoch
+    this.completingTransition = afterProtectionReady !== undefined
+    try {
+      this.session.transition(state)
+      this.continuation.clear()
+      if (state === 'mfaRequired') this.continuation.challengeId = challengeId as string
+      if (this.completingTransition) this.notify()
+      await this.csrf.refresh()
+      if (epoch !== this.transitionEpoch) throw new ApiProtocolError()
+      await afterProtectionReady?.()
+    } finally {
+      if (epoch === this.transitionEpoch) { this.completingTransition = false; this.notify() }
     }
-    try { await this.csrf.refresh() } finally { this.notify() }
   }
 
   async logout(): Promise<void> {

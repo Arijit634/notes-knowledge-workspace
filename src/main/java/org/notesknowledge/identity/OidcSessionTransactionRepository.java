@@ -59,4 +59,14 @@ class OidcSessionTransactionRepository {
     void discardStale(HttpServletRequest request) {
         staleRequests.discardStaleRequestSession(request);
     }
+
+    boolean lockAnonymous(String sessionId) {
+        boolean exists=!jdbc.queryForList("select primary_id from identity.spring_session where session_id=? for update",String.class,sessionId).isEmpty();
+        if(!exists)return false;
+        Session persisted=sessions.findById(sessionId);
+        if(persisted==null)return false;
+        SecurityContext context=persisted.getAttribute("SPRING_SECURITY_CONTEXT");
+        return context==null||context.getAuthentication()==null
+            ||!(context.getAuthentication().getPrincipal() instanceof IdentitySessionPrincipal);
+    }
 }

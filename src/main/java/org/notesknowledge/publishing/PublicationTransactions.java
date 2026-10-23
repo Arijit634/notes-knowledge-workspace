@@ -44,7 +44,7 @@ class PublicationTransactions {
     private final PublicExposureCoordinator exposure;
     private final DatabaseUuidV7Generator ids;
     private final Clock clock;
-    private final StrongCoreEtagCodec etags;
+    private final OwnerPublicationEtag etags;
     private final IfMatchPrecondition preconditions;
     private final PublicationPreviewFingerprintCodec fingerprints;
     private final OpaqueCursorCodec cursors;
@@ -53,7 +53,7 @@ class PublicationTransactions {
     PublicationTransactions(PublicationRepository repository,PublishableSourceApi notes,AttachmentSourceApi attachments,
         PublicProfileApi profiles,ObjectProvider<AccountEligibilityApi> eligibility,ObjectProvider<RecentAuthenticationApi> recent,
         @Value("${publishing.recent-auth-required:true}") boolean recentRequired,PublicProjectionApi discovery,
-        PublicExposureCoordinator exposure,DatabaseUuidV7Generator ids,Clock clock,StrongCoreEtagCodec etags,
+        PublicExposureCoordinator exposure,DatabaseUuidV7Generator ids,Clock clock,OwnerPublicationEtag etags,
         IfMatchPrecondition preconditions,PublicationPreviewFingerprintCodec fingerprints,OpaqueCursorCodec cursors,PublicationTelemetry telemetry,
         org.notesknowledge.knowledge.PublicKnowledgeApi publicKnowledge) {
         this.repository=repository;this.notes=notes;this.attachments=attachments;this.profiles=profiles;this.eligibility=eligibility;
@@ -69,7 +69,7 @@ class PublicationTransactions {
     @Transactional
     Prepared prepareReplacement(UUID owner,UUID id,String ifMatch,List<UUID> selection,HttpServletRequest request) {
         authorize(owner,request,true);
-        var current=requireOwner(owner,id,false);
+        var current=requireOwner(owner,id,true);
         preconditions.requireCurrent(ifMatch,etag(current));
         var source=notes.sourceStatus(owner,current.note(),current.sourceRevision());
         if(!source.updateReady())throw ApiFailureException.of(ApiFailureException.Kind.INVALID_LIFECYCLE_TRANSITION);
@@ -122,7 +122,7 @@ class PublicationTransactions {
         return new Committed(etagged(requireOwner(owner,id,false)),retired);
     }
     @Transactional
-    Etagged read(UUID owner,UUID id,HttpServletRequest request){authorize(owner,request,false);return etagged(requireOwner(owner,id,false));}
+    Etagged read(UUID owner,UUID id,HttpServletRequest request){authorize(owner,request,false);return etagged(requireOwner(owner,id,true));}
     @Transactional
     SourceStatus status(UUID owner,UUID id,HttpServletRequest request){
         authorize(owner,request,false);var p=requireOwner(owner,id,false);var source=notes.sourceStatus(owner,p.note(),p.sourceRevision());
@@ -134,7 +134,10 @@ class PublicationTransactions {
         var paging=new ScopedCursorPage(cursors,"OWNER_PUBLICATIONS",owner.toString(),"ALL","UPDATED_DESC");
         var pos=paging.position(cursor);var rows=repository.page(owner,pos.before(),pos.id(),limit+1);
         boolean more=rows.size()>limit;var visible=more?rows.subList(0,limit):rows;
-        return new CursorPage<>(visible,more?paging.next(visible.getLast().updatedAt(),visible.getLast().id()):null);
+        var existing=notes.existingNavigationSources(owner,visible.stream().map(PublicationRecord.OwnerSummary::sourceNoteId).toList());
+        var views=visible.stream().map(p->new PublicationRecord.OwnerSummary(p.id(),existing.contains(p.sourceNoteId())?p.sourceNoteId():null,
+            p.title(),p.tags(),p.availability(),p.publishedAt(),p.updatedAt())).toList();
+        return new CursorPage<>(views,more?paging.next(visible.getLast().updatedAt(),visible.getLast().id()):null);
     }
     @Transactional(readOnly=true)
     PublicView publicView(UUID id) {
@@ -198,10 +201,12 @@ class PublicationTransactions {
         telemetry.denialAfterCommit(PublicationTelemetry.Denial.MODERATION);
     }
     private PublicationRecord requireOwner(UUID owner,UUID id,boolean lock){return repository.owner(owner,id,lock).orElseThrow(PublicationTransactions::missing);}
-    private Etagged etagged(PublicationRecord p){return new Etagged(view(p),etag(p));}
-    private PublicationRecord.OwnerView view(PublicationRecord p){return new PublicationRecord.OwnerView(p.id(),p.title(),p.markdown(),p.tags(),p.state(),"/p/"+p.id(),
+    private Etagged etagged(PublicationRecord p){var v=view(p);return new Etagged(v,etags.encode(v,p.snapshot(),p.generation()));}
+    private PublicationRecord.OwnerView view(PublicationRecord p){
+        var source=notes.existingNavigationSources(p.owner(),List.of(p.note())).contains(p.note())?p.note():null;
+        return new PublicationRecord.OwnerView(p.id(),source,p.title(),p.markdown(),p.tags(),p.state(),"/p/"+p.id(),
         repository.media(p.id()).stream().map(PublicationRecord.Media::view).toList(),p.publishedAt(),p.updatedAt());}
-    private String etag(PublicationRecord p){return etags.encode(new PublicationCoreVersion(p.id(),p.snapshot(),p.generation()));}
+    private String etag(PublicationRecord p){return etagged(p).etag();}
     private java.time.Instant now(){return clock.instant().truncatedTo(ChronoUnit.MILLIS);}
     static ApiFailureException missing(){return ApiFailureException.of(ApiFailureException.Kind.RESOURCE_NOT_FOUND);}
 }

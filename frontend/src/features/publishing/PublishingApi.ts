@@ -25,14 +25,14 @@ export function publicMedia(value: unknown, publicationId: string): PublicMedia 
   if (contentUrl !== `/api/public/publications/${publicationId}/media/${id}/content`) throw new ApiProtocolError()
   return { id, mediaKind: mediaKind(m.mediaKind, m.mediaType), mediaType: text(m.mediaType, 40), displayName: text(m.displayName, 500), sizeBytes: integer(m.sizeBytes), contentUrl }
 }
-export type OwnerSummary = { id: string; title: string; tags: string[]; availability: 'active' | 'unpublished' | 'removed'; publishedAt: string; updatedAt: string }
+export type OwnerSummary = { id: string; sourceNoteId: string | null; title: string; tags: string[]; availability: 'active' | 'unpublished' | 'removed'; publishedAt: string; updatedAt: string }
 export type OwnerPublication = OwnerSummary & { markdown: string; publicUrl: string; media: PublicMedia[] }
 export type PublicPublication = { id: string; title: string; markdown: string; tags: string[]; author: PublicAuthor; media: PublicMedia[]; publishedAt: string; engagement: { likeCount: number; approximateViewCount: number }; viewerLiked?: boolean }
 export const tags = (value: unknown) => array(value, v => text(v, 100), 50)
 export function summary(value: unknown): OwnerSummary {
   const p = record(value), availability = p.availability
   if (availability !== 'active' && availability !== 'unpublished' && availability !== 'removed') throw new ApiProtocolError()
-  return { id: uuid(p.id), title: text(p.title, 500), tags: tags(p.tags), availability, publishedAt: text(p.publishedAt, 64), updatedAt: text(p.updatedAt, 64) }
+  return { id: uuid(p.id), sourceNoteId: p.sourceNoteId === null ? null : uuid(p.sourceNoteId), title: text(p.title, 500), tags: tags(p.tags), availability, publishedAt: text(p.publishedAt, 64), updatedAt: text(p.updatedAt, 64) }
 }
 export function ownerPublication(value: unknown): OwnerPublication {
   const p = record(value), s = summary(p), publicUrl = text(p.publicUrl, 100)

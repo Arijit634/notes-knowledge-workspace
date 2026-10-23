@@ -67,6 +67,13 @@ class NotesRepository {
                 .query(NotesRepository::map).optional();
     }
 
+    java.util.Set<UUID> existingNavigationSources(UUID owner,java.util.List<UUID> ids) {
+        if(ids.isEmpty())return java.util.Set.of();
+        return java.util.Set.copyOf(jdbc().sql("select note_id from notes.note where owner_user_id=:owner "
+            +"and note_id in (:ids) and lifecycle_state<>'logically_deleted'")
+            .param("owner",owner).param("ids",ids).query(UUID.class).list());
+    }
+
     Optional<NoteRecord> lock(UUID owner, UUID id) {
         // A separate post-lock read gets a fresh READ COMMITTED snapshot if the
         // lock waited for another tag command; root and children stay consistent.

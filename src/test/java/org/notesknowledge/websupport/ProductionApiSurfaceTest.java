@@ -41,7 +41,7 @@ class ProductionApiSurfaceTest {
                 "/api/notes/{noteId}/trash", "/api/notes/{noteId}/restore",
                 "/api/notes/{noteId}/ai-access", "/api/notes/ai-access-bulk",
                 "/api/notes/{noteId}/versions", "/api/notes/{noteId}/versions/{versionId}",
-                "/api/notes/{noteId}/versions/{versionId}/restore", "/api/me/profile", "/api/me/profile/avatar",
+                "/api/notes/{noteId}/versions/{versionId}/restore", "/api/me/profile", "/api/me/profile/avatar", "/api/me/profile/avatar/content",
                 "/api/notes/{noteId}/attachments", "/api/notes/{noteId}/attachments/{attachmentId}",
                 "/api/notes/{noteId}/attachments/{attachmentId}/content", "/api/ai/processing-policy", "/api/ai/processing-policy/acknowledgements", "/api/notes/{noteId}/ai-processing",
                 "/api/knowledge/query", "/api/knowledge/operations/{operationId}", "/api/notes/{noteId}/related", "/api/notes/{noteId}/organization-suggestions",
@@ -75,6 +75,10 @@ class ProductionApiSurfaceTest {
                         org.springframework.web.bind.annotation.RequestMethod.DELETE);
         assertThat(requestMappings.getHandlerMethods().keySet().stream()
                 .filter(mapping -> mapping.getPatternValues().contains("/api/notes/{noteId}/attachments/{attachmentId}/content"))
+                .flatMap(mapping -> mapping.getMethodsCondition().getMethods().stream()))
+                .containsExactly(org.springframework.web.bind.annotation.RequestMethod.GET);
+        assertThat(requestMappings.getHandlerMethods().keySet().stream()
+                .filter(mapping -> mapping.getPatternValues().contains("/api/me/profile/avatar/content"))
                 .flatMap(mapping -> mapping.getMethodsCondition().getMethods().stream()))
                 .containsExactly(org.springframework.web.bind.annotation.RequestMethod.GET);
     }
