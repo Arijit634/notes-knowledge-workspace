@@ -29,7 +29,24 @@ class ProcessingDisclosureTest {
         assertThat(d.fingerprint()).isEqualTo("25ad3e180b76cd302e71d746d9ca2b9f75cef2d5fdfd78bdbb407d86b183263b");
         String escaped=new String(valid(),StandardCharsets.UTF_8).replace("TEST","\\u0054EST");
         assertThat(ProcessingDisclosure.decode(escaped.getBytes(StandardCharsets.UTF_8)).fingerprint()).isEqualTo(d.fingerprint());
+        String escapedLf=new String(valid(),StandardCharsets.UTF_8).replace("\\n","\\u000a");
+        assertThat(ProcessingDisclosure.decode(escapedLf.getBytes(StandardCharsets.UTF_8)).fingerprint()).isEqualTo(d.fingerprint());
         assertThat(d.toString()).doesNotContain(d.content(),ID.toString());
+    }
+    @Test void literalLfFileWhitespacePreservesContentAndFingerprint() {
+        var expected=ProcessingDisclosure.decode(valid());
+        String input=new String(valid(),StandardCharsets.UTF_8);
+        for(String formatted:java.util.List.of("\n"+input,"{\n"+input.substring(1),input+"\n")) {
+            var actual=ProcessingDisclosure.decode(formatted.getBytes(StandardCharsets.UTF_8));
+            assertThat(actual.content()).isEqualTo(expected.content());
+            assertThat(actual.fingerprint()).isEqualTo(expected.fingerprint());
+        }
+    }
+    @ParameterizedTest @ValueSource(strings={"\r\n","\r"})
+    void literalCarriageReturnFileWhitespaceIsRejected(String whitespace) {
+        String input=new String(valid(),StandardCharsets.UTF_8);
+        for(String formatted:java.util.List.of(whitespace+input,"{"+whitespace+input.substring(1),input+whitespace))
+            denied(()->ProcessingDisclosure.decode(formatted.getBytes(StandardCharsets.UTF_8)));
     }
     @ParameterizedTest @ValueSource(strings={"missing","tampered","identity","version","revision","effective","provider","tier","region","categories","approval"})
     void unapprovedOrMisboundDisclosureFailsClosed(String change)throws Exception {

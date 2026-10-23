@@ -48,6 +48,7 @@ import tools.jackson.databind.ObjectMapper;
 @Tag("DATABASE") @Tag("API") @Tag("SECURITY") @Tag("RETRIEVAL")
 @Testcontainers @SpringBootTest @AutoConfigureMockMvc
 class KnowledgeFoundationIntegrationTest {
+    @org.junit.jupiter.api.io.TempDir java.nio.file.Path disclosureDirectory;
     @Container static final PostgreSQLContainer postgres=new PostgreSQLContainer("pgvector/pgvector:0.8.6-pg18-trixie")
             .withDatabaseName("knowledge_foundation").withUsername("knowledge_migrator").withPassword("synthetic-knowledge-password");
     @DynamicPropertySource static void properties(DynamicPropertyRegistry r) {
@@ -337,20 +338,43 @@ class KnowledgeFoundationIntegrationTest {
         assertThat(getPolicy(b,503).toString()).doesNotContain("synthetic-secret","SQL","host-path","Exception");
     }
 
-    @Test void missingVerifiedDisclosureRejectsDirectAndRepeatedAcknowledgementAndWork()throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"missing","crlf","carriageReturn"})
+    void unverifiedDisclosureRejectsDirectAndRepeatedAcknowledgementAndWork(String invalidFile)throws Exception {
         var e=expectation(true);var b=browser(e.owner(),"ROLE_USER");UUID id=policy(1);
         var exact=ackBody(getPolicy(b,200));postAck(b,exact,204);
         var intent=work.enqueueIfAbsent(KnowledgeWork.Kind.NOTE,e);
         var claim=work.claim(new LeaseOwner("synthetic-disclosure"),1).getFirst();
         assertThat(work.revalidate(claim)).isPresent();
-        disclosureFixtures.remove(id);
-        assertThat(getPolicy(b,503).toString()).doesNotContain("SYNTHETIC TEST FIXTURE","disclosureContent","fingerprint");
-        postAck(b,exact,503);
-        assertThatThrownBy(()->work.revalidate(claim)).isInstanceOf(org.notesknowledge.websupport.ApiFailureException.class);
+        if(invalidFile.equals("missing"))disclosureFixtures.remove(id);
+        else {
+            var row=policyRepository.current(code).orElseThrow();
+            byte[] bundle=ProcessingDisclosureFixtures.bundle(id,code,row.version(),row.disclosureRevision(),row.effectiveAt(),
+                "synthetic","synthetic","synthetic");
+            var decoded=ProcessingDisclosure.decode(bundle);
+            var file=disclosureDirectory.resolve("synthetic-disclosure.json");
+            var props=new ProcessingDisclosureProperties(file.toString(),decoded.fingerprint(),decoded.provider(),decoded.tier(),decoded.region(),decoded.categories());
+            java.nio.file.Files.write(file,bundle);
+            assertThat(new ProcessingDisclosureResolver(props,derivationConfiguration).require(row)).isEqualTo(decoded);
+            String whitespace=invalidFile.equals("crlf")?"\r\n":"\r";
+            String invalid="{"+whitespace+new String(bundle,StandardCharsets.UTF_8).substring(1);
+            java.nio.file.Files.writeString(file,invalid,StandardCharsets.UTF_8);
+            // A replacement deployment snapshot is loaded outside authoritative transactions.
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            var invalidSnapshot=new ProcessingDisclosureResolver(props,derivationConfiguration);
+            doAnswer(call->invalidSnapshot.require(call.getArgument(0))).when(disclosures).require(any());
+        }
+        var failure=getPolicy(b,503);
+        assertThat(failure.get("code").asText()).isEqualTo("service_unavailable");
+        assertThat(failure.toString()).doesNotContain("SYNTHETIC TEST FIXTURE","disclosureContent","fingerprint","Exception");
+        assertThat(json.readTree(postAck(b,exact,503)).get("code").asText()).isEqualTo("service_unavailable");
+        assertThatThrownBy(()->work.revalidate(claim)).isInstanceOfSatisfying(org.notesknowledge.websupport.ApiFailureException.class,
+            failureException->assertThat(failureException.kind()).isEqualTo(org.notesknowledge.websupport.ApiFailureException.Kind.SERVICE_UNAVAILABLE));
         assertThat(jdbc.queryForObject("select count(*) from knowledge.processing_policy_acknowledgement where user_id=? and processing_policy_id=?",
             Integer.class,e.owner(),id)).isEqualTo(1);
         assertThat(state(intent.id())).isEqualTo("claimed");
-        UUID other=account();var otherBrowser=browser(other,"ROLE_USER");postAck(otherBrowser,exact,503);
+        UUID other=account();var otherBrowser=browser(other,"ROLE_USER");
+        assertThat(json.readTree(postAck(otherBrowser,exact,503)).get("code").asText()).isEqualTo("service_unavailable");
         assertThat(jdbc.queryForObject("select count(*) from knowledge.processing_policy_acknowledgement where user_id=?",Integer.class,other)).isZero();
     }
 

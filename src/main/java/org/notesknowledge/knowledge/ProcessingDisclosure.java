@@ -39,7 +39,8 @@ record ProcessingDisclosure(UUID id, String code, long version, String revision,
             if (bytes == null || bytes.length == 0 || bytes.length > MAX_FILE_BYTES) throw unavailable();
             String input = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
                     .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();
-            if (input.charAt(0) == '\ufeff') throw unavailable();
+            // Deployment files must already be LF-only; never normalize approved text.
+            if (input.charAt(0) == '\ufeff' || input.indexOf('\r') >= 0) throw unavailable();
             JsonNode root = JSON.readTree(input);
             if (root == null || !root.isObject() || root.size() != FIELDS.size()
                     || root.properties().stream().anyMatch(e -> !FIELDS.contains(e.getKey()))
