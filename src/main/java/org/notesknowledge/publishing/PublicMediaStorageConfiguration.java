@@ -12,6 +12,7 @@ import org.springframework.context.annotation.Configuration;
 @org.springframework.boot.context.properties.EnableConfigurationProperties(PublicMediaStorageProperties.class)
 class PublicMediaStorageConfiguration {
     @Bean @ConditionalOnMissingBean(PublicMediaObjectStore.class)
+    @org.springframework.context.annotation.Profile("!localhost")
     @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(prefix="publishing.media-storage",name="enabled",havingValue="false",matchIfMissing=true)
     PublicMediaObjectStore unavailablePublicMediaStore(){return new PublicMediaObjectStore(){
         private RuntimeException unavailable(){return ApiFailureException.of(ApiFailureException.Kind.SERVICE_UNAVAILABLE);}
