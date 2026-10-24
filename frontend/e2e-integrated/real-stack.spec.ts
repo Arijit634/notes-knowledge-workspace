@@ -1,8 +1,9 @@
-import { expect, test, type Page, type TestInfo } from '@playwright/test'
+import { expect, test, type Page, type Response, type TestInfo } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { openTools, sourceEditor } from '../e2e/editor-support'
 import { control, csrf, logout, mutate, noOverflow, observation, register, runtime } from './stack-support'
+import { playNativeMedia } from './native-media-support'
 
 // No page.route/route.fulfill: every application request reaches Spring and PostgreSQL.
 test.beforeEach(async () => { await control('isolate-transient-rate-state') })
@@ -168,6 +169,18 @@ for (const fixture of ['scene.mp4', 'multiframe.mp4']) test(`real native ${fixtu
 })
 
 async function nativePlayback(page: Page, info: TestInfo, name: string, element: 'audio' | 'video') {
+  const responses: Array<Record<string, string | number | null>> = []
+  const observeResponse = (response: Response) => {
+    if (!/^\/api\/notes\/[0-9a-f-]{36}\/attachments\/[0-9a-f-]{36}\/content$/.test(new URL(response.url()).pathname)) return
+    const headers = response.headers()
+    // No URLs, identifiers, cookies, request headers or response bodies.
+    if (responses.length < 16) responses.push({ status: response.status(),
+      contentType: headers['content-type'] ?? null, contentLength: headers['content-length'] ?? null,
+      contentRange: headers['content-range'] ?? null, acceptRanges: headers['accept-ranges'] ?? null,
+      noStore: headers['cache-control'] === 'no-store' ? 'yes' : 'no',
+      nosniff: headers['x-content-type-options'] === 'nosniff' ? 'yes' : 'no' })
+  }
+  page.on('response', observeResponse)
   // Capture native error codes before React removes the failed player. Only a
   // bounded enum/numeric record, never URLs, bytes, cookies or exception text.
   await page.evaluate(() => {
@@ -189,9 +202,18 @@ async function nativePlayback(page: Page, info: TestInfo, name: string, element:
     await expect(player).toBeVisible()
     await expect.poll(() => player.evaluate((media: HTMLMediaElement) =>
       media.readyState >= 1 && Number.isFinite(media.duration) && media.duration > 0)).toBe(true)
-    // Loop short frozen clips; still require real, advancing native playback.
-    await player.evaluate(async (media: HTMLMediaElement) => { media.muted = true; media.loop = true; await media.play() })
+    // Exercise the product's non-looping controls. Chromium can repeatedly reset
+    // a one-sample clip to zero when the harness forces looping, hiding native
+    // progress from polling. Natural completion keeps its positive final time.
+    expect(await player.evaluate((media: HTMLMediaElement) => media.loop)).toBe(false)
+    const playOutcome = await player.evaluate(playNativeMedia)
     await expect.poll(() => player.evaluate((media: HTMLMediaElement) => media.currentTime)).toBeGreaterThan(0)
+    await observation(info, 'native-media-success', { playOutcome, ...await player.evaluate((media: HTMLMediaElement) => ({
+      element: media.tagName, readyState: media.readyState, networkState: media.networkState,
+      duration: media.duration, currentTime: media.currentTime, ended: media.ended,
+      loop: media.loop, errorCode: media.error?.code ?? null,
+      decodedFrames: media instanceof HTMLVideoElement ? media.getVideoPlaybackQuality().totalVideoFrames : null,
+    })) })
   } catch (failure) {
     const state = await page.evaluate(() => {
       const dialog = document.querySelector('[role="dialog"]'), media = dialog?.querySelector<HTMLMediaElement>('audio, video')
@@ -204,6 +226,9 @@ async function nativePlayback(page: Page, info: TestInfo, name: string, element:
     }).catch(() => ({ observerUnavailable: true }))
     await observation(info, 'native-media-state', { name, ...state })
     throw failure
+  } finally {
+    page.off('response', observeResponse)
+    await observation(info, 'native-media-http', { fixture: name, responses })
   }
   await page.keyboard.press('Escape'); await expect(dialog).not.toBeVisible()
 }
