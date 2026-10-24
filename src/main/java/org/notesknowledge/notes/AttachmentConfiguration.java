@@ -16,6 +16,7 @@ import org.springframework.core.env.Environment;
 class AttachmentConfiguration {
     @Bean AttachmentMediaValidator attachmentMediaValidator(org.springframework.beans.factory.ObjectProvider<io.micrometer.core.instrument.MeterRegistry> meters) { return new AttachmentMediaValidator(meters.getIfAvailable()); }
     @Bean @ConditionalOnMissingBean(PrivateAttachmentObjectStore.class)
+    @org.springframework.context.annotation.Profile("!localhost")
     @ConditionalOnProperty(prefix="notes.private-storage",name="enabled",havingValue="false",matchIfMissing=true)
     PrivateAttachmentObjectStore unavailableAttachmentObjectStore() {
         return new PrivateAttachmentObjectStore() {

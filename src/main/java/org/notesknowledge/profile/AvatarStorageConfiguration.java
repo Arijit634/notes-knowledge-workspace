@@ -10,6 +10,7 @@ import org.springframework.context.annotation.Configuration;
 @Configuration(proxyBeanMethods = false)
 class AvatarStorageConfiguration {
     @Bean @ConditionalOnMissingBean(AvatarObjectStore.class)
+    @org.springframework.context.annotation.Profile("!localhost")
     @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(prefix="profile.avatar-storage",name="enabled",havingValue="false",matchIfMissing=true)
     AvatarObjectStore unavailableAvatarObjectStore() {
         return new AvatarObjectStore() {
