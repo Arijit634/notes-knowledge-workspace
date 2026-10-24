@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { createWriteStream, existsSync } from 'node:fs'
+import { createWriteStream, existsSync, writeFileSync } from 'node:fs'
 import { access, readFile, writeFile } from 'node:fs/promises'
 import { resolve, dirname, delimiter, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -27,8 +27,17 @@ const log = createWriteStream(resolve(repo, 'target', basename(runtime) + '.log'
 const child = spawn(java, ['@' + argfile], { cwd: repo, env: environment, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
 child.stdout.pipe(log); child.stderr.pipe(log)
 let exited = false, spawnFailed = false, stopping = false, vite, edge
+const mediaTransport = new Map()
+function writeMediaTransport() {
+  // Bounded test-only aggregate. Persist on response completion: Windows may
+  // terminate the TLS launcher before its asynchronous close callback settles.
+  writeFileSync(resolve(runtime, 'media-transport.json'), JSON.stringify({
+    actualBackend: true, rawHeadersOrUrlsRecorded: false, observations: [...mediaTransport.values()],
+  }, null, 2))
+}
 async function closeFrontend() {
   await vite?.close()
+  if (edge) writeMediaTransport()
   if (edge?.listening) await new Promise(resolve => edge.close(resolve))
 }
 child.on('error', () => { spawnFailed = true; exited = true })
@@ -61,8 +70,20 @@ try {
   if (process.env.NKW_INTEGRATION_PACKAGED === '1') {
     await access(resolve(repo, 'target/classes/static/index.html'))
     // TLS test edge only; every page, hashed asset and API byte comes from Spring.
-    // Fixed loopback upstream, no body/headers recorded and no auth interception.
+    // Fixed loopback upstream, no bodies/header values recorded or auth interception.
     edge = httpsServer(https, (incoming, outgoing) => {
+      const path = incoming.url?.split('?')[0] ?? ''
+      const privateContent = /^\/api\/notes\/[0-9a-f-]{36}\/attachments\/[0-9a-f-]{36}\/content$/.test(path)
+      if (privateContent) outgoing.on('finish', () => {
+        // Some native media stacks issue requests outside Playwright's network
+        // observer. Record bounded categories, never URLs/IDs/cookie values.
+        const cookiePresent = Boolean(incoming.headers.cookie), rangePresent = Boolean(incoming.headers.range)
+        const status = outgoing.statusCode, key = `${status}:${cookiePresent}:${rangePresent}`
+        const previous = mediaTransport.get(key)
+        if (previous) previous.count++
+        else if (mediaTransport.size < 64) mediaTransport.set(key, { status, cookiePresent, rangePresent, count: 1 })
+        writeMediaTransport()
+      })
       const request = backendRequest({ hostname: '127.0.0.1', port: 18080, path: incoming.url,
         method: incoming.method, headers: incoming.headers }, response => {
         outgoing.writeHead(response.statusCode ?? 502, response.headers); response.pipe(outgoing)

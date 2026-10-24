@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from '../../app/App'
 import { AuthRuntime } from '../auth/AuthRuntime'
 import { AttachmentPanel } from './AttachmentPanel'
@@ -58,6 +58,11 @@ function pick(size = 1) {
   return selected
 }
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); window.history.replaceState(null, '', '/') })
+beforeEach(() => {
+  // jsdom has no decoder; these spies prove lifecycle calls, not native playback.
+  vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {})
+  vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {})
+})
 beforeAll(async () => { await Promise.all([import('./NotesPages'), import('./MarkdownEditorAdapter')]) }, 60_000)
 
 describe('Attachment panel', () => {
@@ -302,6 +307,27 @@ describe('Attachment viewer and editor integration', () => {
       if (tag === 'audio' || tag === 'video') { expect(media.hasAttribute('controls')).toBe(true); expect(media.getAttribute('preload')).toBe('metadata') }
       fireEvent.error(media); expect((await screen.findByRole('alert')).textContent).toBe('This attachment could not be loaded.')
     })
+  it.each(['audio', 'video'])('stops and releases %s on viewer removal', async mediaKind => {
+    const { auth } = runtime(call => call.path.endsWith(`/${id}`)
+      ? json({ ...file, mediaKind, mediaType: mediaKind === 'audio' ? 'audio/wav' : 'video/mp4' }, 200, { ETag: '"a1"' }) : undefined)
+    const view = render(<MemoryRouter><AttachmentMediaViewer auth={auth} noteId={noteId} attachmentId={id} /></MemoryRouter>)
+    await screen.findByRole('heading', { name: 'synthetic.png' })
+    const media = view.container.querySelector<HTMLMediaElement>(mediaKind)!
+    expect(media.hasAttribute('src')).toBe(true)
+    view.unmount()
+    expect(media.pause).toHaveBeenCalledTimes(1)
+    expect(media.hasAttribute('src')).toBe(false)
+    expect(media.load).toHaveBeenCalledTimes(1)
+  })
+  it.each([[2, 2], [99, 1], [-1, 1]])('bounds cited PDF page %s to authorized metadata', async (cited, expected) => {
+    const { auth } = runtime(call => call.path.endsWith(`/${id}`)
+      ? json({ ...file, mediaKind: 'pdf', mediaType: 'application/pdf', pageCount: 3 }, 200, { ETag: '"a1"' }) : undefined)
+    const view = render(<MemoryRouter><AttachmentMediaViewer auth={auth} noteId={noteId} attachmentId={id} sourceLocation={{ page: cited }} /></MemoryRouter>)
+    await screen.findByRole('link', { name: 'Open PDF' })
+    expect((screen.getByLabelText('PDF page') as HTMLInputElement).value).toBe(String(expected))
+    expect(screen.getByRole('link', { name: 'Open PDF' }).getAttribute('href')).toBe(`/api/notes/${noteId}/attachments/${id}/content#page=${expected}`)
+    expect(view.container.querySelector('iframe,object,embed')).toBeNull()
+  })
   it('offers PDF metadata and a safe top-level private content link without embedding or fetching bytes', async () => {
     const { auth, calls } = runtime(call => call.path.endsWith(`/${id}`)
       ? json({ ...file, mediaKind: 'pdf', mediaType: 'application/pdf', displayFilename: 'synthetic.pdf', pageCount: 3, width: null, height: null }, 200, { ETag: '"a1"' }) : undefined)
