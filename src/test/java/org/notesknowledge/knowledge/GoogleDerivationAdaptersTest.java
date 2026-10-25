@@ -84,6 +84,19 @@ class GoogleDerivationAdaptersTest {
     private void generated(String output) {
         response=json.writeValueAsString(Map.of("modelVersion","gemini-3.8-flash","candidates",List.of(Map.of("content",Map.of("role","model","parts",List.of(Map.of("text",output))),"finishReason","STOP"))));
     }
+    @Test void explicitLowThinkingIsSentThroughTheRealSdkAndUnknownConfigurationIsRejected() {
+        var configured=new GoogleDerivationAdapters(metrics,new MockEnvironment().withProperty("knowledge.derivation.thinking-level","LOW"));
+        generated("{\"complete\":true,\"checkedPages\":[],\"noSpeech\":false,\"segments\":[]}");
+        configured.googleMediaUnderstandingPort(config("gemini-embedding-2"),clients,json).describe(sourcePermit(),new byte[]{1},new MediaUnderstandingRequest("image/png",null,null,null));
+        assertThat(json.readTree(requests.getFirst()).path("generationConfig").path("thinkingConfig").path("thinkingLevel").asString()).isEqualTo("LOW");
+        for(String value:List.of("MINIMAL","HIGH","arbitrary"))assertThatThrownBy(()->new GoogleDerivationAdapters(metrics,new MockEnvironment().withProperty("knowledge.derivation.thinking-level",value))).isInstanceOf(IllegalArgumentException.class);
+    }
+    @Test void operatorTimeoutRetainsDefaultAndRejectsUnboundedOrLeaseLengthRequests() {
+        assertThat(GoogleDerivationAdapters.providerTimeout(new MockEnvironment())).isEqualTo(10000);
+        assertThat(GoogleDerivationAdapters.providerTimeout(new MockEnvironment().withProperty("knowledge.derivation.provider-timeout-ms","20000"))).isEqualTo(20000);
+        for(String value:List.of("0","-1","999","20001","30000","2147483647"))
+            assertThatThrownBy(()->GoogleDerivationAdapters.providerTimeout(new MockEnvironment().withProperty("knowledge.derivation.provider-timeout-ms",value))).isInstanceOf(IllegalArgumentException.class);
+    }
     @Test void embedding2UsesSeparateDocumentRequestsAndQueryInstructionWithoutLegacyFields() {
         var permit=sourcePermit();var port=adapters.googleTextEmbeddingPort(config("gemini-embedding-2"),clients);
         assertThat(port.embed(permit,List.of("Synthetic lunar station","Synthetic forest lab"))).hasSize(2);

@@ -12,7 +12,7 @@ export function NotesWorkspace({ children, modalOpen = false, auth }: { children
   const [logoutOpen, setLogoutOpen] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('')
   const blocked = modalOpen || logoutOpen
   const opener = useRef<HTMLElement | null>(null)
-  const section = location.pathname.startsWith('/notes') ? 'Notes library' : location.pathname.startsWith('/settings') ? 'Account settings' : location.pathname.startsWith('/publications') ? 'Publishing' : location.pathname === '/ask' ? 'Search & Ask' : 'Workspace'
+  const section = location.pathname.startsWith('/notes') ? 'Notes' : location.pathname.startsWith('/settings') ? 'Settings' : location.pathname.startsWith('/publications') ? 'Publishing' : location.pathname === '/ask' ? 'Search & Ask' : location.pathname.startsWith('/moderation') ? 'Public safety' : 'Workspace'
   function openLogout(event: MouseEvent<HTMLButtonElement>) { opener.current = event.currentTarget; setLogoutOpen(true) }
   async function logout() {
     if (!auth || busy) return
@@ -43,7 +43,7 @@ export function NotesWorkspace({ children, modalOpen = false, auth }: { children
         {auth && <button type="button" className="studio-logout" onClick={openLogout}>Log out</button>}
       </aside>
       <div className="workspace-stage">
-      <header className="studio-command-bar" inert={blocked}><span className="studio-command-location"><Icon name={section === 'Account settings' ? 'shield' : 'notes'} />{section}</span><Link to="/settings/profile" className="studio-account-link"><Icon name="profile" />Account</Link></header>
+      <header className="studio-command-bar" inert={blocked}><span className="studio-command-location"><Icon name={section === 'Settings' ? 'shield' : 'notes'} />{section}</span><div className="studio-command-actions"><Link to="/ask" className="studio-search-link"><Icon name="search" /><span>Find something in your notes</span></Link><Link to="/settings/profile" className="studio-account-link"><Icon name="profile" />Account</Link></div></header>
       <main id="notes-content" className="notes-content" tabIndex={-1} inert={logoutOpen}>{children}
         {auth && location.pathname.startsWith('/settings') && <button type="button" className="button-secondary studio-mobile-logout" aria-label="Sign out of account" onClick={openLogout}>Log out</button>}
       </main>

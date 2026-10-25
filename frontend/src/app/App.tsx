@@ -223,7 +223,8 @@ function ResetPassword() {
   })
   return <Shell title="Choose a new password" eyebrow="Account recovery">
     {state === 'ready' && <form onSubmit={submit} noValidate><label htmlFor="new-password">New password</label><input id="new-password" type="password" autoComplete="new-password" aria-invalid={!!errors.password} aria-describedby={errors.password ? 'new-password-error' : undefined}
-      {...register('password', { required: 'Enter a new password.', maxLength: { value: 1024, message: 'Password is too long.' } })} />
+      {...register('password', { required: 'Enter a new password.', minLength: { value: 12, message: 'Use at least 12 characters.' }, maxLength: { value: 256, message: 'Use no more than 256 characters.' } })} />
+      <p className="field-help">12–256 characters. Choose a unique password.</p>
       {errors.password && <span id="new-password-error" className="field-error">{errors.password.message}</span>}
       <label htmlFor="confirm-password">Confirm new password</label><input id="confirm-password" type="password" autoComplete="new-password" aria-invalid={!!errors.confirmation} aria-describedby={errors.confirmation ? 'confirm-password-error' : undefined}
         {...register('confirmation', { required: 'Confirm the new password.' })} />

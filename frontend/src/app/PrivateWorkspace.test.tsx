@@ -39,6 +39,14 @@ beforeAll(async () => { await Promise.all([import('../features/knowledge/AskKnow
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); window.history.replaceState(null, '', '/') })
 
 describe('real private-workspace transport contracts', () => {
+  it('explains unavailable AI prerequisites without blocking ordinary search or claiming provider readiness', async () => {
+    const { calls } = mount('/ask', call => call.path === '/api/ai/processing-policy' ? problem(503) : undefined)
+    await screen.findByText(/AI setup could not be verified/)
+    expect(screen.getByRole('link', { name: 'Review AI & Privacy' }).getAttribute('href')).toBe('/settings/privacy')
+    fireEvent.click(screen.getByRole('button', { name: 'Ordinary search' }))
+    expect(await screen.findByLabelText('Search saved notes')).toBeTruthy()
+    expect(calls.some(call => call.path === '/api/knowledge/query')).toBe(false)
+  })
   it.each(['insufficient', 'degraded'])('presents %s evidence without inventing an AI answer', async outcome => {
     mount('/ask', c => c.path === '/api/knowledge/query' ? json({ ...result, aiAnswer: null, citations: [],
       insufficientEvidence: outcome === 'insufficient', degraded: outcome === 'degraded' ? 'providerUnavailable' : null }) : undefined)

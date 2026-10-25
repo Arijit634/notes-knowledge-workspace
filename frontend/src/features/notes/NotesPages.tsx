@@ -16,6 +16,8 @@ import { emptyEditorSession, isDirty, noteEditorSession } from './NoteEditorSess
 import { notesApi, type NoteCore, type NoteOrganizationCommand, type NoteVersion } from './NotesApi'
 import { noteKeys, notePreferenceKeys } from './NotesKeys'
 import { usePrivateScope } from '../../app/security/usePrivateScope'
+import { Icon } from '../../app/ui/Icon'
+import { NoteNavigator } from './NoteNavigator'
 const MarkdownEditorAdapter = lazy(() => import('./MarkdownEditorAdapter').then(module => ({ default: module.MarkdownEditorAdapter })))
 
 function issue(error: unknown): string {
@@ -42,20 +44,20 @@ export function NotesListPage({ auth }: { auth: AuthRuntime }) {
   function cards(notes: NoteCore[]) { return <ul className="notes-list">{notes.map(note => <li key={note.id}>
     <Link to={`/notes/${note.id}`}><div className="notes-card-heading"><strong>{note.title}</strong>{note.pinned && <span className="notes-pill">Pinned</span>}</div>
       <p className="notes-card-snippet">{note.markdown.slice(0, 2400).replace(/^#{1,6}\s+/gm, '').replace(/(^|\n)\s*(?:[-*+] |\d+\. )(?:\[[ x]\] )?/g, '$1').replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/```[^\n]*\n/g, '').replace(/[#*_`>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 240)}</p>
-      {note.tags.length > 0 && <ul className="notes-tags" aria-label="Tags">{note.tags.slice(0, 5).map(tag => <li key={tag}>{tag}</li>)}{note.tags.length > 5 && <li>+{note.tags.length - 5}</li>}</ul>}
-      <span className="notes-card-meta">Updated <time dateTime={note.updatedAt} title={new Date(note.updatedAt).toLocaleString()}>{new Date(note.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</time></span></Link>
+      <div className="notes-card-footer">{note.tags.length > 0 && <ul className="notes-tags" aria-label="Tags">{note.tags.slice(0, 5).map(tag => <li key={tag}>{tag}</li>)}{note.tags.length > 5 && <li>+{note.tags.length - 5}</li>}</ul>}
+      <span className="notes-card-meta">Updated <time dateTime={note.updatedAt} title={new Date(note.updatedAt).toLocaleString()}>{new Date(note.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</time></span></div></Link>
   </li>)}</ul> }
   return <NotesWorkspace auth={auth}><div className={rows ? 'studio-library-rows' : undefined}>
     <header className="notes-heading"><div><p className="eyebrow">Your workspace</p><h1>Notes</h1></div>
       <Link className="button" to="/notes/new">New note</Link></header>
     <p className="notes-intro">A home for your thoughts. Pick a note, or start something new.</p>
-    <div className="studio-library-controls"><button type="button" className="button-secondary" aria-expanded={searching} onClick={() => setSearching(v => !v)}>{searching ? 'Close search' : 'Find a note'}</button>
+    <div className="studio-library-toolbar"><div className="studio-library-controls"><button type="button" className="button-secondary" aria-expanded={searching} onClick={() => setSearching(v => !v)}>{searching ? 'Close search' : 'Find a note'}</button>
       <button className="button-secondary" type="button" aria-pressed={rows} onClick={() => setRows(v => !v)}>{rows ? 'Card view' : 'List view'}</button></div>
     <nav aria-label="Note views" className="notes-views">
       <button type="button" className="button-secondary" aria-pressed={lifecycle === 'active'} onClick={() => setLifecycle('active')}>Active notes</button>
       <button type="button" className="button-secondary" aria-pressed={lifecycle === 'archived'} onClick={() => setLifecycle('archived')}>Archived notes</button>
       <button type="button" className="button-secondary" aria-pressed={lifecycle === 'trashed'} onClick={() => setLifecycle('trashed')}>Trashed notes</button>
-    </nav>
+    </nav></div>
     {searching && <PrivateSearchPanel auth={auth} lifecycle={lifecycle} onActiveChange={setSearchActive} />}
     {!searchActive && <>
     {page.isPending && <p className="notes-message" role="status">Loading notes…</p>}
@@ -378,27 +380,28 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
   const loadError = creating ? preference.error : loaded.error
   if (deleted) return <main><p role="status">Note permanently deleted.</p></main>
   return <NotesWorkspace auth={auth} modalOpen={attachmentModal || archiveConfirmation || trashConfirmation !== null || deleteConfirmation !== null || restoreConfirmation !== null || blocker.state === 'blocked'}>
-    <div inert={attachmentModal || archiveConfirmation || trashConfirmation !== null || deleteConfirmation !== null || restoreConfirmation !== null || blocker.state === 'blocked'}>
+    <div className="studio-note-layout" inert={attachmentModal || archiveConfirmation || trashConfirmation !== null || deleteConfirmation !== null || restoreConfirmation !== null || blocker.state === 'blocked'}>
+    {!creating && !loading && !loadError && id && <NoteNavigator auth={auth} selectedId={id} />}
     {loading ? <p className="notes-message" role="status">Loading editor…</p> : loadError
       ? <p className="notes-message notes-message-error" role="alert">{issue(loadError)} <button onClick={() => void (creating ? preference.refetch() : loaded.refetch())}>Retry</button></p>
         : <><header className="notes-heading studio-editor-heading"><div><Link to="/notes">Back to notes</Link><p className="eyebrow">{creating ? 'New note' : 'Private note'}</p>
-          <h1>{creating ? 'Create a note' : 'Edit note'}</h1></div><span role="status" aria-label="Save status" className="notes-state" data-phase={session.phase}>
+          <h1>{creating ? 'Create a note' : 'Edit note'}</h1></div><div className="studio-editor-actions"><span role="status" aria-label="Save status" className="notes-state" data-phase={session.phase}>
             {session.phase === 'Clean' ? creating ? dirty ? 'Unsaved changes' : 'Not created' : 'Saved' : session.phase === 'Dirty' ? 'Unsaved changes'
               : session.phase === 'Saving' ? 'Saving…' : session.phase === 'SaveFailed' ? 'Save failed'
-                : 'Conflict'}</span></header>
-          {!creating && <div className="studio-tools-toggle"><button type="button" className="button-secondary studio-quiet-action" aria-expanded={toolsOpen} aria-controls="note-tools" onClick={() => setToolsOpen(v => !v)}>Note tools</button></div>}
+                : 'Conflict'}</span>
+          {!creating && <button type="button" className="button-secondary studio-quiet-action" aria-expanded={toolsOpen} aria-controls="note-tools" onClick={() => setToolsOpen(v => !v)}><Icon name="settings" />Note tools</button>}
+          <button type="submit" form="note-editor-form" disabled={busy || archiveConfirmation || trashConfirmation !== null || archived || trashed || !dirty || session.phase === 'Conflict' || !session.draft.title.trim()}>
+            {creating ? 'Create note' : session.phase === 'SaveFailed' ? 'Retry save' : 'Save note'}</button></div></header>
           <div className={`notes-workbench${creating ? ' notes-workbench-new' : ''}`}>
           <div className="notes-authoring">
-          <form className="notes-editor" onSubmit={submit}>
-            <label htmlFor="note-title">Title</label><input id="note-title" maxLength={500} required
+          <form id="note-editor-form" className="notes-editor" onSubmit={submit}>
+            <label htmlFor="note-title" className="visually-hidden">Title</label><input id="note-title" placeholder="Untitled note" maxLength={500} required
               disabled={creating && busy}
               value={session.draft.title} onChange={event => dispatch({ type: 'edit', field: 'title', value: event.target.value })} />
-            {creating && <label className="notes-checkbox"><input type="checkbox" checked={aiEnabled} disabled={busy}
-              onChange={event => setAiEnabled(event.target.checked)} />Use this note with AI</label>}
+            {creating && <div className="notes-draft-options"><label className="notes-checkbox"><input type="checkbox" checked={aiEnabled} disabled={busy}
+              onChange={event => setAiEnabled(event.target.checked)} />Use this note with AI</label><Link to="/settings/privacy">Processing permissions</Link></div>}
             <p id="markdown-help" className="notes-help">Save when you’re ready — Ctrl/Cmd + S.</p>
             <Suspense fallback={<p role="status">Loading writing tools…</p>}><MarkdownEditorAdapter value={session.draft.markdown} disabled={creating && busy} onChange={value => dispatch({ type: 'edit', field: 'markdown', value })} /></Suspense>
-            <div className="notes-actions"><button type="submit" disabled={busy || archiveConfirmation || trashConfirmation !== null || archived || trashed || !dirty || session.phase === 'Conflict' || !session.draft.title.trim()}>
-              {creating ? 'Create note' : session.phase === 'SaveFailed' ? 'Retry save' : 'Save note'}</button></div>
           </form>
           {error && <p className="notes-message notes-message-error" role="alert">{error}</p>}
           {session.serverChangedWhileDirty && session.phase !== 'Conflict'

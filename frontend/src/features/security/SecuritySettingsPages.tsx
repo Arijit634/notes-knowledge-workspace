@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
-import { Link, useNavigate } from 'react-router'
+import { Link, NavLink, useNavigate } from 'react-router'
 import { useForm } from 'react-hook-form'
 import { useQuery } from '@tanstack/react-query'
 import { QRCodeCanvas } from 'qrcode.react'
@@ -60,12 +60,12 @@ function useAction(auth: AuthRuntime, route: SecurityRoute) {
   return { busy, error, setError, run }
 }
 
-function Page({ title, children }: { title: string; children: ReactNode }) {
-  return <div className="settings-layout"><div className="settings-card">
+function Page({ title, children, overview = false }: { title: string; children: ReactNode; overview?: boolean }) {
+  return <div className="settings-layout"><div className={`settings-card${overview ? ' security-overview' : ''}`}>
     <nav aria-label="Security settings" className="settings-nav">
-      <Link to="/">Home</Link><Link to="/settings/security">Security</Link>
-      <Link to="/settings/security/mfa">MFA</Link>
-      <Link to="/settings/security/sessions">Sessions</Link>
+      <Link to="/notes">Workspace</Link><NavLink to="/settings/security" end>Security</NavLink>
+      <NavLink to="/settings/security/mfa">MFA</NavLink>
+      <NavLink to="/settings/security/sessions">Sessions</NavLink>
     </nav>
     <h1>{title}</h1>{children}
   </div></div>
@@ -159,7 +159,7 @@ export function SecuritySettingsPage({ auth }: Props) {
       })
     }
   }
-  return <Page title="Account security">
+  return <Page title="Account security" overview>
     {summary.isPending && <p role="status">Loading security settings…</p>}
     {summary.isError && <ErrorText>{safeError(summary.error)}</ErrorText>}
     {notice && <Status>{notice}</Status>}{action.error && <ErrorText>{action.error}</ErrorText>}
@@ -181,12 +181,13 @@ export function SecuritySettingsPage({ auth }: Props) {
         <p>{summary.data.passwordConfigured ? 'A password is configured.' : 'No password is configured.'}</p>
         <form onSubmit={changePassword} noValidate>
           <label htmlFor="security-password">New password</label><input id="security-password"
-            type="password" autoComplete="new-password" maxLength={1024}
-            aria-invalid={!!passwordForm.formState.errors.newPassword}
-            {...passwordForm.register('newPassword', { required: 'Enter a new password.' })} />
+            type="password" autoComplete="new-password" maxLength={256}
+            aria-invalid={!!passwordForm.formState.errors.newPassword} aria-describedby="security-password-help"
+            {...passwordForm.register('newPassword', { required: 'Enter a new password.', minLength: { value: 12, message: 'Use at least 12 characters.' }, maxLength: { value: 256, message: 'Use no more than 256 characters.' } })} />
+          <span id="security-password-help" className="field-help">12–256 characters. Choose a unique password.</span>
           {passwordForm.formState.errors.newPassword && <span className="field-error" role="alert">{passwordForm.formState.errors.newPassword.message}</span>}
           <label htmlFor="security-password-confirm">Confirm new password</label><input id="security-password-confirm"
-            type="password" autoComplete="new-password" maxLength={1024}
+            type="password" autoComplete="new-password" maxLength={256}
             aria-invalid={!!passwordForm.formState.errors.confirmation}
             {...passwordForm.register('confirmation', { required: 'Confirm the new password.' })} />
           {passwordForm.formState.errors.confirmation && <span className="field-error" role="alert">{passwordForm.formState.errors.confirmation.message}</span>}

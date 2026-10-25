@@ -1,13 +1,14 @@
 :root { font-synthesis:none; text-rendering:optimizeLegibility; -webkit-font-smoothing:antialiased }
 *,*::before,*::after { box-sizing:border-box }
-body { margin:0; min-width:320px }
+body { margin:0; min-width:0 }
 button,input,textarea,select { font:inherit }
 h1 { margin:.6rem 0 1.3rem; line-height:1.15 }
 h2 { margin:.1rem 0 .4rem }
 p { line-height:1.6 }
 form { display:flex; flex-direction:column; gap:.55rem }
 label { font-weight:600; margin-top:.55rem }
-input { width:100%; min-height:44px }
+input:not([type=checkbox]):not([type=radio]) { width:100%; min-height:44px }
+input:is([type=checkbox],[type=radio]) { width:18px; height:18px; min-height:18px; flex:0 0 18px; margin:0; padding:0; accent-color:var(--violet); cursor:pointer }
 input[aria-invalid=true] { border-color:var(--coral) }
 button,.button { display:inline-flex; align-items:center; justify-content:center; gap:.5rem; font-weight:650; text-decoration:none; cursor:pointer; text-align:center }
 button:disabled { cursor:not-allowed }

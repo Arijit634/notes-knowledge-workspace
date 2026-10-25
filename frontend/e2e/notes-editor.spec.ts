@@ -3,9 +3,65 @@ import { sourceEditor, openTools } from './editor-support'
 
 const id = '01990a55-9e12-7ac4-8f5b-31aa4a91d401'
 
+for (const width of [1920, 1280, 834, 390, 320]) test(`new Note uses the full workspace and compact AI control at ${width}px`, async ({ page }) => {
+  await fakeNotesBackend(page)
+    await page.setViewportSize({ width, height: 900 })
+    await page.goto('/notes/new')
+    const checkbox = page.getByRole('checkbox', { name: 'Use this note with AI', exact: true })
+    await expect(checkbox).toBeVisible()
+    const control = await checkbox.boundingBox()
+    expect(control!.width).toBeLessThanOrEqual(24)
+    expect(control!.height).toBeLessThanOrEqual(24)
+    expect(control!.width).toBeGreaterThanOrEqual(16)
+    const shell = await page.locator('.notes-shell').boundingBox()
+    expect(shell!.x).toBe(0)
+    expect(shell!.width).toBe(width)
+    await expect(page.getByRole('button', { name: 'Create note', exact: true })).toBeInViewport()
+    await expect(page.getByLabel('Title', { exact: true })).toHaveAttribute('placeholder', 'Untitled note')
+    await noPageOverflow(page)
+  await page.getByRole('checkbox', { name: 'Use this note with AI', exact: true }).check()
+  await page.getByRole('link', { name: 'Back to notes', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Leave with unsaved changes?' })
+  await expect(dialog).toBeVisible()
+  await dialog.getByRole('button', { name: 'Keep editing', exact: true }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(page.getByRole('checkbox', { name: 'Use this note with AI', exact: true })).toBeChecked()
+  await page.getByLabel('Title', { exact: true }).fill('Focused fictional note')
+  await page.getByRole('textbox', { name: 'Note body', exact: true }).fill('A deliberately saved fictional note.')
+  await page.getByRole('button', { name: 'Create note', exact: true }).click()
+  await expect(page).toHaveURL(new RegExp(`/notes/${id}$`))
+  const navigation = page.getByRole('complementary', { name: 'Note navigation' })
+  if (width >= 1440) {
+    await expect(navigation).toBeVisible()
+    await expect(navigation.getByRole('link', { name: /Focused fictional note/ })).toHaveAttribute('aria-current', 'page')
+    await page.getByRole('button', { name: 'Note tools', exact: true }).click()
+    await expect(navigation).toBeHidden()
+  } else await expect(navigation).toHaveCount(0)
+})
+
 async function noPageOverflow(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
 }
+
+test('the 320px writing surface accommodates a reserved browser scrollbar', async ({ page }) => {
+  await fakeNotesBackend(page)
+  await page.setViewportSize({ width: 320, height: 900 })
+  await page.goto('/notes/new')
+  await expect(page.getByRole('textbox', { name: 'Note body', exact: true })).toBeVisible()
+  // Headless Chromium uses overlay scrollbars. Model the exact 305px content
+  // width observed in headed Windows Chrome with its 15px classic scrollbar.
+  await page.addStyleTag({ content: 'body { width: calc(100% - 15px); }' })
+  expect((await page.locator('body').boundingBox())!.width).toBe(305)
+  expect((await page.locator('.notes-shell').boundingBox())!.width).toBe(305)
+  await noPageOverflow(page)
+  await page.getByLabel('Title', { exact: true }).fill('A long fictional title remains within the visible writing surface')
+  await page.getByRole('textbox', { name: 'Note body', exact: true }).fill('A deliberately saved fictional paragraph. '.repeat(30))
+  await page.getByRole('button', { name: 'Create note', exact: true }).click()
+  await expect(page).toHaveURL(new RegExp(`/notes/${id}$`))
+  await openTools(page)
+  expect((await page.locator('.notes-shell').boundingBox())!.width).toBe(305)
+  await noPageOverflow(page)
+})
 
 async function fakeNotesBackend(page: Page, requireRecent = false) {
   let note: { id: string; title: string; markdown: string; lifecycle: string; pinned: boolean;

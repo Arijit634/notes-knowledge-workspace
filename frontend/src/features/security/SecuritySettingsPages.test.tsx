@@ -93,6 +93,17 @@ describe('security settings browser journey', () => {
       expect(screen.queryByText('owner@example.test')).toBeNull()
     })
 
+  it('explains the password policy and blocks a short security-settings password before dispatch', async () => {
+    const { calls } = mount('/settings/security')
+    await screen.findByText('A password is configured.')
+    fireEvent.change(screen.getByLabelText('New password', { exact: true }), { target: { value: 'short' } })
+    fireEvent.change(screen.getByLabelText('Confirm new password'), { target: { value: 'short' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Change password' }))
+    await screen.findByText('Use at least 12 characters.')
+    expect(screen.getByText('12–256 characters. Choose a unique password.')).toBeTruthy()
+    expect(calls.some(call => call.path === '/api/me/security/password')).toBe(false)
+  })
+
   it('renders only the safe security projection and navigates to MFA and sessions', async () => {
     const { calls } = mount('/settings/security')
     await screen.findByText('Current email: owner@example.test')
@@ -325,8 +336,8 @@ describe('security settings browser journey', () => {
     mount('/settings/security', { handler: (_method, path) =>
       path.endsWith('/password') ? problem(403, 'recent_authentication_required') : noContent() })
     await screen.findByRole('button', { name: 'Change password' })
-    fireEvent.change(screen.getByLabelText('New password'), { target: { value: 'Synthetic!' } })
-    fireEvent.change(screen.getByLabelText('Confirm new password'), { target: { value: 'Synthetic!' } })
+    fireEvent.change(screen.getByLabelText('New password'), { target: { value: 'Synthetic-valid-password!' } })
+    fireEvent.change(screen.getByLabelText('Confirm new password'), { target: { value: 'Synthetic-valid-password!' } })
     fireEvent.click(screen.getByRole('button', { name: 'Change password' }))
     await screen.findByRole('heading', { name: 'Confirm your identity' })
     expect(window.location.pathname).toBe('/reauth')
@@ -340,8 +351,8 @@ describe('security settings browser journey', () => {
       const { calls } = mount('/settings/security', { handler: (_method, path) =>
         path.endsWith('/password') ? problem(status, code) : noContent() })
       await screen.findByRole('button', { name: 'Change password' })
-      fireEvent.change(screen.getByLabelText('New password'), { target: { value: 'Synthetic!' } })
-      fireEvent.change(screen.getByLabelText('Confirm new password'), { target: { value: 'Synthetic!' } })
+      fireEvent.change(screen.getByLabelText('New password'), { target: { value: 'Synthetic-valid-password!' } })
+      fireEvent.change(screen.getByLabelText('Confirm new password'), { target: { value: 'Synthetic-valid-password!' } })
       fireEvent.click(screen.getByRole('button', { name: 'Change password' }))
       await screen.findByText(copy)
       expect(screen.queryByText('INTERNAL PRIVATE DETAIL')).toBeNull()

@@ -143,8 +143,14 @@ final class MediaQualityQualificationHarness implements MediaUnderstandingPort, 
             return result;
         } catch(RuntimeException failure) {
             stopped=true;
-            append(key,fixture.id(),"failed",0,0,(System.nanoTime()-started)/1_000_000,
-                Map.of("outcome",failure instanceof DerivationFailure d?d.category.name():"unclassified_failure"));
+            var safe=new LinkedHashMap<String,Object>();
+            safe.put("outcome",failure instanceof DerivationFailure d?d.category.name():"unclassified_failure");
+            if(failure instanceof DerivationFailure d && d.diagnostic!=null){
+                safe.put("stage",d.diagnostic.stage().name());safe.put("kind",d.diagnostic.kind().name());
+                safe.put("elapsedBand",d.diagnostic.elapsed().name());safe.put("providerReached",d.diagnostic.providerReached().name());
+                if(d.diagnostic.httpStatus()!=null)safe.put("httpStatus",d.diagnostic.httpStatus());
+            }
+            append(key,fixture.id(),"failed",0,0,(System.nanoTime()-started)/1_000_000,safe);
             if(failure instanceof DerivationFailure)throw failure;
             throw new IllegalStateException("Qualification provider failure"); // No raw external message/cause.
         } finally {

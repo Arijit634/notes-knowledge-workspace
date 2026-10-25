@@ -18,9 +18,20 @@ import tools.jackson.databind.ObjectMapper;
 @ConditionalOnProperty(name="knowledge.derivation.enabled",havingValue="true")
 class GoogleDerivationAdapters {
     private final io.micrometer.core.instrument.MeterRegistry meters;
-    GoogleDerivationAdapters(){this(null);}
+    private final org.springframework.ai.google.genai.common.GoogleGenAiThinkingLevel thinkingLevel;
+    GoogleDerivationAdapters(){this(null,null);}
+    GoogleDerivationAdapters(io.micrometer.core.instrument.MeterRegistry meters){this(meters,null);}
     @org.springframework.beans.factory.annotation.Autowired
-    GoogleDerivationAdapters(io.micrometer.core.instrument.MeterRegistry meters){this.meters=meters;}
+    GoogleDerivationAdapters(io.micrometer.core.instrument.MeterRegistry meters,Environment environment){
+        this.meters=meters;
+        String level=environment==null?null:environment.getProperty("knowledge.derivation.thinking-level");
+        if(level!=null&&!"LOW".equals(level))throw new IllegalArgumentException("Unsupported provider thinking configuration");
+        thinkingLevel=level==null?null:org.springframework.ai.google.genai.common.GoogleGenAiThinkingLevel.LOW;
+    }
+    private org.springframework.ai.google.genai.common.GoogleGenAiThinkingLevel modelThinking(AiDerivationProperties configuration){
+        if(thinkingLevel!=null&&!"gemini-3.8-flash".equals(configuration.mediaModel()))throw new IllegalArgumentException("Unqualified provider thinking configuration");
+        return thinkingLevel;
+    }
     private <T>T observed(org.notesknowledge.BackendTelemetry.Operation operation,java.util.function.Supplier<T> action){
         long started=System.nanoTime();var outcome=org.notesknowledge.BackendTelemetry.Outcome.SUCCESS;
         try{return action.get();}
@@ -37,8 +48,16 @@ class GoogleDerivationAdapters {
     com.google.genai.Client derivationGoogleClient(AiDerivationProperties c,Environment environment) {
         String key=environment.getProperty("spring.ai.google.genai.api-key");
         if(!c.configured()||!"gemini".equals(c.provider())||!"unpaid".equals(c.tier())||!"global".equals(c.region())||key==null||key.isBlank())return null;
-        return com.google.genai.Client.builder().apiKey(key).httpOptions(com.google.genai.types.HttpOptions.builder().timeout(10000)
+        modelThinking(c);
+        return com.google.genai.Client.builder().apiKey(key).httpOptions(com.google.genai.types.HttpOptions.builder().timeout(providerTimeout(environment))
             .retryOptions(com.google.genai.types.HttpRetryOptions.builder().attempts(1).build()).build()).build();
+    }
+    static int providerTimeout(Environment environment) {
+        int timeout=environment.getProperty("knowledge.derivation.provider-timeout-ms",Integer.class,10000);
+        // Leave headroom below the 30-second work lease; retain the existing default
+        // and single transport attempt. This is not permission to extend a lease.
+        if(timeout<1000||timeout>20000)throw new IllegalArgumentException("Invalid provider timeout configuration");
+        return timeout;
     }
     @Bean
     TextEmbeddingPort googleTextEmbeddingPort(AiDerivationProperties c,org.springframework.beans.factory.ObjectProvider<com.google.genai.Client> client) {
@@ -55,7 +74,7 @@ class GoogleDerivationAdapters {
     @Bean
     MediaUnderstandingPort googleMediaUnderstandingPort(AiDerivationProperties c,org.springframework.beans.factory.ObjectProvider<com.google.genai.Client> client,ObjectMapper json) {
         var sdk=client.getIfAvailable();
-        var options=sdk==null?null:GoogleGenAiChatOptions.builder().model(c.mediaModel()).maxOutputTokens(8192)
+        var options=sdk==null?null:GoogleGenAiChatOptions.builder().model(c.mediaModel()).maxOutputTokens(8192).thinkingLevel(modelThinking(c))
             .responseMimeType("application/json").responseSchema(mediaSchema()).googleSearchRetrieval(false).includeServerSideToolInvocations(false).useCachedContent(false).build();
         var model=sdk==null?null:GoogleGenAiChatModel.builder().genAiClient(sdk).options(options).retryTemplate(noHiddenRetry()).build();
         return new MediaUnderstandingPort() {
@@ -115,7 +134,7 @@ class GoogleDerivationAdapters {
     StructuredKnowledgePort googleStructuredKnowledgePort(AiDerivationProperties c,org.springframework.beans.factory.ObjectProvider<com.google.genai.Client> client,ObjectMapper json) {
         var sdk=client.getIfAvailable();
         var embedding=new GeminiTextEmbeddings(sdk,c,true);
-        var options=sdk==null?null:GoogleGenAiChatOptions.builder().model(c.mediaModel()).maxOutputTokens(8192)
+        var options=sdk==null?null:GoogleGenAiChatOptions.builder().model(c.mediaModel()).maxOutputTokens(8192).thinkingLevel(modelThinking(c))
             .responseMimeType("application/json").responseSchema("""
                 {"type":"object","required":["claims","conflicting"],"properties":{
                 "claims":{"type":"array","maxItems":32,"items":{"type":"object","required":["text","evidenceIds"],"properties":{

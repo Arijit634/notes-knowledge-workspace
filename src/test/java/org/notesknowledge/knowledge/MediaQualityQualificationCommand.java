@@ -181,6 +181,10 @@ public final class MediaQualityQualificationCommand {
             TransformedMediaIdentity.digest(child),child.length,type,scope,lineage,c.provider(),c.mediaModel(),"media-understanding",c.approvedPolicyFingerprint());
     }
     private static String extension(String type){return switch(type){case "image/png"->".png";case "audio/wav"->".wav";case "application/pdf"->".pdf";case "video/mp4"->".mp4";default->throw new IllegalStateException("Unknown frozen type");};}
+    static Optional<KnowledgeWork.Claim> matchingClaim(List<KnowledgeWork.Claim> claims,PrivateAiSourceCurrentness.Expected source,String lineage) {
+        return claims.stream().filter(claim->claim.intent().kind()==KnowledgeWork.Kind.ATTACHMENT
+            &&claim.intent().expected().equals(source)&&claim.intent().targetLineageId().equals(lineage)).findFirst();
+    }
     static String query(String fixture){return switch(fixture){
         case "audio"->"Where is the fictional observatory with a silver dome?";
         case "tones"->"Where is the recording of high tones changing to lower tones?";
@@ -231,7 +235,10 @@ public final class MediaQualityQualificationCommand {
                 require(TransformedMediaIdentity.digest(bytes).equals(source.sha256()));Arrays.fill(bytes,(byte)0);
                 var lineage=EmbeddingLineage.create(configuration,policies.policyPrerequisite(plan.owner()).orElseThrow(),source.metadata().modality());
                 tx(c,()->c.getBean(KnowledgeWorkRepository.class).enqueue(KnowledgeWork.Kind.ATTACHMENT,source.metadata().expected(),lineage.id()));
-                var claim=work.claim(new LeaseOwner("synthetic-qualification"),10).stream().filter(v->v.intent().expected().equals(source.metadata().expected())).findFirst().orElseThrow();
+                var worker=new LeaseOwner("synthetic-qualification");
+                var claims=new ArrayList<>(work.claim(worker,10));
+                claims.addAll(work.reclaim(worker,10));
+                var claim=matchingClaim(claims,source.metadata().expected(),lineage.id()).orElseThrow();
                 current.set(claim);executor.execute(claim);current.set(null);
                 require("completed".equals(jdbc.queryForObject("select state from knowledge.knowledge_work_intent where knowledge_work_intent_id=?",String.class,claim.intent().id())));
             }

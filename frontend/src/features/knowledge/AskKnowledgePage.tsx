@@ -7,6 +7,7 @@ import { PrivateSearchPanel } from '../notes/PrivateSearchPanel'
 import { featureError } from '../../app/ui/featureError'
 import { usePrivateScope } from '../../app/security/usePrivateScope'
 import { activeOperation, knowledgeApi, type Citation, type KnowledgeResult, type Operation } from './KnowledgeApi'
+import { processingPolicyApi } from './ProcessingPolicyApi'
 
 export function CitationList({ citations }: { citations: Citation[] }) {
   return <ol className="studio-citations">{citations.map((c, index) => <li key={`${c.noteId}:${c.attachmentId}:${index}`}>
@@ -59,6 +60,7 @@ function OperationProgress({ auth, initial, onResult, onTerminal }: { auth: Auth
 }
 export function AskKnowledgePage({ auth }: { auth: AuthRuntime }) {
   const current = usePrivateScope(auth), [mode, setMode] = useState<'ask' | 'search'>('ask')
+  const policy = useQuery({ queryKey: ['knowledge', auth.session.viewerScope, 'policy'], queryFn: ({ signal }) => processingPolicyApi.read(auth, signal), retry: false }, auth.queries)
   const [input, setInput] = useState(''), [result, setResult] = useState<KnowledgeResult | null>(null), [operation, setOperation] = useState<Operation | null>(null)
   const [busy, setBusy] = useState(false), [running, setRunning] = useState(false), [error, setError] = useState('')
   const request = useRef<AbortController | null>(null)
@@ -76,7 +78,7 @@ export function AskKnowledgePage({ auth }: { auth: AuthRuntime }) {
   }
   return <NotesWorkspace auth={auth}><div className="studio-ask"><header className="notes-heading"><h1>Search &amp; Ask</h1></header><p className="notes-intro">Find a saved detail. Connect the dots. Keep the evidence close.</p>
     <div className="notes-views" role="group" aria-label="Search mode"><button aria-pressed={mode === 'ask'} onClick={() => setMode('ask')}>Ask your knowledge</button><button aria-pressed={mode === 'search'} onClick={() => setMode('search')}>Ordinary search</button></div>
-    {mode === 'search' ? <PrivateSearchPanel auth={auth} /> : <><form className="studio-ask-form" onSubmit={event => void submit(event)}><label htmlFor="knowledge-question">What would you like to find?</label>
+    {mode === 'search' ? <PrivateSearchPanel auth={auth} /> : <><aside className="studio-readiness" aria-label="AI processing prerequisites"><div><strong>AI processing</strong><p role="status">{policy.isPending ? 'Checking the current processing disclosure…' : policy.isError ? 'AI setup could not be verified. An approved disclosure and provider configuration are required; ordinary search remains available.' : !policy.data?.acknowledged ? 'Review and acknowledge the current disclosure before AI processing. Each saved note also needs AI access enabled.' : 'Only eligible saved notes with AI access enabled may be used. Provider and source checks still apply to every request.'}</p></div><Link to="/settings/privacy">Review AI &amp; Privacy</Link></aside><form className="studio-ask-form" onSubmit={event => void submit(event)}><label htmlFor="knowledge-question">What would you like to find?</label>
       <textarea id="knowledge-question" maxLength={2048} required value={input} onChange={e => setInput(e.target.value)} placeholder="Ask about something you’ve saved…" />
       <p className="notes-help">Uses saved content, not unsaved drafts. The server chooses the retrieval strategy. AI requires eligible sources and processing permission.</p>
       <div className="actions"><button disabled={!input.trim() || busy || running}>{busy ? 'Submitting…' : 'Ask your knowledge'}</button><button className="button-secondary" type="button" disabled={busy || running} onClick={() => { setInput(''); setResult(null); setOperation(null); setError('') }}>Clear question</button></div></form>
@@ -86,6 +88,6 @@ export function AskKnowledgePage({ auth }: { auth: AuthRuntime }) {
     {result && <KnowledgeResults result={result} />}
     {!result && !operation && !busy && !error && mode === 'ask' && <div className="notes-empty"><h2>Start with a question</h2><p>Answers stay connected to the notes and media that support them.</p>
       <div className="actions" aria-label="Example questions">{['Find my notes about project planning', 'List the URLs I saved', 'What did I write about my travel plans?'].map(example => <button type="button" className="button-secondary" key={example} onClick={() => setInput(example)}>{example}</button>)}</div>
-      <Link to="/settings/privacy">Review AI &amp; Privacy</Link></div>}
+      </div>}
   </div></NotesWorkspace>
 }
