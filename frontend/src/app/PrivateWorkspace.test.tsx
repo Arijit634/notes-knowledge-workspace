@@ -39,6 +39,19 @@ beforeAll(async () => { await Promise.all([import('../features/knowledge/AskKnow
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); window.history.replaceState(null, '', '/') })
 
 describe('real private-workspace transport contracts', () => {
+  it('renders the AI answer and a whole-Note deterministic match without inventing a location', async () => {
+    mount('/ask', c => c.path === '/api/knowledge/query' ? json({ ...result,
+      deterministicResults: [{ kind: 'note', value: 'Synthetic whole-Note match', aiEnabled: false,
+        occurrences: [{ noteId: id, attachmentId: null, location: null }] }] }) : undefined)
+    fireEvent.change(await screen.findByLabelText('What would you like to find?'), { target: { value: 'Find a saved fact' } })
+    fireEvent.submit(screen.getByLabelText('What would you like to find?').closest('form')!)
+    expect((await screen.findByRole('region', { name: 'AI answer' })).textContent).toContain('A grounded synthetic answer.')
+    const matches = screen.getByRole('region', { name: 'Deterministic results' })
+    expect(matches.textContent).toContain('Synthetic whole-Note match')
+    expect(matches.textContent).toContain('AI OFF · deterministic only')
+    expect(within(matches).getByRole('link', { name: 'Source 1 · Note' }).getAttribute('href')).toBe(`/notes/${id}`)
+    expect(matches.textContent).not.toContain('undefined')
+  })
   it('explains unavailable AI prerequisites without blocking ordinary search or claiming provider readiness', async () => {
     const { calls } = mount('/ask', call => call.path === '/api/ai/processing-policy' ? problem(503) : undefined)
     await screen.findByText(/AI setup could not be verified/)

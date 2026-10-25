@@ -6,12 +6,12 @@ import { NotesWorkspace } from '../notes/NotesWorkspace'
 import { PrivateSearchPanel } from '../notes/PrivateSearchPanel'
 import { featureError } from '../../app/ui/featureError'
 import { usePrivateScope } from '../../app/security/usePrivateScope'
-import { activeOperation, knowledgeApi, type Citation, type KnowledgeResult, type Operation } from './KnowledgeApi'
+import { activeOperation, knowledgeApi, type DeterministicOccurrence, type KnowledgeResult, type Operation } from './KnowledgeApi'
 import { processingPolicyApi } from './ProcessingPolicyApi'
 
-export function CitationList({ citations }: { citations: Citation[] }) {
+export function CitationList({ citations }: { citations: readonly DeterministicOccurrence[] }) {
   return <ol className="studio-citations">{citations.map((c, index) => <li key={`${c.noteId}:${c.attachmentId}:${index}`}>
-    <Link to={`/notes/${c.noteId}`} state={{ attachmentId: c.attachmentId, sourceLocation: c.location }}>Source {index + 1} · {c.attachmentId ? c.location.kind.replaceAll('_', ' ') : 'Note'}{c.location.page ? ` · page ${c.location.page}` : ''}{c.location.timeStart !== null ? ` · ${Math.floor(c.location.timeStart)}s` : ''}</Link>
+    <Link to={`/notes/${c.noteId}`} state={{ attachmentId: c.attachmentId, sourceLocation: c.location }}>Source {index + 1} · {c.attachmentId && c.location ? c.location.kind.replaceAll('_', ' ') : 'Note'}{c.location?.page ? ` · page ${c.location.page}` : ''}{c.location?.timeStart != null ? ` · ${Math.floor(c.location.timeStart)}s` : ''}</Link>
   </li>)}</ol>
 }
 export function KnowledgeResults({ result }: { result: KnowledgeResult }) {

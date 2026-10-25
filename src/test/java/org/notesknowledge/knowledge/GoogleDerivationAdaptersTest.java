@@ -39,7 +39,10 @@ class GoogleDerivationAdaptersTest {
     private int status=200;
     private String response="{\"embeddings\":[{\"values\":[1.0,0.0]}]}";
     private AiDerivationProperties config(String model) {
-        return new AiDerivationProperties(true,false,"gemini",model,"gemini-3.8-flash","synthetic-v1","global","unpaid",
+        return config(model,"gemini-3.8-flash");
+    }
+    private AiDerivationProperties config(String model,String mediaModel) {
+        return new AiDerivationProperties(true,false,"gemini",model,mediaModel,"synthetic-v1","global","unpaid",
             "synthetic-qualification-v1","google-v2",2,"cosine","none","a".repeat(64));
     }
     @BeforeEach @SuppressWarnings("unchecked") void start() throws Exception {
@@ -52,7 +55,7 @@ class GoogleDerivationAdaptersTest {
             exchange.getResponseHeaders().set("Content-Type","application/json");
             exchange.sendResponseHeaders(status,bytes.length);exchange.getResponseBody().write(bytes);exchange.close();
         });server.start();
-        sdk=Client.builder().apiKey("synthetic-not-a-provider-key").httpOptions(HttpOptions.builder()
+        sdk=Client.builder().apiKey("synthetic-not-a-provider-key").httpOptions(GoogleDerivationAdapters.providerHttpOptions(new MockEnvironment()).toBuilder()
             // Status/parsing contracts use the production deadline, not an unrelated
             // two-second scheduling threshold on a resource-constrained test host.
             .baseUrl("http://127.0.0.1:"+server.getAddress().getPort()).timeout(10000)
@@ -84,11 +87,15 @@ class GoogleDerivationAdaptersTest {
     private void generated(String output) {
         response=json.writeValueAsString(Map.of("modelVersion","gemini-3.8-flash","candidates",List.of(Map.of("content",Map.of("role","model","parts",List.of(Map.of("text",output))),"finishReason","STOP"))));
     }
-    @Test void explicitLowThinkingIsSentThroughTheRealSdkAndUnknownConfigurationIsRejected() {
+    @ParameterizedTest @ValueSource(strings={"gemini-3.8-flash","gemini-3.6-flash","gemini-3.5-flash-lite"})
+    void explicitLowThinkingIsSentThroughTheRealSdkAndUnknownConfigurationIsRejected(String mediaModel) {
         var configured=new GoogleDerivationAdapters(metrics,new MockEnvironment().withProperty("knowledge.derivation.thinking-level","LOW"));
         generated("{\"complete\":true,\"checkedPages\":[],\"noSpeech\":false,\"segments\":[]}");
-        configured.googleMediaUnderstandingPort(config("gemini-embedding-2"),clients,json).describe(sourcePermit(),new byte[]{1},new MediaUnderstandingRequest("image/png",null,null,null));
+        configured.googleMediaUnderstandingPort(config("gemini-embedding-2",mediaModel),clients,json).describe(sourcePermit(),new byte[]{1},new MediaUnderstandingRequest("image/png",null,null,null));
         assertThat(json.readTree(requests.getFirst()).path("generationConfig").path("thinkingConfig").path("thinkingLevel").asString()).isEqualTo("LOW");
+        assertThat(requestPaths.getFirst()).endsWith("/models/"+mediaModel+":generateContent");
+        assertThatThrownBy(()->configured.googleMediaUnderstandingPort(config("gemini-embedding-2","unqualified-model"),clients,json)).isInstanceOf(IllegalArgumentException.class);
+        assertThat(requests).hasSize(1);
         for(String value:List.of("MINIMAL","HIGH","arbitrary"))assertThatThrownBy(()->new GoogleDerivationAdapters(metrics,new MockEnvironment().withProperty("knowledge.derivation.thinking-level",value))).isInstanceOf(IllegalArgumentException.class);
     }
     @Test void operatorTimeoutRetainsDefaultAndRejectsUnboundedOrLeaseLengthRequests() {
@@ -96,6 +103,20 @@ class GoogleDerivationAdaptersTest {
         assertThat(GoogleDerivationAdapters.providerTimeout(new MockEnvironment().withProperty("knowledge.derivation.provider-timeout-ms","20000"))).isEqualTo(20000);
         for(String value:List.of("0","-1","999","20001","30000","2147483647"))
             assertThatThrownBy(()->GoogleDerivationAdapters.providerTimeout(new MockEnvironment().withProperty("knowledge.derivation.provider-timeout-ms",value))).isInstanceOf(IllegalArgumentException.class);
+    }
+    @ParameterizedTest @ValueSource(ints={128,129})
+    void mediaSegmentLimitRemainsAuthoritativeWithoutTheProviderCompilerBound(int count) {
+        var segment=Map.of("text","Fictional visible mark","kind","whole_image","heading","");
+        generated(json.writeValueAsString(Map.of("complete",true,"checkedPages",List.of(),"noSpeech",false,
+            "segments",Collections.nCopies(count,segment))));
+        var port=adapters.googleMediaUnderstandingPort(config("gemini-embedding-2"),clients,json);
+        if(count==128)assertThat(port.describe(sourcePermit(),new byte[]{1},new MediaUnderstandingRequest("image/png",null,null,null))).hasSize(128);
+        else assertThatThrownBy(()->port.describe(sourcePermit(),new byte[]{1},new MediaUnderstandingRequest("image/png",null,null,null)))
+            .isInstanceOfSatisfying(DerivationFailure.class,failure->assertThat(failure.category).isEqualTo(KnowledgeWork.Failure.INVALID_OUTPUT)).hasNoCause();
+        var schema=json.readTree(requests.getFirst()).path("generationConfig").path("responseJsonSchema");
+        assertThat(schema.path("properties").path("segments").has("maxItems")).isFalse();
+        assertThat(schema.path("properties").path("checkedPages").path("maxItems").asInt()).isEqualTo(8);
+        assertThat(requests).hasSize(1);
     }
     @Test void embedding2UsesSeparateDocumentRequestsAndQueryInstructionWithoutLegacyFields() {
         var permit=sourcePermit();var port=adapters.googleTextEmbeddingPort(config("gemini-embedding-2"),clients);

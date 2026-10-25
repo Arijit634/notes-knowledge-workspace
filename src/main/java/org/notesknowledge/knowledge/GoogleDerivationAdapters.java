@@ -29,7 +29,7 @@ class GoogleDerivationAdapters {
         thinkingLevel=level==null?null:org.springframework.ai.google.genai.common.GoogleGenAiThinkingLevel.LOW;
     }
     private org.springframework.ai.google.genai.common.GoogleGenAiThinkingLevel modelThinking(AiDerivationProperties configuration){
-        if(thinkingLevel!=null&&!"gemini-3.8-flash".equals(configuration.mediaModel()))throw new IllegalArgumentException("Unqualified provider thinking configuration");
+        if(thinkingLevel!=null&&!List.of("gemini-3.8-flash","gemini-3.6-flash","gemini-3.5-flash-lite").contains(configuration.mediaModel()))throw new IllegalArgumentException("Unqualified provider thinking configuration");
         return thinkingLevel;
     }
     private <T>T observed(org.notesknowledge.BackendTelemetry.Operation operation,java.util.function.Supplier<T> action){
@@ -49,8 +49,11 @@ class GoogleDerivationAdapters {
         String key=environment.getProperty("spring.ai.google.genai.api-key");
         if(!c.configured()||!"gemini".equals(c.provider())||!"unpaid".equals(c.tier())||!"global".equals(c.region())||key==null||key.isBlank())return null;
         modelThinking(c);
-        return com.google.genai.Client.builder().apiKey(key).httpOptions(com.google.genai.types.HttpOptions.builder().timeout(providerTimeout(environment))
-            .retryOptions(com.google.genai.types.HttpRetryOptions.builder().attempts(1).build()).build()).build();
+        return com.google.genai.Client.builder().apiKey(key).httpOptions(providerHttpOptions(environment)).build();
+    }
+    static com.google.genai.types.HttpOptions providerHttpOptions(Environment environment) {
+        return com.google.genai.types.HttpOptions.builder().timeout(providerTimeout(environment))
+            .retryOptions(com.google.genai.types.HttpRetryOptions.builder().attempts(1).build()).build();
     }
     static int providerTimeout(Environment environment) {
         int timeout=environment.getProperty("knowledge.derivation.provider-timeout-ms",Integer.class,10000);
@@ -280,10 +283,13 @@ class GoogleDerivationAdapters {
             +"At most 128 segments, at most 12000 characters per segment and 48000 total text characters. No URLs/tools/actions, fabricated locations or outside knowledge. "+scope;
     }
     static String mediaSchema() {
+        // A provider-side 128-item bound combined with the optional location union
+        // exceeds Gemini's schema compiler limits. Keep the same output shape;
+        // validateMediaOutput/validateScope still enforce 128 segments and 48k text.
         return """
             {"type":"object","required":["complete","checkedPages","noSpeech","segments"],"properties":{
             "complete":{"type":"boolean"},"checkedPages":{"type":"array","maxItems":8,"items":{"type":"integer"}},"noSpeech":{"type":"boolean"},
-            "segments":{"type":"array","maxItems":128,"items":{"type":"object","required":["text","kind","heading"],"properties":{
+            "segments":{"type":"array","items":{"type":"object","required":["text","kind","heading"],"properties":{
             "text":{"type":"string"},"kind":{"type":"string","enum":["pdf_text","whole_image","image_region","transcript","video_scene"]},
             "heading":{"type":"string"},"start":{"anyOf":[{"type":"integer"},{"type":"null"}]},"end":{"anyOf":[{"type":"integer"},{"type":"null"}]},
             "page":{"anyOf":[{"type":"integer"},{"type":"null"}]},"timeStart":{"anyOf":[{"type":"number"},{"type":"null"}]},"timeEnd":{"anyOf":[{"type":"number"},{"type":"null"}]},

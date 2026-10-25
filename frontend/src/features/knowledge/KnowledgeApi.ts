@@ -5,7 +5,8 @@ import { ApiProtocolError } from '../../app/api/ProblemDetailsDecoder'
 export type SourceLocation = { kind: string; start: number | null; end: number | null; page: number | null;
   timeStart: number | null; timeEnd: number | null; x: number | null; y: number | null; width: number | null; height: number | null }
 export type Citation = { noteId: string; attachmentId: string | null; location: SourceLocation }
-export type KnowledgeResult = { deterministicResults: { kind: string; value: string; occurrences: Citation[]; aiEnabled: boolean }[];
+export type DeterministicOccurrence = Citation | { noteId: string; attachmentId: null; location: null }
+export type KnowledgeResult = { deterministicResults: { kind: string; value: string; occurrences: DeterministicOccurrence[]; aiEnabled: boolean }[];
   aiAnswer: null | { claims: string[]; conflicting: boolean }; citations: Citation[];
   coverage: { boundary: string; inspectedSources: number; completed: boolean; corpusChanged: boolean; truncated: boolean; retryRequired: boolean; classificationUncertain: boolean };
   degraded: string | null; insufficientEvidence: boolean }
@@ -23,10 +24,19 @@ export function citation(value: unknown): Citation {
     kind, start: nullable(l.start), end: nullable(l.end), page: nullable(l.page), timeStart: nullable(l.timeStart), timeEnd: nullable(l.timeEnd),
     x: nullable(l.x), y: nullable(l.y), width: nullable(l.width), height: nullable(l.height) } }
 }
+function deterministicOccurrence(value: unknown, kind: string): DeterministicOccurrence {
+  const c = record(value)
+  // A whole-Note lexical match has no invented paragraph/media position.
+  // This exception is never used for model-evidence citations.
+  if (kind === 'note' && c.attachmentId === null && c.location === null) {
+    return { noteId: uuid(c.noteId), attachmentId: null, location: null }
+  }
+  return citation(value)
+}
 export function knowledgeResult(value: unknown): KnowledgeResult {
   const r = record(value), c = record(r.coverage), answer = r.aiAnswer === null ? null : record(r.aiAnswer)
   return { deterministicResults: array(r.deterministicResults, value => { const d = record(value); return {
-    kind: text(d.kind, 80), value: text(d.value, 16384), occurrences: array(d.occurrences, citation), aiEnabled: flag(d.aiEnabled) } }),
+    kind: text(d.kind, 80), value: text(d.value, 16384), occurrences: array(d.occurrences, c => deterministicOccurrence(c, text(d.kind, 80))), aiEnabled: flag(d.aiEnabled) } }),
     aiAnswer: answer && { claims: array(answer.claims, value => text(value, 16384), 256), conflicting: flag(answer.conflicting) },
     citations: array(r.citations, citation), coverage: { boundary: text(c.boundary, 80), inspectedSources: integer(c.inspectedSources), completed: flag(c.completed),
       corpusChanged: flag(c.corpusChanged), truncated: flag(c.truncated), retryRequired: flag(c.retryRequired), classificationUncertain: flag(c.classificationUncertain) },
