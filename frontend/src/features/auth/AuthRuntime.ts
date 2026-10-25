@@ -8,10 +8,12 @@ import { SessionCoordinator, type LocalSessionState } from '../../app/security/S
 import { AuthContinuationState, validChallenge } from './AuthContinuationState'
 import { captureSecurityLink } from './SecurityLinkIngress'
 import { SignInDestination } from './SafeDestination'
+import { deploymentPresentation } from './DeploymentPresentation'
 
 type SessionProjection = { state?: unknown; challengeId?: unknown }
 
 export class AuthRuntime {
+  readonly presentation = deploymentPresentation(document)
   readonly continuation = new AuthContinuationState()
   readonly signInDestination = new SignInDestination()
   readonly sensitive = new SensitiveStateRegistry()

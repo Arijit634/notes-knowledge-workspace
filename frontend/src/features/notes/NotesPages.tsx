@@ -42,8 +42,8 @@ export function NotesListPage({ auth }: { auth: AuthRuntime }) {
   function cards(notes: NoteCore[]) { return <ul className="notes-list">{notes.map(note => <li key={note.id}>
     <Link to={`/notes/${note.id}`}><div className="notes-card-heading"><strong>{note.title}</strong>{note.pinned && <span className="notes-pill">Pinned</span>}</div>
       <p className="notes-card-snippet">{note.markdown.slice(0, 2400).replace(/^#{1,6}\s+/gm, '').replace(/(^|\n)\s*(?:[-*+] |\d+\. )(?:\[[ x]\] )?/g, '$1').replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/```[^\n]*\n/g, '').replace(/[#*_`>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 240)}</p>
-      <span className="notes-card-meta">Updated <time dateTime={note.updatedAt}>{new Date(note.updatedAt).toLocaleString()}</time></span>
-      {note.tags.length > 0 && <ul className="notes-tags" aria-label="Tags">{note.tags.slice(0, 5).map(tag => <li key={tag}>{tag}</li>)}{note.tags.length > 5 && <li>+{note.tags.length - 5}</li>}</ul>}</Link>
+      {note.tags.length > 0 && <ul className="notes-tags" aria-label="Tags">{note.tags.slice(0, 5).map(tag => <li key={tag}>{tag}</li>)}{note.tags.length > 5 && <li>+{note.tags.length - 5}</li>}</ul>}
+      <span className="notes-card-meta">Updated <time dateTime={note.updatedAt} title={new Date(note.updatedAt).toLocaleString()}>{new Date(note.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</time></span></Link>
   </li>)}</ul> }
   return <NotesWorkspace auth={auth}><div className={rows ? 'studio-library-rows' : undefined}>
     <header className="notes-heading"><div><p className="eyebrow">Your workspace</p><h1>Notes</h1></div>
@@ -62,7 +62,7 @@ export function NotesListPage({ auth }: { auth: AuthRuntime }) {
     {page.isError && <p className="notes-message notes-message-error" role="alert">{issue(page.error)} <button onClick={() => void page.refetch()}>Retry</button></p>}
     {!page.isPending && !page.isError && entries.length === 0 && <div className="notes-empty"><h2>{lifecycle === 'active' ? 'No notes yet' : lifecycle === 'archived' ? 'No archived notes' : 'No trashed notes'}</h2><p>{lifecycle === 'active' ? 'Start with a thought worth keeping.' : 'Notes in this view will appear here.'}</p><Link to="/notes/new">Create a note</Link></div>}
     {pinned.length > 0 && <section aria-label="Pinned notes"><h2 className="studio-section-label">Pinned notes</h2>{cards(pinned)}</section>}
-    {regular.length > 0 && <section aria-label="Notes library"><h2 className="studio-section-label">{pinned.length ? 'Other notes' : 'Your notes'}</h2>{cards(regular)}</section>}
+    {regular.length > 0 && <section className="studio-regular-notes" aria-label="Notes library"><h2 className="studio-section-label">{pinned.length ? 'Other notes' : 'Your notes'}</h2>{cards(regular)}</section>}
     {page.hasNextPage && <button className="button-secondary" disabled={page.isFetchingNextPage}
       onClick={() => void page.fetchNextPage()}>Load more</button>}
     </>}

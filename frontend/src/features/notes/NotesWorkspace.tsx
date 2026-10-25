@@ -12,6 +12,7 @@ export function NotesWorkspace({ children, modalOpen = false, auth }: { children
   const [logoutOpen, setLogoutOpen] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('')
   const blocked = modalOpen || logoutOpen
   const opener = useRef<HTMLElement | null>(null)
+  const section = location.pathname.startsWith('/notes') ? 'Notes library' : location.pathname.startsWith('/settings') ? 'Account settings' : location.pathname.startsWith('/publications') ? 'Publishing' : location.pathname === '/ask' ? 'Search & Ask' : 'Workspace'
   function openLogout(event: MouseEvent<HTMLButtonElement>) { opener.current = event.currentTarget; setLogoutOpen(true) }
   async function logout() {
     if (!auth || busy) return
@@ -24,6 +25,7 @@ export function NotesWorkspace({ children, modalOpen = false, auth }: { children
       <aside className="notes-sidebar" aria-label="Workspace" inert={blocked}>
         <Link className="notes-brand" to="/"><span aria-hidden="true" className="notes-brand-mark">n.</span>
           <span>Notes &amp;<br />{' '}Knowledge</span></Link>
+        <Link to="/notes/new" className="studio-new-note"><Icon name="plus" />New note</Link>
         <p className="notes-nav-label">Workspace</p>
         <nav aria-label="Workspace navigation">
           <Link to="/notes" aria-current={location.pathname.startsWith('/notes') ? 'page' : undefined}><Icon name="notes" />All notes</Link>
@@ -37,13 +39,15 @@ export function NotesWorkspace({ children, modalOpen = false, auth }: { children
             <Link to="/settings/profile">Profile</Link><Link to="/settings/public-profile">Public profile</Link><Link to="/settings/privacy">AI &amp; Privacy</Link><Link to="/settings/security">Security settings</Link>
           </div></details>
         </nav>
-        <Link to="/notes/new" className="studio-new-note"><Icon name="plus" />New note</Link>
         <p className="notes-sidebar-foot">Your private workspace</p>
         {auth && <button type="button" className="studio-logout" onClick={openLogout}>Log out</button>}
       </aside>
+      <div className="workspace-stage">
+      <header className="studio-command-bar" inert={blocked}><span className="studio-command-location"><Icon name={section === 'Account settings' ? 'shield' : 'notes'} />{section}</span><Link to="/settings/profile" className="studio-account-link"><Icon name="profile" />Account</Link></header>
       <main id="notes-content" className="notes-content" tabIndex={-1} inert={logoutOpen}>{children}
         {auth && location.pathname.startsWith('/settings') && <button type="button" className="button-secondary studio-mobile-logout" aria-label="Sign out of account" onClick={openLogout}>Log out</button>}
       </main>
+      </div>
     </div>
     {logoutOpen && <ConfirmDialog opener={opener.current} title="Log out of this workspace?" busy={busy} onCancel={() => setLogoutOpen(false)} onConfirm={() => void logout()} confirmText="Log out">
       <p>Unsaved drafts in this tab will be discarded. Saved notes remain in your account.</p>{error && <p role="alert">{error}</p>}</ConfirmDialog>}

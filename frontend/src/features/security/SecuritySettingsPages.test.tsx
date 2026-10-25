@@ -34,7 +34,10 @@ function mount(path: string, options: {
   state?: 'anonymous' | 'mfaRequired' | 'authenticated'
   handler?: (method: string, path: string, body: unknown) => Response
   summary?: SecuritySummary
+  googleEnabled?: boolean
 } = {}) {
+  document.querySelectorAll('meta[name="nkw-presentation"]').forEach(node => node.remove())
+  const meta = document.createElement('meta'); meta.name = 'nkw-presentation'; meta.content = `google=${options.googleEnabled === false ? 'disabled' : 'enabled'};email=ordinary`; document.head.append(meta)
   window.history.replaceState(null, '', path)
   const calls: Array<{ method: string; path: string; body: unknown; csrf: string | null }> = []
   const state = options.state ?? 'authenticated'
@@ -58,9 +61,18 @@ afterEach(() => {
   cleanup(); qrValues.length = 0; vi.unstubAllGlobals(); vi.restoreAllMocks()
   window.localStorage.clear(); window.sessionStorage.clear()
   window.history.replaceState(null, '', '/')
+  document.querySelectorAll('meta[name="nkw-presentation"]').forEach(node => node.remove())
 })
 
 describe('security settings browser journey', () => {
+  it('does not start Google linking when the deployment disables that provider', async () => {
+    const { calls } = mount('/settings/security', { googleEnabled: false })
+    const button = await screen.findByRole('button', { name: 'Link Google sign-in' })
+    expect((button as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(button)
+    expect(calls.some(call => call.path.endsWith('/link-authorizations'))).toBe(false)
+    expect(screen.getByText(/Google sign-in is not enabled/)).toBeTruthy()
+  })
   it('registers the existing authentication, security, and Notes routes', () => {
     expect(PRODUCT_ROUTES).toEqual(['/', '/signup', '/verify-email', '/login', '/mfa',
       '/forgot-password', '/reset-password', '/auth/complete', '/reauth',

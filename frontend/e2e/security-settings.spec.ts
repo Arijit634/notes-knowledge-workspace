@@ -75,6 +75,12 @@ test('email-change fragment is scrubbed before confirmation', async ({ page }) =
 
 test('Google linking uses only the approved top-level provider destination', async ({ page }) => {
   const calls = await fakeSecurityBackend(page)
+  // This controlled deployment explicitly advertises an enabled Google provider;
+  // production availability comes from the existing server-rendered HTML shell.
+  await page.route('**/settings/security', async route => {
+    const response = await route.fetch()
+    await route.fulfill({ response, body: (await response.text()).replace('content="unconfigured"', 'content="google=enabled;email=ordinary"') })
+  })
   await page.route('https://accounts.google.com/o/oauth2/v2/auth?*', async route => {
     await route.fulfill({ status: 200, contentType: 'text/html', body: '<h1>Provider double</h1>' })
   })

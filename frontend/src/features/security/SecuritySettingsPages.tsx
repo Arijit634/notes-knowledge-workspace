@@ -143,6 +143,7 @@ export function SecuritySettingsPage({ auth }: Props) {
     })
   }
   async function beginGoogleLink() {
+    if (!auth.presentation.googleEnabled) return
     await action.run(async () => navigateToGoogle(await securityApi.beginGoogleLink(auth)), () => undefined)
   }
   async function completeConfirmation() {
@@ -198,7 +199,8 @@ export function SecuritySettingsPage({ auth }: Props) {
             <button type="button" className="button-secondary" disabled={action.busy}
               onClick={() => setConfirmation({ kind: 'unlink', id: link.linkId })}>Remove Google sign-in</button>
           </li>)}</ul>}
-        <button type="button" onClick={beginGoogleLink} disabled={action.busy}>Link Google sign-in</button>
+        <button type="button" onClick={beginGoogleLink} disabled={action.busy || !auth.presentation.googleEnabled}>Link Google sign-in</button>
+        {!auth.presentation.googleEnabled && <p className="field-help">Google sign-in is not enabled for this deployment. Existing account security remains protected.</p>}
       </section>
       <section aria-labelledby="factors-heading"><h2 id="factors-heading">More security controls</h2>
         <nav className="actions" aria-label="More security controls"><Link className="button button-secondary" to="/settings/security/mfa">Manage MFA</Link>

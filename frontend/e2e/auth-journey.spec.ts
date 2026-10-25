@@ -44,7 +44,7 @@ async function fakeBackend(page: Page, initial: 'anonymous' | 'mfaRequired' | 'a
 test('anonymous landing to signup uses generic accepted copy', async ({ page }) => {
   await fakeBackend(page)
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: /quieter place/i })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'A home for your ideas' })).toBeVisible()
   await page.getByRole('link', { name: 'Create an account' }).click()
   await page.getByLabel('Email').fill('person@example.test')
   await page.getByLabel('Create password').fill('Synthetic-password-123!')
