@@ -5,7 +5,8 @@ import java.util.UUID;
 
 /** Current full-session scope is resolved by Notes, never supplied as a caller's owner UUID. */
 public interface PrivateLexicalSearch {
-    record Query(String text, PrivateKnowledgeSource.Lifecycle lifecycle, List<String> tags) {
+    record Query(String text, PrivateKnowledgeSource.Lifecycle lifecycle, List<String> tags,PrivateQuerySource.SavedDuring savedDuring) {
+        public Query(String text,PrivateKnowledgeSource.Lifecycle lifecycle,List<String> tags){this(text,lifecycle,tags,null);}
         public Query { tags=List.copyOf(tags); }
         @Override public String toString() { return "CurrentLexicalQuery[REDACTED]"; }
     }

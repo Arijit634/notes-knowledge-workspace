@@ -136,7 +136,7 @@ class AttachmentParserRuntimeTest {
         var loader = TikaLoader.load(Path.of(getClass().getResource("/attachments/parser.json").toURI()));
         var parser = (CompositeParser)loader.loadParsers();
         assertThat(parser.getAllComponentParsers()).extracting(p -> p.getClass().getSimpleName())
-                .containsExactlyInAnyOrder("PDFParser", "MP4Parser");
+                .containsExactlyInAnyOrder("PdfAdmissionParser", "MP4Parser");
     }
 
     @Test

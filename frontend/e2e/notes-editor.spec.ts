@@ -3,7 +3,7 @@ import { sourceEditor, openTools } from './editor-support'
 
 const id = '01990a55-9e12-7ac4-8f5b-31aa4a91d401'
 
-for (const width of [1920, 1280, 834, 390, 320]) test(`new Note uses the full workspace and compact AI control at ${width}px`, async ({ page }) => {
+for (const width of [1920, 1280, 834, 390, 320]) test(`new Note uses the reference modal and compact AI control at ${width}px`, async ({ page }) => {
   await fakeNotesBackend(page)
     await page.setViewportSize({ width, height: 900 })
     await page.goto('/notes/new')
@@ -20,10 +20,10 @@ for (const width of [1920, 1280, 834, 390, 320]) test(`new Note uses the full wo
     await expect(page.getByLabel('Title', { exact: true })).toHaveAttribute('placeholder', 'Untitled note')
     await noPageOverflow(page)
   await page.getByRole('checkbox', { name: 'Use this note with AI', exact: true }).check()
-  await page.getByRole('link', { name: 'Back to notes', exact: true }).click()
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Leave with unsaved changes?' })
   await expect(dialog).toBeVisible()
-  await dialog.getByRole('button', { name: 'Keep editing', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Keep writing', exact: true }).click()
   await expect(dialog).toHaveCount(0)
   await expect(page.getByRole('checkbox', { name: 'Use this note with AI', exact: true })).toBeChecked()
   await page.getByLabel('Title', { exact: true }).fill('Focused fictional note')
@@ -77,6 +77,7 @@ async function fakeNotesBackend(page: Page, requireRecent = false) {
     calls.push({ method, path, body })
     let status = 200, response: unknown = {}, headers: Record<string, string> = {}
     if (path === '/api/auth/session') response = { state: 'authenticated' }
+    else if (path === '/api/me/profile') response = { displayName: 'Synthetic writer', biography: '', handle: null, avatar: null, updatedAt: null }
     else if (path === '/api/auth/csrf') response = { csrfToken: 'synthetic-csrf' }
     else if (path === `/api/notes/${id}/attachments` && method === 'GET') response = { items: [], nextCursor: null }
     else if (path === '/api/me/note-preferences') response = { defaultAiEnabledForNewNotes: false }
@@ -280,7 +281,7 @@ test('new Note stays local until Create; explicit Save and dirty navigation work
     externalImageRequests++; await route.abort()
   })
   await page.goto('/notes/new')
-  await expect(page.getByRole('heading', { name: 'Create a note' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'New note' })).toBeVisible()
   await page.getByLabel('Title').fill('Watch later')
   await (await sourceEditor(page)).fill('**Movie**\n\n![remote](https://untrusted.invalid/remote-image)')
   await page.getByRole('button', { name: 'Read', exact: true }).click()
@@ -409,13 +410,13 @@ for (const width of [360, 390, 768, 1280, 1440]) {
     await expect(page.getByRole('main')).toBeFocused()
     await noPageOverflow(page)
     expect(await page.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('link').allTextContents())
-      .toEqual(width <= 600 ? ['All notes', 'Search & Ask', 'Publications', 'Explore'] : ['All notes', 'Search & Ask', 'Publications', 'Explore', 'Profile', 'AI & Privacy', 'Security settings'])
+      .toEqual(['All notes', 'AI Search', 'Publications', 'Explore'])
     if (width <= 600) {
-      await page.locator('.workspace-more > summary').click()
-      await expect(page.getByRole('navigation', { name: 'Workspace navigation' }).getByRole('link', { name: 'Public profile', exact: true })).toBeVisible()
-      await page.locator('.workspace-more > summary').click()
+      await page.locator('.workspace-account > summary').click()
+      await expect(page.locator('.workspace-account-menu').getByRole('link', { name: 'Public profile', exact: true })).toBeVisible()
+      await page.locator('.workspace-account > summary').click()
     }
-    await expect(page.getByRole('searchbox')).toHaveCount(0)
+    await expect(page.getByRole('searchbox', { name: 'Search notes', exact: true })).toBeVisible()
     await page.getByRole('link', { name: 'New note', exact: true }).click()
     await page.getByLabel('Title', { exact: true }).fill('Small things worth keeping')
     await (await sourceEditor(page)).fill('# A quiet afternoon\n\nA few **ideas** for later.\n\n- Read a chapter\n- Take a walk\n\n```text\n' + 'synthetic-long-line-'.repeat(30) + '\n```')

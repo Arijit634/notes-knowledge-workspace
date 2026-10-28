@@ -315,6 +315,26 @@ class PrivateDerivationIntegrationTest {
         assertThat(readyCount()).isZero();
         assertThat(jdbc.queryForObject("select ai_enabled from notes.note where note_id=?",Boolean.class,note)).isTrue();
     }
+    @Test void pausingBackgroundNoteIndexingDoesNotChangeAiStateOrBlockAttachmentWork() throws Exception {
+        UUID attachment=upload("image");
+        org.springframework.test.util.ReflectionTestUtils.setField(reconciler,"scheduleNotes",false);
+        try{reconcileAll();
+            assertThat(jdbc.queryForObject("select count(*) from knowledge.knowledge_work_intent where owner_user_id=? and source_attachment_id is null",Integer.class,owner)).isZero();
+            assertThat(jdbc.queryForObject("select count(*) from knowledge.knowledge_work_intent where owner_user_id=? and source_attachment_id=?",Integer.class,owner,attachment)).isEqualTo(1);
+            assertThat(jdbc.queryForObject("select ai_enabled from notes.note where note_id=?",Boolean.class,note)).isTrue();
+        }finally{org.springframework.test.util.ReflectionTestUtils.setField(reconciler,"scheduleNotes",true);}
+    }
+    @Test void explicitLongerLeaseRetainsCurrentHeartbeatAndExpiredClaimFencing() {
+        try{work.leaseSeconds(90);var current=claim(noteExpected(),"note");
+            assertThat(jdbc.queryForObject("select extract(epoch from lease_until-updated_at)::double precision from knowledge.knowledge_work_intent where knowledge_work_intent_id=?",Double.class,current.intent().id()))
+                .isCloseTo(90.,within(.1));
+            assertThat(work.heartbeat(current)).isTrue();
+            jdbc.update("update knowledge.knowledge_work_intent set lease_until=clock_timestamp()-interval '1 second' where knowledge_work_intent_id=?",current.intent().id());
+            assertThat(work.heartbeat(current)).isFalse();assertThat(work.complete(current)).isFalse();
+            assertThatThrownBy(()->work.leaseSeconds(29)).isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(()->work.leaseSeconds(121)).isInstanceOf(IllegalArgumentException.class);
+        }finally{work.leaseSeconds(30);}
+    }
     @Test void exactApprovedUnpaidSourceDispatchesButItsEditRequiresNewOperatorApproval() throws Exception {
         unpaidGemini();approve(noteExpected());reconcileAll();assertThat(ownerWorkCount()).isEqualTo(1);
         var first=work.claim(new LeaseOwner("synthetic-approved-worker"),10).stream().filter(c->c.intent().expected().owner().equals(owner)).findFirst().orElseThrow();

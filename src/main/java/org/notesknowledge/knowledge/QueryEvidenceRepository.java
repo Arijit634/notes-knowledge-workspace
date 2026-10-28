@@ -12,6 +12,10 @@ import org.springframework.stereotype.Repository;
 class QueryEvidenceRepository {
     record Evidence(UUID segmentId,UUID representationId,PrivateAiSourceCurrentness.Expected expected,String lineage,
             String modality,int ordinal,DerivedSegment segment) {
+        static Evidence noteSnapshot(PrivateAiSourceCurrentness.Expected expected,String lineage,int ordinal,DerivedSegment segment) {
+            if(expected.attachmentId()!=null||!segment.kind().equals("note_text"))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
+            return new Evidence(null,null,expected,lineage,"note",ordinal,segment);
+        }
         @Override public String toString(){return "QueryEvidence[REDACTED]";}
     }
     private final ObjectProvider<JdbcClient> clients;
@@ -22,14 +26,21 @@ class QueryEvidenceRepository {
         return source(source,lineage,null,0);
     }
     List<Evidence> page(PrivateAiSourceCurrentness.Expected source,EmbeddingLineage lineage,int nextOrdinal) {
+        return page(source,lineage,nextOrdinal,12);
+    }
+    List<Evidence> page(PrivateAiSourceCurrentness.Expected source,EmbeddingLineage lineage,int nextOrdinal,int limit) {
         if(nextOrdinal<0||nextOrdinal>512)throw new IllegalArgumentException("Invalid segment continuation");
-        return source(source,lineage,null,nextOrdinal);
+        if(limit<1||limit>KnowledgeQueryLimits.EXTRACTION)throw new IllegalArgumentException("Invalid segment batch");
+        return source(source,lineage,null,nextOrdinal,limit+1);
     }
     Evidence candidate(ExactPrivateVectorSearch.Candidate candidate,EmbeddingLineage lineage) {
         return source(candidate.expected(),lineage,candidate.segmentId(),0).stream()
             .filter(e->e.ordinal()==candidate.ordinal()).findFirst().orElse(null);
     }
     private List<Evidence> source(PrivateAiSourceCurrentness.Expected source,EmbeddingLineage lineage,UUID segmentId,int nextOrdinal) {
+        return source(source,lineage,segmentId,nextOrdinal,13);
+    }
+    private List<Evidence> source(PrivateAiSourceCurrentness.Expected source,EmbeddingLineage lineage,UUID segmentId,int nextOrdinal,int limit) {
         if(!current.matches(source))return List.of();
         return clients.getObject().sql("""
             select s.*,r.source_note_id,r.source_attachment_id,r.source_revision,r.processing_generation,r.attachment_generation,r.modality
@@ -42,18 +53,23 @@ class QueryEvidenceRepository {
                 and s.lineage_id=:lineage and s.owner_user_id=:owner
                 and (:segment::uuid is null or s.derived_segment_id=:segment)
                 and s.ordinal>=:nextOrdinal
-            order by s.ordinal limit 13
+            order by s.ordinal limit :limit
             """).param("owner",source.owner()).param("note",source.noteId()).param("attachment",source.attachmentId(),java.sql.Types.OTHER)
             .param("revision",source.revision()).param("generation",source.aiGeneration()).param("attachmentGeneration",source.attachmentGeneration(),java.sql.Types.BIGINT)
             .param("lineage",lineage.id()).param("policy",lineage.policyId()).param("dimension",lineage.dimension())
             .param("segment",segmentId,java.sql.Types.OTHER)
             .param("nextOrdinal",nextOrdinal)
+            .param("limit",limit)
             .query((r,i)->new Evidence(r.getObject("derived_segment_id",UUID.class),r.getObject("parent_id",UUID.class),source,lineage.id(),r.getString("modality"),r.getInt("ordinal"),
                 new DerivedSegment(r.getString("surrogate_text"),r.getString("segment_kind"),r.getString("heading_ancestry"),r.getObject("source_start",Integer.class),r.getObject("source_end",Integer.class),
                     r.getObject("page_number",Integer.class),r.getObject("time_start",Double.class),r.getObject("time_end",Double.class),r.getObject("region_x",Double.class),r.getObject("region_y",Double.class),
                     r.getObject("region_width",Double.class),r.getObject("region_height",Double.class)))).list();
     }
     boolean current(Evidence e,EmbeddingLineage lineage) {
+        // Authoritative Note snapshots are ephemeral generation evidence, never vectors
+        // or invented persistent representation identities. A Note revision is immutable.
+        if(e.representationId()==null)return e.segmentId()==null&&e.expected().attachmentId()==null&&e.modality().equals("note")
+            &&e.segment().kind().equals("note_text")&&e.lineage().equals(lineage.id())&&current.matches(e.expected());
         return e.lineage().equals(lineage.id())&&current.matches(e.expected())&&clients.getObject().sql("""
             select count(*) from knowledge.private_derived_representation r join knowledge.private_derived_segment s
             on r.derived_representation_id=s.parent_id and r.owner_user_id=s.owner_user_id

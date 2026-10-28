@@ -28,7 +28,7 @@ class KnowledgeQueryGate {
             if(Instant.now().isAfter(expires)||org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()||!configuration.configured())throw new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE);
         }
         void requireGoogle(String query){requireDispatch();if(normalizedQuery==null||!normalizedQuery.equals(query)
-            ||!dispatch.permitsUnpaidGeminiQuery(configuration,query))throw new DerivationFailure(KnowledgeWork.Failure.POLICY_BLOCKED);}
+            ||!dispatch.permitsUnpaidGeminiQuery(configuration,owner,query))throw new DerivationFailure(KnowledgeWork.Failure.POLICY_BLOCKED);}
         @Override public String toString(){return "QueryOnlyPermit[REDACTED]";}
     }
     final class EvidencePermit {
@@ -50,12 +50,16 @@ class KnowledgeQueryGate {
     }
     @Transactional(timeout=3)
     QueryPermit query(UUID owner,String query){var prerequisite=query(owner);String normalized=KnowledgeQueryRequest.normalize(query);
-        if(!dispatch.permitsQuery(configuration,normalized))throw new DerivationFailure(KnowledgeWork.Failure.POLICY_BLOCKED);
+        if(!dispatch.permitsQuery(configuration,owner,normalized))throw new DerivationFailure(KnowledgeWork.Failure.POLICY_BLOCKED);
         return new QueryPermit(owner,prerequisite.policy,normalized);
     }
     @Transactional(timeout=3)
     EvidencePermit evidence(UUID owner,String query,List<PrivateQuerySource.Source> evidence,DispatchCoordinator.Handle handle){
-        if(evidence.isEmpty()||evidence.size()>12)throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);
+        return evidence(owner,query,evidence,handle,12);
+    }
+    @Transactional(timeout=3)
+    EvidencePermit evidence(UUID owner,String query,List<PrivateQuerySource.Source> evidence,DispatchCoordinator.Handle handle,int limit){
+        if((limit!=12&&limit!=KnowledgeQueryLimits.EXTRACTION)||evidence.isEmpty()||evidence.size()>limit)throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);
         handle.requireDispatchScopes(owner,evidence.stream().map(e->e.expected().noteId()).distinct().toList());
         var permit=query(owner,query);
         if(evidence.stream().anyMatch(e->!owner.equals(e.expected().owner())||!sources.matches(e,true)||!dispatch.permits(configuration,e.expected(),e.modality())))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);

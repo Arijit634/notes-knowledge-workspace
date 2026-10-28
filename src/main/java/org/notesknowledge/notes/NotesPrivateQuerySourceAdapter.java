@@ -36,16 +36,17 @@ class NotesPrivateQuerySourceAdapter implements PrivateQuerySource {
         from notes.note n join notes.attachment a on a.note_id=n.note_id and a.owner_user_id=n.owner_user_id
         where a.storage_state='stored' and a.validation_state='accepted' and a.cleanup_state='retained' and a.removed_at is null
         """;
-    public Boundary capture(UUID user,List<String> states){return transaction(()->{
+    public Boundary capture(UUID user,List<String> states){return capture(user,states,null);}
+    public Boundary capture(UUID user,List<String> states,SavedDuring period){return transaction(()->{
         owner(user);
         var start=clients.getObject().sql("select clock_timestamp()").query(Timestamp.class).single().toInstant();
-        var maxima=clients.getObject().sql("select distinct on (family) family,created_at,source_id from ("+SOURCES+") s where owner_user_id=:owner and lifecycle_state in (:states) order by family,created_at desc,source_id desc")
-            .param("owner",user).param("states",states).query((r,i)->java.util.Map.entry(r.getInt("family"),new FamilyBoundary(false,r.getTimestamp("created_at").toInstant(),r.getObject("source_id",UUID.class)))).list();
+        var maxima=clients.getObject().sql("select distinct on (family) family,created_at,source_id from ("+SOURCES+") s where owner_user_id=:owner and lifecycle_state in (:states) and (:allDates or (created_at>=:savedFrom::timestamptz and created_at<:savedUntil::timestamptz)) and (:allDates or (created_at>=:savedFrom::timestamptz and created_at<:savedUntil::timestamptz)) order by family,created_at desc,source_id desc")
+            .param("owner",user).param("states",states).param("allDates",period==null).param("savedFrom",period==null?null:period.from().atOffset(java.time.ZoneOffset.UTC),java.sql.Types.TIMESTAMP_WITH_TIMEZONE).param("savedUntil",period==null?null:period.toExclusive().atOffset(java.time.ZoneOffset.UTC),java.sql.Types.TIMESTAMP_WITH_TIMEZONE).query((r,i)->java.util.Map.entry(r.getInt("family"),new FamilyBoundary(false,r.getTimestamp("created_at").toInstant(),r.getObject("source_id",UUID.class)))).list();
         var families=maxima.stream().collect(java.util.stream.Collectors.toMap(java.util.Map.Entry::getKey,java.util.Map.Entry::getValue));
-        return new Boundary(1,start,states,families.getOrDefault(0,FamilyBoundary.emptyFamily()),families.getOrDefault(1,FamilyBoundary.emptyFamily()));
+        return new Boundary(1,start,states,families.getOrDefault(0,FamilyBoundary.emptyFamily()),families.getOrDefault(1,FamilyBoundary.emptyFamily()),period);
     });}
     private static final String BOUNDARY_SCOPE="""
-         where owner_user_id=:owner and lifecycle_state in (:states) and (
+         where owner_user_id=:owner and lifecycle_state in (:states) and (:allDates or (created_at>=:savedFrom::timestamptz and created_at<:savedUntil::timestamptz)) and (
             (family=0 and not :notesEmpty and (created_at,source_id)<=(:noteTime::timestamptz,:noteId::uuid)) or
             (family=1 and not :mediaEmpty and (created_at,source_id)<=(:mediaTime::timestamptz,:mediaId::uuid)))
         """;
@@ -53,12 +54,14 @@ class NotesPrivateQuerySourceAdapter implements PrivateQuerySource {
         owner(user);
         clients.getObject().sql("select set_config('statement_timeout','2000',true)").query(String.class).single();
         return clients.getObject().sql(select+" from ("+SOURCES+") s "+BOUNDARY_SCOPE+(ai?"and ai_enabled ":"and modality in ('note','pdf') ")+suffix)
-            .param("owner",user).param("states",b.lifecycles())
+            .param("owner",user).param("states",b.lifecycles()).param("allDates",b.savedDuring()==null)
+            .param("savedFrom",b.savedDuring()==null?null:b.savedDuring().from().atOffset(java.time.ZoneOffset.UTC),java.sql.Types.TIMESTAMP_WITH_TIMEZONE)
+            .param("savedUntil",b.savedDuring()==null?null:b.savedDuring().toExclusive().atOffset(java.time.ZoneOffset.UTC),java.sql.Types.TIMESTAMP_WITH_TIMEZONE)
             .param("notesEmpty",b.notes().empty()).param("noteTime",b.notes().empty()?null:b.notes().createdAt().atOffset(java.time.ZoneOffset.UTC),java.sql.Types.TIMESTAMP_WITH_TIMEZONE).param("noteId",b.notes().sourceId(),java.sql.Types.OTHER)
             .param("mediaEmpty",b.attachments().empty()).param("mediaTime",b.attachments().empty()?null:b.attachments().createdAt().atOffset(java.time.ZoneOffset.UTC),java.sql.Types.TIMESTAMP_WITH_TIMEZONE).param("mediaId",b.attachments().sourceId(),java.sql.Types.OTHER);
     }
     public Page page(UUID user,Boundary b,Position after,int limit,boolean ai) {
-        if(limit<1||limit>12)throw new IllegalArgumentException("Invalid query batch");
+        if(limit<1||limit>32)throw new IllegalArgumentException("Invalid query batch");
         return transaction(()->{
             String suffix=" and (:afterId::uuid is null or (family,created_at,source_id)>(:afterFamily,:afterTime::timestamptz,:afterId::uuid)) order by family,created_at,source_id limit :limit";
             var rows=scoped(user,b,ai,"select *",suffix)
@@ -69,6 +72,7 @@ class NotesPrivateQuerySourceAdapter implements PrivateQuerySource {
             return new Page(rows,rows.size()<limit?null:new Position(last.expected().attachmentId()==null?0:1,last.createdAt(),last.expected().attachmentId()==null?last.expected().noteId():last.expected().attachmentId()));
         });
     }
+    public long count(UUID user,Boundary boundary,boolean ai){return transaction(()->scoped(user,boundary,ai,"select count(*)","").query(Long.class).single());}
     public Source note(UUID user,UUID note){return transaction(()->{owner(user);return clients.getObject().sql("select * from ("+SOURCES+") s where owner_user_id=:owner and note_id=:note and attachment_id is null and lifecycle_state in ('active','archived')")
         .param("owner",user).param("note",note).query(NotesPrivateQuerySourceAdapter::map).optional().orElseThrow(()->ApiFailureException.of(ApiFailureException.Kind.RESOURCE_NOT_FOUND));});}
     public Source source(UUID user,UUID note,UUID attachment){return transaction(()->{owner(user);return clients.getObject().sql("select * from ("+SOURCES+") s where owner_user_id=:owner and note_id=:note and attachment_id is not distinct from :attachment and lifecycle_state in ('active','archived')")
@@ -109,6 +113,15 @@ class NotesPrivateQuerySourceAdapter implements PrivateQuerySource {
     }
     private record SourceKey(UUID note,UUID attachment) { }
     private static SourceKey key(Source s){return new SourceKey(s.expected().noteId(),s.expected().attachmentId());}
+    public String currentMarkdown(Source source) {
+        var e=source.expected();
+        if(e.attachmentId()!=null||!"note".equals(source.modality()))throw ApiFailureException.of(ApiFailureException.Kind.RESOURCE_NOT_FOUND);
+        return transaction(()->{
+            if(!matches(source,true))throw ApiFailureException.of(ApiFailureException.Kind.RESOURCE_NOT_FOUND);
+            return clients.getObject().sql("select markdown from notes.note where owner_user_id=:owner and note_id=:note")
+                .param("owner",e.owner()).param("note",e.noteId()).query(String.class).single();
+        });
+    }
     public List<Text> deterministicText(Source source) {
         if(!matches(source,false))throw ApiFailureException.of(ApiFailureException.Kind.RESOURCE_NOT_FOUND);
         var e=source.expected();

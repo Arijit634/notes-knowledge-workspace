@@ -15,6 +15,7 @@ public interface PrivateAiSourceCurrentness {
         }
         @Override public String toString() { return "ExpectedPrivateSource[REDACTED]"; }
     }
+    default java.util.List<Expected> matching(java.util.List<Expected> expected,PrivateQuerySource.SavedDuring period){if(period!=null)throw new UnsupportedOperationException("Saved period unsupported");return matching(expected);}
     /** Caller-owned short transaction; no content, object locator or network access. */
     boolean matches(Expected expected);
     /** Bounded current-source facts, never retained authorization; caller owns a short transaction. */

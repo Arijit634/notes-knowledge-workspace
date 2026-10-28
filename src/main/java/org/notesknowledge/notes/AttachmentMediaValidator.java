@@ -72,16 +72,19 @@ final class AttachmentMediaValidator implements AutoCloseable {
     }
 
     private Validated video(Path path, long size) {
-        var structural = new StrictMp4StructureValidator().validate(path);
+        var structural = new StrictMp4StructureValidator().validateUpload(path);
         Metadata metadata = parser().parse(path);
         requireType(metadata, "video/mp4");
         try {
             int width = Integer.parseInt(metadata.get(TIFF.IMAGE_WIDTH));
             int height = Integer.parseInt(metadata.get(TIFF.IMAGE_LENGTH));
             double duration = Double.parseDouble(metadata.get(XMPDM.DURATION));
+            // Tika's MP4 metadata rounds to centiseconds (e.g. 9.088 -> 9.09).
+            // Require agreement at that precision, but retain the exact bounded container duration.
+            double rounded = Math.round(structural.durationSeconds() * 100) / 100.0;
             if (width != structural.width() || height != structural.height() || !Double.isFinite(duration)
-                    || Math.abs(duration - structural.durationSeconds()) > 0.001) throw invalid();
-            return new Validated("video", "video/mp4", size, width, height, duration, null);
+                    || Math.abs(duration - structural.durationSeconds()) > 0.001 && Math.abs(duration - rounded) > 0.000001) throw invalid();
+            return new Validated("video", "video/mp4", size, width, height, structural.durationSeconds(), null);
         } catch (NumberFormatException | NullPointerException failure) { throw invalid(); }
     }
 

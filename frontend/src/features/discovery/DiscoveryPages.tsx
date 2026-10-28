@@ -25,13 +25,14 @@ export function ExplorePage({ auth, searching = false }: { auth: AuthRuntime; se
     queryFn: ({ pageParam, signal }) => searching ? discoveryApi.search(auth, q, tag, pageParam, signal) : discoveryApi.explore(auth, sort, pageParam, signal), enabled,
     initialPageParam: null as string | null, getNextPageParam: p => p.nextCursor ?? undefined, retry: false, staleTime: 0 }, auth.queries)
   const items = [...new Map(result.data?.pages.flatMap(p => p.items).map(p => [p.id, p] as const) ?? []).values()]
-  return <PublicShell auth={auth}><div className="public-container"><header className="public-heading"><div><p className="studio-section-label">The public library</p><h1>{searching ? 'Find your next idea' : 'A little perspective.'}</h1><p>{searching ? 'Keyword and tag search across active public notes.' : 'Notes, perspectives, and things worth learning.'}</p></div>{!searching && <Link className="button button-secondary" to="/explore/search">Search public notes</Link>}</header>
+  return <PublicShell auth={auth}><div className="public-container"><header className="public-heading"><div><h1>{searching ? 'Search public notes' : 'Explore'}</h1></div>{!searching && <Link className="button button-secondary" to="/explore/search">Search public notes</Link>}</header>
     {searching ? <form className="public-search-form" onSubmit={handleSubmit(v => setParams(new URLSearchParams({ ...(v.q.trim() ? { q: v.q.trim() } : {}), ...(v.tag.trim() ? { tag: v.tag.trim() } : {}) })))}><div><label htmlFor="public-q">Keywords</label><input id="public-q" maxLength={400} {...register('q')} /></div><div><label htmlFor="public-tag">Tag</label><input id="public-tag" maxLength={64} {...register('tag')} /></div><button>Search</button></form>
       : <nav className="public-tabs" aria-label="Explore order"><Link to="/explore" aria-current={sort === 'latest' ? 'page' : undefined}>Latest</Link><Link to="/explore?sort=trending" aria-current={sort === 'trending' ? 'page' : undefined}>Trending</Link></nav>}
+    {!searching && sort === 'trending' && <p className="public-trending-help">Ranked by likes and approximate views, with newer notes weighted more heavily.</p>}
     {!enabled ? <div className="public-state"><h2>Start with a word or a tag.</h2><p>Search is public-only and uses keyword and fuzzy matching, not AI.</p></div>
       : result.isPending ? <p className="public-state" role="status">Opening the library…</p>
         : result.isError ? <PublicFailure error={result.error} retry={() => void result.refetch()} />
-          : items.length ? <PublicCards items={items} /> : <div className="public-state"><h2>{searching ? 'No matches this time' : 'A fresh page'}</h2><p>{searching ? 'Try another keyword or remove the tag filter.' : 'Active published notes will appear here.'}</p></div>}
+          : items.length ? <PublicCards items={items} /> : <div className="public-state"><h2>{searching ? 'No matches' : 'No public notes yet'}</h2><p>{searching ? 'Try another keyword or remove the tag filter.' : 'Active published notes will appear here.'}</p></div>}
     {result.hasNextPage && !result.isError && <button className="button-secondary" disabled={result.isFetchingNextPage} onClick={() => void result.fetchNextPage()}>More public notes</button>}
   </div></PublicShell>
 }

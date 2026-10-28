@@ -41,7 +41,7 @@ public class DispatchCoordinator implements AutoCloseable {
         return handle;
     }
     private static List<Scope> multiScopes(UUID owner, java.util.Collection<UUID> notes) {
-        if (owner==null || notes==null || notes.isEmpty() || notes.size()>12 || notes.stream().anyMatch(java.util.Objects::isNull)) throw unavailable();
+        if (owner==null || notes==null || notes.isEmpty() || notes.size()>32 || notes.stream().anyMatch(java.util.Objects::isNull)) throw unavailable();
         var result=new ArrayList<Scope>();
         result.add(new Scope(17401,0,true)); result.add(new Scope(17402,key(owner),true));
         notes.stream().map(DispatchCoordinator::key).distinct().sorted().forEach(k->result.add(new Scope(17403,k,false)));

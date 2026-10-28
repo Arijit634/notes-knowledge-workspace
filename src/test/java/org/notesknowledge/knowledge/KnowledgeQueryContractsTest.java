@@ -13,6 +13,27 @@ class KnowledgeQueryContractsTest {
     private static final UUID WORK=UUID.fromString("01999000-0000-7000-8000-000000000001"),OWNER=UUID.fromString("01999000-0000-7000-8000-000000000002");
     private static KnowledgeOperationMaterialCipher cipher(){return new KnowledgeOperationMaterialCipher("v1",KEY,"","");}
     private static KnowledgeOperationMaterialCipher.Context context(){return new KnowledgeOperationMaterialCipher.Context(WORK,OWNER,"semantic_corpus",KnowledgeOperationMaterialCipher.Kind.INPUT,0);}
+    @Test void explicitSavedPeriodIsStrictHalfOpenAndBackwardsCompatible()throws Exception {
+        var scope=Map.of("savedDuring",Map.of("from","2021-01-01T00:00:00Z","toExclusive","2022-01-01T00:00:00Z"));
+        var r=KnowledgeQueryRequest.parse(Map.of("query","find synthetic evidence","scope",scope));
+        assertThat(r.savedDuring().contains(Instant.parse("2021-01-01T00:00:00Z"))).isTrue();
+        assertThat(r.savedDuring().contains(Instant.parse("2022-01-01T00:00:00Z"))).isFalse();
+        assertThat(KnowledgeQueryRequest.parse(Map.of("query","find synthetic evidence")).savedDuring()).isNull();
+        var json=new tools.jackson.databind.ObjectMapper();
+        assertThat(json.readValue(json.writeValueAsBytes(r),KnowledgeQueryRequest.class)).isEqualTo(r);
+        for(var bad:List.of(Map.of("from","2021-01-01T00:00:00Z"),Map.of("from","2022-01-01T00:00:00Z","toExclusive","2021-01-01T00:00:00Z"),
+            Map.of("from","2021-01-01","toExclusive","2022-01-01"),Map.of("from","bad","toExclusive","2022-01-01T00:00:00Z"),Map.of("from","2021-01-01T00:00:00Z","toExclusive","+999999999-01-01T00:00:00Z"),
+            Map.of("from","2021-01-01T00:00:00Z","toExclusive","2022-01-01T00:00:00Z","owner","forbidden")))
+            assertThatThrownBy(()->KnowledgeQueryRequest.parse(Map.of("query","synthetic","scope",Map.of("savedDuring",bad)))).isInstanceOf(org.notesknowledge.websupport.ApiFailureException.class);
+    }
+    @Test void historyEnvelopesCannotBeReplayedAsOperationsOrAnotherOwnersHistory(){
+        var c=cipher();var history=new KnowledgeOperationMaterialCipher.Context(WORK,OWNER,"search_history",KnowledgeOperationMaterialCipher.Kind.INPUT,0);
+        var envelope=c.seal(history,"synthetic question".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        assertThat(c.open(history,envelope)).isEqualTo("synthetic question".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        assertThatThrownBy(()->c.open(context(),envelope)).isInstanceOf(org.notesknowledge.websupport.ApiFailureException.class);
+        assertThatThrownBy(()->c.open(new KnowledgeOperationMaterialCipher.Context(WORK,WORK,"search_history",KnowledgeOperationMaterialCipher.Kind.INPUT,0),envelope)).isInstanceOf(org.notesknowledge.websupport.ApiFailureException.class);
+        assertThatThrownBy(()->c.open(new KnowledgeOperationMaterialCipher.Context(OWNER,OWNER,"search_history",KnowledgeOperationMaterialCipher.Kind.INPUT,0),envelope)).isInstanceOf(org.notesknowledge.websupport.ApiFailureException.class);
+    }
     @Test void roundtripRotationAndRedaction(){var c=cipher();var frame=c.seal(context(),"synthetic intent".getBytes(java.nio.charset.StandardCharsets.UTF_8));
         assertThat(new String(c.open(context(),frame),java.nio.charset.StandardCharsets.UTF_8)).isEqualTo("synthetic intent");
         var rotated=new KnowledgeOperationMaterialCipher("v2",Base64.getEncoder().encodeToString(new byte[32]),"v1",KEY);
@@ -57,6 +78,14 @@ class KnowledgeQueryContractsTest {
         for(String q:List.of("list all cities I visited","every book I mentioned","list films to watch","all recipes for dinner","find everything about the project deadline"))assertThat(KnowledgeQueryRequest.parse(Map.of("query",q)).plan()).isEqualTo(KnowledgeQueryRequest.Plan.SEMANTIC_CORPUS);
         assertThat(KnowledgeQueryRequest.parse(Map.of("query","what was my PlayStation password")).plan()).isEqualTo(KnowledgeQueryRequest.Plan.FOCUSED);
         assertThat(KnowledgeQueryRequest.parse(Map.of("query","find Kyoto hotel")).plan()).isEqualTo(KnowledgeQueryRequest.Plan.RANKED);
+    }
+    @ParameterizedTest @ValueSource(strings={"Which fictional performer names did I save???","Which botanist names did I save?","What book titles have I saved?","Which scientist names have I written down?"})
+    void savedNameAndTitleEnumerationTraversesTheCorpusWithoutMagicAllKeyword(String query){
+        assertThat(KnowledgeQueryRequest.parse(Map.of("query",query)).plan()).isEqualTo(KnowledgeQueryRequest.Plan.SEMANTIC_CORPUS);
+    }
+    @ParameterizedTest @ValueSource(strings={"Which name is on my ticket?","What is the title of my trip note?","Which budget amount is current?"})
+    void singularFactQuestionsRemainFocused(String query){
+        assertThat(KnowledgeQueryRequest.parse(Map.of("query",query)).plan()).isEqualTo(KnowledgeQueryRequest.Plan.FOCUSED);
     }
     @ParameterizedTest @ValueSource(strings={"ownerUserId","provider","model","queryClass","lineage","vector","reranker","contextSize","workClass"})
     void rejectsTechnicalRouting(String field){assertThatThrownBy(()->KnowledgeQueryRequest.parse(Map.of("query","synthetic",field,"injected"))).isInstanceOf(org.notesknowledge.websupport.ApiFailureException.class);}

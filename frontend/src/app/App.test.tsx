@@ -48,9 +48,9 @@ describe('authentication browser journey', () => {
       '/forgot-password', '/reset-password', '/auth/complete', '/reauth'])
   })
 
-  it('bootstraps anonymous session and CSRF, then shows landing', async () => {
+  it('bootstraps anonymous session and CSRF, then redirects root to login', async () => {
     const { calls } = mount('/')
-    await screen.findByRole('heading', { name: 'A home for your ideas' })
+    await screen.findByRole('heading', { name: 'Welcome back' })
     expect(calls.map(call => call.path)).toContain('/api/auth/session')
     expect(calls.map(call => call.path)).toContain('/api/auth/csrf')
     expect(screen.getByRole('link', { name: 'Create an account' })).toBeTruthy()

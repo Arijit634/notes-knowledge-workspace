@@ -95,18 +95,23 @@ class NotesSearchRepository {
 
     @Transactional(readOnly = true)
     List<Row> search(UUID owner, PrivateSearchRequest request, Long beforeRank, UUID beforeId, int count) {
+        return search(owner,request,beforeRank,beforeId,count,null);
+    }
+    @Transactional(readOnly = true)
+    List<Row> search(UUID owner,PrivateSearchRequest request,Long beforeRank,UUID beforeId,int count,org.notesknowledge.knowledge.spi.PrivateQuerySource.SavedDuring period) {
         var jdbc = clients.getObject();
         // Transaction-local, bounded policy, restored by PostgreSQL at transaction end.
         jdbc.sql("select set_config('pg_trgm.word_similarity_threshold', :value, true)")
                 .param("value", Double.toString(policy.wordSimilarityThreshold())).query(String.class).single();
         jdbc.sql("select set_config('statement_timeout', :value, true)")
                 .param("value", Integer.toString(policy.timeoutMillis())).query(String.class).single();
-        var statement = jdbc.sql(sql(beforeRank != null)).param("owner", owner)
+        var statement = jdbc.sql(period==null?sql(beforeRank != null):sql(beforeRank != null).replace(SCOPE,SCOPE+" and n.created_at>=:savedFrom::timestamptz and n.created_at<:savedUntil::timestamptz ")).param("owner", owner)
                 .param("lifecycle", request.lifecycle()).param("query", request.query())
                 .param("variant", request.lexicalVariant()).param("tags", new org.springframework.jdbc.core.SqlParameterValue(
                         java.sql.Types.ARRAY, request.tags().toArray(String[]::new)))
                 .param("budget", policy.candidatesPerSignal()).param("count", count)
                 .param("threshold", policy.wordSimilarityThreshold());
+        if(period!=null)statement=statement.param("savedFrom",period.from().atOffset(java.time.ZoneOffset.UTC)).param("savedUntil",period.toExclusive().atOffset(java.time.ZoneOffset.UTC));
         if (beforeRank != null) statement = statement.param("beforeRank", beforeRank).param("beforeId", beforeId);
         return statement.query((row, index) -> new Row(new NoteSearchResult(
                 row.getObject("note_id", UUID.class), row.getString("title"), row.getString("lifecycle_state"),

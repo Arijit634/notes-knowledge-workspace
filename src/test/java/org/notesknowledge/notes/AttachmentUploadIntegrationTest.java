@@ -124,6 +124,16 @@ class AttachmentUploadIntegrationTest {
         assertThat(content.getResponse().getHeader("ETag")).isEqualTo(response.getResponse().getHeader("ETag"));
     }
 
+    @Test void commonIsomVideoUsesTheSameAuthorizedUploadAndContentBoundary() throws Exception {
+        UUID owner=account(),note=note(owner);Browser browser=browser(owner,"ROLE_USER");
+        byte[] bytes=getClass().getResourceAsStream("/attachments/synthetic-common-avc.mp4").readAllBytes();
+        var accepted=upload(browser,note,new MockMultipartFile("file","synthetic-common.mp4","video/mp4",bytes)).andExpect(status().isCreated()).andReturn().getResponse();
+        var body=json.readTree(accepted.getContentAsString());String contentPath=path(note)+"/"+body.get("id").asText()+"/content";
+        assertThat(body.get("mediaKind").asText()).isEqualTo("video");assertThat(body.get("width").asInt()).isEqualTo(128);
+        assertThat(mvc.perform(get(contentPath).cookie(browser.cookie())).andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray()).isEqualTo(bytes);
+        mvc.perform(get(contentPath).cookie(browser(account(),"ROLE_USER").cookie())).andExpect(status().isNotFound());
+        assertThat(jdbc.queryForObject("select revision from notes.note where note_id=?",Long.class,note)).isEqualTo(1);assertThat(store.sawTransaction).isFalse();
+    }
     @Test void authorityAndCsrfFailBeforeStaging() throws Exception {
         UUID owner = account(), note = note(owner); Browser browser = browser(owner, "ROLE_USER"), anonymous = csrf(null);
         upload(anonymous, note, media("image")).andExpect(status().isUnauthorized());

@@ -22,13 +22,21 @@ import tools.jackson.databind.ObjectMapper;
 @Service
 class KnowledgeOperationService {
     record Metadata(int schemaVersion,PrivateQuerySource.Boundary boundary,PrivateQuerySource.Position continuation,
-            long inspected,String fingerprint,int restarts,boolean truncated,boolean includeOccurrences,int nextSegment) {
+            long inspected,String fingerprint,int restarts,boolean truncated,boolean includeOccurrences,int nextSegment,Long totalSources) {
+        Metadata(int schemaVersion,PrivateQuerySource.Boundary boundary,PrivateQuerySource.Position continuation,
+                long inspected,String fingerprint,int restarts,boolean truncated,boolean includeOccurrences,int nextSegment){
+            this(schemaVersion,boundary,continuation,inspected,fingerprint,restarts,truncated,includeOccurrences,nextSegment,null);
+        }
         Metadata(int schemaVersion,PrivateQuerySource.Boundary boundary,PrivateQuerySource.Position continuation,
                 long inspected,String fingerprint,int restarts,boolean truncated,boolean includeOccurrences) {
             this(schemaVersion,boundary,continuation,inspected,fingerprint,restarts,truncated,includeOccurrences,0);
         }
     }
-    record View(String operationId,String status,Instant submittedAt,KnowledgeQueryResult result) {
+    record View(String operationId,String status,Instant submittedAt,KnowledgeQueryResult result,long inspectedSources,Long totalSources,Instant expiresAt,UUID historyId) {
+        View(String operationId,String status,Instant submittedAt,KnowledgeQueryResult result,long inspectedSources){this(operationId,status,submittedAt,result,inspectedSources,null,null,null);}
+        View(String operationId,String status,Instant submittedAt,KnowledgeQueryResult result) {
+            this(operationId,status,submittedAt,result,0);
+        }
         @Override public String toString(){return "KnowledgeOperationView[REDACTED]";}
     }
     private final KnowledgeOperationRepository repository;
@@ -43,12 +51,19 @@ class KnowledgeOperationService {
     private final ObjectProvider<AccountEligibilityApi> accounts;
     private final ObjectProvider<PlatformTransactionManager> managers;
     private final io.micrometer.core.instrument.MeterRegistry metrics;
+    private final SearchHistoryService history;
     private RetrievalTelemetry telemetry;
+    private int semanticPauseMillis;
+    @org.springframework.beans.factory.annotation.Value("${knowledge.operations.semantic-pause-ms:0}")
+    void semanticPauseMillis(int value){
+        if(value<0||value>60000)throw new IllegalArgumentException("Invalid operation pause");
+        semanticPauseMillis=value;
+    }
     @org.springframework.beans.factory.annotation.Autowired void telemetry(RetrievalTelemetry telemetry){this.telemetry=telemetry;}
     KnowledgeOperationService(KnowledgeOperationRepository repository,KnowledgeOperationMaterialCipher cipher,KnowledgeOperationHandleCodec handles,
         PrivateQuerySource sources,KnowledgeQueryEngine engine,KnowledgeQueryGate gate,ObjectMapper json,Clock clock,DatabaseUuidV7Generator ids,
-        ObjectProvider<AccountEligibilityApi> accounts,ObjectProvider<PlatformTransactionManager> managers,io.micrometer.core.instrument.MeterRegistry metrics) {
-        this.repository=repository;this.cipher=cipher;this.handles=handles;this.sources=sources;this.engine=engine;this.gate=gate;this.json=json;this.clock=clock;this.ids=ids;this.accounts=accounts;this.managers=managers;this.metrics=metrics;
+        ObjectProvider<AccountEligibilityApi> accounts,ObjectProvider<PlatformTransactionManager> managers,io.micrometer.core.instrument.MeterRegistry metrics,SearchHistoryService history) {
+        this.repository=repository;this.cipher=cipher;this.handles=handles;this.sources=sources;this.engine=engine;this.gate=gate;this.json=json;this.clock=clock;this.ids=ids;this.accounts=accounts;this.managers=managers;this.metrics=metrics;this.history=history;
     }
     private <T>T tx(java.util.function.Supplier<T> work){var t=new TransactionTemplate(managers.getObject());t.setTimeout(3);return t.execute(s->work.get());}
     UUID browserOwner(HttpServletRequest browser) {
@@ -58,14 +73,15 @@ class KnowledgeOperationService {
     }
     View accept(UUID owner,KnowledgeQueryRequest request,HttpServletRequest browser) {
         String purpose=switch(request.plan()){case SEMANTIC_CORPUS->"semantic_corpus";case DETERMINISTIC_CORPUS->"deterministic_corpus";default->throw new IllegalArgumentException("Non-corpus request");};
-        var boundary=sources.capture(owner,request.lifecycles());
+        var boundary=sources.capture(owner,request.lifecycles(),request.savedDuring());
         String fingerprint=sources.fingerprint(owner,boundary,"semantic_corpus".equals(purpose));
         UUID id=ids.generate();Instant created=clock.instant(),expiry=created.plusSeconds(24*3600);
         String handle=handles.encode(new KnowledgeOperationHandleCodec.Location(id,owner,purpose,expiry));
         var envelope=cipher.seal(context(id,owner,purpose,KnowledgeOperationMaterialCipher.Kind.INPUT,0),json.writeValueAsBytes(request));
-        var metadata=new Metadata(1,boundary,null,0,fingerprint,0,false,request.includeOccurrences());
-        tx(()->{accounts.getObject().requireCurrentOwner(owner,browser);repository.insert(id,owner,purpose,created,expiry,json.writeValueAsString(metadata),envelope);return null;});
-        return new View(handle,"queued",created,null);
+        var total=sourceCount(owner,boundary,"semantic_corpus".equals(purpose));
+        var metadata=new Metadata(1,boundary,null,0,fingerprint,0,false,request.includeOccurrences(),0,total);
+        UUID historyId=tx(()->{accounts.getObject().requireCurrentOwner(owner,browser);history.lock(owner);repository.insert(id,owner,purpose,created,expiry,json.writeValueAsString(metadata),envelope);return history.begin(owner,request,id);});
+        return new View(handle,"queued",created,null,0,total,expiry,historyId);
     }
     View poll(HttpServletRequest browser,String handle) {
         UUID owner=browserOwner(browser);var location=handles.decode(handle,owner);
@@ -81,13 +97,15 @@ class KnowledgeOperationService {
                     .map(i->new KnowledgeQueryResult.DeterministicItem(i.kind(),i.value(),i.occurrences().isEmpty()?List.of():List.of(i.occurrences().getFirst()),i.aiEnabled())).toList(),
                     result.aiAnswer(),result.citations(),result.coverage(),result.degraded(),result.insufficientEvidence());
             }
-            return new View(handle,"claimed".equals(row.state())?"running":row.state(),row.created(),result);
+            var metadata=parseMetadata(row.metadata());
+            return new View(handle,"claimed".equals(row.state())?"running":row.state(),row.created(),result,
+                    Math.max(0,metadata.inspected()),metadata.totalSources(),row.expires(),history.idForWork(owner,row.id()));
         });
     }
     void cancel(HttpServletRequest browser,String handle){UUID owner=browserOwner(browser);var location=handles.decode(handle,owner);tx(()->{
         accounts.getObject().requireCurrentOwner(owner,browser);repository.owner(owner,location.work()).filter(r->r.purpose().equals(location.purpose())).orElseThrow(KnowledgeOperationService::missing);repository.cancel(owner,location.work());return null;});}
     boolean databaseAvailable(){return managers.getIfAvailable()!=null;}
-    List<KnowledgeOperationRepository.Row> claim(int limit){return tx(()->{repository.expire();return repository.claim(limit);});}
+    List<KnowledgeOperationRepository.Row> claim(int limit){return tx(()->{repository.expire();history.sweep();return repository.claim(limit);});}
     void execute(KnowledgeOperationRepository.Row original) {
         var row=original;
         try {
@@ -101,27 +119,28 @@ class KnowledgeOperationService {
                 var stored=row.result()==null?empty(metadata.fingerprint()):openResult(row);
                 if(batch==0&&!provenanceCurrent(row,stored)) {
                     if(metadata.restarts()>=1){tx(()->repository.terminate(active,"obsolete"));return;}
-                    metadata=new Metadata(1,metadata.boundary(),null,0,sources.fingerprint(row.owner(),metadata.boundary(),semantic),metadata.restarts()+1,false,metadata.includeOccurrences());
+                    metadata=new Metadata(1,metadata.boundary(),null,0,sources.fingerprint(row.owner(),metadata.boundary(),semantic),metadata.restarts()+1,false,metadata.includeOccurrences(),0,sourceCount(row.owner(),metadata.boundary(),semantic));
                     stored=empty(metadata.fingerprint());
                 }
-                var page=sources.page(row.owner(),metadata.boundary(),metadata.continuation(),semantic?1:12,semantic);
+                var page=sources.page(row.owner(),metadata.boundary(),metadata.continuation(),semantic?engine.extractionBatchSize():12,semantic);
                 var items=new ArrayList<>(stored.result().deterministicResults());var claims=new ArrayList<String>();
                 if(stored.result().aiAnswer()!=null)claims.addAll(stored.result().aiAnswer().claims());
                 var citations=new ArrayList<>(stored.result().citations());var provenance=new ArrayList<>(stored.provenance());var lineages=new java.util.LinkedHashMap<>(stored.lineages());
                 boolean conflicting=stored.result().aiAnswer()!=null&&stored.result().aiAnswer().conflicting();
                 String degraded=stored.result().degraded();boolean truncated=metadata.truncated();
-                int nextSegment=0;
-                for(var source:page.sources()) {
-                    if(semantic) {
-                        var segmentPage=engine.semanticPage(row.owner(),request.query(),source,metadata.nextSegment(),()->repository.current(active));
-                        var generated=segmentPage.generated();nextSegment=segmentPage.nextOrdinal();
+                int nextSegment=0,completedSources=page.sources().size();
+                if(semantic) {
+                        var batchResult=engine.semanticBatch(row.owner(),request.query(),page.sources(),metadata.nextSegment(),()->repository.current(active));
+                        var generated=batchResult.generated();nextSegment=batchResult.nextOrdinal();completedSources=batchResult.completedSources();
                         if(generated.result().degraded()!=null){degraded=generated.result().degraded();truncated=true;}
                         else {
                             if(generated.result().aiAnswer()!=null){claims.addAll(generated.result().aiAnswer().claims());conflicting|=generated.result().aiAnswer().conflicting();}
                             citations.addAll(generated.result().citations());lineages.putAll(generated.lineages());
-                            if(!generated.result().citations().isEmpty())provenance.add(KnowledgeQueryEngine.referenceOnly(source));
+                            provenance.addAll(generated.provenance().stream().filter(source->generated.result().citations().stream()
+                                .anyMatch(c->c.noteId().equals(source.expected().noteId())
+                                    &&java.util.Objects.equals(c.attachmentId(),source.expected().attachmentId()))).toList());
                         }
-                    } else {
+                } else for(var source:page.sources()) {
                         int before=items.size();
                         var scanItems=items;
                         for(var text:sources.deterministicText(source)) {
@@ -133,18 +152,22 @@ class KnowledgeOperationService {
                         }
                         // Boundary fingerprint covers negative inspections; retain detailed provenance only for returned material.
                         if(items.size()>before)provenance.add(KnowledgeQueryEngine.referenceOnly(source));
-                    }
                 }
-                boolean sourceDone=nextSegment==0;
-                boolean done=sourceDone&&page.continuation()==null;
-                long inspected=metadata.inspected()+(sourceDone?page.sources().size():0);
+                PrivateQuerySource.Position continuation=page.continuation();
+                if(semantic&&completedSources<page.sources().size()) {
+                    if(completedSources==0)continuation=metadata.continuation();
+                    else {var last=page.sources().get(completedSources-1);continuation=new PrivateQuerySource.Position(
+                        last.expected().attachmentId()==null?0:1,last.createdAt(),last.expected().attachmentId()==null?last.expected().noteId():last.expected().attachmentId());}
+                }
+                boolean done=truncated||nextSegment==0&&completedSources==page.sources().size()&&page.continuation()==null;
+                long inspected=metadata.inspected()+completedSources;
                 if(claims.size()>256||citations.size()>1024){truncated=true;done=true;}
                 // Never retain a claim after dropping some of its supporting citations.
                 if(claims.size()>256||citations.size()>1024){claims.clear();citations.clear();provenance.clear();lineages.clear();}
                 String currentFingerprint=done?sources.fingerprint(row.owner(),metadata.boundary(),semantic):metadata.fingerprint();
                 boolean changed=done&&!currentFingerprint.equals(metadata.fingerprint());
                 if(changed&&metadata.restarts()<1) {
-                    var restart=new Metadata(1,metadata.boundary(),null,0,currentFingerprint,metadata.restarts()+1,false,metadata.includeOccurrences());
+                    var restart=new Metadata(1,metadata.boundary(),null,0,currentFingerprint,metadata.restarts()+1,false,metadata.includeOccurrences(),0,sourceCount(row.owner(),metadata.boundary(),semantic));
                     var envelope=sealResult(row,empty(currentFingerprint));
                     if(!tx(()->repository.checkpoint(active,json.writeValueAsString(restart),envelope)))return;
                     row=tx(()->repository.owner(active.owner(),active.id()).orElseThrow());continue;
@@ -162,14 +185,16 @@ class KnowledgeOperationService {
                         new KnowledgeQueryResult.Coverage(semantic?"acceptedAiSources":"acceptedNoteAndPdfText",inspected,false,changed,true,changed,semantic),
                         "budgetExceeded",false),List.of(),currentFingerprint,Map.of());
                 }
-                var next=new Metadata(1,metadata.boundary(),sourceDone?page.continuation():metadata.continuation(),inspected,currentFingerprint,metadata.restarts(),truncated,metadata.includeOccurrences(),nextSegment);
+                var next=new Metadata(1,metadata.boundary(),continuation,inspected,currentFingerprint,metadata.restarts(),truncated,metadata.includeOccurrences(),nextSegment,metadata.totalSources());
                 var finalCheckpoint=checkpoint;var finalFingerprint=currentFingerprint;
                 var envelope=sealResult(row,checkpoint);boolean finish=done;
                 boolean success=tx(()->{
+                    if(finish)history.lock(active.owner());
                     if(!repository.current(active)||!accounts.getObject().isEligible(active.owner())
                         ||finish&&!provenanceCurrent(active,finalCheckpoint))return repository.terminate(active,"obsolete");
                     if(finish&&!sources.fingerprint(active.owner(),next.boundary(),semantic).equals(finalFingerprint))return repository.terminate(active,"obsolete");
                     boolean committed=finish?repository.complete(active,json.writeValueAsString(next),envelope):repository.checkpoint(active,json.writeValueAsString(next),envelope);
+                    if(committed&&finish)history.completeWork(active.owner(),active.id(),semantic,next.boundary(),finalCheckpoint);
                     if(committed&&finish){
                         org.notesknowledge.BackendTelemetry.afterCommit(metrics,org.notesknowledge.BackendTelemetry.Event.WORK,
                             org.notesknowledge.BackendTelemetry.Operation.QUERY,org.notesknowledge.BackendTelemetry.Outcome.SUCCESS);
@@ -180,11 +205,15 @@ class KnowledgeOperationService {
                 });
                 if(!success||done)return;
                 row=tx(()->repository.owner(active.owner(),active.id()).orElseThrow());
+                if(semantic&&semanticPauseMillis>0){var continuationRow=row;tx(()->repository.yield(continuationRow,semanticPauseMillis));return;}
                 if(System.nanoTime()>deadline)break;
             }
             var active=row;tx(()->repository.yield(active));
         } catch(DerivationFailure|ApiFailureException invalid) {
-            var active=row;tx(()->repository.terminate(active,invalid instanceof DerivationFailure d&&d.category==KnowledgeWork.Failure.INVALID_SOURCE?"obsolete":"failed"));
+            var active=row;
+            if(invalid instanceof DerivationFailure failure&&failure.retryableProvider()) {
+                tx(()->repository.retryTransient(active)||repository.terminate(active,"failed"));
+            } else tx(()->repository.terminate(active,invalid instanceof DerivationFailure d&&d.category==KnowledgeWork.Failure.INVALID_SOURCE?"obsolete":"failed"));
             unavailableMetric("unavailable");
         } catch(tools.jackson.core.JacksonException invalid) {
             var active=row;tx(()->repository.terminate(active,"failed"));unavailableMetric("invalidMaterial");
@@ -221,6 +250,7 @@ class KnowledgeOperationService {
     }
     private static String purpose(KnowledgeQueryRequest request){return request.plan()==KnowledgeQueryRequest.Plan.DETERMINISTIC_CORPUS?"deterministic_corpus":"semantic_corpus";}
     private Metadata parseMetadata(String text){return json.readValue(text,Metadata.class);}
+    private Long sourceCount(UUID owner,PrivateQuerySource.Boundary boundary,boolean ai){long count=sources.count(owner,boundary,ai);return count<0?null:count;}
     private static KnowledgeOperationMaterialCipher.Context context(KnowledgeOperationRepository.Row r,KnowledgeOperationMaterialCipher.Kind kind,long version){return context(r.id(),r.owner(),r.purpose(),kind,version);}
     private static KnowledgeOperationMaterialCipher.Context context(UUID id,UUID owner,String purpose,KnowledgeOperationMaterialCipher.Kind kind,long version){return new KnowledgeOperationMaterialCipher.Context(id,owner,purpose,kind,version);}
     private static ApiFailureException missing(){return ApiFailureException.of(ApiFailureException.Kind.RESOURCE_NOT_FOUND);}

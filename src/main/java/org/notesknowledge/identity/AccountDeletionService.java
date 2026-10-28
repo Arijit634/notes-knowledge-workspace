@@ -21,6 +21,7 @@ final class AccountDeletionService {
     private final MfaSessionChallengeRepository staleRequests;
     private final AccountDeletionProfileConsequence profile;
     private final AccountDeletionPublishingConsequence publishing;
+    private final org.notesknowledge.identity.spi.AccountDeletionKnowledgeConsequence knowledge;
     private final IdentitySessionTransitionCheckpoint checkpoint;
     private final MfaProperties policy;
     private final Clock clock;
@@ -31,6 +32,7 @@ final class AccountDeletionService {
             MfaSessionChallengeRepository staleRequests,
             AccountDeletionProfileConsequence profile,
             AccountDeletionPublishingConsequence publishing,
+            org.notesknowledge.identity.spi.AccountDeletionKnowledgeConsequence knowledge,
             IdentitySessionTransitionCheckpoint checkpoint,
             MfaProperties policy, Clock clock, PlatformTransactionManager manager,
             org.notesknowledge.DispatchCoordinator coordination) {
@@ -39,6 +41,7 @@ final class AccountDeletionService {
         this.staleRequests = staleRequests;
         this.profile = profile;
         this.publishing = publishing;
+        this.knowledge = knowledge;
         this.checkpoint = checkpoint;
         this.policy = policy;
         this.clock = clock;
@@ -64,6 +67,7 @@ final class AccountDeletionService {
             checkpoint.afterProfileDeletionConsequence(request);
             publishing.makeIneligible(userId);
             checkpoint.afterPublishingDeletionConsequence(request);
+            knowledge.makeIneligible(userId);
 
             var now = clock.instant();
             identity.revokeOutstandingForDeletion(userId, now);

@@ -21,6 +21,7 @@ async function backend(page: Page, pdf = false) {
     let body: unknown, status = 200
     const headers: Record<string, string> = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
     if (path === '/api/auth/session') body = { state: 'authenticated' }
+    else if (path === '/api/me/profile') body = { displayName: 'Synthetic writer', biography: '', handle: null, avatar: null, updatedAt: null }
     else if (path === '/api/auth/csrf') body = { csrfToken: 'synthetic-proof' }
     else if (path === `/api/notes/${noteId}`) {
       if (method === 'PUT') { expect(request.headers()['if-match']).toBe('"n1"'); markdown = request.postDataJSON().markdown }

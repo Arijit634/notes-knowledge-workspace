@@ -84,7 +84,7 @@ function Shell({ title, eyebrow, children }: { title: string; eyebrow?: string; 
     <Brand /><h1 id="page-title">{title}</h1>{eyebrow && <p className="auth-subtitle">{eyebrow}</p>}
     {auth.presentation.syntheticEmailOnly && <p className="local-environment-note">Local test workspace · use an <strong>@example.test</strong> address. Verification links are delivered to your protected local outbox, not an internet inbox.</p>}
     {children}
-  </section><p className="auth-footer">Your notes. Your space.</p></main>
+  </section></main>
 }
 function Gate({ access, children }: { access: RouteAccess; children: ReactNode }) {
   const auth = useAuth(), location = useLocation()
@@ -108,10 +108,7 @@ function RestartLogin() {
 function Landing() {
   const auth = useAuth()
   if (auth.state === 'authenticated') return <Navigate to="/notes" replace />
-  return <Shell title="A home for your ideas" eyebrow="Capture a thought. Make room for what comes next.">
-    {auth.state === 'mfaRequired' ? <Link className="button" to={auth.continuation.challengeId ? '/mfa' : '/login'}>{auth.continuation.challengeId ? 'Continue verification' : 'Restart sign in'}</Link>
-        : <nav className="actions" aria-label="Get started"><Link className="button" to="/signup">Create an account</Link><Link className="button button-secondary" to="/login">Log in</Link></nav>}
-  </Shell>
+  return <Navigate to={auth.state === 'mfaRequired' && auth.continuation.challengeId ? '/mfa' : '/login'} replace />
 }
 type Credentials = { email: string; password: string }
 function CredentialsFields({ register, errors, creating = false }: { register: ReturnType<typeof useForm<Credentials>>['register']; errors: ReturnType<typeof useForm<Credentials>>['formState']['errors']; creating?: boolean }) {
@@ -128,7 +125,7 @@ function Signup() {
   const auth = useAuth(), { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<Credentials>()
   const [accepted, setAccepted] = useState(false), [error, setError] = useState('')
   const submit = handleSubmit(async values => { setError(''); try { await auth.api.request('POST', '/api/auth/registrations', { json: values }); setAccepted(true) } catch (e) { setError(message(e)) } })
-  return <Shell title="Create your account" eyebrow="A little space for everything on your mind.">
+  return <Shell title="Create your account">
     {accepted ? <BlindAcceptedPanel /> : <form onSubmit={submit} noValidate><CredentialsFields register={register} errors={errors} creating />{error && <Alert>{error}</Alert>}<button disabled={isSubmitting}>Create account</button></form>}
     <p className="footnote">Already have an account? <Link to="/login">Log in</Link></p>
   </Shell>
@@ -174,7 +171,7 @@ function Login() {
     } catch (e) { setError(message(e)) }
   })
   async function google() { if (!auth.presentation.googleEnabled) return; setGoogleBusy(true); setError(''); try { const intendedDestination = safeDestination(location.state?.from) ?? auth.signInDestination.consume(); const r = await auth.api.request<{ authorizationUrl?: unknown }>('POST', '/api/auth/oidc/google/authorizations', { json: { intendedDestination }, retryOnCsrfInvalid: false }); navigateToGoogle(r.body?.authorizationUrl) } catch (e) { setError(message(e)) } finally { setGoogleBusy(false) } }
-  return <Shell title="Welcome back" eyebrow="Pick up where your thoughts left off."><form onSubmit={submit} noValidate><CredentialsFields register={register} errors={errors} />{error && <Alert>{error}</Alert>}<button disabled={isSubmitting || googleBusy}>Log in</button></form>
+  return <Shell title="Welcome back"><form onSubmit={submit} noValidate><CredentialsFields register={register} errors={errors} />{error && <Alert>{error}</Alert>}<button disabled={isSubmitting || googleBusy}>Log in</button></form>
     <div className="divider" aria-hidden="true">or</div><button className="button-secondary google-button" onClick={google} aria-describedby={!auth.presentation.googleEnabled ? 'google-unavailable' : undefined} disabled={!auth.presentation.googleEnabled || isSubmitting || googleBusy}><GoogleMark />Continue with Google</button>
     {!auth.presentation.googleEnabled && <p id="google-unavailable" className="field-help">Google sign-in is not enabled for this deployment. Use email and password instead.</p>}
     <p className="footnote"><Link to="/forgot-password">Forgot password?</Link></p><p className="footnote">New here? <Link to="/signup">Create an account</Link></p></Shell>

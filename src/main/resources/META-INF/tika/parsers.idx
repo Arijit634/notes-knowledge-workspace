@@ -1,2 +1,3 @@
 # Fixed project-owned component, used only by the derivation fork configuration.
 pdf-evidence-parser=org.notesknowledge.notes.PdfEvidenceParser:key=org.apache.tika.parser.Parser
+pdf-admission-parser=org.notesknowledge.notes.PdfAdmissionParser:key=org.apache.tika.parser.Parser

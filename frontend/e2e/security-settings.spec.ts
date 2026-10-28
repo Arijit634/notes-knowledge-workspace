@@ -15,6 +15,7 @@ async function fakeSecurityBackend(page: Page) {
     let status = 200
     let response: unknown = {}
     if (path === '/api/auth/session') response = { state }
+    else if (path === '/api/me/profile') response = { displayName: 'Synthetic writer', biography: '', handle: null, avatar: null, updatedAt: null }
     else if (path === '/api/auth/csrf') response = { csrfToken: 'synthetic-csrf-proof' }
     else if (path === '/api/me/security' && method === 'GET') response = {
       email: 'owner@example.test', passwordConfigured: true, mfaState, oidcLinks: [],

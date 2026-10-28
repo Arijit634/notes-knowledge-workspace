@@ -57,7 +57,9 @@ public final class LocalhostMode {
         var binder=org.springframework.boot.context.properties.bind.Binder.get(environment);
         for (String field : java.util.List.of("approved-source-fingerprints", "approved-query-fingerprints")) {
             var approved=binder.bind("knowledge.derivation."+field,org.springframework.boot.context.properties.bind.Bindable.listOf(String.class)).orElse(java.util.List.of());
-            if (approved.isEmpty() || approved.size()>256 || approved.stream().anyMatch(value->!value.matches("[0-9a-f]{64}"))) throw new IllegalStateException();
+            int limit=field.equals("approved-source-fingerprints")?2048:256;
+            boolean workspace=environment.getProperty("knowledge.derivation.synthetic-workspace-owner",java.util.UUID.class)!=null;
+            if (approved.isEmpty()&&!workspace || approved.size()>limit || approved.stream().anyMatch(value->!value.matches("[0-9a-f]{64}"))) throw new IllegalStateException();
         }
         Path bundle=Path.of(environment.getRequiredProperty("knowledge.processing-disclosure.path")).toAbsolutePath().normalize();
         Path approvedDirectory=directory.resolve("synthetic-ai");

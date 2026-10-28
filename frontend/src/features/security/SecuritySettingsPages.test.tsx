@@ -246,7 +246,7 @@ describe('security settings browser journey', () => {
     expect(window.localStorage.length).toBe(0)
     expect(window.sessionStorage.length).toBe(0)
     expect(auth.queries.getQueryCache().getAll().every(query =>
-      !JSON.stringify(query.state.data).includes(setup.manualSecret))).toBe(true)
+      !JSON.stringify(query.state.data ?? null).includes(setup.manualSecret))).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: 'Done' }))
     expect(screen.queryByText('SYNTHETIC-RECOVERY-1')).toBeNull()
   })

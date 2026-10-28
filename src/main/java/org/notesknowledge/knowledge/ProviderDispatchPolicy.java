@@ -10,12 +10,23 @@ import org.springframework.stereotype.Component;
 /** Additional dispatch prerequisite; an approval never establishes source authority/currentness. */
 @Component
 class ProviderDispatchPolicy {
-    static final int MAX_APPROVED_SOURCES=256;
+    static final int MAX_APPROVED_SOURCES=2048;
+    static final int MAX_APPROVED_QUERIES=256;
+    static final int MAX_APPROVED_CHILDREN=256;
     private final ProviderDispatchProperties properties;
+    private final boolean protectedLocalhost;
     ProviderDispatchPolicy(ProviderDispatchProperties properties) {
-        this.properties=properties;
+        this(properties,false);
+    }
+    @org.springframework.beans.factory.annotation.Autowired
+    ProviderDispatchPolicy(ProviderDispatchProperties properties,org.springframework.beans.factory.ObjectProvider<org.notesknowledge.LocalhostMode> localhost) {
+        this(properties,properties.syntheticWorkspaceOwner()!=null&&localhost.getIfAvailable()!=null);
+    }
+    ProviderDispatchPolicy(ProviderDispatchProperties properties,boolean protectedLocalhost) {
+        this.properties=properties;this.protectedLocalhost=protectedLocalhost;
         // Validate outside configuration binding so rejected fingerprints are not echoed as binding values.
         validate(properties);
+        if(properties.syntheticWorkspaceOwner()!=null&&!protectedLocalhost)throw new IllegalArgumentException("Protected synthetic workspace required");
     }
     static void validate(ProviderDispatchProperties properties) {
         var fingerprints=properties.approvedSourceFingerprints();
@@ -25,21 +36,30 @@ class ProviderDispatchPolicy {
                 &&!"unpaid-synthetic-demo".equals(properties.dispatchPolicy())
                 ||fingerprints!=null&&(fingerprints.size()>MAX_APPROVED_SOURCES
                 ||fingerprints.stream().anyMatch(f->f==null||!f.matches("[0-9a-f]{64}")))
-                ||queries!=null&&(queries.size()>MAX_APPROVED_SOURCES||queries.stream().anyMatch(f->f==null||!f.matches("[0-9a-f]{64}")))
-                ||children.size()>MAX_APPROVED_SOURCES||children.stream().anyMatch(f->f==null||!f.matches("[0-9a-f]{64}")))
+                ||queries!=null&&(queries.size()>MAX_APPROVED_QUERIES||queries.stream().anyMatch(f->f==null||!f.matches("[0-9a-f]{64}")))
+                ||children.size()>MAX_APPROVED_CHILDREN||children.stream().anyMatch(f->f==null||!f.matches("[0-9a-f]{64}")))
             throw new IllegalArgumentException("Invalid provider dispatch policy configuration");
     }
     boolean permitsQuery(AiDerivationProperties configuration,String normalizedQuery) {
+        return permitsQuery(configuration,null,normalizedQuery);
+    }
+    boolean permitsQuery(AiDerivationProperties configuration,java.util.UUID owner,String normalizedQuery) {
         validate(properties);
         return "synthetic".equals(configuration.provider())&&"synthetic".equals(configuration.tier())
-            ||permitsUnpaidGeminiQuery(configuration,normalizedQuery);
+            ||permitsUnpaidGeminiQuery(configuration,owner,normalizedQuery);
     }
     boolean permitsUnpaidGeminiQuery(AiDerivationProperties configuration,String normalizedQuery) {
+        return permitsUnpaidGeminiQuery(configuration,null,normalizedQuery);
+    }
+    boolean permitsUnpaidGeminiQuery(AiDerivationProperties configuration,java.util.UUID owner,String normalizedQuery) {
         validate(properties);
         return "gemini".equals(configuration.provider())&&"unpaid".equals(configuration.tier())
             &&"global".equals(configuration.region())&&"unpaid-synthetic-demo".equals(properties.dispatchPolicy())
             &&normalizedQuery!=null&&properties.approvedQueryFingerprints()!=null
-            &&properties.approvedQueryFingerprints().contains(queryFingerprint(normalizedQuery));
+            &&(workspace(owner)||properties.approvedQueryFingerprints().contains(queryFingerprint(normalizedQuery)));
+    }
+    private boolean workspace(java.util.UUID owner) {
+        return protectedLocalhost&&owner!=null&&owner.equals(properties.syntheticWorkspaceOwner());
     }
     /** Exactly the request's strip/NFKC normalization; no case-folding or inferred approval. */
     static String queryFingerprint(String query) {
@@ -57,14 +77,14 @@ class ProviderDispatchPolicy {
         validate(properties);
         return "gemini".equals(configuration.provider())&&"unpaid".equals(configuration.tier())
             &&"global".equals(configuration.region())&&"unpaid-synthetic-demo".equals(properties.dispatchPolicy())
-            &&properties.approvedSourceFingerprints()!=null&&properties.approvedSourceFingerprints().contains(fingerprint(source));
+            &&properties.approvedSourceFingerprints()!=null&&(workspace(source.owner())||properties.approvedSourceFingerprints().contains(fingerprint(source)));
     }
     boolean permitsUnpaidGeminiChild(AiDerivationProperties configuration,TransformedMediaIdentity child) {
         validate(properties);
         return child!=null&&permitsUnpaidGemini(configuration,child.original())
             &&configuration.provider().equals(child.provider())&&configuration.mediaModel().equals(child.model())
             &&configuration.approvedPolicyFingerprint().equals(child.policySha256())
-            &&properties.approvedChildFingerprints().contains(child.approvalFingerprint());
+            &&(workspace(child.original().owner())||properties.approvedChildFingerprints().contains(child.approvalFingerprint()));
     }
     /** SHA-256 over UTF-8, LF-separated fixed fields, no trailing LF; '-' represents absent Attachment fields. */
     static String fingerprint(PrivateAiSourceCurrentness.Expected source) {

@@ -10,7 +10,7 @@ export function attachmentPreflight(file: File): string | null {
     mp4: { bytes: 20_000_000, types: ['video/mp4'], label: '20,000,000 bytes' },
   }
   const rule = suffix ? limits[suffix] : undefined
-  if (!rule || (file.type && file.type !== 'application/octet-stream' && !rule.types.includes(file.type))) return 'Choose a PNG, JPEG, PDF, PCM WAV or video-only AVC MP4.'
+  if (!rule || (file.type && file.type !== 'application/octet-stream' && !rule.types.includes(file.type))) return 'Choose a PNG, JPEG, PDF, PCM WAV or H.264 MP4 (optional AAC audio).'
   if (!file.size) return 'Choose a file that is not empty.'
   return file.size > rule.bytes ? `That file is too large. The limit for this format is ${rule.label}.` : null
 }

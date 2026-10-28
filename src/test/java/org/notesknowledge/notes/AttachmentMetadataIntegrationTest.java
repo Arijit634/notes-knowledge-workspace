@@ -98,6 +98,35 @@ class AttachmentMetadataIntegrationTest {
         assertThat(response.getResponse().getHeader("ETag")).isNull();
     }
 
+    @Test void noteLibraryMediaSummaryIsOwnerScopedBatchedAndSeparateFromTheCoreValidator() throws Exception {
+        UUID owner = account(), note = note(owner), foreignOwner = account(), foreignNote = note(foreignOwner);
+        Cookie cookie = browser(owner, "ROLE_USER");
+        String etag = mvc.perform(get("/api/notes/" + note).cookie(cookie)).andExpect(status().isOk())
+                .andReturn().getResponse().getHeader("ETag");
+        attachment(owner, note, "image", CREATED); attachment(owner, note, "video", CREATED);
+        UUID removed = attachment(owner, note, "pdf", CREATED);
+        jdbc.update("update notes.attachment set cleanup_state='pending',removed_at=created_at,revision=2 where attachment_id=?", removed);
+        UUID pending = attachment(owner, note, "audio", CREATED);
+        jdbc.update("update notes.attachment set storage_state='pending',validation_state='pending',revision=2 where attachment_id=?", pending);
+        attachment(foreignOwner, foreignNote, "image", CREATED);
+        var response = mvc.perform(get("/api/notes").cookie(cookie)).andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", "no-store")).andReturn();
+        assertThat(response.getResponse().getHeader("ETag")).isNull();
+        var items = body(response).get("items"); assertThat(items.size()).isEqualTo(1);
+        assertThat(items.get(0).get("id").asText()).isEqualTo(note.toString());
+        var summary = items.get(0).get("attachmentSummary");
+        assertThat(summary.get("images").asInt()).isEqualTo(1);
+        assertThat(summary.get("video").asInt()).isEqualTo(1);
+        assertThat(summary.get("audio").asInt()).isZero();
+        assertThat(summary.get("documents").asInt()).isZero();
+        var core = mvc.perform(get("/api/notes/" + note).cookie(cookie)).andExpect(status().isOk())
+                .andExpect(header().string("ETag", etag)).andReturn();
+        assertThat(body(core).has("attachmentSummary")).isFalse();
+        assertThat(response.getResponse().getContentAsString()).doesNotContain(foreignNote.toString(), "objectReference", "private-attachment/");
+        setLifecycle(note, "logically_deleted");
+        assertThat(body(mvc.perform(get("/api/notes").cookie(cookie)).andExpect(status().isOk()).andReturn()).get("items").isEmpty()).isTrue();
+    }
+
     @ParameterizedTest @ValueSource(strings = {"image", "audio", "video", "pdf"})
     void safeCoreIsSharedByListAndReadWithExactRevisionEtag(String kind) throws Exception {
         UUID owner = account(), note = note(owner), id = attachment(owner, note, kind, CREATED);

@@ -7,11 +7,13 @@ import { sizeLabel } from './DiscoveryApi'
 import { featureError } from '../../app/ui/featureError'
 import { ApiProblemError } from '../../app/api/ProblemDetailsDecoder'
 import { useRetryAfter } from '../../app/ui/useRetryAfter'
+import { NotesWorkspace } from '../notes/NotesWorkspace'
 import './PublicExperience.css'
 
 export const dateLabel = (date: string) => { const d = new Date(date); return Number.isNaN(d.valueOf()) ? 'Date unavailable' : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) }
 export function PublicShell({ auth, children, modal = false }: { auth: AuthRuntime; children: ReactNode; modal?: boolean }) {
-  return <div className="public-shell"><div inert={modal}><a className="notes-skip" href="#public-content">Skip to content</a><header className="public-topbar"><Link className="public-brand" to="/explore"><span className="notes-brand-mark" aria-hidden="true">n.</span><span>Notes &amp; Knowledge</span></Link><nav aria-label="Public navigation"><NavLink to="/explore" end>Explore</NavLink><NavLink to="/explore/search">Search</NavLink>{auth.state === 'authenticated' ? <Link className="button button-secondary" to="/notes">Workspace</Link> : <Link className="button button-secondary" to="/login">Log in</Link>}</nav></header><main id="public-content" tabIndex={-1}>{children}</main><footer className="public-footer">Ideas worth keeping. Knowledge worth sharing.</footer></div></div>
+  if (auth.state === 'authenticated') return <NotesWorkspace auth={auth} modalOpen={modal}><div className="public-shell public-in-workspace" inert={modal}>{children}</div></NotesWorkspace>
+  return <div className="public-shell"><div inert={modal}><a className="notes-skip" href="#public-content">Skip to content</a><header className="public-topbar"><Link className="public-brand" to="/explore"><span className="notes-brand-mark" aria-hidden="true">n.</span><span>Notes &amp; Knowledge</span></Link><nav aria-label="Public navigation"><NavLink to="/explore" end>Explore</NavLink><NavLink to="/explore/search">Search</NavLink><Link className="button button-secondary" to="/login">Log in</Link></nav></header><main id="public-content" tabIndex={-1}>{children}</main></div></div>
 }
 export function PublicAuthorView({ author, large = false }: { author: PublicAuthor; large?: boolean }) {
   const [failed, setFailed] = useState(false)

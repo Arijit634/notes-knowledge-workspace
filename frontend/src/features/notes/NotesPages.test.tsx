@@ -4,6 +4,7 @@ import { App } from '../../app/App'
 import { AuthRuntime } from '../auth/AuthRuntime'
 import type { NoteCore } from './NotesApi'
 import { noteKeys } from './NotesKeys'
+import { AttachmentXhrDouble, syntheticAttachment } from './AttachmentUpload.test-support'
 
 const id = '01990a55-9e12-7ac4-8f5b-31aa4a91d401'
 function markdownField() {
@@ -62,16 +63,32 @@ beforeAll(async () => { await Promise.all([import('./NotesPages'), import('./Mar
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); window.history.replaceState(null, '', '/') })
 
 describe('private Notes browser journey', () => {
+  it('blocks the Create shortcut during discard confirmation and keeps the draft on Keep writing', async () => {
+    const { calls } = mount('/notes/new')
+    await screen.findByRole('dialog', { name: 'New note' })
+    const ai = screen.getByRole('checkbox', { name: 'Use this note with AI' }) as HTMLInputElement
+    await waitFor(() => expect(ai.disabled).toBe(false))
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Uncommitted writing' } })
+    fireEvent.click(ai)
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await screen.findByRole('dialog', { name: 'Leave with unsaved changes?' })
+    fireEvent.keyDown(document, { key: 's', ctrlKey: true })
+    expect(calls.filter(c => c.method === 'POST' && c.path === '/api/notes')).toHaveLength(0)
+    fireEvent.click(screen.getByRole('button', { name: 'Keep writing' }))
+    expect(ai.checked).toBe(true)
+    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Uncommitted writing')
+  })
   it('protects a new Note whose only unsaved change is AI permission', async () => {
     mount('/notes/new')
     const choice = await screen.findByRole('checkbox', { name: 'Use this note with AI' })
+    await waitFor(() => expect((choice as HTMLInputElement).disabled).toBe(false))
     fireEvent.click(choice)
     expect((choice as HTMLInputElement).checked).toBe(true)
-    fireEvent.click(screen.getByRole('link', { name: 'All notes' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Cancel$/ }))
     await screen.findByRole('dialog', { name: 'Leave with unsaved changes?' })
-    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+    fireEvent.keyDown(screen.getByRole('dialog', { name: 'Leave with unsaved changes?' }), { key: 'Escape' })
     expect((choice as HTMLInputElement).checked).toBe(true)
-    fireEvent.click(screen.getByRole('link', { name: 'All notes' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Cancel$/ }))
     fireEvent.click(await screen.findByRole('button', { name: 'Discard changes and leave' }))
     await screen.findByRole('heading', { name: 'No notes yet' })
     fireEvent.click(screen.getAllByRole('link', { name: 'New note' })[0])
@@ -101,13 +118,13 @@ describe('private Notes browser journey', () => {
     await screen.findByRole('link', { name: /Saved title/ })
     expect(screen.getAllByRole('main')).toHaveLength(1)
     const nav = screen.getByRole('navigation', { name: 'Workspace navigation' })
-    expect(Array.from(nav.querySelectorAll(':scope > a')).map(link => link.getAttribute('href'))).toEqual(['/notes', '/ask', '/publications', '/explore', '/settings/profile', '/settings/privacy', '/settings/security'])
-    expect(Array.from(nav.querySelectorAll('.workspace-more a')).map(link => link.getAttribute('href'))).toEqual(['/settings/profile', '/settings/public-profile', '/settings/privacy', '/settings/security'])
+    expect(Array.from(nav.querySelectorAll(':scope > a')).map(link => link.getAttribute('href'))).toEqual(['/notes', '/ask', '/publications', '/explore'])
+    expect(Array.from(document.querySelectorAll('.workspace-account-menu a')).map(link => link.getAttribute('href'))).toEqual(['/settings/profile', '/settings/public-profile', '/settings/privacy', '/settings/security'])
     expect(within(nav).getByRole('link', { name: 'All notes' }).getAttribute('aria-current')).toBe('page')
     expect(screen.getByRole('link', { name: 'Skip to Notes content' }).getAttribute('href')).toBe('#notes-content')
     expect(screen.getByRole('list', { name: 'Tags' }).textContent).toBe('IdeasWatch later')
     expect(screen.getByText('Pinned')).toBeTruthy()
-    expect(screen.queryByRole('searchbox')).toBeNull()
+    expect(screen.getByRole('searchbox', { name: 'Search notes' })).toBeTruthy()
   })
 
   it('keeps library failure distinct from empty state and exposes a working retry', async () => {
@@ -734,7 +751,7 @@ describe('private Notes browser journey', () => {
       method === 'POST' && path === '/api/notes'
         ? json({ ...initial, ...body as object }, 201,
           { ETag: '"e1"', Location: `/api/notes/${id}` }) : undefined)
-    await screen.findByRole('heading', { name: 'Create a note' }, { timeout: 5000 })
+    await screen.findByRole('heading', { name: 'New note' }, { timeout: 5000 })
     expect(screen.queryByRole('button', { name: 'Edit tags' })).toBeNull()
     expect(calls.filter(call => call.path === '/api/notes' && call.method === 'POST')).toHaveLength(0)
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Created' } })
@@ -863,4 +880,46 @@ describe('private Notes browser journey', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Keep my draft and use current version as save base' }))
     expect(screen.getByRole('button', { name: 'Save note' }).hasAttribute('disabled')).toBe(false)
   })
+  it('stages a dropped photo locally, creates a media-only Note explicitly, then uploads one file', async () => {
+    const OriginalURL = URL, revoke = vi.fn()
+    vi.stubGlobal('URL', Object.assign(class extends OriginalURL {}, { createObjectURL: () => 'blob:synthetic-preview', revokeObjectURL: revoke }))
+    const uploads: AttachmentXhrDouble[] = []
+    vi.stubGlobal('XMLHttpRequest', class extends AttachmentXhrDouble { constructor() { super(xhr => { uploads.push(xhr); void xhr.respond(json(syntheticAttachment, 201, { ETag: '"a1"', Location: `/api/notes/${id}/attachments/${syntheticAttachment.id}` })) }) } })
+    let server = { ...initial, title: 'synthetic', markdown: '' }
+    const { calls } = mount('/notes/new', 'authenticated', (method, path, body) => method === 'POST' && path === '/api/notes' ? json({ ...server, ...body as object }, 201, { ETag: '"e1"', Location: `/api/notes/${id}` }) : method === 'GET' && path === `/api/notes/${id}` ? json(server, 200, { ETag: '"e1"' }) : undefined)
+    await screen.findByRole('dialog', { name: 'New note' })
+    await waitFor(() => expect((screen.getByRole('checkbox', { name: 'Use this note with AI' }) as HTMLInputElement).disabled).toBe(false))
+    fireEvent.drop(screen.getByRole('region', { name: 'New note file drop area' }), { dataTransfer: { types: ['Files'], files: [new File(['synthetic'], 'synthetic.png', { type: 'image/png' })] } })
+    expect(screen.getByRole('list', { name: 'Files ready to upload' })).toBeTruthy()
+    expect(uploads).toHaveLength(0); expect(calls.filter(c => c.method === 'POST' && c.path === '/api/notes')).toHaveLength(0)
+    fireEvent.click(screen.getByRole('button', { name: /^Create note$/ }))
+    await waitFor(() => expect(window.location.pathname).toBe(`/notes/${id}`))
+    expect(calls.find(c => c.method === 'POST' && c.path === '/api/notes')?.body).toEqual({ title: 'synthetic', markdown: '', aiEnabled: false })
+    expect(uploads).toHaveLength(1); expect(uploads[0].path).toBe(`/api/notes/${id}/attachments`)
+    expect(revoke).toHaveBeenCalledWith('blob:synthetic-preview')
+  })
+  it('shows attached media counts on library cards without requesting each Note or its bytes', async () => {
+    const { calls } = mount('/notes', 'authenticated', (method, path) => method === 'GET' && path === '/api/notes' ? json({ items: [{ ...initial, attachmentSummary: { images: 2, video: 1, audio: 0, documents: 1 } }], nextCursor: null }) : undefined)
+    expect((await screen.findByLabelText('Attached media')).textContent).toContain('2 photos')
+    expect(screen.getByLabelText('Attached media').textContent).toContain('1 video')
+    expect(calls.some(c => c.path.includes('/attachments') || c.path.endsWith('/content'))).toBe(false)
+  })
+
+  it('keeps the created Note identity after an upload failure and never repeats creation on upload retry', async () => {
+    const OriginalURL = URL
+    vi.stubGlobal('URL', Object.assign(class extends OriginalURL {}, { createObjectURL: () => 'blob:synthetic-retry', revokeObjectURL: vi.fn() }))
+    const uploads: AttachmentXhrDouble[] = []
+    vi.stubGlobal('XMLHttpRequest', class extends AttachmentXhrDouble { constructor() { super(xhr => { uploads.push(xhr); void xhr.respond(uploads.length === 1 ? problem(503, 'service_unavailable') : json(syntheticAttachment, 201, { ETag: '"a1"', Location: `/api/notes/${id}/attachments/${syntheticAttachment.id}` })) }) } })
+    const { calls } = mount('/notes/new', 'authenticated', (method, path, body) => method === 'POST' && path === '/api/notes' ? json({ ...initial, ...body as object }, 201, { ETag: '"e1"', Location: `/api/notes/${id}` }) : undefined)
+    await screen.findByRole('dialog', { name: 'New note' })
+    await waitFor(() => expect((screen.getByRole('checkbox', { name: 'Use this note with AI' }) as HTMLInputElement).disabled).toBe(false))
+    fireEvent.change(screen.getByLabelText('Choose files for new note'), { target: { files: [new File(['synthetic'], 'synthetic.png', { type: 'image/png' })] } })
+    fireEvent.click(screen.getByRole('button', { name: /^Create note$/ }))
+    await screen.findByText(/Note created. A file could not be uploaded/)
+    expect(calls.filter(c => c.method === 'POST' && c.path === '/api/notes')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Retry remaining uploads' }))
+    await waitFor(() => expect(window.location.pathname).toBe(`/notes/${id}`))
+    expect(uploads).toHaveLength(2); expect(calls.filter(c => c.method === 'POST' && c.path === '/api/notes')).toHaveLength(1)
+  })
+
 })

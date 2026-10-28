@@ -18,6 +18,7 @@ async function fakeBackend(page: Page, initial: 'anonymous' | 'mfaRequired' | 'a
   await page.route('**/api/me/security', route => route.fulfill({ status: 200,
     contentType: 'application/json', body: JSON.stringify({ email: 'person@example.test',
       passwordConfigured, mfaState: 'disabled', oidcLinks: [] }) }))
+  await page.route('**/api/me/profile', route => route.fulfill({ json: { displayName: 'Synthetic writer', biography: '', handle: null, avatar: null, updatedAt: null } }))
   await page.route('**/api/auth/**', async route => {
     const request = route.request(), path = new URL(request.url()).pathname
     const method = request.method()
@@ -41,11 +42,14 @@ async function fakeBackend(page: Page, initial: 'anonymous' | 'mfaRequired' | 'a
   })
 }
 
-test('anonymous landing to signup uses generic accepted copy', async ({ page }) => {
+test('anonymous root redirects to login and signup uses generic accepted copy', async ({ page }) => {
   await fakeBackend(page)
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: 'A home for your ideas' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible()
+  await expect(page).toHaveURL('/login')
   await page.getByRole('link', { name: 'Create an account' }).click()
+  // Login also has Email. Wait for the destination form before filling it.
+  await expect(page.getByRole('heading', { name: 'Create your account', exact: true })).toBeVisible()
   await page.getByLabel('Email').fill('person@example.test')
   await page.getByLabel('Create password').fill('Synthetic-password-123!')
   await page.getByRole('button', { name: 'Create account' }).click()

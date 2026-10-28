@@ -30,6 +30,67 @@ class StrictMp4StructureValidatorTest {
         rejected(AttachmentParserPreflightTest.metadataOnlyMp4());
     }
 
+    @Test void boundedSdrColourDescriptionPreservesSampleCustodyAndTiming() throws Exception {
+        for (int range : new int[]{0, 128}) {
+            var result = validate(withExtensions(colour(1, 13, 1, range)));
+            assertThat(result).isEqualTo(validate(AttachmentParserPreflightTest.supportedMp4()));
+        }
+    }
+
+    @Test void colourProfilesUnknownTypesHdrAndReservedBitsRemainRejected() throws Exception {
+        for (byte[] extension : new byte[][]{
+                colour(9, 13, 1, 128), colour(1, 16, 1, 128), colour(1, 13, 9, 128),
+                colour(1, 13, 1, 1), colour(1, 13, 1, 129), colour(0, 13, 1, 0)}) {
+            rejected(withExtensions(extension));
+        }
+        byte[] profile = colour(1, 13, 1, 128);
+        System.arraycopy("prof".getBytes(StandardCharsets.US_ASCII), 0, profile, 8, 4);
+        rejected(withExtensions(profile));
+        rejected(withExtensions(Arrays.copyOf(colour(1, 13, 1, 128), 18)));
+        byte[] oversized = Arrays.copyOf(colour(1, 13, 1, 128), 20);
+        ByteBuffer.wrap(oversized).putInt(20);
+        rejected(withExtensions(oversized));
+    }
+
+    @Test void colourDoesNotPermitDuplicateOrMissingCodecConfigurationOrUnknownExtensions() throws Exception {
+        byte[] colour = colour(1, 13, 1, 128);
+        rejected(withExtensions(colour, colour));
+        byte[] valid = AttachmentParserPreflightTest.supportedMp4();
+        int config = start(valid, "avcC");
+        rejected(withExtensions(Arrays.copyOfRange(valid, config, config + ByteBuffer.wrap(valid).getInt(config))));
+        byte[] unknown = colour.clone();
+        System.arraycopy("btrt".getBytes(StandardCharsets.US_ASCII), 0, unknown, 4, 4);
+        rejected(withExtensions(unknown));
+        byte[] missing = withExtensions(colour);
+        System.arraycopy("colr".getBytes(StandardCharsets.US_ASCII), 0, missing, start(missing, "avcC") + 4, 4);
+        rejected(missing);
+    }
+
+    private static byte[] colour(int primary, int transfer, int matrix, int range) {
+        return ByteBuffer.allocate(19).putInt(19).put("colr".getBytes(StandardCharsets.US_ASCII))
+                .put("nclx".getBytes(StandardCharsets.US_ASCII)).putShort((short)primary)
+                .putShort((short)transfer).putShort((short)matrix).put((byte)range).array();
+    }
+
+    private static byte[] withExtensions(byte[]... extensions) throws Exception {
+        byte[] original = AttachmentParserPreflightTest.supportedMp4();
+        int insertion = start(original, "avc1") + ByteBuffer.wrap(original).getInt(start(original, "avc1"));
+        int extra = Arrays.stream(extensions).mapToInt(e -> e.length).sum();
+        byte[] result = new byte[original.length + extra];
+        System.arraycopy(original, 0, result, 0, insertion);
+        int position = insertion;
+        for (byte[] extension : extensions) {
+            System.arraycopy(extension, 0, result, position, extension.length);
+            position += extension.length;
+        }
+        System.arraycopy(original, insertion, result, position, original.length - insertion);
+        for (String parent : new String[]{"moov", "trak", "mdia", "minf", "stbl", "stsd", "avc1"}) {
+            int at = start(result, parent);
+            ByteBuffer.wrap(result).putInt(at, ByteBuffer.wrap(result).getInt(at) + extra);
+        }
+        return result;
+    }
+
     @Test void everyPartialTrailingHeaderIsRejected() throws Exception {
         byte[] valid = AttachmentParserPreflightTest.supportedMp4();
         for (int tail = 1; tail <= 7; tail++) rejected(Arrays.copyOf(valid, valid.length + tail));

@@ -17,8 +17,8 @@ export function restoreFocus(opener: HTMLElement | null, fallback: HTMLElement |
   }
   target?.focus({ preventScroll: true })
 }
-export function ConfirmDialog({ title, children, onCancel, onConfirm, confirmText, busy = false, opener }: {
-  title: string; children: ReactNode; onCancel: () => void; onConfirm: () => void; confirmText: string; busy?: boolean; opener?: HTMLElement | null
+export function ConfirmDialog({ title, children, onCancel, onConfirm, confirmText, cancelText = 'Cancel', busy = false, opener }: {
+  title: string; children: ReactNode; onCancel: () => void; onConfirm: () => void; confirmText: string; cancelText?: string; busy?: boolean; opener?: HTMLElement | null
 }) {
   const ref = useRef<HTMLDivElement>(null), id = useId()
   useEffect(() => {
@@ -37,6 +37,6 @@ export function ConfirmDialog({ title, children, onCancel, onConfirm, confirmTex
         if (buttons.length) buttons[(at + (event.shiftKey ? buttons.length - 1 : 1)) % buttons.length]?.focus()
         else event.currentTarget.focus({ preventScroll: true })
       }
-    }}><h2 id={id}>{title}</h2>{children}<div className="actions"><button type="button" className="button-secondary" disabled={busy} onClick={onCancel}>Cancel</button>
+    }}><h2 id={id}>{title}</h2>{children}<div className="actions"><button type="button" className="button-secondary" disabled={busy} onClick={onCancel}>{cancelText}</button>
       <button type="button" disabled={busy} onClick={onConfirm}>{confirmText}</button></div></div></div>, document.body)
 }

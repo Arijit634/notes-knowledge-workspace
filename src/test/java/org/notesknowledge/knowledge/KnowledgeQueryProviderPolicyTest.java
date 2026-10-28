@@ -39,6 +39,31 @@ class KnowledgeQueryProviderPolicyTest {
     private List<String> queries(){return List.of(ProviderDispatchPolicy.queryFingerprint(query));}
     private List<String> sourceApproval(){return List.of(ProviderDispatchPolicy.fingerprint(expected));}
     @Test void defaultDenyPreventsQueryOnlyEmbeddingCapture(){var g=gate(List.of(),List.of());assertThatThrownBy(()->embed(g,query)).isInstanceOf(DerivationFailure.class);assertThat(embeddings).hasValue(0);}
+    @Test void largerExtractionPermitRevalidatesEverySourceAndKeepsFocusedAndHardLimits(){
+        gate(List.of(),List.of());var p=new ProviderDispatchProperties("unpaid-synthetic-demo",List.of(),List.of(),List.of(),owner);
+        var g=new KnowledgeQueryGate(policies,config,new ProviderDispatchPolicy(p,true),p,sources);
+        var batch=java.util.stream.IntStream.range(0,32).mapToObj(i->new PrivateQuerySource.Source(new Expected(owner,new UUID(0,100+i),null,1,1,null),"active",true,"note",Instant.EPOCH,"")).toList();
+        g.evidence(owner,query,batch,handle,32).requireGoogle(query);verify(sources,times(32)).matches(any(),eq(true));
+        assertThatThrownBy(()->g.evidence(owner,query,batch,handle)).isInstanceOf(DerivationFailure.class);
+        var tooMany=new ArrayList<>(batch);tooMany.add(source());assertThatThrownBy(()->g.evidence(owner,query,tooMany,handle,32)).isInstanceOf(DerivationFailure.class);
+        when(sources.matches(eq(batch.getLast()),eq(true))).thenReturn(false);assertThatThrownBy(()->g.evidence(owner,query,batch,handle,32)).isInstanceOf(DerivationFailure.class);
+        var foreign=new ArrayList<>(batch);foreign.set(31,new PrivateQuerySource.Source(new Expected(new UUID(0,999),note,null,1,1,null),"active",true,"note",Instant.EPOCH,""));
+        assertThatThrownBy(()->g.evidence(owner,query,foreign,handle,32)).isInstanceOf(DerivationFailure.class);
+    }
+    @Test void freeFormWorkspaceStillBindsTheActualQueryAndRejectsForeignDisabledOrStaleEvidence() {
+        gate(List.of(),List.of());
+        var p=new ProviderDispatchProperties("unpaid-synthetic-demo",List.of(),List.of(),List.of(),owner);
+        var g=new KnowledgeQueryGate(policies,config,new ProviderDispatchPolicy(p,true),p,sources);
+        String fresh="A question that was never fingerprinted?";
+        var permit=g.query(owner,fresh);permit.requireGoogle(fresh);
+        assertThatThrownBy(()->permit.requireGoogle(fresh+"!")).isInstanceOf(DerivationFailure.class);
+        var evidence=g.evidence(owner,fresh,List.of(source()),handle);evidence.requireGoogle(fresh);
+        when(sources.matches(any(),eq(true))).thenReturn(false);
+        assertThatThrownBy(()->g.evidence(owner,fresh,List.of(source()),handle)).isInstanceOf(DerivationFailure.class);
+        assertThatThrownBy(()->g.query(new UUID(0,99),fresh)).isInstanceOf(DerivationFailure.class);
+        when(policies.policyPrerequisite(owner)).thenReturn(Optional.empty());
+        assertThatThrownBy(()->g.query(owner,fresh)).isInstanceOf(DerivationFailure.class);
+    }
     @Test void approvedSourcesNeverApproveAQuery(){var g=gate(List.of(),sourceApproval());assertThatThrownBy(()->generate(g,query)).isInstanceOf(DerivationFailure.class);assertThat(generations).hasValue(0);}
     @Test void approvedQueryNeverApprovesASource(){var g=gate(queries(),List.of());assertThatThrownBy(()->generate(g,query)).isInstanceOf(DerivationFailure.class);assertThat(generations).hasValue(0);}
     @Test void bothExactApprovalsPermitDispatch(){var g=gate(queries(),sourceApproval());embed(g,query);generate(g,query);assertThat(embeddings).hasValue(1);assertThat(generations).hasValue(1);}

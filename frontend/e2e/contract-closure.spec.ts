@@ -86,8 +86,8 @@ test('private avatar loads after refresh through the authenticated byte endpoint
   const beforeRefresh = reads
   await page.reload(); await expect(image).toHaveAttribute('src', /^blob:/)
   // Development StrictMode deliberately mounts effects twice; each actual page
-  // lifetime must still fetch afresh and issue at most two bounded GETs.
-  expect(reads).toBeGreaterThan(beforeRefresh); expect(reads).toBeLessThanOrEqual(4)
+  // lifetime fetches afresh: at most two editor-effect GETs plus one Account thumbnail GET.
+  expect(reads).toBeGreaterThan(beforeRefresh); expect(reads).toBeLessThanOrEqual(6)
   await page.getByLabel('Display name').fill('Uncommitted profile draft')
   await page.getByRole('button', { name: 'Remove avatar' }).click()
   await expect(image).toHaveCount(0)

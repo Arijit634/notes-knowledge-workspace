@@ -82,12 +82,24 @@ class LocalhostTransportTest {
         for(var entry:invalid.entrySet())assertThatThrownBy(()->new LocalhostMode(syntheticAi().withProperty(entry.getKey(),entry.getValue())))
                 .isInstanceOf(IllegalStateException.class).hasMessage("Protected loopback localhost configuration required").hasNoCause();
     }
+    @Test void designatedSyntheticWorkspaceNeedsNoQuestionOrSourceListButStillRequiresProtectedTransport() throws Exception {
+        var e=syntheticAi().withProperty("knowledge.derivation.synthetic-workspace-owner","01999000-0000-7000-8000-000000000001")
+            .withProperty("knowledge.derivation.approved-query-fingerprints","").withProperty("knowledge.derivation.approved-source-fingerprints","");
+        assertThat(new LocalhostMode(e)).isNotNull();
+        assertThatThrownBy(()->new LocalhostMode(e.withProperty("server.address","0.0.0.0"))).hasMessage("Protected loopback localhost configuration required");
+        assertThatThrownBy(()->new LocalhostMode(syntheticAi().withProperty("knowledge.derivation.synthetic-workspace-owner","not-an-id"))).hasMessage("Protected loopback localhost configuration required");
+    }
     @Test void syntheticAiCannotLoadAnUnownedBundleOrUnboundedApprovalList() throws Exception {
         var environment=syntheticAi();var outside=root.resolve("unapproved.json");Files.writeString(outside,"not an approved bundle");
         assertThatThrownBy(()->new LocalhostMode(environment.withProperty("knowledge.processing-disclosure.path",outside.toString())))
                 .isInstanceOf(IllegalStateException.class).hasNoCause();
-        String excessive=String.join(",",java.util.Collections.nCopies(257,"b".repeat(64)));
+        String excessive=String.join(",",java.util.Collections.nCopies(2049,"b".repeat(64)));
         assertThatThrownBy(()->new LocalhostMode(syntheticAi().withProperty("knowledge.derivation.approved-source-fingerprints",excessive)))
+                .isInstanceOf(IllegalStateException.class).hasNoCause();
+        assertThat(new LocalhostMode(syntheticAi().withProperty("knowledge.derivation.approved-source-fingerprints",
+                String.join(",",java.util.Collections.nCopies(2048,"b".repeat(64)))))).isNotNull();
+        assertThatThrownBy(()->new LocalhostMode(syntheticAi().withProperty("knowledge.derivation.approved-query-fingerprints",
+                String.join(",",java.util.Collections.nCopies(257,"c".repeat(64))))))
                 .isInstanceOf(IllegalStateException.class).hasNoCause();
     }
     @Test void controlledModeCannotAccidentallyUseAnotherDatabaseOrDdlRole() throws Exception {

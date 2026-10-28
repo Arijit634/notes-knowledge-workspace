@@ -118,6 +118,15 @@ class TransformedMediaIdentityTest {
         assertThat(policy.permitsUnpaidGemini(config(),source)).isTrue();
         assertThat(policy.permitsUnpaidGeminiChild(config(),child())).isFalse();
     }
+    @Test void protectedSyntheticWorkspaceInheritsOnlyItsOwnBoundedChildApproval() {
+        var p=new ProviderDispatchProperties("unpaid-synthetic-demo",List.of(),List.of(),List.of(),source.owner());
+        var approved=new ProviderDispatchPolicy(p,true);
+        assertThat(approved.permitsUnpaidGeminiChild(config(),child())).isTrue();
+        var other=new ProviderDispatchPolicy(new ProviderDispatchProperties("unpaid-synthetic-demo",List.of(),List.of(),List.of(),new java.util.UUID(0,99)),true);
+        assertThat(other.permitsUnpaidGeminiChild(config(),child())).isFalse();
+        assertThat(new ProviderDispatchPolicy(new ProviderDispatchProperties("unpaid-synthetic-demo",List.of()))
+            .permitsUnpaidGeminiChild(config(),child())).isFalse();
+    }
     @Test void childApprovalDoesNotApproveTheOriginal() {
         var policy=new ProviderDispatchPolicy(new ProviderDispatchProperties("unpaid-synthetic-demo",List.of(),List.of(),List.of(child().approvalFingerprint())));
         assertThat(policy.permitsUnpaidGeminiChild(config(),child())).isFalse();

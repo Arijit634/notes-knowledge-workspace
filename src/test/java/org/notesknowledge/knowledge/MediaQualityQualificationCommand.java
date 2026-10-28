@@ -251,7 +251,7 @@ public final class MediaQualityQualificationCommand {
                 new ObjectProvider<StructuredKnowledgePort>(){public StructuredKnowledgePort getObject(){paced.waitBeforePermit();return structured;}},paced,c.getBeanProvider(PlatformTransactionManager.class));
             var controller=new KnowledgeQueryController(c.getBean(KnowledgeOperationService.class),engine,c.getBean(NoteKnowledgeService.class),
                 c.getBean(io.micrometer.core.instrument.MeterRegistry.class),c.getBean(org.notesknowledge.security.RateControlService.class),
-                c.getBean(org.notesknowledge.security.RateKeyDeriver.class),c.getBean(ObjectMapper.class),c.getBean(org.notesknowledge.websupport.ApiProblemWriter.class));
+                c.getBean(org.notesknowledge.security.RateKeyDeriver.class),c.getBean(ObjectMapper.class),c.getBean(org.notesknowledge.websupport.ApiProblemWriter.class),c.getBean(SearchHistoryService.class));
             var mvc=MockMvcBuilders.standaloneSetup(controller).addFilters(c.getBean(org.springframework.session.web.http.SessionRepositoryFilter.class))
                 .apply(springSecurity(c.getBean("springSecurityFilterChain",jakarta.servlet.Filter.class))).build();
             var bootstrap=MockMvcBuilders.webAppContextSetup((org.springframework.web.context.WebApplicationContext)c)
