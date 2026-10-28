@@ -40,12 +40,14 @@ class KnowledgeQueryEngine {
     Generated ranked(UUID owner,KnowledgeQueryRequest request) {
         long started=System.nanoTime();
         var signals=new ArrayList<List<UUID>>();var sourceMap=new LinkedHashMap<UUID,PrivateQuerySource.Source>();
+        var lexicalMatches=new LinkedHashMap<UUID,PrivateQuerySource.Source>();
         for(String lifecycle:request.lifecycles()) {
             var rows=tx(()->lexical.search(new PrivateLexicalSearch.Query(request.query(),PrivateKnowledgeSource.Lifecycle.valueOf(lifecycle.toUpperCase(java.util.Locale.ROOT)),List.of(),request.savedDuring())));
             var ids=new ArrayList<UUID>();
-            for(var row:rows) {var current=sources.note(owner,row.noteId());if(current.expected().revision()==row.revision()){sourceMap.put(row.noteId(),current);ids.add(row.noteId());}}
+            for(var row:rows) {var current=sources.note(owner,row.noteId());if(current.expected().revision()==row.revision()){sourceMap.put(row.noteId(),current);lexicalMatches.put(row.noteId(),current);ids.add(row.noteId());}}
             signals.add(ids);
         }
+        var ordinaryOrder=ReciprocalRankFusion.fuse(signals,50);
         var selected=new ArrayList<QueryEvidenceRepository.Evidence>();String degraded=null;KnowledgeQueryGate.QueryPermit permit=null;
         if(telemetry!=null)telemetry.candidates(request.plan(),RetrievalTelemetry.Stage.LEXICAL,sourceMap.size());
         var relevant=new LinkedHashMap<UUID,ExactPrivateVectorSearch.Candidate>();
@@ -111,7 +113,9 @@ class KnowledgeQueryEngine {
                 if(selected.size()==12)break;
             }
         }
-        var deterministic=order.stream().map(sourceMap::get).filter(s->(request.savedDuring()==null||request.savedDuring().contains(s.createdAt()))&&sources.matches(s,false))
+        // Fusion orders model candidates; it does not establish an ordinary-search
+        // match. Keep AI-OFF lexical hits, but never promote vector-only neighbors.
+        var deterministic=ordinaryOrder.stream().map(lexicalMatches::get).filter(s->(request.savedDuring()==null||request.savedDuring().contains(s.createdAt()))&&sources.matches(s,false))
             .map(s->new KnowledgeQueryResult.DeterministicItem("note",s.title(),List.of(citation(s,null)),s.aiEnabled())).toList();
         if(telemetry!=null){telemetry.candidates(request.plan(),RetrievalTelemetry.Stage.CONTEXT,selected.size());telemetry.preGeneration(request.plan(),System.nanoTime()-started);}
         Generated answer=selected.isEmpty()?empty(List.of(),degraded,degraded==null&&request.plan()==KnowledgeQueryRequest.Plan.FOCUSED):generate(owner,request.query(),"answer",selected,()->true);

@@ -896,7 +896,9 @@ describe('private Notes browser journey', () => {
     await waitFor(() => expect(window.location.pathname).toBe(`/notes/${id}`))
     expect(calls.find(c => c.method === 'POST' && c.path === '/api/notes')?.body).toEqual({ title: 'synthetic', markdown: '', aiEnabled: false })
     expect(uploads).toHaveLength(1); expect(uploads[0].path).toBe(`/api/notes/${id}/attachments`)
-    expect(revoke).toHaveBeenCalledWith('blob:synthetic-preview')
+    // This transport fixture contains text, not a decodable image. Never preview
+    // unvalidated bytes as an image; valid thumbnail cleanup is tested separately.
+    expect(revoke).not.toHaveBeenCalled()
   })
   it('shows attached media counts on library cards without requesting each Note or its bytes', async () => {
     const { calls } = mount('/notes', 'authenticated', (method, path) => method === 'GET' && path === '/api/notes' ? json({ items: [{ ...initial, attachmentSummary: { images: 2, video: 1, audio: 0, documents: 1 } }], nextCursor: null }) : undefined)

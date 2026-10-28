@@ -9,6 +9,7 @@ export const answer = { deterministicResults: [{ kind: 'saved_detail', value: 'A
   aiAnswer: { claims: ['A grounded synthetic answer from eligible evidence.'], conflicting: false }, citations: [{ noteId, attachmentId: null, location: sourceLocation }],
   coverage: { boundary: 'acceptedAiSources', inspectedSources: 4, completed: false, corpusChanged: false, truncated: true, retryRequired: false, classificationUncertain: true }, degraded: null, insufficientEvidence: false }
 export async function flagshipBackend(page: Page) {
+  const submittedAt = new Date().toISOString()
   const state = {
     note: { id: noteId, title: 'A quieter morning', markdown: '## Before the day begins\n\nMake room for a thought worth keeping.\n\n- [ ] Read a chapter\n- [x] Take a walk\n\n> Small things count.\n', lifecycle: 'active', pinned: true, tags: ['Personal', 'Routines'], aiEnabled: false, createdAt: timestamp, updatedAt: timestamp },
     revision: 1, failSave: 0, holdSave: false, releaseSave: () => {}, saveStarted: false, asyncAsk: false, operationDone: false,
@@ -26,6 +27,7 @@ export async function flagshipBackend(page: Page) {
     if (path === '/api/auth/session') body = { state: 'authenticated' }
     else if (path === '/api/auth/csrf') body = { csrfToken: 'synthetic-proof' }
     else if (path === '/api/me/note-preferences') body = { defaultAiEnabledForNewNotes: false }
+    else if (path === '/api/knowledge/history' && method === 'GET') body = { items: [], nextCursor: null }
     else if (path === '/api/notes' && method === 'GET') body = { items: url.searchParams.get('lifecycle') ? [] : [state.note,
       { ...state.note, id: '01990a55-9e12-7ac4-8f5b-31aa4a91d403', title: 'Ideas worth coming back to', pinned: false, tags: ['Ideas'], markdown: 'An ongoing collection of small ideas. Some need time; some just need a first step.' }], nextCursor: null }
     else if (path === '/api/notes' && method === 'POST') { state.note = { ...state.note, ...input, pinned: false }; status = 201; body = state.note; headers.ETag = `"n${state.revision}"`; headers.Location = `/api/notes/${noteId}` }
@@ -41,9 +43,9 @@ export async function flagshipBackend(page: Page) {
     } else if (path.endsWith('/attachments') || path.endsWith('/versions')) body = { items: [], nextCursor: null }
     else if (path === '/api/notes/search') body = { items: [{ id: noteId, title: state.note.title, snippet: 'A matching saved detail.', lifecycle: 'active', pinned: true, tags: ['Personal'], updatedAt: timestamp, matchLabels: ['body'] }], nextCursor: null }
     else if (path === '/api/knowledge/query') {
-      if (state.asyncAsk) { status = 202; body = { operationId, status: 'queued', submittedAt: timestamp, result: null }; headers.Location = `/api/knowledge/operations/${operationId}` }
+      if (state.asyncAsk) { status = 202; body = { operationId, status: 'queued', submittedAt, result: null }; headers.Location = `/api/knowledge/operations/${operationId}` }
       else body = answer
-    } else if (path === `/api/knowledge/operations/${operationId}`) body = { operationId, status: state.operationDone ? 'completed' : 'running', submittedAt: timestamp, result: state.operationDone ? answer : null }
+    } else if (path === `/api/knowledge/operations/${operationId}`) body = { operationId, status: state.operationDone ? 'completed' : 'running', submittedAt, result: state.operationDone ? answer : null }
     else if (path === '/api/me/profile') { if (method === 'PUT') state.profile = { ...state.profile, ...input, updatedAt: timestamp }; body = state.profile }
     else if (path === '/api/me/profile/avatar') {
       if (method === 'PUT') { expect(multipart).toBe(true); state.profile.avatar = { mediaType: 'image/png', width: 1, height: 1, byteSize: 68, createdAt: timestamp }; body = state.profile }

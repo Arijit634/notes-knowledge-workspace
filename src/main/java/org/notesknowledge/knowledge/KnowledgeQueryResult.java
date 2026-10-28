@@ -22,5 +22,11 @@ record KnowledgeQueryResult(List<DeterministicItem> deterministicResults,Answer 
         @Override public String toString(){return "StoredKnowledgeResult[REDACTED]";}
     }
     public KnowledgeQueryResult {deterministicResults=List.copyOf(deterministicResults);citations=List.copyOf(citations);}
+    KnowledgeQueryResult projectOccurrences(boolean includeOccurrences) {
+        if(includeOccurrences)return this;
+        return new KnowledgeQueryResult(deterministicResults.stream()
+            .map(i->new DeterministicItem(i.kind(),i.value(),i.occurrences().isEmpty()?List.of():List.of(i.occurrences().getFirst()),i.aiEnabled())).toList(),
+            aiAnswer,citations,coverage,degraded,insufficientEvidence);
+    }
     @Override public String toString(){return "KnowledgeQueryResult[REDACTED]";}
 }

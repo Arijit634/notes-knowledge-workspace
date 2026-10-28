@@ -15,12 +15,11 @@ import { featureError } from '../../app/ui/featureError'
 import { safeDestination } from '../auth/SafeDestination'
 import { ApiProblemError } from '../../app/api/ProblemDetailsDecoder'
 import { FileDropSurface } from './FileDropSurface'
+import { LocalImagePreview } from './LocalImagePreview'
 const Editor = lazy(() => import('./MarkdownEditorAdapter').then(m => ({ default: m.MarkdownEditorAdapter })))
 
 function StagedFile({ file, remove, disabled }: { file: File; remove: () => void; disabled: boolean }) {
-  const [url, setUrl] = useState<string | null>(null)
-  useEffect(() => { if (!file.type.startsWith('image/')) return; const u = URL.createObjectURL(file); setUrl(u); return () => URL.revokeObjectURL(u) }, [file])
-  return <li>{url ? <img src={url} alt="" /> : <Icon name="attach" />}<span>{file.name}</span><button type="button" className="button-secondary" disabled={disabled} onClick={remove} aria-label={`Remove ${file.name}`}>Remove</button></li>
+  return <li><LocalImagePreview file={file} /><span>{file.name}</span><button type="button" className="button-secondary" disabled={disabled} onClick={remove} aria-label={`Remove ${file.name}`}>Remove</button></li>
 }
 
 export function NewNotePage({ auth }: { auth: AuthRuntime }) {

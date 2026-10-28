@@ -112,6 +112,10 @@ class KnowledgeOperationRepository {
             lease_owner=null,lease_token=null,lease_until=null,next_attempt_at=null,updated_at=greatest(w.updated_at,clock_timestamp())
             from picked where w.knowledge_work_intent_id=picked.knowledge_work_intent_id
         """).update();}
+    java.util.Optional<String> historyMetadata(UUID owner,UUID id){return clients.getObject().sql("""
+        select operation_metadata::text from knowledge.knowledge_work_intent
+        where owner_user_id=:owner and knowledge_work_intent_id=:id and work_class='private_knowledge_operation'
+        """).param("owner",owner).param("id",id).query(String.class).optional();}
     private static Row map(java.sql.ResultSet r,int ignored)throws java.sql.SQLException {
         return new Row(r.getObject("knowledge_work_intent_id",UUID.class),r.getObject("owner_user_id",UUID.class),r.getString("operation_purpose"),r.getString("state"),
             r.getTimestamp("created_at").toInstant(),r.getTimestamp("operation_expires_at").toInstant(),r.getLong("checkpoint_version"),frame(r,"input"),frame(r,"result"),r.getString("operation_metadata"),

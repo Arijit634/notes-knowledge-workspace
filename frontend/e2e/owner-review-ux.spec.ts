@@ -20,7 +20,8 @@ for (const width of [1440, 834, 390, 320]) test(`owner review: request continuit
   const state = await flagshipBackend(page)
   let completed = false, inspected = 4, submits = 0, polls = 0, uploaded = false
   const attachment = { id: attachmentId, noteId, mediaKind: 'image', mediaType: 'image/png', displayFilename: 'synthetic-media.png', sizeBytes: png.length, width: 640, height: 360, durationSeconds: null, pageCount: null, storageState: 'stored', validationState: 'accepted', cleanupState: 'retained', createdAt: timestamp, updatedAt: timestamp }
-  const operation = () => ({ operationId, status: completed ? 'completed' : 'running', submittedAt: timestamp, result: completed ? answer : null, inspectedSources: inspected })
+  const submittedAt = new Date().toISOString()
+  const operation = () => ({ operationId, status: completed ? 'completed' : 'running', submittedAt, result: completed ? answer : null, inspectedSources: inspected })
   await page.route('**/api/knowledge/query', async route => { submits++; await route.fulfill({ status: 202, headers: { Location: `/api/knowledge/operations/${operationId}` }, json: operation() }) })
   await page.route('**/api/knowledge/operations/**', async route => { polls++; await route.fulfill({ json: operation() }) })
   await page.route(/\/api\/public\/explore(?:\?|$)/, async route => route.fulfill({ json: { items: ['A weekend by the coast', 'Learning to make things', 'A recipe I keep coming back to'].map((title, i) => ({ id: `01990a55-9e12-7ac4-8f5b-31aa4a91d40${i + 1}`, title, tags: [['Travel'], ['Projects'], ['Food']][i], publishedAt: timestamp, author: { handle: 'synthetic_writer', displayName: 'Synthetic writer', biography: '', avatarUrl: null }, engagement: { likeCount: i + 2, approximateViewCount: 20 + i } })), nextCursor: null } }))

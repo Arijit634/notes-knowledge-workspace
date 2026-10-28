@@ -18,7 +18,8 @@ class ModerationMigrationTest {
     @BeforeAll void migrate() {
         ds=new DriverManagerDataSource(postgres.getJdbcUrl(),postgres.getUsername(),postgres.getPassword());jdbc=new JdbcTemplate(ds);
         Flyway.configure().dataSource(ds).target("18").load().migrate();before=relations();assertThat(before).hasSize(35);
-        flyway=Flyway.configure().dataSource(ds).load();assertThat(flyway.migrate().migrationsExecuted).isEqualTo(1);
+        // This test proves the historical V019 delta, not later Knowledge tables.
+        flyway=Flyway.configure().dataSource(ds).target("19").load();assertThat(flyway.migrate().migrationsExecuted).isEqualTo(1);
     }
     @Test void addsOnlyThreeRelationsAndPreservesPostgresAndHistoricalMigrationTruth() {
         var after=relations();assertThat(after).hasSize(38);assertThat(after.stream().filter(s->!before.contains(s))).containsExactlyInAnyOrder("moderation.report","moderation.moderation_decision","moderation.moderation_audit_fact");

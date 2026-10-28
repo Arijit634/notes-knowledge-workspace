@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import { AuthRuntime } from '../features/auth/AuthRuntime'
 import { knowledgeResult, operation } from '../features/knowledge/KnowledgeApi'
@@ -36,6 +36,9 @@ function mount(path: string, handler: (call: Call) => Response | Promise<Respons
   const auth = new AuthRuntime(); render(<App auth={auth} />); return { auth, calls }
 }
 beforeAll(async () => { await Promise.all([import('../features/knowledge/AskKnowledgePage'), import('../features/knowledge/PrivacySettingsPage'), import('../features/profile/ProfileSettingsPage'), import('../features/notes/NotesPages'), import('../features/notes/MarkdownEditorAdapter')]) }, 60_000)
+// Fixtures below deliberately use this submission epoch. Keep real timers for
+// transport/React, but make authority expiry independent of the runner's date.
+beforeEach(() => { vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-20T00:05:00Z')) })
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); window.history.replaceState(null, '', '/') })
 
 describe('real private-workspace transport contracts', () => {

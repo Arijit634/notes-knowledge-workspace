@@ -38,7 +38,7 @@ export function KnowledgeResults({ result }: { result: KnowledgeResult }) {
   </section>
 }
 export function operationInterval(value: Operation, now: number, failed: boolean): number | false {
-  const end = Date.parse(value.expiresAt ?? '') || Date.parse(value.submittedAt) + 86400000
+  const end = value.expiresAt == null ? Date.parse(value.submittedAt) + 86400000 : Date.parse(value.expiresAt)
   if (!activeOperation(value) || !Number.isFinite(end) || now >= end) return false
   if (failed) return 30000
   const age = now - Date.parse(value.submittedAt)

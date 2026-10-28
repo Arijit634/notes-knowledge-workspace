@@ -2,7 +2,11 @@ package org.notesknowledge.knowledge;
 
 /** Bounded metadata only: never retain a provider exception, message, body or request. */
 record ProviderFailureDiagnostic(Stage stage, Kind kind, Integer httpStatus,
-        Elapsed elapsed, Reach providerReached, boolean structurallyValidResponse) {
+        Elapsed elapsed, Reach providerReached, boolean structurallyValidResponse, Detail detail) {
+    enum Detail { UNSPECIFIED, COMPLETION, RESPONSE_SHAPE, JSON_SCHEMA, TEMPORAL_EVIDENCE, ORIGINAL_SCOPE }
+    ProviderFailureDiagnostic(Stage stage,Kind kind,Integer httpStatus,Elapsed elapsed,Reach reach,boolean valid){
+        this(stage,kind,httpStatus,elapsed,reach,valid,Detail.UNSPECIFIED);
+    }
     enum Stage { EMBEDDING, GENERATION, MEDIA }
     enum Kind { HTTP, SOCKET_TIMEOUT, INTERRUPTED_IO, TRANSPORT_IO, CLIENT_CONFIGURATION, PARSING, UNKNOWN }
     enum Elapsed { UNDER_ONE_SECOND, ONE_TO_FIVE_SECONDS, FIVE_TO_TEN_SECONDS, TEN_TO_THIRTY_SECONDS, OVER_THIRTY_SECONDS, UNKNOWN }

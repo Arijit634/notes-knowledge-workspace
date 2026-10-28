@@ -9,6 +9,19 @@ const now = Date.parse('2026-10-27T12:00:00Z')
 const operation: Operation = { operationId: 'v1.synthetic', status: 'running', submittedAt: new Date(now - 1800000).toISOString(), expiresAt: new Date(now + 3600000).toISOString(), totalSources: 1194, inspectedSources: 600, result: null }
 afterEach(() => vi.restoreAllMocks())
 describe('Retained search workflow and bounded status checks', () => {
+  it('honors the exact default and explicit server expiry boundaries without extending either', () => {
+    const submitted = Date.parse(operation.submittedAt)
+    const implicit = { ...operation, expiresAt: null }
+    expect(operationInterval(implicit, submitted + 86400000 - 1, false)).toBe(30000)
+    expect(operationInterval(implicit, submitted + 86400000, false)).toBe(false)
+    const explicit = { ...operation, expiresAt: new Date(submitted + 60000).toISOString() }
+    expect(operationInterval(explicit, submitted + 59999, false)).toBe(3000)
+    expect(operationInterval(explicit, submitted + 60000, false)).toBe(false)
+    expect(operationInterval({ ...operation, expiresAt: '1970-01-01T00:00:00Z' }, now, false)).toBe(false)
+    expect(operationInterval({ ...operation, expiresAt: 'not-an-instant' }, now, false)).toBe(false)
+    for (const status of ['completed', 'cancelled', 'obsolete', 'failed'] as const)
+      expect(operationInterval({ ...explicit, status }, submitted + 1000, false)).toBe(false)
+  })
   it('continues checking a thirty-minute operation, backs off errors, and stops at expiry or terminal state', () => {
     expect(operationInterval(operation, now, false)).toBe(30000)
     expect(operationInterval(operation, now, true)).toBe(30000)

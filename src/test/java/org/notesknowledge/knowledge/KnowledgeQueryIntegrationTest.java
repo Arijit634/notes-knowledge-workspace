@@ -548,8 +548,13 @@ class KnowledgeQueryIntegrationTest {
         assertThat(ids).contains(note.toString(),off.toString()).doesNotContain(other.toString());
         var ranked=new ArrayList<String>();tree.get("deterministicResults").forEach(i->ranked.add(i.get("occurrences").get(0).get("noteId").asText()));
         assertFrozenSetQuality(new HashSet<>(ranked.subList(0,Math.min(2,ranked.size()))),Set.of(note.toString(),off.toString()));
-        double reciprocalRank=ranked.indexOf(note.toString())<0?0:1.0/(ranked.indexOf(note.toString())+1);
-        assertThat(reciprocalRank).isEqualTo(1.0);
+        // Ordinary matches must keep ordinary lexical relevance, independent of AI
+        // permission/vector similarity; preserve the exact source set above.
+        var ordinary=json.readTree(mvc.perform(post("/api/notes/search").cookie(browser.cookie).header("X-CSRF-TOKEN",browser.csrf)
+            .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(Map.of("query","find Kyoto","limit",50))))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        var lexicalOrder=new ArrayList<String>();ordinary.get("items").forEach(item->lexicalOrder.add(item.get("id").asText()));
+        assertThat(ranked).containsExactlyElementsOf(lexicalOrder);
         var captured=org.mockito.ArgumentCaptor.forClass(List.class);verify(provider).generate(any(),any(),eq("answer"),captured.capture());
         @SuppressWarnings("unchecked") List<StructuredKnowledgePort.Evidence> payload=(List<StructuredKnowledgePort.Evidence>)captured.getValue();
         assertThat(payload).allSatisfy(e->assertThat(e.text()).doesNotContain("excluded marker","Foreign secret marker"));
@@ -1007,6 +1012,72 @@ class KnowledgeQueryIntegrationTest {
     }
     @Autowired SearchHistoryService history;
     @Autowired KnowledgeQueryEngine queryEngine;
+    @Autowired org.springframework.context.ApplicationContext application;
+    @ParameterizedTest @ValueSource(strings={"find cobaltbeacon","what is cobaltbeacon"})
+    void savedMatchesAreIndependentLexicalHitsNotNearestVideoCandidates(String question)throws Exception {
+        UUID hit=note(owner,true,"cobaltbeacon saved detail","cobaltbeacon evidence");derive(hit,"cobaltbeacon evidence");
+        UUID aiOff=note(owner,false,"cobaltbeacon manual reference","cobaltbeacon ordinary-only");
+        UUID attachment=upload("video");var source=sources.source(owner,note,attachment);
+        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),"video");
+        tx(()->{representations.activate(source.expected(),lineage,List.of(new DerivedSegment("Unrelated basketball video","video_scene","",null,null,null,0.0,0.5,null,null,null,null)),List.of(vector()));return null;});
+        doAnswer(call->{List<StructuredKnowledgePort.Evidence> supplied=call.getArgument(3);
+            return new StructuredKnowledgePort.Output(supplied.stream().filter(e->e.text().contains("cobaltbeacon"))
+                .map(e->new StructuredKnowledgePort.Claim("Supported saved detail",List.of(e.id()))).toList(),false);
+        }).when(provider).generate(any(),any(),any(),any());
+        var result=json.readTree(query(question).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        var matches=result.get("deterministicResults").toString();assertThat(matches).contains(hit.toString(),aiOff.toString()).doesNotContain(note.toString(),attachment.toString());
+        assertThat(result.get("citations").toString()).contains(hit.toString()).doesNotContain(aiOff.toString(),attachment.toString());
+        assertThat(capturedEvidence()).noneMatch(e->e.text().contains("ordinary-only"));
+        // Controlled provider reports no supported claim for the unrelated question.
+        doReturn(new StructuredKnowledgePort.Output(List.of(),false)).when(provider).generate(any(),eq("find xylophonenosource"),any(),any());
+        var unsupported=json.readTree(query("find xylophonenosource").andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(unsupported.get("deterministicResults").size()).isZero();assertThat(unsupported.get("aiAnswer").isNull()).isTrue();
+        when(provider.available()).thenReturn(false);
+        var degraded=json.readTree(query(question).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(degraded.get("deterministicResults").toString()).contains(aiOff.toString(),hit.toString()).doesNotContain(attachment.toString(),note.toString());
+    }
+    @ParameterizedTest @org.junit.jupiter.params.provider.CsvSource({"true,true","true,false","false,true","false,false"})
+    void historyReplayAndPollingPreserveExactlyTheOriginalOccurrencePresentation(boolean deduplicate,boolean includeOccurrences)throws Exception {
+        jdbc.update("update notes.note set markdown='https://example.test/shared https://example.test/shared',created_at='2021-01-01T00:00:00Z'::timestamptz where note_id=?",note);
+        UUID second=note(owner,false,"Second URL source","https://example.test/shared");jdbc.update("update notes.note set created_at='2021-02-01T00:00:00Z'::timestamptz where note_id=?",second);
+        UUID outside=note(owner,false,"Outside scope","https://example.test/excluded");jdbc.update("update notes.note set created_at='2022-01-01T00:00:00Z'::timestamptz where note_id=?",outside);
+        var response=mvc.perform(post("/api/knowledge/query").cookie(browser.cookie).header("X-CSRF-TOKEN",browser.csrf).contentType(MediaType.APPLICATION_JSON)
+            .content(json.writeValueAsString(Map.of("query","all links","scope",Map.of("savedDuring",syntheticPeriod()),"presentation",Map.of("deduplicate",deduplicate,"includeOccurrences",includeOccurrences)))))
+            .andExpect(status().isAccepted()).andReturn().getResponse();
+        var accepted=json.readTree(response.getContentAsString());var row=claim();operations.execute(row);var original=poll(accepted.get("operationId").asText()).get("result");
+        var detail=json.readTree(mvc.perform(get(response.getHeader("Content-Location")).cookie(browser.cookie)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(detail.get("result")).isEqualTo(original);assertThat(detail.get("savedDuring").get("from").asText()).isEqualTo("2021-01-01T00:00:00Z");
+        assertThat(original.toString()).doesNotContain(outside.toString(),"excluded");
+        if(deduplicate){assertThat(original.get("deterministicResults").size()).isEqualTo(1);assertThat(original.get("deterministicResults").get(0).get("occurrences").size()).isEqualTo(includeOccurrences?3:1);}
+        assertThat(jdbc.queryForObject("select input_ciphertext is null from knowledge.knowledge_work_intent where knowledge_work_intent_id=?",Boolean.class,row.id())).isTrue();
+        var replay=json.readTree(json.writeValueAsBytes(history.detail(owner,history.idForWork(owner,row.id())).result()));assertThat(replay).isEqualTo(original);
+        // Reproduce the previously shipped V020 envelope: full occurrences were
+        // stored even when the original request asked for a collapsed view.
+        var completed=operationRows.owner(owner,row.id()).orElseThrow();
+        var stored=json.readValue(cipher.open(new KnowledgeOperationMaterialCipher.Context(row.id(),owner,row.purpose(),KnowledgeOperationMaterialCipher.Kind.RESULT,completed.version()),completed.result()),KnowledgeQueryResult.Stored.class);
+        UUID historyId=history.idForWork(owner,row.id());var legacy=cipher.seal(new KnowledgeOperationMaterialCipher.Context(historyId,owner,"search_history",KnowledgeOperationMaterialCipher.Kind.RESULT,1),json.writeValueAsBytes(new SearchHistoryService.Snapshot(1,false,json.readValue(completed.metadata(),KnowledgeOperationService.Metadata.class).boundary(),stored)));
+        jdbc.update("update knowledge.search_history_entry set result_ciphertext=?,result_nonce=?,result_key_version=? where history_id=?",legacy.ciphertext(),legacy.nonce(),legacy.keyVersion(),historyId);
+        var legacyReplay=json.readTree(json.writeValueAsBytes(history.detail(owner,historyId).result()));assertThat(legacyReplay).isEqualTo(original);
+        var other=browser(account());mvc.perform(get(response.getHeader("Content-Location")).cookie(other.cookie)).andExpect(status().isNotFound());
+        verify(provider,never()).generate(any(),any(),any(),any());
+    }
+    @Test void expiredOperationalInputDoesNotEraseOwnerBoundHistoryPresentationMetadata(){
+        UUID id=jdbc.queryForObject("select uuidv7()",UUID.class);Instant created=Instant.now().minusSeconds(172800),expiry=created.plusSeconds(86400);
+        var frame=cipher.seal(new KnowledgeOperationMaterialCipher.Context(id,owner,"deterministic_corpus",KnowledgeOperationMaterialCipher.Kind.INPUT,0),new byte[]{1});
+        tx(()->{operationRows.insert(id,owner,"deterministic_corpus",created,expiry,"{\"includeOccurrences\":false}",frame);operationRows.expire();return null;});
+        assertThat(operationRows.owner(owner,id)).isEmpty();assertThat(json.readTree(operationRows.historyMetadata(owner,id).orElseThrow()).get("includeOccurrences").asBoolean()).isFalse();
+        assertThat(operationRows.historyMetadata(account(),id)).isEmpty();
+    }
+    @Test void retainedHistoryRemainsDecryptableAcrossPlannedKeyRotationAndFailsClosedWithoutTheFormerKey()throws Exception {
+        var response=query("find synthetic").andExpect(status().isOk()).andReturn().getResponse();UUID id=UUID.fromString(response.getHeader("Content-Location").replace("/api/knowledge/history/",""));
+        jdbc.update("update knowledge.search_history_entry set created_at=clock_timestamp()-interval '29 days',expires_at=clock_timestamp()+interval '1 hour' where history_id=?",id);
+        byte[] changed=new byte[32];java.util.Arrays.fill(changed,(byte)70);
+        var rotated=historyWith(new KnowledgeOperationMaterialCipher("v2",Base64.getEncoder().encodeToString(changed),"v1",Base64.getEncoder().encodeToString(new byte[32])));
+        assertThat(rotated.detail(owner,id).query()).isEqualTo("find synthetic");
+        var unavailable=historyWith(new KnowledgeOperationMaterialCipher("v2",Base64.getEncoder().encodeToString(changed),"",""));
+        assertThatThrownBy(()->unavailable.detail(owner,id)).isInstanceOfSatisfying(org.notesknowledge.websupport.ApiFailureException.class,e->assertThat(e.kind()).isEqualTo(org.notesknowledge.websupport.ApiFailureException.Kind.SERVICE_UNAVAILABLE));
+    }
+    private SearchHistoryService historyWith(KnowledgeOperationMaterialCipher keys){return new SearchHistoryService(application.getBean(SearchHistoryRepository.class),operationRows,keys,application.getBean(KnowledgeOperationHandleCodec.class),application.getBeanProvider(org.notesknowledge.identity.AccountEligibilityApi.class),application.getBeanProvider(PlatformTransactionManager.class),application.getBeanProvider(org.notesknowledge.websupport.OpaqueCursorCodec.class),sources,application.getBean(KnowledgeQueryGate.class),application.getBean(org.notesknowledge.DatabaseUuidV7Generator.class),application.getBean(java.time.Clock.class),json);}
     @Test void conservativeBatchSizeTraversesEverySourceWithoutLargerModelContexts() throws Exception {
         try{queryEngine.extractionBatchSize(12);for(int i=0;i<32;i++)note(owner,true,"Synthetic record "+i,"Frozen conservative record "+i);
             var seen=new HashSet<String>();var sizes=new ArrayList<Integer>();

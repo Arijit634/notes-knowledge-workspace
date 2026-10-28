@@ -101,6 +101,18 @@ class GoogleDerivationAdaptersTest {
     private void generated(String output) {
         response=json.writeValueAsString(Map.of("modelVersion","gemini-3.8-flash","candidates",List.of(Map.of("content",Map.of("role","model","parts",List.of(Map.of("text",output))),"finishReason","STOP"))));
     }
+    @Test void videoFailuresDistinguishCompletionSchemaAndTemporalEvidenceWithoutRetainingOutput(){
+        var port=adapters.googleMediaUnderstandingPort(config("gemini-embedding-2"),clients,json);
+        var request=new MediaUnderstandingRequest("video/mp4",null,null,2.);
+        response="{\"candidates\":[{\"finishReason\":\"MAX_TOKENS\",\"content\":{\"parts\":[{\"text\":\"synthetic-private-marker\"}]}}]}";
+        assertThatThrownBy(()->port.describe(sourcePermit(),new byte[]{1},request)).isInstanceOfSatisfying(DerivationFailure.class,f->{
+            assertThat(f.category).isEqualTo(KnowledgeWork.Failure.INVALID_OUTPUT);assertThat(f.diagnostic.detail()).isEqualTo(ProviderFailureDiagnostic.Detail.COMPLETION);
+            assertThat(f.toString()+f.diagnostic).doesNotContain("synthetic-private-marker");});
+        generated("not-valid-json-synthetic-private-marker");
+        assertThatThrownBy(()->port.describe(sourcePermit(),new byte[]{1},request)).isInstanceOfSatisfying(DerivationFailure.class,f->assertThat(f.diagnostic.detail()).isEqualTo(ProviderFailureDiagnostic.Detail.JSON_SCHEMA));
+        generated(json.writeValueAsString(Map.of("complete",true,"checkedPages",List.of(),"noSpeech",false,"segments",List.of(new DerivedSegment("synthetic-private-marker","video_scene","",null,null,null,0.,3.,null,null,null,null)))));
+        assertThatThrownBy(()->port.describe(sourcePermit(),new byte[]{1},request)).isInstanceOfSatisfying(DerivationFailure.class,f->assertThat(f.diagnostic.detail()).isEqualTo(ProviderFailureDiagnostic.Detail.TEMPORAL_EVIDENCE));
+    }
     @ParameterizedTest @ValueSource(strings={"image/png","image/jpeg","application/pdf","video/mp4"})
     void nonAudioSchemaRequiresFalseNoSpeechAndStillRejectsContradictoryProviderOutput(String type) {
         var request=new MediaUnderstandingRequest(type,type.equals("application/pdf")?1:null,type.equals("application/pdf")?1:null,type.equals("video/mp4")?2.:null);

@@ -65,9 +65,10 @@ final class SearchHistoryService {
         if(!exposable(owner,snapshot)){repository.unavailable(owner,id,"obsolete");return false;}
         return repository.complete(owner,id,cipher.seal(context(id,owner,KnowledgeOperationMaterialCipher.Kind.RESULT),json.writeValueAsBytes(snapshot)));
     });}
-    void completeWork(UUID owner,UUID operation,boolean semantic,PrivateQuerySource.Boundary boundary,KnowledgeQueryResult.Stored result){
+    void completeWork(UUID owner,UUID operation,boolean semantic,PrivateQuerySource.Boundary boundary,KnowledgeQueryResult.Stored result,boolean includeOccurrences){
         // Caller holds the history-owner lock before the work completion write.
-        repository.work(owner,operation).ifPresent(row->complete(owner,row.id(),new Snapshot(1,semantic,boundary,result)));
+        var projected=new KnowledgeQueryResult.Stored(result.result().projectOccurrences(includeOccurrences),result.provenance(),result.fingerprint(),result.lineages());
+        repository.work(owner,operation).ifPresent(row->complete(owner,row.id(),new Snapshot(1,semantic,boundary,projected)));
     }
     UUID idForWork(UUID owner,UUID operation){return repository.work(owner,operation).map(SearchHistoryRepository.Row::id).orElse(null);}
     void fail(UUID owner,UUID id){tx(()->{lock(owner);repository.owner(owner,id).filter(r->r.state().equals("pending")).ifPresent(r->repository.unavailable(owner,id,"failed"));return null;});}
@@ -83,6 +84,15 @@ final class SearchHistoryService {
             var snapshot=json.readValue(cipher.open(context(id,owner,KnowledgeOperationMaterialCipher.Kind.RESULT),row.result()),Snapshot.class);
             if(!exposable(owner,snapshot)){repository.unavailable(owner,id,"obsolete");return new View(id,question(row),"obsolete",row.created(),row.expires(),null,null,questionScope(row));}
             result=snapshot.stored().result();
+            // V020 histories written before projection was fixed may hold every
+            // occurrence. The restrictive work FK retains the original request's
+            // presentation metadata even after operational material is cleared.
+            if(row.work()!=null){
+                var original=work.historyMetadata(owner,row.work()).orElseThrow(SearchHistoryService::missing);
+                var setting=json.readTree(original).get("includeOccurrences");
+                if(setting==null||!setting.isBoolean())throw ApiFailureException.of(ApiFailureException.Kind.SERVICE_UNAVAILABLE);
+                result=result.projectOccurrences(setting.asBoolean());
+            }
         }
         KnowledgeOperationService.View operation=null;String status=status(row);
         if(row.work()!=null&&row.state().equals("pending")){
@@ -98,7 +108,8 @@ final class SearchHistoryService {
         if(row.work()!=null)work.forget(owner,row.work());repository.remove(owner,id);return null;});}
     void clear(UUID owner){tx(()->{lock(owner);eligible(owner);erase(owner);return null;});}
     void erase(UUID owner){lock(owner);repository.workIds(owner).forEach(id->work.forget(owner,id));repository.clear(owner);}
-    void sweep(){repository.sweep();}
+    boolean databaseAvailable(){return managers.getIfAvailable()!=null;}
+    void sweep(){tx(()->{repository.sweep();return null;});}
     private Question historyQuestion(SearchHistoryRepository.Row row){String input=new String(cipher.open(context(row.id(),row.owner(),KnowledgeOperationMaterialCipher.Kind.INPUT),row.question()),StandardCharsets.UTF_8);return input.startsWith("\u0000NKW_SEARCH_SCOPE_V1\n")?json.readValue(input.substring(21),Question.class):new Question(input,null);}
     private String question(SearchHistoryRepository.Row row){return historyQuestion(row).query();}
     private PrivateQuerySource.SavedDuring questionScope(SearchHistoryRepository.Row row){return historyQuestion(row).savedDuring();}

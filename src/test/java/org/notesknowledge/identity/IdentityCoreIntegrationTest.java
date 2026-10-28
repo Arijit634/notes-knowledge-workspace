@@ -154,7 +154,7 @@ class IdentityCoreIntegrationTest {
                 "/api/notes/{noteId}/versions", "/api/notes/{noteId}/versions/{versionId}",
                 "/api/notes/{noteId}/versions/{versionId}/restore", "/api/notes/{noteId}/attachments",
                 "/api/notes/{noteId}/attachments/{attachmentId}", "/api/notes/{noteId}/attachments/{attachmentId}/content", "/api/ai/processing-policy", "/api/ai/processing-policy/acknowledgements",
-                "/api/knowledge/query", "/api/knowledge/operations/{operationId}", "/api/notes/{noteId}/related", "/api/notes/{noteId}/organization-suggestions",
+                "/api/knowledge/history", "/api/knowledge/history/{historyId}", "/api/knowledge/query", "/api/knowledge/operations/{operationId}", "/api/notes/{noteId}/related", "/api/notes/{noteId}/organization-suggestions",
                 "/api/me/public-profile", "/api/public/profiles/{handle}", "/api/public/profiles/{handle}/publications",
                 "/api/public/profiles/{handle}/avatar/{publicAvatarId}/content",
                 "/api/notes/{noteId}/publication-preview", "/api/notes/{noteId}/publication",
@@ -167,7 +167,12 @@ class IdentityCoreIntegrationTest {
                 "/api/moderation/reports/{reportId}/decisions");
         assertThat(mappings.getHandlerMethods().keySet().stream()
                 .filter(mapping->mapping.getPatternValues().stream().anyMatch(path->path.startsWith("/api/")))
-                .mapToInt(mapping->mapping.getMethodsCondition().getMethods().size()).sum()).isEqualTo(91);
+                .mapToInt(mapping->mapping.getMethodsCondition().getMethods().size()).sum()).isEqualTo(95);
+        assertThat(mappings.getHandlerMethods().keySet().stream()
+                .flatMap(mapping->mapping.getPatternValues().stream().filter(path->path.startsWith("/api/knowledge/history"))
+                    .flatMap(path->mapping.getMethodsCondition().getMethods().stream().map(method->method+" "+path))))
+                .containsExactlyInAnyOrder("GET /api/knowledge/history","DELETE /api/knowledge/history",
+                    "GET /api/knowledge/history/{historyId}","DELETE /api/knowledge/history/{historyId}");
     }
 
     @Test

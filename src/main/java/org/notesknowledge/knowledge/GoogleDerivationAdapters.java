@@ -136,7 +136,8 @@ class GoogleDerivationAdapters {
                 try {
                     var result=json.readValue(output,MediaOutput.class);
                     return validateMediaOutput(request,result);
-                } catch(RuntimeException malformed){throw invalidOutput(ProviderFailureDiagnostic.Stage.MEDIA,started);}
+                } catch(DerivationFailure invalid){throw invalid;}
+                catch(RuntimeException malformed){throw invalidMedia(ProviderFailureDiagnostic.Detail.JSON_SCHEMA,started);}
             }
         };
     }
@@ -170,8 +171,9 @@ class GoogleDerivationAdapters {
         if(response==null||response.candidates().isEmpty()||response.candidates().get().size()!=1)
             throw invalidOutput(ProviderFailureDiagnostic.Stage.MEDIA,started);
         var candidate=response.candidates().get().getFirst();
-        if(candidate==null||!candidate.finishReason().map(Object::toString).orElse("").equals("STOP")
-            ||candidate.content().isEmpty()||candidate.content().get().parts().isEmpty())throw invalidOutput(ProviderFailureDiagnostic.Stage.MEDIA,started);
+        if(candidate==null||!candidate.finishReason().map(Object::toString).orElse("").equals("STOP"))
+            throw invalidMedia(ProviderFailureDiagnostic.Detail.COMPLETION,started);
+        if(candidate.content().isEmpty()||candidate.content().get().parts().isEmpty())throw invalidMedia(ProviderFailureDiagnostic.Detail.RESPONSE_SHAPE,started);
         var parts=candidate.content().get().parts().get();
         if(parts.isEmpty()||parts.size()>16)throw invalidOutput(ProviderFailureDiagnostic.Stage.MEDIA,started);
         var text=new StringBuilder();
@@ -180,13 +182,13 @@ class GoogleDerivationAdapters {
         return text.toString();
     }
     static void requireChildScope(TransformedMediaIdentity child,MediaUnderstandingRequest request) {
-        if(child==null||!request.mediaType().equals(child.childType()))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
+        if(child==null||!request.mediaType().equals(child.childType()))throw invalidMediaScope();
         boolean pdf=request.pdfScope()&&"pdf_pages".equals(child.scope().kind())
             &&child.scope().first()==request.firstPage()&&child.scope().last()==request.lastPage();
         boolean video=!request.pdfScope()&&"video/mp4".equals(request.mediaType())&&"video_samples".equals(child.scope().kind())
             &&request.durationSeconds()!=null&&Double.compare(request.durationSeconds(),
                 (double)(child.scope().endTick()-child.scope().startTick())/child.scope().timescale())==0;
-        if(!pdf&&!video)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
+        if(!pdf&&!video)throw invalidMediaScope();
     }
     static org.springframework.core.retry.RetryTemplate noHiddenRetry() {
         // Durable retries obtain fresh permits; SDK/model retries cannot silently
@@ -247,6 +249,14 @@ class GoogleDerivationAdapters {
             ProviderFailureDiagnostic.Kind.PARSING,null,ProviderFailureDiagnostic.band(started),
             ProviderFailureDiagnostic.Reach.HTTP_RESPONSE_RECEIVED,false));
     }
+    private static DerivationFailure invalidMedia(ProviderFailureDiagnostic.Detail detail,long started) {
+        return new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT,new ProviderFailureDiagnostic(ProviderFailureDiagnostic.Stage.MEDIA,
+            ProviderFailureDiagnostic.Kind.PARSING,null,ProviderFailureDiagnostic.band(started),
+            started==0?ProviderFailureDiagnostic.Reach.UNKNOWN:ProviderFailureDiagnostic.Reach.HTTP_RESPONSE_RECEIVED,false,detail));
+    }
+    private static DerivationFailure invalidMediaScope(){return new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE,
+        new ProviderFailureDiagnostic(ProviderFailureDiagnostic.Stage.MEDIA,ProviderFailureDiagnostic.Kind.PARSING,null,
+            ProviderFailureDiagnostic.Elapsed.UNKNOWN,ProviderFailureDiagnostic.Reach.UNKNOWN,false,ProviderFailureDiagnostic.Detail.ORIGINAL_SCOPE));}
     static DerivationFailure providerFailure(RuntimeException failure,ProviderFailureDiagnostic.Stage stage,long started) {
         // Only allowlisted status categories cross the boundary; never retain provider messages/bodies.
         var diagnostic=ProviderFailureDiagnostic.capture(stage,failure,started);
@@ -262,7 +272,7 @@ class GoogleDerivationAdapters {
     }
     static List<DerivedSegment> validateMediaOutput(MediaUnderstandingRequest request,MediaOutput result) {
         if(result==null||!Boolean.TRUE.equals(result.complete())||result.checkedPages()==null||result.noSpeech()==null
-                ||result.segments()==null||result.segments().size()>128)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
+                ||result.segments()==null||result.segments().size()>128)throw invalidMedia(ProviderFailureDiagnostic.Detail.RESPONSE_SHAPE,0);
         var expectedPages=request.firstPage()==null?List.<Integer>of():java.util.stream.IntStream.rangeClosed(request.firstPage(),request.lastPage()).boxed().toList();
         if(!result.checkedPages().equals(expectedPages)||result.noSpeech()&&!request.mediaType().equals("audio/wav"))
             throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
@@ -298,6 +308,8 @@ class GoogleDerivationAdapters {
         if(segments==null||segments.size()>128)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
         int characters=0;
         for(var s:segments) {
+            if(s!=null&&(request.mediaType().equals("video/mp4")||request.mediaType().equals("audio/wav"))
+                &&s.timeEnd()!=null&&s.timeEnd()>request.durationSeconds())throw invalidMedia(ProviderFailureDiagnostic.Detail.TEMPORAL_EVIDENCE,0);
             boolean kind=s!=null&&(request.pdfScope()
                 ?s.kind().equals("pdf_text")&&s.start()==null&&s.page()!=null&&s.page()>=request.firstPage()&&s.page()<=request.lastPage()
                 :switch(request.mediaType()) {

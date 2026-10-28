@@ -42,7 +42,7 @@ public final class DeploymentSmokeDatabase {
                     sql.execute(new String(resource.readAllBytes(),java.nio.charset.StandardCharsets.UTF_8).replace(":\"runtime_role\"","synthetic_runtime"));
                 }
                 try(var rows=sql.executeQuery("select count(*) from information_schema.tables where table_schema in ('identity','profile','notes','knowledge','publishing','discovery','moderation') and table_type='BASE TABLE'")){
-                    if(!rows.next()||rows.getInt(1)!=38)throw new IllegalStateException();
+                    if(!rows.next()||rows.getInt(1)!=39)throw new IllegalStateException();
                 }
             }
             System.out.println("deployment_smoke_database_ready_relations_38");

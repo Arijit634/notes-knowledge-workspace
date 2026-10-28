@@ -150,6 +150,8 @@ class DerivationExecutor {
             if(!transactions.activate(claim,initial.lineage(),segments,vectors,List.copyOf(dispatches))){outcome=work.obsolete(claim)?"obsolete":"rejected";}
             else outcome="activated";
         } catch(DerivationFailure failure) {
+            if(failure.diagnostic!=null&&failure.diagnostic.stage()==ProviderFailureDiagnostic.Stage.MEDIA)
+                org.slf4j.LoggerFactory.getLogger(DerivationExecutor.class).warn("knowledge_media_rejected detail={}",failure.diagnostic.detail());
             switch(failure.category) {
                 case TRANSIENT_DEPENDENCY,QUOTA,PROVIDER_UNAVAILABLE -> outcome=work.retry(claim)?"retry":"rejected";
                 case INVALID_SOURCE,POLICY_BLOCKED,LINEAGE_OBSOLETE -> outcome=work.obsolete(claim)?"obsolete":"rejected";

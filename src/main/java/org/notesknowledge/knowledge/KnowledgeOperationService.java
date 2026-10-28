@@ -93,9 +93,7 @@ class KnowledgeOperationService {
                 var stored=openResult(row);var metadata=parseMetadata(row.metadata());
                 if(!exposable(row,stored,metadata)) {repository.obsolete(owner,row.id());return new View(handle,"obsolete",row.created(),null);}
                 result=stored.result();
-                if(!metadata.includeOccurrences())result=new KnowledgeQueryResult(result.deterministicResults().stream()
-                    .map(i->new KnowledgeQueryResult.DeterministicItem(i.kind(),i.value(),i.occurrences().isEmpty()?List.of():List.of(i.occurrences().getFirst()),i.aiEnabled())).toList(),
-                    result.aiAnswer(),result.citations(),result.coverage(),result.degraded(),result.insufficientEvidence());
+                result=result.projectOccurrences(metadata.includeOccurrences());
             }
             var metadata=parseMetadata(row.metadata());
             return new View(handle,"claimed".equals(row.state())?"running":row.state(),row.created(),result,
@@ -194,7 +192,7 @@ class KnowledgeOperationService {
                         ||finish&&!provenanceCurrent(active,finalCheckpoint))return repository.terminate(active,"obsolete");
                     if(finish&&!sources.fingerprint(active.owner(),next.boundary(),semantic).equals(finalFingerprint))return repository.terminate(active,"obsolete");
                     boolean committed=finish?repository.complete(active,json.writeValueAsString(next),envelope):repository.checkpoint(active,json.writeValueAsString(next),envelope);
-                    if(committed&&finish)history.completeWork(active.owner(),active.id(),semantic,next.boundary(),finalCheckpoint);
+                    if(committed&&finish)history.completeWork(active.owner(),active.id(),semantic,next.boundary(),finalCheckpoint,next.includeOccurrences());
                     if(committed&&finish){
                         org.notesknowledge.BackendTelemetry.afterCommit(metrics,org.notesknowledge.BackendTelemetry.Event.WORK,
                             org.notesknowledge.BackendTelemetry.Operation.QUERY,org.notesknowledge.BackendTelemetry.Outcome.SUCCESS);
