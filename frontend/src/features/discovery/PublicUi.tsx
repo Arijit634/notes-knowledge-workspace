@@ -8,12 +8,12 @@ import { featureError } from '../../app/ui/featureError'
 import { ApiProblemError } from '../../app/api/ProblemDetailsDecoder'
 import { useRetryAfter } from '../../app/ui/useRetryAfter'
 import { NotesWorkspace } from '../notes/NotesWorkspace'
-import './PublicExperience.css'
+import { AppearanceControl } from '../../app/ui/Appearance'
 
 export const dateLabel = (date: string) => { const d = new Date(date); return Number.isNaN(d.valueOf()) ? 'Date unavailable' : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) }
 export function PublicShell({ auth, children, modal = false }: { auth: AuthRuntime; children: ReactNode; modal?: boolean }) {
   if (auth.state === 'authenticated') return <NotesWorkspace auth={auth} modalOpen={modal}><div className="public-shell public-in-workspace" inert={modal}>{children}</div></NotesWorkspace>
-  return <div className="public-shell"><div inert={modal}><a className="notes-skip" href="#public-content">Skip to content</a><header className="public-topbar"><Link className="public-brand" to="/explore"><span className="notes-brand-mark" aria-hidden="true">n.</span><span>Notes &amp; Knowledge</span></Link><nav aria-label="Public navigation"><NavLink to="/explore" end>Explore</NavLink><NavLink to="/explore/search">Search</NavLink><Link className="button button-secondary" to="/login">Log in</Link></nav></header><main id="public-content" tabIndex={-1}>{children}</main></div></div>
+  return <div className="public-shell"><div inert={modal}><a className="notes-skip" href="#public-content">Skip to content</a><header className="public-topbar"><Link className="public-brand" to="/explore"><span className="notes-brand-mark" aria-hidden="true">n.</span><span>Notes &amp; Knowledge</span></Link><nav aria-label="Public navigation"><NavLink to="/explore" end>Explore</NavLink><NavLink to="/explore/search">Search</NavLink><Link className="button button-secondary" to="/login">Log in</Link><AppearanceControl /></nav></header><main id="public-content" tabIndex={-1}>{children}</main></div></div>
 }
 export function PublicAuthorView({ author, large = false }: { author: PublicAuthor; large?: boolean }) {
   const [failed, setFailed] = useState(false)
@@ -24,7 +24,7 @@ export function PublicAuthorView({ author, large = false }: { author: PublicAuth
 export function PublicTags({ values }: { values: readonly string[] }) { return <ul className="public-tags" aria-label="Public tags">{values.map(t => <li key={t}><Link to={'/explore/search?' + new URLSearchParams({ tag: t })}>{t}</Link></li>)}</ul> }
 export function PublicCards({ items }: { items: readonly PublicCard[] }) {
   return <ul className="public-grid">{items.map((p, i) => <li key={p.id} className={`public-card public-card-tone-${i % 4}`}><div className="public-card-rule" aria-hidden="true" />
-    {p.author && <PublicAuthorView author={p.author} />}<h2><Link to={`/publication/${p.id}`}>{p.title}</Link></h2><PublicTags values={p.tags} /><div className="public-card-meta"><time dateTime={p.publishedAt}>{dateLabel(p.publishedAt)}</time>{p.engagement && <span>{p.engagement.likeCount} likes · {p.engagement.approximateViewCount} approximate views</span>}</div></li>)}</ul>
+    {p.author && <PublicAuthorView author={p.author} />}<h2><Link to={`/publication/${p.id}`}>{p.title}</Link></h2><PublicTags values={p.tags} /><div className="public-card-meta"><time dateTime={p.publishedAt}>{dateLabel(p.publishedAt)}</time>{p.engagement && <span><EngagementCounts likes={p.engagement.likeCount} views={p.engagement.approximateViewCount} /></span>}</div></li>)}</ul>
 }
 export function PublicFailure({ error, retry, unavailable = 'This public content is unavailable.' }: { error: unknown; retry?: () => void; unavailable?: string }) {
   const missing = error instanceof ApiProblemError && error.problem.status === 404
@@ -41,3 +41,7 @@ export function PublicMediaView({ media }: { media: PublicMedia }) {
     {(media.mediaKind === 'audio' || media.mediaKind === 'video') && <p className="notes-help">Playback depends on your browser’s supported codecs.</p>}</figure>
 }
 export function PublicMediaList({ media }: { media: readonly PublicMedia[] }) { return <div className="public-media-list">{media.map(m => <PublicMediaView key={m.id} media={m} />)}</div> }
+
+export function EngagementCounts({ likes, views }: { likes: number; views: number }) {
+  return <span className="engagement-counts"><span>{likes.toLocaleString()} {likes === 1 ? 'like' : 'likes'}</span><span aria-hidden="true"> · </span><span title="Estimated reads, with repeat visits filtered." aria-label={`${views.toLocaleString()} estimated ${views === 1 ? 'view' : 'views'}`}>~{views.toLocaleString()} {views === 1 ? 'view' : 'views'}</span></span>
+}

@@ -463,7 +463,7 @@ function SavedNoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; cr
                 <label htmlFor="note-tags">Tags, one per line</label>
                 <textarea id="note-tags" rows={4} maxLength={5100} value={tagInput} disabled={busy}
                   onChange={event => setTagInput(event.target.value)} aria-describedby="tags-help" />
-                <p id="tags-help">Up to 50 tags, 100 characters each. Apply tags separately; your title and Markdown draft are not saved.</p>
+                <p id="tags-help">Up to 50 tags, 100 characters each. Applying tags does not save your draft.</p>
                 <button type="submit" disabled={busy || !organizationEligible || session.phase === 'Conflict' || session.serverChangedWhileDirty}>Apply tags</button>
                 <button type="button" className="button-secondary" disabled={busy}
                   onClick={() => { setTagsEditing(false); setTagError('') }}>Cancel tag editing</button>
@@ -474,9 +474,9 @@ function SavedNoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; cr
             <h2>Use this note with AI</h2>
             <p aria-live="polite">AI access is {session.serverVersion?.value.aiEnabled ? 'ON' : 'OFF'}.</p>
             <p id="note-ai-help">{session.serverVersion?.value.aiEnabled
-              ? 'This note may participate in AI features once all processing permissions and availability checks are satisfied. Enabling access does not mean processing is ready.'
-              : 'Normal note use remains available with AI off. This is not encryption or a visibility change.'}</p>
-            <p>Changing AI access does not save your title or Markdown draft.</p>
+              ? 'AI can use this saved note after permission and processing checks pass.'
+              : 'AI will not use this note. Writing and ordinary search still work.'}</p>
+            <p>This choice does not save your draft.</p>
             <button type="button" className="button-secondary" aria-describedby="note-ai-help"
               disabled={lifecycleBlocked} onClick={() => void changeAiAccess()}>
               {session.serverVersion?.value.aiEnabled ? 'Disable AI' : 'Enable AI'}</button>

@@ -68,9 +68,9 @@ class MediaQualityQualificationCommandIntegrationTest {
             try(var context=MediaQualityQualificationCommand.start(directory,plan,args,configurations)){
                 UUID staleIntent=null;
                 if(scenario.equals("whole"))staleIntent=context.getBean(KnowledgeWorkRepository.class).enqueue(KnowledgeWork.Kind.ATTACHMENT,plan.sources().getFirst().metadata().expected(),"0".repeat(64)).id();
-                if(failGeneration)assertThatThrownBy(()->MediaQualityQualificationCommand.execute(context,directory,plan,new QualificationRequestBudget.Limits(64,64L*1024*1024,114688,15),clock,
+                if(failGeneration)assertThatThrownBy(()->MediaQualityQualificationCommand.execute(context,directory,plan,new QualificationRequestBudget.Limits(64,64L*1024*1024,15L*8192,15),clock,
                     duration->clock.now=clock.now.plus(duration),"controlled-sdk")).isInstanceOf(IllegalStateException.class).hasMessage("Synthetic qualification prerequisite failed");
-                else MediaQualityQualificationCommand.execute(context,directory,plan,new QualificationRequestBudget.Limits(64,64L*1024*1024,114688,15),clock,
+                else MediaQualityQualificationCommand.execute(context,directory,plan,new QualificationRequestBudget.Limits(64,64L*1024*1024,15L*8192,15),clock,
                     duration->clock.now=clock.now.plus(duration),"controlled-sdk");
                 var jdbc=context.getBean(JdbcTemplate.class);
                 if(staleIntent!=null)assertThat(jdbc.queryForObject("select state from knowledge.knowledge_work_intent where knowledge_work_intent_id=?",String.class,staleIntent)).isNotEqualTo("completed");
@@ -81,7 +81,7 @@ class MediaQualityQualificationCommandIntegrationTest {
                     var candidates=context.getBean(ExactPrivateVectorSearch.class).search(plan.owner(),modality,new float[]{1,0,0,0,0,0,0,0},100);
                     assertThat(candidates.stream().map(candidate->candidate.expected().attachmentId()).distinct().toList()).containsAll(expected);
                 }
-                assertThatThrownBy(()->MediaQualityQualificationCommand.execute(context,directory,plan,new QualificationRequestBudget.Limits(64,64L*1024*1024,114688,15),clock,
+                assertThatThrownBy(()->MediaQualityQualificationCommand.execute(context,directory,plan,new QualificationRequestBudget.Limits(64,64L*1024*1024,15L*8192,15),clock,
                     duration->clock.now=clock.now.plus(duration),"controlled-sdk")).isInstanceOf(FileAlreadyExistsException.class);
             }
             var result=JSON.readTree(Files.readAllBytes(directory.resolve("result.json")));
@@ -132,9 +132,13 @@ class MediaQualityQualificationCommandIntegrationTest {
                         noSpeech=payload.length==64044;
                         segments.add(Map.of("text",noSpeech?"Possibly high tones change to lower tones":"The fictional observatory is on planet Aster. Its dome is silver.",
                             "kind","transcript","heading",noSpeech?"Acoustic description":"Transcript","timeStart",0,"timeEnd",1));
-                    }else if(type.equals("video/mp4"))segments.add(Map.of("text","ASTER blue square beside red circle","kind","video_scene","heading","","timeStart",0,"timeEnd",1));
+                    }else if(type.equals("video/mp4")) {
+                        // The frozen visual fixture has no acoustic gold fact.
+                        if(!instruction.contains("dedicated listening pass"))segments.add(Map.of("text","ASTER blue square beside red circle","kind","video_scene","heading","","startMs",0,"endMs",1000));
+                    }
                     else segments.add(Map.of("text","ASTER blue square beside red circle equipment reserve 740 credits","kind","whole_image","heading",""));
-                    Arrays.fill(payload,(byte)0);output=Map.of("complete",true,"checkedPages",pages,"noSpeech",noSpeech,"segments",segments);
+                    Arrays.fill(payload,(byte)0);output=type.equals("video/mp4")?Map.of("complete",true,"segments",segments)
+                        :Map.of("complete",true,"checkedPages",pages,"noSpeech",noSpeech,"segments",segments);
                 }else {
                     if(failGeneration){
                         byte[] unavailable="{\"error\":{\"code\":503,\"status\":\"UNAVAILABLE\",\"message\":\"Synthetic provider unavailable\"}}".getBytes(java.nio.charset.StandardCharsets.UTF_8);

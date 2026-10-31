@@ -9,6 +9,28 @@ const now = Date.parse('2026-10-27T12:00:00Z')
 const operation: Operation = { operationId: 'v1.synthetic', status: 'running', submittedAt: new Date(now - 1800000).toISOString(), expiresAt: new Date(now + 3600000).toISOString(), totalSources: 1194, inspectedSources: 600, result: null }
 afterEach(() => vi.restoreAllMocks())
 describe('Retained search workflow and bounded status checks', () => {
+  it('retains pending activity across observers, rejects duplicate dispatch, and clears it on authority loss', async () => {
+    const auth = new AuthRuntime()
+    let complete!: (value: Awaited<ReturnType<typeof knowledgeApi.query>>) => void
+    const spy = vi.spyOn(knowledgeApi, 'query').mockImplementation(() => new Promise(resolve => { complete = resolve }))
+    auth.ask.input('Synthetic pending question')
+    const pending = auth.ask.submit(), startedAt = auth.ask.snapshot().requestStartedAt
+    expect(startedAt).not.toBeNull(); expect(auth.ask.snapshot().busy).toBe(true)
+    const unsubscribe = auth.ask.subscribe(() => {}); unsubscribe()
+    await auth.ask.submit()
+    expect(auth.ask.snapshot().requestStartedAt).toBe(startedAt); expect(spy).toHaveBeenCalledTimes(1)
+    complete({ kind: 'result', result, historyId: id }); await pending
+    expect(auth.ask.snapshot().busy).toBe(false); expect(auth.ask.snapshot().result).toBe(result)
+    auth.ask.clear(); expect(auth.ask.snapshot().requestStartedAt).toBeNull()
+    auth.ask.input('Another synthetic question')
+    const abandoned = auth.ask.submit()
+    auth.sensitive.clearAll()
+    expect(spy.mock.calls[1][2].aborted).toBe(true)
+    complete({ kind: 'result', result, historyId: id }); await abandoned
+    expect(auth.ask.snapshot().requestStartedAt).toBeNull()
+    expect(auth.ask.snapshot().result).toBeNull(); expect(auth.ask.snapshot().busy).toBe(false)
+    auth.queries.clear()
+  })
   it('honors the exact default and explicit server expiry boundaries without extending either', () => {
     const submitted = Date.parse(operation.submittedAt)
     const implicit = { ...operation, expiresAt: null }

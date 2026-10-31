@@ -31,6 +31,8 @@ final class StrictMp4StructureValidator {
         Timeline {durations=durations.clone();}
         @Override public long[] durations(){return durations.clone();}
     }
+    record AudioTimeline(long timescale,long ticks,boolean hasAudio) { }
+    record UploadTimeline(Timeline video,AudioTimeline audio) { }
     private record Box(String type, long payload, long end) {
         long length() { return end - payload; }
     }
@@ -67,6 +69,15 @@ final class StrictMp4StructureValidator {
         }catch(IOException unavailable){throw ApiFailureException.of(ApiFailureException.Kind.SERVICE_UNAVAILABLE);}
         catch(ArithmeticException malformed){throw invalid();}
     }
+    /** Original-upload inspection is confined to VideoTimelineWorker, never the application. */
+    UploadTimeline uploadTimeline(Path input) {
+        try(var channel=FileChannel.open(input,StandardOpenOption.READ)) {
+            if(channel.size()<8||channel.size()>AttachmentMediaValidator.VIDEO_BYTES)throw invalid();
+            var reader=new Reader(channel,true);reader.validate();
+            return new UploadTimeline(reader.timeline,reader.audioPlan);
+        }catch(IOException unavailable){throw ApiFailureException.of(ApiFailureException.Kind.SERVICE_UNAVAILABLE);}
+        catch(ArithmeticException malformed){throw invalid();}
+    }
 
     private static ApiFailureException invalid() {
         return ApiFailureException.of(ApiFailureException.Kind.INVALID_INPUT);
@@ -77,6 +88,7 @@ final class StrictMp4StructureValidator {
         private final ByteBuffer scratch = ByteBuffer.allocate(8);
         private int visited;
         private Timeline timeline;
+        private AudioTimeline audioPlan;
         private final List<Range> media = new ArrayList<>();
         private final List<Range> allCustody = new ArrayList<>();
         private final boolean upload;
@@ -133,7 +145,7 @@ final class StrictMp4StructureValidator {
             Video video = description(required(tables, "stsd"));
             if (u32(tkhd, 76) != ((long) video.width() << 16) || u32(tkhd, 80) != ((long) video.height() << 16)) throw invalid();
             long[] sizes = sizes(required(tables, "stsz"));
-            sampleTiming(required(tables, "stts"), sizes.length, mediaTime);
+            timeline=sampleTiming(required(tables, "stts"), sizes.length, mediaTime);
             if (Math.multiplyExact(mediaTime.ticks(), movieTime.scale()) != Math.multiplyExact(movieTime.ticks(), mediaTime.scale())) throw invalid();
             double seconds = (double) mediaTime.ticks() / mediaTime.scale();
             if (seconds <= 0 || seconds > MAX_SECONDS || sizes.length / seconds > 60) throw invalid();
@@ -172,12 +184,16 @@ final class StrictMp4StructureValidator {
                 if(sound){if(audio)throw invalid();audio=true;var h=required(minf,"smhd");exact(h,8);if(u32(h,0)!=0||u32(h,4)!=0)throw invalid();}
                 else {if(video!=null)throw invalid();var h=required(minf,"vmhd");exact(h,12);if(u32(h,0)!=1)throw invalid();}
                 selfContained(required(minf,"dinf"));
-                var table=children(required(minf,"stbl"),6,Set.of("stsd","stts","stsc","stsz","stco","stss","ctts","sdtp"));
+                var table=children(required(minf,"stbl"),6,sound
+                    ?Set.of("stsd","stts","stsc","stsz","stco","stss","ctts","sdtp","sgpd","sbgp")
+                    :Set.of("stsd","stts","stsc","stsz","stco","stss","ctts","sdtp"));
                 if(sound)audioDescription(required(table,"stsd"));else {
                     video=description(required(table,"stsd"));
                     if(u32(header,76)!=((long)video.width()<<16)||u32(header,80)!=((long)video.height()<<16))throw invalid();
                 }
-                var sizes=sizes(required(table,"stsz"));sampleTiming(required(table,"stts"),sizes.length,time);
+                var sizes=sizes(required(table,"stsz"));var trackTimeline=sampleTiming(required(table,"stts"),sizes.length,time);
+                if(!sound)timeline=trackTimeline;
+                if(sound&&(table.containsKey("sgpd")||table.containsKey("sbgp")))audioRoll(table,sizes.length);
                 if(!sound&&sizes.length/((double)time.ticks()/time.scale())>60)throw invalid();
                 ranges(required(table,"stsc"),required(table,"stco"),sizes);
                 if(table.containsKey("stss"))syncSamples(table.get("stss"),sizes.length);
@@ -187,6 +203,7 @@ final class StrictMp4StructureValidator {
             if(video==null)throw invalid();allCustody.sort(Comparator.comparingLong(Range::start));
             for(int i=1;i<allCustody.size();i++)if(allCustody.get(i).start()<allCustody.get(i-1).end())throw invalid();
             for(var mdat:media)if(allCustody.stream().noneMatch(r->r.start()>=mdat.start()&&r.end()<=mdat.end()))throw invalid();
+            audioPlan=new AudioTimeline(movie.scale(),movie.ticks(),audio);
             return new Video(video.width(),video.height(),(double)movie.ticks()/movie.scale());
         }
         private void edit(Box box,Timing movie)throws IOException {
@@ -194,6 +211,16 @@ final class StrictMp4StructureValidator {
             for(int i=0;i<count;i++){long at=8+i*12L;duration=Math.addExact(duration,u32(list,at));long mediaTime=u32(list,at+4);
                 if(u32(list,at+8)!=0x10000L||mediaTime!=0xffffffffL&&mediaTime>1000000)throw invalid();}
             if(duration!=movie.ticks())throw invalid();
+        }
+        private void audioRoll(Map<String,Box> table,int samples)throws IOException {
+            // AAC-LC encoder priming metadata emitted by the pinned FFmpeg muxer.
+            // This bounded declaration never changes the movie/sample time authority.
+            var description=required(table,"sgpd");exact(description,18);
+            if(u32(description,0)!=0x01000000L||!type(description,4).equals("roll")
+                    ||u32(description,8)!=2||u32(description,12)!=1||u16(description,16)!=0xffff)throw invalid();
+            var mapping=required(table,"sbgp");exact(mapping,20);
+            if(u32(mapping,0)!=0||!type(mapping,4).equals("roll")||u32(mapping,8)!=1
+                    ||u32(mapping,12)!=samples||u32(mapping,16)!=1)throw invalid();
         }
         private void composition(Box box,int samples,Timing time)throws IOException {
             int n=tableCount(box,8,MAX_TABLE_ENTRIES);long count=0;
@@ -215,9 +242,16 @@ final class StrictMp4StructureValidator {
             for(int i=0;i<4;i++){value=u8(box,at++);size=(size<<7)|(value&127);if((value&128)==0)break;if(i==3)throw invalid();}
             if(size!=end-at)throw invalid();
             if(tag==3&&depth==0){if(size<3||(u8(box,at+2)&0xe0)!=0)throw invalid();long child=at+3;long childEnd=descriptorEnd(box,child,end);aacDescriptor(box,child,childEnd,1,channels,rate);
-                if(end-childEnd!=3||u8(box,childEnd)!=6||u8(box,childEnd+1)!=1||u8(box,childEnd+2)!=2)throw invalid();
+                if(u8(box,childEnd)!=6||descriptorEnd(box,childEnd,end)!=end)throw invalid();
+                long payload=childEnd+1;boolean complete=false;
+                for(int i=0;i<4;i++)if((u8(box,payload++)&128)==0){complete=true;break;}
+                if(!complete||end-payload!=1||u8(box,payload)!=2)throw invalid();
             }else if(tag==4&&depth==1){if(size<15||u8(box,at)!=64||u8(box,at+1)!=21)throw invalid();aacDescriptor(box,at+13,end,2,channels,rate);
-            }else if(tag==5&&depth==2){if(size!=2)throw invalid();int config=u16(box,at);int[] rates={96000,88200,64000,48000,44100,32000,24000,22050,16000,12000,11025,8000,7350};int index=(config>>>7)&15;
+            }else if(tag==5&&depth==2){
+                // FFmpeg explicitly appends syncExtensionType=0x2b7 / SBR absent.
+                // Accept that exact AAC-LC spelling, never HE-AAC or unknown extensions.
+                if(size!=2&&(size!=5||u16(box,at+2)!=0x56e5||u8(box,at+4)!=0))throw invalid();
+                int config=u16(box,at);int[] rates={96000,88200,64000,48000,44100,32000,24000,22050,16000,12000,11025,8000,7350};int index=(config>>>7)&15;
                 if((config>>>11)!=2||index>=rates.length||rates[index]!=rate||((config>>>3)&15)!=channels||(config&7)!=0)throw invalid();
             }else throw invalid();
         }
@@ -327,7 +361,7 @@ final class StrictMp4StructureValidator {
             return sizes;
         }
 
-        private void sampleTiming(Box box, int sampleCount, Timing expected) throws IOException {
+        private Timeline sampleTiming(Box box, int sampleCount, Timing expected) throws IOException {
             int entries = tableCount(box, 8, MAX_TABLE_ENTRIES);
             long count = 0, ticks = 0;
             for (int i = 0; i < entries; i++) {
@@ -342,7 +376,7 @@ final class StrictMp4StructureValidator {
                 int samples=Math.toIntExact(u32(box,8+i*8L));long delta=u32(box,12+i*8L);
                 java.util.Arrays.fill(durations,sample,sample+samples,delta);sample+=samples;
             }
-            timeline=new Timeline(expected.scale(),durations);
+            return new Timeline(expected.scale(),durations);
         }
 
         private void ranges(Box stsc, Box stco, long[] sizes) throws IOException {

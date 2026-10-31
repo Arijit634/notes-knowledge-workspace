@@ -1,3 +1,4 @@
+import { AttachmentLimits } from './AttachmentLimits'
 import { useCallback, useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
 import { createPortal } from 'react-dom'
 import { useInfiniteQuery, type InfiniteData } from '@tanstack/react-query'
@@ -141,7 +142,7 @@ export function AttachmentPanel({ auth, noteId, lifecycle, onModalChange, initia
     }}>
     <header className="attachment-panel-heading"><h2>Files</h2><button type="button" className="button-secondary" disabled={busy !== null || lifecycle === 'trashed' || unavailable} onClick={() => input.current?.click()}><Icon name="attach" />Add file</button></header>
     {lifecycle !== 'trashed' && <p className="attachment-drop-hint">Drop a file anywhere in this note to add it.</p>}
-    <details className="attachment-limits"><summary>File limits</summary><p> PNG/JPEG ≤ 5 MiB; PDF/PCM WAV ≤ 10 MiB; H.264 MP4 (optional AAC audio) ≤ 20,000,000 bytes. PDF ≤ 100 pages; audio/video ≤ 5 minutes. Server validation is final.</p></details>
+    <AttachmentLimits />
     <label className="visually-hidden" htmlFor="note-attachment-file">Add file</label>
     <input ref={input} id="note-attachment-file" hidden type="file" accept=".png,.jpg,.jpeg,.wav,.mp4,.pdf"
       disabled={busy !== null || lifecycle === 'trashed' || unavailable} onChange={event => {

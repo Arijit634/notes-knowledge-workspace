@@ -34,7 +34,8 @@ class VideoDerivationTest {
         var source=new org.notesknowledge.knowledge.spi.PrivateAiSourceCurrentness.Expected(new java.util.UUID(0,1),new java.util.UUID(0,2),new java.util.UUID(0,3),1,1,1L);
         var child=new TransformedMediaIdentity(source,"a".repeat(64),8,"video/mp4","video-v1","v1","a".repeat(64),"a".repeat(64),"a".repeat(64),8,"video/mp4",
             new TransformedMediaIdentity.Scope("video_samples",500,1000,1000,20000,40000),"a".repeat(64),"gemini","model","media-understanding","a".repeat(64));
-        GoogleDerivationAdapters.requireChildScope(child,new MediaUnderstandingRequest("video/mp4",null,null,20d));
+        GoogleDerivationAdapters.requireChildScope(child,new MediaUnderstandingRequest("video/mp4",null,null,20d,false));
+        assertThatThrownBy(()->GoogleDerivationAdapters.requireChildScope(child,new MediaUnderstandingRequest("video/mp4",null,null,20d,true))).isInstanceOf(DerivationFailure.class);
         assertThatThrownBy(()->GoogleDerivationAdapters.requireChildScope(child,new MediaUnderstandingRequest("video/mp4",null,null,21d))).isInstanceOf(DerivationFailure.class);
         assertThatThrownBy(()->GoogleDerivationAdapters.requireChildScope(child,new MediaUnderstandingRequest("image/png",1,1,null))).isInstanceOf(DerivationFailure.class);
     }
@@ -62,6 +63,20 @@ class VideoDerivationTest {
         assertThat(result).extracting(DerivedSegment::timeStart).containsExactly(1d,21d);
         assertThat(result).extracting(DerivedSegment::timeEnd).containsExactly(2d,22d);
         payloads.forEach(bytes->assertThat(bytes).containsOnly((byte)0));
+    }
+    @Test void separatelyValidatedSoundtrackAllowsOnlyTheBoundedAudioTailWithoutExtendingVisualEvidence() {
+        var context=new Context();
+        var shorter=new PrivateDerivationSource.VideoPlan(1000,List.of(19500L,19500L));
+        var soundtrack=new PrivateDerivationSource.VideoAudioPlan(1000,40000,true);
+        var result=VideoDerivation.derive(context.permit,new byte[8],shorter,soundtrack,context.config,context::child,
+            (identity,bytes,request)->List.of(scene(0,request.durationSeconds())),new DerivationAttemptBudget());
+        assertThat(result.getLast().timeEnd()).isEqualTo(39.);
+        for(var rejected:List.of(new PrivateDerivationSource.VideoAudioPlan(1000,40000,false),new PrivateDerivationSource.VideoAudioPlan(1000,39000,true)))
+            assertThatThrownBy(()->VideoDerivation.derive(context.permit,new byte[8],shorter,rejected,context.config,context::child,
+                (identity,bytes,request)->List.of(scene(0,1)),new DerivationAttemptBudget())).isInstanceOf(DerivationFailure.class);
+        var excessiveTail=new PrivateDerivationSource.VideoPlan(1000,List.of(19000L,19000L));
+        assertThatThrownBy(()->VideoDerivation.derive(context.permit,new byte[8],excessiveTail,soundtrack,context.config,context::child,
+            (identity,bytes,request)->List.of(scene(0,1)),new DerivationAttemptBudget())).isInstanceOf(DerivationFailure.class);
     }
     @Test void laterRegionFailureDoesNotReturnPartialEvidence() {
         var context=new Context();var calls=new java.util.concurrent.atomic.AtomicInteger();

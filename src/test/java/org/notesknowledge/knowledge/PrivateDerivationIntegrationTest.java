@@ -90,6 +90,7 @@ class PrivateDerivationIntegrationTest {
             .when(coordination).ownerMutation(any());
         when(configuration.configured()).thenReturn(true);when(configuration.provider()).thenReturn("synthetic");
         when(configuration.embeddingModel()).thenReturn("synthetic-embedding");when(configuration.mediaModel()).thenReturn("synthetic-media");
+        when(configuration.soundtrackModel()).thenReturn("synthetic-media");
         when(configuration.modelRevision()).thenReturn("v1");when(configuration.configurationId()).thenReturn("synthetic-v1");
         when(configuration.adapterVersion()).thenReturn("synthetic-v1");when(configuration.region()).thenReturn("synthetic");when(configuration.tier()).thenReturn("synthetic");
         when(configuration.dimension()).thenReturn(8);when(configuration.operator()).thenReturn("cosine");when(configuration.normalization()).thenReturn("none");
@@ -460,6 +461,36 @@ class PrivateDerivationIntegrationTest {
             } else assertThat(next).isEmpty();
         }
         assertThat(readyCount()).isZero();verifyNoInteractions(embeddings,media);
+    }
+    @ParameterizedTest @ValueSource(strings={"disable","save","trash","suspend","policy","child-revoke","lease-expire"})
+    void soundtrackChildRequiresExactApprovalAndFreshOriginalAuthority(String mutation)throws Exception {
+        UUID attachment=upload("video");var expected=new PrivateAiSourceCurrentness.Expected(owner,note,attachment,1,1,1L);
+        unpaidGemini();approve(expected);when(configuration.videoChildren()).thenReturn(true);
+        String profile=org.notesknowledge.knowledge.spi.PrivateDerivationSource.VideoAudioChild.PROFILE;
+        when(configuration.videoTransformFingerprint()).thenReturn(org.notesknowledge.knowledge.spi.PrivateDerivationSource.PdfChild.transformFingerprint(profile,"synthetic-v2","b".repeat(64),"c".repeat(64)));
+        var attempt=claim(expected,"video");byte[] original=originalBytes(attempt),pcm=VideoSoundtrackDerivationTest.wave(16000);
+        TransformedMediaIdentity child;
+        try(var handle=coordination.dispatch(owner,note)){
+            var permit=gate.issueForDispatch(attempt,handle).orElseThrow();
+            child=new TransformedMediaIdentity(expected,TransformedMediaIdentity.digest(original),original.length,"video/mp4",profile,"synthetic-v2",
+                "b".repeat(64),"c".repeat(64),TransformedMediaIdentity.digest(pcm),pcm.length,"audio/wav",
+                new TransformedMediaIdentity.Scope("video_audio",0,16000,16000,0,16000),permit.lineage().id(),"gemini",configuration.mediaModel(),"media-understanding",configuration.approvedPolicyFingerprint());
+            assertThatThrownBy(()->permit.requireGoogleChildDispatch(child,original,pcm)).isInstanceOf(DerivationFailure.class);
+            when(dispatchConfiguration.approvedChildFingerprints()).thenReturn(List.of(child.approvalFingerprint()));
+            permit.requireGoogleChildDispatch(child,original,pcm);
+            var altered=pcm.clone();altered[altered.length-1]^=1;
+            assertThatThrownBy(()->permit.requireGoogleChildDispatch(child,original,altered)).isInstanceOf(DerivationFailure.class);
+        }
+        if(mutation.equals("child-revoke")){
+            try(var ignored=coordination.globalMutation()){when(dispatchConfiguration.approvedChildFingerprints()).thenReturn(List.of());}
+        }else if(mutation.equals("lease-expire"))jdbc.update("update knowledge.knowledge_work_intent set lease_until=clock_timestamp()-interval '1 second' where knowledge_work_intent_id=?",attempt.intent().id());
+        else authorityMutation(mutation);
+        try(var handle=coordination.dispatch(owner,note)){
+            var next=gate.issueForDispatch(attempt,handle);
+            if(mutation.equals("child-revoke"))assertThatThrownBy(()->next.orElseThrow().requireGoogleChildDispatch(child,original,pcm)).isInstanceOf(DerivationFailure.class);
+            else assertThat(next).isEmpty();
+        }finally{java.util.Arrays.fill(original,(byte)0);java.util.Arrays.fill(pcm,(byte)0);}
+        verifyNoInteractions(embeddings,media);assertThat(readyCount()).isZero();
     }
     private byte[] originalBytes(KnowledgeWork.Claim attempt) throws Exception {
         var expected=attempt.intent().expected();
@@ -838,7 +869,9 @@ class PrivateDerivationIntegrationTest {
         doAnswer(call->{
             assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
             var permit=(AiProcessingGate.SourceAiPermit)call.getArgument(0);assertThat(permit.source().modality()).isEqualTo(kind);
-            assertThat((byte[])call.getArgument(1)).isNotEmpty();return mediaSegments(kind);
+            assertThat((byte[])call.getArgument(1)).isNotEmpty();
+            MediaUnderstandingRequest request=call.getArgument(2);
+            return request.soundtrackOnly()?List.of():mediaSegments(kind);
         }).when(media).describe(any(),any(),any());
         var claim=claim(expected,kind);executor.execute(claim);
         assertThat(state(claim)).isEqualTo("completed");
@@ -855,6 +888,48 @@ class PrivateDerivationIntegrationTest {
         assertThat(readyCount()).isEqualTo(1);verify(media).describe(any(),any(),any());
         assertThat(jdbc.queryForList("select page_number from knowledge.private_derived_segment where owner_user_id=?",Integer.class,owner)).containsOnly(1);
         assertThat(jdbc.queryForObject("select surrogate_text from knowledge.private_derived_segment where owner_user_id=?",String.class,owner)).contains("Synthetic PDF page evidence");
+    }
+    @ParameterizedTest @ValueSource(strings={"success","silent","disable","save","policy","failed","bad-output"})
+    void inlineVideoListeningHasFreshAuthorityAndAtomicOriginalProvenance(String mode)throws Exception {
+        UUID attachment=upload("video");
+        var expected=new PrivateAiSourceCurrentness.Expected(owner,note,attachment,1,1,1L);
+        var attempt=claim(expected,"video");var permits=new ArrayList<AiProcessingGate.SourceAiPermit>();
+        var firstDone=new java.util.concurrent.atomic.AtomicBoolean();
+        doAnswer(call->{
+            if(firstDone.compareAndSet(true,false)) {
+                if(mode.equals("disable"))disable();
+                if(mode.equals("save"))mutate("put","",Map.of("title","Changed","markdown","Changed source context"));
+                if(mode.equals("policy"))policy(2,"b");
+            }
+            return call.callRealMethod();
+        }).when(coordination).dispatch(any(),any());
+        doAnswer(call->{
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            AiProcessingGate.SourceAiPermit permit=call.getArgument(0);permit.requireDispatch();
+            assertThat(permit.source().expected()).isEqualTo(expected);permits.add(permit);
+            MediaUnderstandingRequest request=call.getArgument(2);
+            if(!request.soundtrackOnly()){assertThat(request.videoAudioPossible()).isFalse();firstDone.set(true);return mediaSegments("video");}
+            assertThat(request.videoAudioPossible()).isTrue();
+            if(mode.equals("failed"))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
+            if(mode.equals("silent"))return List.of();
+            return List.of(new DerivedSegment("Audio description (model inference, not spoken words): Repeated synthetic high chirps over a low rhythm.",
+                "video_scene",mode.equals("bad-output")?"Visual description":"Acoustic description",null,null,null,0d,.5,null,null,null,null));
+        }).when(media).describe(any(),any(),any());
+        executor.execute(attempt);
+        boolean success=Set.of("success","silent").contains(mode);
+        assertThat(readyCount()).isEqualTo(success?1:0);
+        if(success) {
+            assertThat(state(attempt)).isEqualTo("completed");assertThat(permits).hasSize(2);
+            assertThat(permits.getFirst()).isNotSameAs(permits.getLast());
+            activate();var candidates=search.search(request(),"video",vector(),10);
+            assertThat(candidates).hasSize(mode.equals("silent")?1:2);
+            assertThat(candidates).allSatisfy(c->assertThat(c.expected()).isEqualTo(expected));
+            if(mode.equals("success"))assertThat(candidates).anySatisfy(c->{
+                assertThat(c.segment().heading()).isEqualTo("Acoustic description");
+                assertThat(c.segment().timeStart()).isZero();assertThat(c.segment().timeEnd()).isEqualTo(.5);
+            });
+        } else {assertThat(state(attempt)).isIn("failed","obsolete");verify(embeddings,never()).embed(any(),any());}
+        assertThat(permits).hasSize(Set.of("disable","save","policy").contains(mode)?1:2);
     }
     @ParameterizedTest @ValueSource(strings={"image","audio","video","pdf"})
     void aiOffMediaRemainsOwnerReadableWithoutAnyProviderOrVectors(String kind) throws Exception {

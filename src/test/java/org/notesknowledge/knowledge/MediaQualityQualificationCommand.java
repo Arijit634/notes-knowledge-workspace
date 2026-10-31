@@ -31,9 +31,10 @@ import static org.springframework.security.test.web.servlet.setup.SecurityMockMv
  * approval of the exact plan hash, fresh quota consent and ordinary production gates.
  * No user-file input, automatic child approval, mocked permit, Files API or retry. */
 public final class MediaQualityQualificationCommand {
+    static final String PLAN_PROTOCOL="bounded-media-ms-dual-pass-v4";
     record Source(String fixture,PrivateDerivationSource.Metadata metadata,String sha256) { }
     record Plan(UUID owner,UUID policy,AiDerivationProperties configuration,List<Source> sources,
-            List<String> children,List<String> queries) { }
+            List<String> children,List<String> queries,String protocol) { }
     private static final ObjectMapper JSON=new ObjectMapper();
     private static final String POLICY="synthetic-media-qualification";
 
@@ -69,6 +70,7 @@ public final class MediaQualityQualificationCommand {
         result.require();return result;
     }
     static ConfigurableApplicationContext start(Path directory,Plan plan,String[] args,Class<?>... controlledTestConfiguration) {
+        if(plan!=null)requireCurrentPlan(plan);
         var configurations=new ArrayList<Class<?>>(List.of(Application.class,org.notesknowledge.notes.PersistentQualificationMediaFixtures.class));
         configurations.addAll(List.of(controlledTestConfiguration));
         return new SpringApplicationBuilder(configurations.toArray(Class<?>[]::new))
@@ -89,6 +91,7 @@ public final class MediaQualityQualificationCommand {
                     var c=plan.configuration();
                     fixed.put("knowledge.derivation.provider",c.provider());fixed.put("knowledge.derivation.embedding-model",c.embeddingModel());
                     fixed.put("knowledge.derivation.media-model",c.mediaModel());fixed.put("knowledge.derivation.model-revision",c.modelRevision());
+                    if(c.videoSoundtrackModel()!=null)fixed.put("knowledge.derivation.video-soundtrack-model",c.videoSoundtrackModel());
                     fixed.put("knowledge.derivation.region",c.region());fixed.put("knowledge.derivation.tier",c.tier());
                     fixed.put("knowledge.derivation.configuration-id",c.configurationId());fixed.put("knowledge.derivation.adapter-version",c.adapterVersion());
                     fixed.put("knowledge.derivation.dimension",c.dimension());fixed.put("knowledge.derivation.operator",c.operator());
@@ -114,7 +117,7 @@ public final class MediaQualityQualificationCommand {
         require(jdbc.queryForObject("select count(*) from identity.account",Integer.class)==0);
         require(jdbc.queryForObject("select count(*) from knowledge.processing_policy",Integer.class)==0);
         var c=context.getBean(AiDerivationProperties.class);
-        c=new AiDerivationProperties(true,false,c.provider(),c.embeddingModel(),c.mediaModel(),c.modelRevision(),c.region(),c.tier(),c.configurationId(),c.adapterVersion(),c.dimension(),c.operator(),c.normalization(),c.approvedPolicyFingerprint(),c.pdfPageChildren(),c.pdfTransformFingerprint(),c.videoChildren(),c.videoTransformFingerprint());
+        c=new AiDerivationProperties(true,false,c.provider(),c.embeddingModel(),c.mediaModel(),c.modelRevision(),c.region(),c.tier(),c.configurationId(),c.adapterVersion(),c.dimension(),c.operator(),c.normalization(),c.approvedPolicyFingerprint(),c.pdfPageChildren(),c.pdfTransformFingerprint(),c.videoChildren(),c.videoTransformFingerprint(),c.videoSoundtrackModel());
         require(c.configured()&&"gemini".equals(c.provider())&&"unpaid".equals(c.tier())&&"global".equals(c.region())&&GeminiTextEmbeddings.embedding2(c));
         if(selection.contains("long-video"))require(c.videoChildren());
         UUID owner=jdbc.queryForObject("select uuidv7()",UUID.class);String email="synthetic-qualification-"+owner+"@example.test";
@@ -149,7 +152,7 @@ public final class MediaQualityQualificationCommand {
             prepared.add(source);Arrays.fill(original,(byte)0);
         }
         var queries=prepared.stream().map(s->query(s.fixture())).distinct().toList();
-        QualificationJournal.forceCreate(directory.resolve("plan.json"),JSON.writeValueAsBytes(new Plan(owner,policy,c,List.copyOf(prepared),List.copyOf(children),queries)));
+        QualificationJournal.forceCreate(directory.resolve("plan.json"),JSON.writeValueAsBytes(new Plan(owner,policy,c,List.copyOf(prepared),List.copyOf(children),queries,PLAN_PROTOCOL)));
         QualificationJournal.forceCreate(directory.resolve("plan.sha256"),QualificationJournal.hash(Files.readAllBytes(directory.resolve("plan.json"))).getBytes(StandardCharsets.US_ASCII));
     }
     private static List<String> childApprovals(AiDerivationProperties c,ProcessingPolicyService.AcknowledgedProcessingPolicy policy,
@@ -178,7 +181,7 @@ public final class MediaQualityQualificationCommand {
     private static TransformedMediaIdentity identity(AiDerivationProperties c,PrivateDerivationSource.Metadata m,String lineage,byte[] original,byte[] child,
             String profile,String version,String artifact,String configuration,String type,TransformedMediaIdentity.Scope scope){
         return new TransformedMediaIdentity(m.expected(),TransformedMediaIdentity.digest(original),original.length,m.mediaType(),profile,version,artifact,configuration,
-            TransformedMediaIdentity.digest(child),child.length,type,scope,lineage,c.provider(),c.mediaModel(),"media-understanding",c.approvedPolicyFingerprint());
+            TransformedMediaIdentity.digest(child),child.length,type,scope,lineage,c.provider(),"video_audio".equals(scope.kind())?c.soundtrackModel():c.mediaModel(),"media-understanding",c.approvedPolicyFingerprint());
     }
     private static String extension(String type){return switch(type){case "image/png"->".png";case "audio/wav"->".wav";case "application/pdf"->".pdf";case "video/mp4"->".mp4";default->throw new IllegalStateException("Unknown frozen type");};}
     static Optional<KnowledgeWork.Claim> matchingClaim(List<KnowledgeWork.Claim> claims,PrivateAiSourceCurrentness.Expected source,String lineage) {
@@ -207,6 +210,7 @@ public final class MediaQualityQualificationCommand {
         execute(c,directory,plan,limits,Clock.systemUTC(),duration->{try{Thread.sleep(duration);}catch(InterruptedException stopped){Thread.currentThread().interrupt();throw new IllegalStateException("Qualification cancelled");}},"live-gemini");
     }
     static void execute(ConfigurableApplicationContext c,Path directory,Plan plan,QualificationRequestBudget.Limits limits,Clock clock,java.util.function.Consumer<Duration> pause,String mode)throws Exception {
+        requireCurrentPlan(plan);
         require(Set.of("controlled-sdk","live-gemini").contains(mode));
         var jdbc=c.getBean(JdbcTemplate.class);require(jdbc.queryForObject("select count(*) from identity.account",Integer.class)==1);
         require(jdbc.queryForObject("select count(*) from identity.account where user_id=? and canonical_email=?",Integer.class,plan.owner(),"synthetic-qualification-"+plan.owner()+"@example.test")==1);
@@ -269,13 +273,14 @@ public final class MediaQualityQualificationCommand {
                     "claimFaithfulness","independent annotation required; citation validity is not entailment"));
             }
             QualificationJournal.forceCreate(directory.resolve("result.json"),JSON.writeValueAsBytes(Map.of("mode",mode,"budget",budget.totals(),"queries",results,
-                "media",media.ledger(),"models",List.of(configuration.embeddingModel(),configuration.mediaModel()),"qualityQualified",false)));
+                "media",media.ledger(),"models",java.util.stream.Stream.of(configuration.embeddingModel(),configuration.mediaModel(),configuration.soundtrackModel()).distinct().toList(),"qualityQualified",false)));
             // A recorded provider failure is not successful execution merely because
             // the application truthfully returned a degraded 200 projection.
             require(!Boolean.TRUE.equals(budget.totals().get("failed")));
         } finally {current.set(null);SecurityContextHolder.clearContext();}
     }
     private static long estimate(List<String> text){return MediaUnderstandingRequest.ENVELOPE_RESERVE_BYTES+text.stream().mapToLong(t->6L*t.getBytes(StandardCharsets.UTF_8).length).sum();}
+    static void requireCurrentPlan(Plan plan){require(plan!=null&&PLAN_PROTOCOL.equals(plan.protocol()));}
     private static long mediaEstimate(byte[] bytes,MediaUnderstandingRequest r){return 4L*((bytes.length+2L)/3)+estimate(List.of(GoogleDerivationAdapters.mediaInstruction(r),GoogleDerivationAdapters.mediaSchema()));}
     private static <T>ObjectProvider<T> provider(T value){return new ObjectProvider<>(){public T getObject(){return value;}};}
     /** No authority is mocked: wait before the real lock and subsequent production gate.

@@ -1,9 +1,11 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { restoreFocus } from './ConfirmDialog'
+import { useModalLayer } from './useModalLayer'
 
 /** Form-capable modal: native fields, bounded focus, and safe no-scroll restoration. */
 export function FormDialog({ title, children, onClose, busy = false, opener, inactive = false, closeText = 'Close', hideClose = false }: { title: string; children: ReactNode; onClose: () => void; busy?: boolean; opener?: HTMLElement | null; inactive?: boolean; closeText?: string; hideClose?: boolean }) {
+  useModalLayer()
   const root = useRef<HTMLDivElement>(null), id = useId()
   useEffect(() => {
     const previous = opener ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null)

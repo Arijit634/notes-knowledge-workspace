@@ -11,6 +11,7 @@ import { navigateToGoogle } from '../features/auth/OidcNavigationCoordinator'
 import { securityKeys, securitySummary } from '../features/security/SecurityApi'
 import { safeDestination } from '../features/auth/SafeDestination'
 import { Brand, GoogleMark } from './ui/Brand'
+import { AppearanceControl, AppearanceRoot } from './ui/Appearance'
 
 export const AUTH_ROUTES = ['/', '/signup', '/verify-email', '/login', '/mfa',
   '/forgot-password', '/reset-password', '/auth/complete', '/reauth'] as const
@@ -78,10 +79,10 @@ function message(error: unknown): string {
 }
 const Alert = ({ children }: { children: ReactNode }) => <p className="alert" role="alert">{children}</p>
 const BlindAcceptedPanel = () => <div className="success" role="status"><h2>Check your email</h2><p>If the details can be used, check your email for the next step.</p></div>
-function Shell({ title, eyebrow, children }: { title: string; eyebrow?: string; children: ReactNode }) {
+function Shell({ title, children }: { title: string; eyebrow?: string; children: ReactNode }) {
   const auth = useAuth()
   return <main className="auth-layout"><section className="auth-card" aria-labelledby="page-title">
-    <Brand /><h1 id="page-title">{title}</h1>{eyebrow && <p className="auth-subtitle">{eyebrow}</p>}
+    <AppearanceControl /><Brand /><h1 id="page-title">{title}</h1>
     {auth.presentation.syntheticEmailOnly && <p className="local-environment-note">Local test workspace · use an <strong>@example.test</strong> address. Verification links are delivered to your protected local outbox, not an internet inbox.</p>}
     {children}
   </section></main>
@@ -265,7 +266,7 @@ function AuthRoutes() {
     if (priorPath.current === '/settings/security' && location.pathname !== '/settings/security') auth.continuation.emailChangeToken = null
     priorPath.current = location.pathname
   }, [auth, location.pathname])
-  return <Routes>
+  const routes = <Routes>
     <Route path={AUTH_ROUTES[0]} element={<Gate access="PUBLIC"><Landing /></Gate>} />
     <Route path={AUTH_ROUTES[1]} element={<Gate access="ANONYMOUS_ONLY"><Signup /></Gate>} />
     <Route path={AUTH_ROUTES[2]} element={<Gate access="PUBLIC"><VerifyEmail /></Gate>} />
@@ -278,9 +279,9 @@ function AuthRoutes() {
     <Route path={SECURITY_ROUTES[0]} element={<Gate access="FULL_AUTHENTICATED"><NotesWorkspace auth={auth}><Suspense fallback={<p role="status">Loading security settings…</p>}><SecuritySettingsPage auth={auth} /></Suspense></NotesWorkspace></Gate>} />
     <Route path={SECURITY_ROUTES[1]} element={<Gate access="FULL_AUTHENTICATED"><NotesWorkspace auth={auth}><Suspense fallback={<p role="status">Loading MFA settings…</p>}><MfaSettingsPage auth={auth} /></Suspense></NotesWorkspace></Gate>} />
     <Route path={SECURITY_ROUTES[2]} element={<Gate access="FULL_AUTHENTICATED"><NotesWorkspace auth={auth}><Suspense fallback={<p role="status">Loading sessions…</p>}><SessionsSettingsPage auth={auth} /></Suspense></NotesWorkspace></Gate>} />
-    <Route path={NOTES_ROUTES[0]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<Shell title="Loading notes"><p role="status">Please wait…</p></Shell>}><NotesListPage auth={auth} /></Suspense></Gate>} />
-    <Route path={NOTES_ROUTES[1]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<Shell title="Loading editor"><p role="status">Please wait…</p></Shell>}><NoteEditorPage auth={auth} creating /></Suspense></Gate>} />
-    <Route path={NOTES_ROUTES[2]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<Shell title="Loading editor"><p role="status">Please wait…</p></Shell>}><NoteEditorPage key={location.pathname} auth={auth} /></Suspense></Gate>} />
+    <Route path={NOTES_ROUTES[0]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<p className="route-loading" role="status">Loading…</p>}><NotesListPage auth={auth} /></Suspense></Gate>} />
+    <Route path={NOTES_ROUTES[1]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<p className="route-loading" role="status">Loading…</p>}><NoteEditorPage auth={auth} creating /></Suspense></Gate>} />
+    <Route path={NOTES_ROUTES[2]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<p className="route-loading" role="status">Loading…</p>}><NoteEditorPage key={location.pathname} auth={auth} /></Suspense></Gate>} />
     <Route path="/ask" element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<p role="status">Loading knowledge…</p>}><AskKnowledgePage auth={auth} /></Suspense></Gate>} />
     <Route path="/settings/profile" element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<p role="status">Loading profile…</p>}><ProfileSettingsPage auth={auth} /></Suspense></Gate>} />
     <Route path="/settings/privacy" element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<p role="status">Loading privacy…</p>}><PrivacySettingsPage auth={auth} /></Suspense></Gate>} />
@@ -296,6 +297,10 @@ function AuthRoutes() {
     <Route path="/moderation/reports/:reportId" element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<p role="status">Loading report…</p>}><ModerationReportPage key={location.pathname} auth={auth} /></Suspense></Gate>} />
     <Route path="*" element={<Shell title="Page not found"><p>That page is unavailable.</p><Link to="/">Go home</Link></Shell>} />
   </Routes>
+  // Keep navigation mounted during route and lazy-chunk transitions. Nested page
+  // shells contribute modal state, while this single frame owns navigation.
+  return auth.state === 'authenticated' && !(AUTH_ROUTES as readonly string[]).includes(location.pathname)
+    ? <NotesWorkspace auth={auth}>{routes}</NotesWorkspace> : routes
 }
 function SafeRouteError() {
   return <main className="auth-layout"><section className="auth-card" role="alert"><h1>This view is unavailable</h1><p>It could not be displayed safely. Unsaved work is not guaranteed after a rendering failure.</p><a href="/notes">Return to notes</a></section></main>
@@ -306,5 +311,5 @@ export function App({ auth = defaultRuntime }: { auth?: AuthRuntime }) {
   const [router] = useState(() => createBrowserRouter([{ path: '*', element: <AuthRoutes />, errorElement: <SafeRouteError /> }]))
   useEffect(() => auth.subscribe(() => rerender(value => value + 1)), [auth])
   useEffect(() => { auth.bootstrap().catch(() => setStartupError(true)) }, [auth])
-  return <Context.Provider value={{ auth, version, completeNavigation: (destination, from) => router.navigate(destination, { replace: true, flushSync: true, state: from ? { from } : undefined }) }}>{startupError ? <Shell title="Session unavailable"><Alert>We could not check your session safely. Refresh to try again.</Alert></Shell> : <RouterProvider router={router} onError={() => { /* Never report raw route errors or private props. */ }} />}</Context.Provider>
+  return <Context.Provider value={{ auth, version, completeNavigation: (destination, from) => router.navigate(destination, { replace: true, flushSync: true, state: from ? { from } : undefined }) }}><AppearanceRoot />{startupError ? <Shell title="Session unavailable"><Alert>We could not check your session safely. Refresh to try again.</Alert></Shell> : <RouterProvider router={router} onError={() => { /* Never report raw route errors or private props. */ }} />}</Context.Provider>
 }

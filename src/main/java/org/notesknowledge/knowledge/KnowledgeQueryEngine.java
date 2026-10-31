@@ -30,6 +30,9 @@ class KnowledgeQueryEngine {
     private final DispatchCoordinator coordination;
     private final ObjectProvider<PlatformTransactionManager> managers;
     private RetrievalTelemetry telemetry;
+    private DirectAudioSearch audioSearch;
+    @org.springframework.beans.factory.annotation.Autowired
+    void audioSearch(DirectAudioSearch audioSearch){this.audioSearch=audioSearch;}
     @org.springframework.beans.factory.annotation.Autowired
     void telemetry(RetrievalTelemetry telemetry){this.telemetry=telemetry;}
     KnowledgeQueryEngine(PrivateLexicalSearch lexical,PrivateQuerySource sources,ExactPrivateVectorSearch vectors,QueryEvidenceRepository evidence,
@@ -48,14 +51,16 @@ class KnowledgeQueryEngine {
             signals.add(ids);
         }
         var ordinaryOrder=ReciprocalRankFusion.fuse(signals,50);
-        var selected=new ArrayList<QueryEvidenceRepository.Evidence>();String degraded=null;KnowledgeQueryGate.QueryPermit permit=null;
+        var selected=new ArrayList<QueryEvidenceRepository.Evidence>();
+        var verificationCandidates=new ArrayList<QueryEvidenceRepository.Evidence>();String degraded=null;KnowledgeQueryGate.QueryPermit permit=null;
         if(telemetry!=null)telemetry.candidates(request.plan(),RetrievalTelemetry.Stage.LEXICAL,sourceMap.size());
         var relevant=new LinkedHashMap<UUID,ExactPrivateVectorSearch.Candidate>();
+        var candidateModalities=new java.util.HashMap<UUID,String>();
         var lexicalNotes=sourceMap.values().stream().filter(PrivateQuerySource.Source::aiEnabled).map(s->s.expected().noteId()).toList();
-        var provider=providers.getIfAvailable();
+        var provider=providers.getIfAvailable();float[] queryVector=null;
         try {
             if(provider==null||!provider.available())throw new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE);
-            permit=gate.query(owner,request.query());permit.requireDispatch();float[] query=provider.embedQuery(permit,request.query());
+            permit=gate.query(owner,request.query());permit.requireDispatch();float[] query=provider.embedQuery(permit,request.query());queryVector=query;
             // Same embedding configuration, separately compatible modality lineage, never an incompatible fallback.
             for(String modality:List.of("note","image","audio","video","pdf")) {
                 var candidates=vectors.search(owner,modality,query,50,request.savedDuring());var ids=new ArrayList<UUID>();
@@ -64,13 +69,16 @@ class KnowledgeQueryEngine {
                     if(!request.lifecycles().contains(source.lifecycle())||!source.expected().equals(candidate.expected()))continue;
                     var note=sources.note(owner,source.expected().noteId());sourceMap.put(note.expected().noteId(),note);ids.add(note.expected().noteId());
                     relevant.putIfAbsent(candidate.segmentId(),candidate);
+                    candidateModalities.putIfAbsent(candidate.segmentId(),modality);
                 }
                 signals.add(ids.stream().distinct().toList());
             }
             // A lexical Note does not authorize its media. Only current Note-text nearest
             // segments are additional candidates; Attachments require independent retrieval.
             for(var candidate:vectors.searchNotes(owner,lexicalNotes,query,50,request.savedDuring()))
-                if(candidate.expected().equals(sourceMap.get(candidate.expected().noteId()).expected()))relevant.putIfAbsent(candidate.segmentId(),candidate);
+                if(candidate.expected().equals(sourceMap.get(candidate.expected().noteId()).expected())) {
+                    relevant.putIfAbsent(candidate.segmentId(),candidate);candidateModalities.putIfAbsent(candidate.segmentId(),"note");
+                }
         } catch(DerivationFailure failure){degraded=safeReason(failure);}
         var order=ReciprocalRankFusion.fuse(signals,50);
         if(telemetry!=null)telemetry.candidates(request.plan(),RetrievalTelemetry.Stage.EXACT,relevant.size());
@@ -81,11 +89,12 @@ class KnowledgeQueryEngine {
             // Distance is a rank signal, never a calibrated correctness probability.
             var ranks=new java.util.HashMap<UUID,Integer>();for(int i=0;i<order.size();i++)ranks.put(order.get(i),i);
             var pool=new ArrayList<RankedEvidence>();
-            for(var candidate:relevant.values().stream().filter(c->Double.isFinite(c.distance())
+            var rankedCandidates=relevant.values().stream().filter(c->Double.isFinite(c.distance())
                 &&(!"cosine".equals(qp.lineage("note").operator())||c.distance()<1))
                 .sorted(java.util.Comparator.comparingInt((ExactPrivateVectorSearch.Candidate c)->ranks.getOrDefault(c.expected().noteId(),Integer.MAX_VALUE))
                     .thenComparingDouble(ExactPrivateVectorSearch.Candidate::distance)
-                    .thenComparing(ExactPrivateVectorSearch.Candidate::segmentId)).toList()) {
+                    .thenComparing(ExactPrivateVectorSearch.Candidate::segmentId)).toList();
+            for(var candidate:interleave(rankedCandidates,c->candidateModalities.get(c.segmentId()))) {
                 String modality=candidate.expected().attachmentId()==null?"note":sources.source(owner,candidate.expected().noteId(),candidate.expected().attachmentId()).modality();
                 var item=tx(()->evidence.candidate(candidate,qp.lineage(modality)));
                 if(item!=null)pool.add(new RankedEvidence(item,ranks.getOrDefault(candidate.expected().noteId(),Integer.MAX_VALUE),candidate.distance()));
@@ -103,9 +112,11 @@ class KnowledgeQueryEngine {
                 }
             }catch(DerivationFailure blocked){degraded=safeReason(blocked);}
             catch(org.notesknowledge.websupport.ApiFailureException unavailable){degraded="coordinationUnavailable";}
-            if(degraded==null)for(var row:pool.stream().sorted(java.util.Comparator.comparingInt(RankedEvidence::sourceRank)
+            var rankedPool=pool.stream().sorted(java.util.Comparator.comparingInt(RankedEvidence::sourceRank)
                     .thenComparingDouble(RankedEvidence::withinSourceRank)
-                    .thenComparing(e->e.item().segmentId(),java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder()))).toList()) {
+                    .thenComparing(e->e.item().segmentId(),java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder()))).toList();
+            verificationCandidates.addAll(rankedPool.stream().map(RankedEvidence::item).toList());
+            if(degraded==null)for(var row:interleave(rankedPool,KnowledgeQueryEngine::evidenceChannel)) {
                 var item=row.item();
                 if(characters+item.segment().text().length()<=48000&&selected.stream().noneMatch(e->overlaps(e,item))) {
                     selected.add(item);characters+=item.segment().text().length();
@@ -113,15 +124,42 @@ class KnowledgeQueryEngine {
                 if(selected.size()==12)break;
             }
         }
+        boolean videoVerificationUsed=false;
+        if(degraded==null&&audioSearch!=null&&queryVector!=null&&audioSearch.applies(request.query()))try {
+            var refined=audioSearch.refine(owner,request.query(),queryVector,selected,verificationCandidates);selected.clear();selected.addAll(refined.evidence());videoVerificationUsed=refined.videoVerified();
+        }catch(DerivationFailure blocked){selected.removeIf(e->audioSearch.excludesOnFailure(e.modality(),request.query()));degraded=safeReason(blocked);}
+        catch(org.notesknowledge.websupport.ApiFailureException blocked){selected.removeIf(e->audioSearch.excludesOnFailure(e.modality(),request.query()));degraded="coordinationUnavailable";}
         // Fusion orders model candidates; it does not establish an ordinary-search
         // match. Keep AI-OFF lexical hits, but never promote vector-only neighbors.
         var deterministic=ordinaryOrder.stream().map(lexicalMatches::get).filter(s->(request.savedDuring()==null||request.savedDuring().contains(s.createdAt()))&&sources.matches(s,false))
             .map(s->new KnowledgeQueryResult.DeterministicItem("note",s.title(),List.of(citation(s,null)),s.aiEnabled())).toList();
-        if(telemetry!=null){telemetry.candidates(request.plan(),RetrievalTelemetry.Stage.CONTEXT,selected.size());telemetry.preGeneration(request.plan(),System.nanoTime()-started);}
+        if(telemetry!=null){telemetry.candidates(request.plan(),RetrievalTelemetry.Stage.CONTEXT,selected.size());
+            telemetry.acousticContext((int)selected.stream().filter(e->e.segment().heading().equals("Acoustic description")).count());
+            telemetry.preGeneration(request.plan(),System.nanoTime()-started);}
         Generated answer=selected.isEmpty()?empty(List.of(),degraded,degraded==null&&request.plan()==KnowledgeQueryRequest.Plan.FOCUSED):generate(owner,request.query(),"answer",selected,()->true);
+        if(videoVerificationUsed&&answer.lineages().containsKey("video")){var bindings=new LinkedHashMap<>(answer.lineages());bindings.put("video",KnowledgeQueryGate.videoQueryHistoryBinding(bindings.get("video")));answer=new Generated(answer.result(),answer.provenance(),java.util.Map.copyOf(bindings));}
         var retained=new ArrayList<>(answer.provenance());
         for(var item:deterministic)for(var occurrence:item.occurrences()){var source=sourceMap.get(occurrence.noteId());if(source!=null)retained.add(referenceOnly(source));}
         var r=answer.result();return new Generated(new KnowledgeQueryResult(deterministic,r.aiAnswer(),r.citations(),new KnowledgeQueryResult.Coverage("bounded",sourceMap.size(),false,false,false,false,false),degraded!=null?degraded:r.degraded(),r.insufficientEvidence()),retained.stream().distinct().toList(),answer.lineages());
+    }
+    /** Preserve ranked order inside each group while sharing existing context caps.
+     * Text's lexical+vector votes, or video frames, must not exclude soundtrack
+     * evidence. Deterministic RRF result order and eligibility gates are untouched. */
+    private static <T> List<T> interleave(List<T> ranked,java.util.function.Function<T,String> group) {
+        var groups=new LinkedHashMap<String,java.util.ArrayDeque<T>>();
+        for(var row:ranked)groups.computeIfAbsent(group.apply(row),k->new java.util.ArrayDeque<>()).add(row);
+        var result=new ArrayList<T>();boolean added;
+        do {
+            added=false;
+            for(var queue:groups.values())if(!queue.isEmpty()){result.add(queue.removeFirst());added=true;}
+        }while(added);
+        return result;
+    }
+    private static String evidenceChannel(RankedEvidence row) {
+        String modality=row.item().modality();
+        if(!modality.equals("video")&&!modality.equals("audio"))return modality;
+        if(row.item().segment().heading().equals("Acoustic description"))return modality+"-acoustic";
+        return modality.equals("audio")||row.item().segment().heading().equals("Transcript")?modality+"-transcript":modality+"-visual";
     }
     static boolean overlaps(QueryEvidenceRepository.Evidence a,QueryEvidenceRepository.Evidence b) {
         if(a.segmentId()!=null&&a.segmentId().equals(b.segmentId()))return true;

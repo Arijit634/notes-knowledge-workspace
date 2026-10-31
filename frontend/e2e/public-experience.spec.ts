@@ -35,7 +35,7 @@ test('private Save leaves snapshot unchanged; fresh preview explicitly updates i
   await page.getByRole('button', { name: 'Save note', exact: true }).click(); await expect(page.getByRole('status', { name: 'Save status' })).toHaveText('Saved')
   expect(s.publication.markdown).toBe(f.owner.markdown)
   await page.getByRole('link', { name: 'Publications', exact: true }).click(); await page.getByRole('link', { name: 'Inspect & manage' }).click()
-  await expect(page.getByText('Private changes are waiting. Readers still see the existing public copy.')).toBeVisible()
+  await expect(page.getByText('Your private note has unpublished changes.')).toBeVisible()
   await ownerPreview(page); await page.getByRole('button', { name: 'Confirm public update' }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0); expect(s.publication.markdown).toBe('A private revision, not public yet.')
   expect(s.calls.filter(c => c.method === 'PUT' && c.path === `/api/me/publications/${f.pubId}`).at(-1)?.ifMatch).toBe('"p1"')
@@ -51,7 +51,7 @@ test('unpublish denies public article/media and eligible republish retains stabl
 test('unusable source blocks update and republish instead of treating missing source as safe', async ({ page }) => {
   const s = await publicBackend(page, true); s.sourceUsable = false
   await page.goto(`/publications/${f.pubId}`); await expect(page.getByRole('button', { name: 'Update public copy', exact: true })).toBeDisabled()
-  await expect(page.getByText('The source is not currently usable for publishing.')).toBeVisible()
+  await expect(page.getByText("Your private note is not available for publishing.")).toBeVisible()
 })
 test('anonymous Latest and Trending are backend ordered, cursor paginated without per-card reads', async ({ page }) => {
   const s = await publicBackend(page); s.pages = true
@@ -213,7 +213,7 @@ for (const width of [1440, 1024, 834, 390, 320]) {
     await page.setViewportSize({ width, height: 1000 })
     for (const [name, path, heading] of [
       ['publications', '/publications', 'Publications'], ['publication-detail', `/publications/${f.pubId}`, f.owner.title],
-      ['public-profile-settings', '/settings/public-profile', 'Public author profile'], ['author', `/profile/${f.author.handle}`, f.author.displayName],
+      ['public-profile-settings', '/settings/public-profile', 'Public profile'], ['author', `/profile/${f.author.handle}`, f.author.displayName],
       ['latest', '/explore', 'Explore'], ['trending', '/explore?sort=trending', 'Explore'], ['search', '/explore/search?q=idea', 'Search public notes'],
       ['reader', `/publication/${f.pubId}`, f.owner.title], ['moderation-queue', '/moderation/reports', 'Report review'], ['moderation-detail', `/moderation/reports/${f.reportId}`, 'Public report review'],
     ]) { await page.goto(path); await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible(); await noOverflow(page); await page.screenshot({ path: testInfo.outputPath(`${name}-${width}.png`), fullPage: (await page.getByRole('dialog').count()) === 0, animations: 'disabled' }) }

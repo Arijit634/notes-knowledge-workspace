@@ -47,7 +47,7 @@ for (const width of [1440, 834, 390, 320]) test(`owner review: request continuit
   await expect(page.getByRole('heading', { name: 'Explore', exact: true })).toBeVisible()
   await expect(page.getByRole('navigation', { name: 'Workspace navigation' })).toBeVisible()
   await page.getByRole('link', { name: 'Trending', exact: true }).click()
-  await expect(page.getByText(/Ranked by likes and approximate views/)).toBeVisible()
+  await expect(page.getByText(/Popular now, based on likes/)).toBeVisible()
   await page.screenshot({ path: info.outputPath(`explore-${width}.png`), fullPage: true })
   await page.getByRole('link', { name: 'AI Search', exact: true }).click()
   await expect(page.getByLabel('What would you like to find?', { exact: true })).toHaveValue('List every fictional saved detail')

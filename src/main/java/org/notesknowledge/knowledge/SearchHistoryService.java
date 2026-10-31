@@ -125,7 +125,7 @@ final class SearchHistoryService {
         }
         for(int i=0;i<aiSources.size();i+=64)if(!sources.validate(aiSources.subList(i,Math.min(i+64,aiSources.size())),true))return false;
         for(int i=0;i<deterministicSources.size();i+=64)if(!sources.validate(deterministicSources.subList(i,Math.min(i+64,deterministicSources.size())),false))return false;
-        if(!stored.lineages().isEmpty())try{var current=gate.query(owner);if(stored.lineages().entrySet().stream().anyMatch(e->!current.lineage(e.getKey()).id().equals(e.getValue())))return false;}catch(DerivationFailure unavailable){return false;}
+        if(!stored.lineages().isEmpty())try{var current=gate.query(owner);if(stored.lineages().entrySet().stream().anyMatch(e->!current.matchesStoredLineage(e.getKey(),e.getValue())))return false;}catch(DerivationFailure unavailable){return false;}
         return snapshot.boundary()==null||sources.fingerprint(owner,snapshot.boundary(),snapshot.allAi()).equals(stored.fingerprint());
     }
     private static KnowledgeOperationMaterialCipher.Context context(UUID id,UUID owner,KnowledgeOperationMaterialCipher.Kind kind){return new KnowledgeOperationMaterialCipher.Context(id,owner,"search_history",kind,kind==KnowledgeOperationMaterialCipher.Kind.INPUT?0:1);}

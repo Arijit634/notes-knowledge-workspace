@@ -81,6 +81,7 @@ final class MediaQualityQualificationHarness implements MediaUnderstandingPort, 
         lock=acquired;
         try {
             var identity=new TreeMap<String,Object>();identity.put("consent",consent);
+            identity.put("scopeProtocol",MediaQualityQualificationCommand.PLAN_PROTOCOL);
             identity.put("corpus",corpus.entrySet().stream().collect(java.util.stream.Collectors.toMap(e->e.getValue().id(),Map.Entry::getKey)));
             var expected=JSON.readTree(JSON.writeValueAsBytes(identity));Path header=directory.resolve("identity.json");
             if(!Files.exists(header))QualificationJournal.forceCreate(header,JSON.writeValueAsBytes(identity));
@@ -130,7 +131,8 @@ final class MediaQualityQualificationHarness implements MediaUnderstandingPort, 
             +GoogleDerivationAdapters.mediaInstruction(request).getBytes(java.nio.charset.StandardCharsets.UTF_8).length
             +GoogleDerivationAdapters.mediaSchema().getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
         String key=QualificationJournal.hash(ProviderDispatchPolicy.fingerprint(source)+"\n"+Objects.toString(child,"original")
-            +"\n"+TransformedMediaIdentity.digest(bytes)+"\n"+request.mediaType()+"\n"+request.firstPage()+"\n"+request.lastPage()+"\n"+request.durationSeconds());
+            +"\n"+TransformedMediaIdentity.digest(bytes)+"\n"+request.mediaType()+"\n"+request.firstPage()+"\n"+request.lastPage()+"\n"+request.durationSeconds()
+            +"\n"+request.videoAudioPossible()+"\n"+request.soundtrackOnly());
         var reservations=events.stream().filter(e->e.state().equals("reserved")).toList();
         if(events.stream().anyMatch(e->e.key().equals(key))||reservations.size()>=consent.requests()
                 ||reservations.stream().mapToLong(Event::estimatedBytes).sum()+estimate>consent.estimatedRequestBytes()

@@ -7,6 +7,8 @@ test ! -e "$context"
 mkdir -p "$context/artifacts/classes" "$context/artifacts/libraries" "$context/controller" "$context/native"
 cp -a "$JAVA_HOME" "$context/jdk"
 cp src/main/native/*.c src/main/native/empty-metadata.patch "$context/native/"
+# Frozen synthetic AAC fixture, also exercised by the upload/decoder regressions.
+cp src/test/resources/attachments/synthetic-aac-video.mp4 "$context/native/audio-preflight.mp4"
 cp target/notes-knowledge-workspace-0.0.1-SNAPSHOT.jar "$context/application.jar"
 # Use the actual packaged production classes and libraries, never recompile them.
 (cd "$context" && "$JAVA_HOME/bin/jar" xf application.jar BOOT-INF)
@@ -104,6 +106,7 @@ docker "${common[@]}" "$image" -Xmx192m -cp "$cp" org.notesknowledge.notes.Super
 mkdir "$RUNNER_TEMP/media-clips"
 chmod 0777 "$RUNNER_TEMP/media-clips"
 docker "${common[@]}" -v "$RUNNER_TEMP/media-clips:/output" "$image" -Xmx192m -cp "$cp" org.notesknowledge.notes.SupervisedVideoRuntimeQualification /opt/video /fixtures/long.mp4 /fixtures/vfr.mp4 /output /fixtures/broken.mp4 unused
+docker "${common[@]}" "$image" -Xmx192m -cp "$cp" org.notesknowledge.notes.VideoSoundtrackRuntimeQualification /opt/video
 # Decode every emitted frame independently. A protocol/metadata match is not
 # evidence that clip bytes decode successfully.
 decoded=0

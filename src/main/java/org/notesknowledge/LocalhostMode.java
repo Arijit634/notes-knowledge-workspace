@@ -47,6 +47,8 @@ public final class LocalhostMode {
                 || !"global".equals(environment.getProperty("knowledge.derivation.region"))
                 || !"gemini-embedding-2".equals(environment.getProperty("knowledge.derivation.embedding-model"))
                 || !java.util.Set.of("gemini-3.6-flash","gemini-3.5-flash-lite").contains(environment.getProperty("knowledge.derivation.media-model", ""))
+                || environment.getProperty("knowledge.derivation.video-soundtrack-model")!=null
+                    && !java.util.Set.of("gemini-3.6-flash","gemini-3.5-flash-lite").contains(environment.getProperty("knowledge.derivation.video-soundtrack-model"))
                 || !"unpaid-synthetic-demo".equals(environment.getProperty("knowledge.derivation.dispatch-policy"))) throw new IllegalStateException();
         String fingerprint=environment.getProperty("knowledge.derivation.approved-policy-fingerprint", "");
         if (!fingerprint.matches("[0-9a-f]{64}")

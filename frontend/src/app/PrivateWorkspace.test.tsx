@@ -139,7 +139,7 @@ describe('real private-workspace transport contracts', () => {
     fireEvent.submit(screen.getByLabelText('What would you like to find?').closest('form')!)
     await screen.findByText('A grounded synthetic answer.')
     expect(within(screen.getByRole('region', { name: 'Deterministic results' })).getByText('AI OFF · deterministic only')).toBeTruthy()
-    expect(screen.getByText(/Partial coverage/)).toBeTruthy()
+    expect(screen.getByText(/Some sources weren’t checked/)).toBeTruthy()
     expect(screen.getAllByRole('link', { name: /Source 1/ }).every(link => link.getAttribute('href') === `/notes/${id}`)).toBe(true)
     const request = calls.find(c => c.path === '/api/knowledge/query')!
     expect(request.body).toEqual({ query: question }); expect(request.headers.get('X-CSRF-TOKEN')).toBe('synthetic-csrf')
@@ -221,7 +221,7 @@ describe('real private-workspace transport contracts', () => {
     await screen.findByDisplayValue('Synthetic writer')
     fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Changed name' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }))
-    await screen.findByText('Profile saved. Nothing was published.')
+    await screen.findByText('Profile saved.')
     expect(calls.find(c => c.method === 'PUT')?.body).toEqual({ displayName: 'Changed name', biography: profile.biography, handle: null })
     expect(calls.some(c => /public-profile|publication/.test(c.path))).toBe(false)
   })

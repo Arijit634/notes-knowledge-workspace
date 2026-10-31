@@ -111,6 +111,11 @@ class LocalhostTransportTest {
         var invalid = configuration().withProperty("spring.datasource.username", "nkw_local_migrator");
         assertThatThrownBy(() -> new LocalhostMode(invalid)).isInstanceOf(IllegalStateException.class);
     }
+    @Test void explicitVideoSoundtrackModelKeepsProtectedLocalProviderAllowlist() throws Exception {
+        assertThat(new LocalhostMode(syntheticAi().withProperty("knowledge.derivation.video-soundtrack-model","gemini-3.6-flash"))).isNotNull();
+        assertThatThrownBy(()->new LocalhostMode(syntheticAi().withProperty("knowledge.derivation.video-soundtrack-model","unqualified")))
+            .hasMessage("Protected loopback localhost configuration required").hasNoCause();
+    }
     @Test void objectWritesAreCreateOnlyAndSurviveReconstruction() throws Exception {
         var objects = objects(); objects.write(KEY, new ByteArrayInputStream(new byte[]{1,2,3}), 3);
         assertThatThrownBy(() -> objects.write(KEY, new ByteArrayInputStream(new byte[]{9}), 1)).isInstanceOf(RuntimeException.class);

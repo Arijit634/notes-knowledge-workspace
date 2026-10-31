@@ -20,6 +20,18 @@ public class VideoClipRuntimeFixtures {
         return new VideoClipRuntime() {
             public VideoPlan plan(byte[] original){return VideoClipRuntimeFixtures.plan(original);}
             public VideoChild render(byte[] original,VideoPlan plan,int first,int last){return VideoClipRuntimeFixtures.render(original,plan,first,last);}
+            public org.notesknowledge.knowledge.spi.PrivateDerivationSource.VideoAudioPlan audioPlan(byte[] original){
+                try {
+                    var nativeValue=nativeRuntime();if(nativeValue!=null)return nativeValue.audioPlan(original);
+                    var plan=VideoClipRuntimeFixtures.plan(original);
+                    return new org.notesknowledge.knowledge.spi.PrivateDerivationSource.VideoAudioPlan(plan.timescale(),plan.tick(plan.durations().size()),false);
+                }catch(Exception failed){throw new AssertionError("Synthetic audio plan unavailable",failed);}
+            }
+            public org.notesknowledge.knowledge.spi.PrivateDerivationSource.VideoAudioChild audio(byte[] original,org.notesknowledge.knowledge.spi.PrivateDerivationSource.VideoAudioPlan plan){
+                try {var nativeValue=nativeRuntime();if(nativeValue!=null)return nativeValue.audio(original,plan);}
+                catch(Exception failed){throw new AssertionError("Synthetic audio child unavailable",failed);}
+                throw new AssertionError("Silent fixture must not extract audio");
+            }
         };
     }
     public static byte[] original()throws Exception{return MeaningfulMediaFixtures.videoSamples(20,2000);}

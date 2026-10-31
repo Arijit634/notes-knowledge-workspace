@@ -234,7 +234,7 @@ class KnowledgeOperationService {
         if(stored.provenance().stream().anyMatch(s->!row.owner().equals(s.expected().owner())))return false;
         for(int i=0;i<stored.provenance().size();i+=64)
             if(!sources.validate(stored.provenance().subList(i,Math.min(i+64,stored.provenance().size())),semantic))return false;
-        if(semantic&&!stored.lineages().isEmpty())try {var q=gate.query(row.owner());return stored.lineages().entrySet().stream().allMatch(e->q.lineage(e.getKey()).id().equals(e.getValue()));}catch(DerivationFailure blocked){return false;}
+        if(semantic&&!stored.lineages().isEmpty())try {var q=gate.query(row.owner());return stored.lineages().entrySet().stream().allMatch(e->q.matchesStoredLineage(e.getKey(),e.getValue()));}catch(DerivationFailure blocked){return false;}
         return true;
     }
     private KnowledgeQueryResult.Stored openResult(KnowledgeOperationRepository.Row row){return json.readValue(cipher.open(context(row,KnowledgeOperationMaterialCipher.Kind.RESULT,row.version()),row.result()),KnowledgeQueryResult.Stored.class);}

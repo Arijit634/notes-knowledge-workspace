@@ -12,6 +12,24 @@ import org.notesknowledge.websupport.ApiFailureException;
 @Tag("FAST") @Tag("SECURITY")
 class Mp4UploadCompatibilityTest {
     @TempDir Path directory;
+    @Test void encodedAacSoundtrackRetainsBothClocksAndUploadAgreement()throws Exception {
+        byte[] bytes;
+        try(var input=getClass().getResourceAsStream("/attachments/synthetic-aac-video.mp4")){bytes=input.readAllBytes();}
+        var file=Files.write(directory.resolve("encoded-audio.mp4"),bytes);
+        var inspected=new StrictMp4StructureValidator().uploadTimeline(file);
+        assertThat(inspected.audio().hasAudio()).isTrue();
+        assertThat(inspected.audio().ticks()/(double)inspected.audio().timescale()).isEqualTo(2);
+        assertThat(inspected.video().durations()).hasSize(50);
+        try(var validator=new AttachmentMediaValidator()){
+            assertThat(validator.validate(file,"synthetic.mp4","video/mp4").durationSeconds()).isEqualTo(2);
+        }
+        byte[] wrongGroup=bytes.clone();wrongGroup[find(wrongGroup,"sgpd")+12]='x';rejected(wrongGroup);
+        byte[] wrongCount=bytes.clone();ByteBuffer.wrap(wrongCount).putInt(find(wrongCount,"sbgp")+20,1);rejected(wrongCount);
+        byte[] wrongDistance=bytes.clone();wrongDistance[find(wrongDistance,"sgpd")+24]=0;rejected(wrongDistance);
+        byte[] sbr=bytes.clone();boolean extension=false;
+        for(int i=find(sbr,"esds");i<sbr.length-2;i++)if((sbr[i]&255)==0x56&&(sbr[i+1]&255)==0xe5&&sbr[i+2]==0){sbr[i+2]=(byte)0x80;extension=true;break;}
+        assertThat(extension).isTrue();rejected(sbr);
+    }
     private byte[] common()throws Exception{return getClass().getResourceAsStream("/attachments/synthetic-common-avc.mp4").readAllBytes();}
     private StrictMp4StructureValidator.Video upload(byte[] bytes)throws Exception{return new StrictMp4StructureValidator().validateUpload(Files.write(directory.resolve("input.mp4"),bytes));}
     @Test void realEncodedIsomMainProfileUploadAgreesWithForkMetadata()throws Exception {
@@ -32,6 +50,14 @@ class Mp4UploadCompatibilityTest {
         byte[] unsupported=bytes.clone();int esds=find(unsupported,"esds");unsupported[esds+13]=0x40; // ES flags must be zero, not external URL flags.
         rejected(unsupported);
         byte[] duplicate=bytes.clone();int second=last(duplicate,"tkhd");ByteBuffer.wrap(duplicate).putInt(second+20,1);rejected(duplicate);
+    }
+    @Test void uploadPlannerRetainsVideoClockWhenAudioTrackIsLastAndKeepsCanonicalGateStrict()throws Exception {
+        var path=Files.write(directory.resolve("with-audio.mp4"),withAac());
+        var inspected=new StrictMp4StructureValidator().uploadTimeline(path);
+        assertThat(inspected.video().timescale()).isEqualTo(1000);
+        assertThat(inspected.video().durations()).containsExactly(1000);
+        assertThat(inspected.audio().hasAudio()).isTrue();assertThat(inspected.audio().timescale()).isEqualTo(1000);assertThat(inspected.audio().ticks()).isEqualTo(1000);
+        assertThatThrownBy(()->new StrictMp4StructureValidator().timeline(path)).isInstanceOf(ApiFailureException.class);
     }
     private byte[] withAac()throws Exception {
         // Container/framing fixture only: the AAC payload is not a decoder or playback oracle.

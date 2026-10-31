@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { ConfirmDialog as SharedConfirmDialog } from '../../app/ui/ConfirmDialog'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, NavLink, useNavigate } from 'react-router'
 import { useForm } from 'react-hook-form'
 import { useQuery } from '@tanstack/react-query'
@@ -78,28 +79,8 @@ function ConfirmDialog({ title, description, confirmText, onCancel, onConfirm, b
   title: string; description: string; confirmText: string; onCancel: () => void
   onConfirm: () => void; busy?: boolean
 }) {
-  const first = useRef<HTMLButtonElement>(null), last = useRef<HTMLButtonElement>(null)
-  useEffect(() => {
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    first.current?.focus()
-    return () => previous?.focus()
-  }, [])
-  function keys(event: KeyboardEvent) {
-    if (event.key === 'Escape') { event.preventDefault(); onCancel() }
-    if (event.key === 'Tab' && !event.shiftKey && document.activeElement === last.current) {
-      event.preventDefault(); first.current?.focus()
-    } else if (event.key === 'Tab' && event.shiftKey && document.activeElement === first.current) {
-      event.preventDefault(); last.current?.focus()
-    }
-  }
-  return <div className="dialog-backdrop"><div role="alertdialog" aria-modal="true"
-    aria-labelledby="confirm-title" aria-describedby="confirm-description" className="confirm-dialog"
-    onKeyDown={keys}>
-    <h2 id="confirm-title">{title}</h2><p id="confirm-description">{description}</p>
-    <div className="actions"><button ref={first} type="button" className="button-secondary"
-      onClick={onCancel} disabled={busy}>Cancel</button>
-      <button ref={last} type="button" onClick={onConfirm} disabled={busy}>{confirmText}</button></div>
-  </div></div>
+  return <SharedConfirmDialog role="alertdialog" title={title} description={description}
+    onCancel={onCancel} onConfirm={onConfirm} confirmText={confirmText} busy={busy} />
 }
 
 async function refreshSecurity(auth: AuthRuntime, includeSessions = false) {

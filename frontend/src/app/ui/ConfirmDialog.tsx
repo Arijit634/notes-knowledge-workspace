@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { useModalLayer } from './useModalLayer'
 
 export function restoreFocus(opener: HTMLElement | null, fallback: HTMLElement | null = document.getElementById('notes-content')) {
   let hidden = false
@@ -17,9 +18,10 @@ export function restoreFocus(opener: HTMLElement | null, fallback: HTMLElement |
   }
   target?.focus({ preventScroll: true })
 }
-export function ConfirmDialog({ title, children, onCancel, onConfirm, confirmText, cancelText = 'Cancel', busy = false, opener }: {
-  title: string; children: ReactNode; onCancel: () => void; onConfirm: () => void; confirmText: string; cancelText?: string; busy?: boolean; opener?: HTMLElement | null
+export function ConfirmDialog({ title, children, onCancel, onConfirm, confirmText, cancelText = 'Cancel', busy = false, opener, role = 'dialog', description }: {
+  title: string; children?: ReactNode; onCancel: () => void; onConfirm: () => void; confirmText: string; cancelText?: string; busy?: boolean; opener?: HTMLElement | null; role?: 'dialog' | 'alertdialog'; description?: string
 }) {
+  useModalLayer()
   const ref = useRef<HTMLDivElement>(null), id = useId()
   useEffect(() => {
     const previous = opener ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null)
@@ -28,7 +30,7 @@ export function ConfirmDialog({ title, children, onCancel, onConfirm, confirmTex
     return () => { requestAnimationFrame(() => restoreFocus(previous)) }
   }, [])
   useEffect(() => { if (busy) ref.current?.focus({ preventScroll: true }) }, [busy])
-  return createPortal(<div className="dialog-backdrop"><div ref={ref} tabIndex={-1} className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby={id}
+  return createPortal(<div className="dialog-backdrop"><div ref={ref} tabIndex={-1} className="confirm-dialog" role={role} aria-modal="true" aria-labelledby={id} aria-describedby={description ? `${id}-description` : undefined}
     onKeyDown={event => {
       if (event.key === 'Escape' && !busy) { event.preventDefault(); onCancel() }
       if (event.key === 'Tab') {
@@ -37,6 +39,6 @@ export function ConfirmDialog({ title, children, onCancel, onConfirm, confirmTex
         if (buttons.length) buttons[(at + (event.shiftKey ? buttons.length - 1 : 1)) % buttons.length]?.focus()
         else event.currentTarget.focus({ preventScroll: true })
       }
-    }}><h2 id={id}>{title}</h2>{children}<div className="actions"><button type="button" className="button-secondary" disabled={busy} onClick={onCancel}>{cancelText}</button>
+    }}><h2 id={id}>{title}</h2>{description && <p id={`${id}-description`}>{description}</p>}{children}<div className="actions"><button type="button" className="button-secondary" disabled={busy} onClick={onCancel}>{cancelText}</button>
       <button type="button" disabled={busy} onClick={onConfirm}>{confirmText}</button></div></div></div>, document.body)
 }

@@ -63,11 +63,13 @@ class KnowledgeQueryIntegrationTest {
     @MockitoSpyBean PrivateAiSourceCurrentness currentSources;
     @MockitoBean AiDerivationProperties configuration; @MockitoBean ProviderDispatchProperties dispatch;
     @MockitoBean KnowledgePolicyProperties policyConfiguration; @MockitoBean StructuredKnowledgePort provider;
+    @MockitoBean AudioSignalPort audioSignals;
+    @MockitoSpyBean QueryEvidenceRepository evidenceRows;
     @MockitoBean RateLimitPort rates;
     @MockitoBean ProcessingDisclosureResolver disclosures;
     UUID owner,note,policy; Browser browser;
     @BeforeEach void prepare() throws Exception {
-        reset(configuration,dispatch,policyConfiguration,provider,rates,operationRows,sources,currentSources);
+        reset(configuration,dispatch,policyConfiguration,provider,audioSignals,evidenceRows,rates,operationRows,sources,currentSources);
         when(configuration.configured()).thenReturn(true);when(configuration.provider()).thenReturn("synthetic");
         when(configuration.embeddingModel()).thenReturn("synthetic-embedding");when(configuration.mediaModel()).thenReturn("synthetic-media");
         when(configuration.modelRevision()).thenReturn("v1");when(configuration.configurationId()).thenReturn("synthetic-v1");
@@ -143,6 +145,45 @@ class KnowledgeQueryIntegrationTest {
         assertThat(captured.getFirst().modality()).isEqualTo(relevant.equals("media")?"image":"note");
         var citation=t.get("citations").get(0);if(relevant.equals("media"))assertThat(citation.get("attachmentId").asText()).isEqualTo(attachment.toString());else assertThat(citation.get("attachmentId").isNull()).isTrue();
     }
+    @Test void soundtrackEvidenceRetrievesBothSavedOccurrencesWithOriginalVideoCitations()throws Exception {
+        UUID first=note,second=note(owner,true,"Another saved clip","No soundtrack hint in the private note text");
+        var expectedAttachments=new java.util.HashSet<String>();
+        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),"video");
+        for(UUID parent:List.of(first,second)){
+            note=parent;UUID attachment=upload("video");expectedAttachments.add(attachment.toString());
+            var source=sources.source(owner,parent,attachment);
+            var scene=new DerivedSegment("Audio description (model inference, not spoken words): Possibly chattering calls over a bass rhythm","video_scene","Acoustic description",null,null,null,0.,.5,null,null,null,null);
+            tx(()->{representations.activate(source.expected(),lineage,List.of(scene),List.of(vector()));return null;});
+        }
+        note=first;
+        doAnswer(call->{
+            KnowledgeQueryGate.EvidencePermit permit=call.getArgument(0);permit.requireDispatch();assertOutsideTransaction();
+            List<StructuredKnowledgePort.Evidence> supplied=call.getArgument(3);
+            return new StructuredKnowledgePort.Output(supplied.stream().map(e->new StructuredKnowledgePort.Claim(e.text(),List.of(e.id()))).toList(),false);
+        }).when(provider).generate(any(),any(),any(),any());
+        var result=json.readTree(query("find the clip with chattering sounds in the background").andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(capturedEvidence()).hasSize(2).allSatisfy(e->assertThat(e.modality()).isEqualTo("video"));
+        var actualAttachments=new java.util.HashSet<String>();var actualNotes=new java.util.HashSet<String>();
+        for(var citation:result.get("citations")){actualAttachments.add(citation.get("attachmentId").asText());actualNotes.add(citation.get("noteId").asText());}
+        assertThat(actualAttachments).isEqualTo(expectedAttachments);assertThat(actualNotes).containsExactlyInAnyOrder(first.toString(),second.toString());
+    }
+    @ParameterizedTest @org.junit.jupiter.params.provider.CsvSource({"16,video","60,video","16,audio","60,audio"})
+    void repeatedTextMatchesCannotCrowdRelevantVideoAudioOutOfBoundedContext(int count,String modality)throws Exception {
+        UUID original=note;
+        for(int i=0;i<count;i++) {
+            UUID text=note(owner,true,"Electronic background music bass reference "+i,"Video electronic background music repeated bass reference notes");
+            derive(text,"Electronic background music repeated bass reference",vector());
+        }
+        note=original;UUID attachment=upload(modality);var source=sources.source(owner,note,attachment);
+        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),modality);
+        String kind=modality.equals("video")?"video_scene":"transcript";
+        var sound=new DerivedSegment("Audio description (model inference, not spoken words): Repeated electronic bass music",kind,"Acoustic description",null,null,null,0.,.5,null,null,null,null);
+        var foreground=new DerivedSegment("A fictional foreground observation",kind,modality.equals("video")?"Visual description":"Transcript",null,null,null,0.,.5,null,null,null,null);
+        tx(()->{representations.activate(source.expected(),lineage,List.of(foreground,sound),List.of(vector(),new float[]{.9f,.1f,0,0,0,0,0,0}));return null;});
+        query("Find a "+modality+" with electronic background music and repeated bass").andExpect(status().isOk());
+        assertThat(capturedEvidence()).hasSizeLessThanOrEqualTo(12)
+            .anySatisfy(e->{assertThat(e.modality()).isEqualTo(modality);assertThat(e.text()).startsWith("Audio description");});
+    }
     @Test void overlappingSemanticAndLexicalCandidatesDoNotExpandContext() throws Exception {
         jdbc.update("update notes.note set title='Kyoto plans' where note_id=?",note);
         deriveChunks(List.of(DerivedSegment.note("Kyoto supported overlapping evidence one","",0,100),DerivedSegment.note("Kyoto supported overlapping evidence two","",5,105)),List.of(vector(),vector()));
@@ -183,6 +224,171 @@ class KnowledgeQueryIntegrationTest {
         var capture=org.mockito.ArgumentCaptor.forClass(List.class);verify(provider).generate(any(),any(),eq("answer"),capture.capture());return (List<StructuredKnowledgePort.Evidence>)capture.getValue();
     }
     private static float[] orthogonal(){return new float[]{0,1,0,0,0,0,0,0};}
+
+    private UUID directAudioFixture(String query) throws Exception {
+        return directMediaFixture(query,"audio");
+    }
+    private UUID directMediaFixture(String query,String modality) throws Exception {
+        when(configuration.directAudioSearch()).thenReturn(true);when(configuration.provider()).thenReturn("gemini");
+        when(configuration.directVideoSoundtrackSearch()).thenReturn(modality.equals("video"));
+        when(configuration.embeddingModel()).thenReturn("gemini-embedding-2");when(configuration.mediaModel()).thenReturn("gemini-3.5-flash-lite");
+        when(configuration.region()).thenReturn("global");when(configuration.tier()).thenReturn("unpaid");
+        String code="synthetic-direct-audio-"+UUID.randomUUID();when(policyConfiguration.code()).thenReturn(code);
+        policy=disclosureFixtures.insert(jdbc,code,1,true);ack(owner);
+        when(dispatch.dispatchPolicy()).thenReturn("unpaid-synthetic-demo");when(audioSignals.available()).thenReturn(true);
+        UUID attachment=upload(modality);var source=sources.source(owner,note,attachment);
+        when(dispatch.approvedSourceFingerprints()).thenReturn(List.of(ProviderDispatchPolicy.fingerprint(source.expected())));
+        when(dispatch.approvedQueryFingerprints()).thenReturn(List.of(ProviderDispatchPolicy.queryFingerprint(query)));
+        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),modality);
+        tx(()->{representations.activate(source.expected(),lineage,List.of(new DerivedSegment("Generic synthetic music",modality.equals("video")?"video_scene":"transcript","Acoustic description",null,null,null,0.,1.,null,null,null,null)),List.of(vector()));return null;});
+        when(audioSignals.embed(any(),eq(query),any())).thenAnswer(call->{((KnowledgeQueryGate.EvidencePermit)call.getArgument(0)).requireGoogleAudio(query);assertOutsideTransaction();return vector();});
+        doAnswer(call->{((KnowledgeQueryGate.EvidencePermit)call.getArgument(0)).requireGoogle(query);assertOutsideTransaction();
+            @SuppressWarnings("unchecked") var items=(List<StructuredKnowledgePort.Evidence>)call.getArgument(3);
+            return new StructuredKnowledgePort.Output(List.of(new StructuredKnowledgePort.Claim(items.getFirst().text(),List.of(items.getFirst().id()))),false);
+        }).when(provider).generate(any(),any(),any(),any());
+        return attachment;
+    }
+    @ParameterizedTest @ValueSource(strings={"supported","contradicted","uncertain"})
+    void directAudioRequiresActualSupportedVerificationRatherThanItsSimilarity(String decision) throws Exception {
+        String question="find synthetic audio";UUID attachment=directAudioFixture(question);
+        when(audioSignals.verify(any(),eq(question),any(),eq(1d))).thenAnswer(call->{((KnowledgeQueryGate.EvidencePermit)call.getArgument(0)).requireGoogleAudio(question);assertOutsideTransaction();return new AudioSignalPort.Verification(decision,"Possibly synthetic chattering-like sounds",100,900);});
+        var result=json.readTree(query(question).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        verify(audioSignals,times(1)).embed(any(),eq(question),any());verify(audioSignals,times(1)).verify(any(),eq(question),any(),eq(1d));
+        if(decision.equals("supported")) {
+            assertThat(result.get("aiAnswer").toString()).contains("chattering-like");
+            assertThat(result.get("citations").get(0).get("attachmentId").asText()).isEqualTo(attachment.toString());
+            assertThat(result.get("citations").get(0).get("location").get("timeStart").asDouble()).isEqualTo(.1);
+            assertThat(result.get("citations").get(0).get("location").get("timeEnd").asDouble()).isEqualTo(.9);
+        }else{assertThat(result.get("aiAnswer").isNull()).isTrue();assertThat(result.get("citations").size()).isZero();verify(provider,never()).generate(any(),any(),any(),any());}
+    }
+    @ParameterizedTest @ValueSource(strings={"aiOff","stale","foreign"})
+    void directAudioNeverReadsOrDispatchesExcludedSources(String exclusion)throws Exception {
+        String question="find synthetic audio";directAudioFixture(question);
+        if(exclusion.equals("aiOff"))jdbc.update("update notes.note set ai_enabled=false,ai_generation=ai_generation+1 where note_id=?",note);
+        else if(exclusion.equals("stale"))jdbc.update("update notes.note set ai_generation=ai_generation+1 where note_id=?",note);
+        else {UUID other=account();ack(other);browser=browser(other);}
+        query(question).andExpect(status().isOk());verify(audioSignals,never()).embed(any(),any(),any());verify(audioSignals,never()).verify(any(),any(),any(),anyDouble());
+    }
+    @Test void directAudioProviderFailureCannotFallBackToAnUnverifiedAcousticClaim()throws Exception {
+        String question="find synthetic audio";directAudioFixture(question);
+        when(audioSignals.embed(any(),eq(question),any())).thenThrow(new DerivationFailure(KnowledgeWork.Failure.QUOTA));
+        var result=json.readTree(query(question).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(result.get("degraded").asText()).isEqualTo("providerUnavailable");assertThat(result.get("aiAnswer").isNull()).isTrue();
+        verify(audioSignals,never()).verify(any(),any(),any(),anyDouble());verify(provider,never()).generate(any(),any(),any(),any());
+    }
+    @Test void directAudioRevalidatesAfterNativeInspectionBeforeVerificationOrAnswer()throws Exception {
+        String question="find synthetic audio";directAudioFixture(question);var checks=new java.util.concurrent.atomic.AtomicInteger();
+        doAnswer(call->checks.incrementAndGet()<2&&((Boolean)call.callRealMethod())).when(evidenceRows).current(any(),any());
+        var result=json.readTree(query(question).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(result.get("degraded").asText()).isEqualTo("sourceChanged");assertThat(result.get("aiAnswer").isNull()).isTrue();
+        verify(audioSignals,times(1)).embed(any(),eq(question),any());verify(audioSignals,never()).verify(any(),any(),any(),anyDouble());verify(provider,never()).generate(any(),any(),any(),any());
+        var bytes=org.mockito.ArgumentCaptor.forClass(byte[].class);verify(audioSignals).embed(any(),eq(question),bytes.capture());assertThat(bytes.getValue()).containsOnly((byte)0);
+    }
+    @Test void directAudioBoundsInspectedSourcesAndDoesNotExpandItsEvidenceWindow()throws Exception {
+        String question="find synthetic audio";UUID first=directAudioFixture(question);var fingerprints=new ArrayList<>(dispatch.approvedSourceFingerprints());
+        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),"audio");
+        for(int i=0;i<3;i++){
+            UUID attachment=upload("audio");var source=sources.source(owner,note,attachment);fingerprints.add(ProviderDispatchPolicy.fingerprint(source.expected()));
+            tx(()->{representations.activate(source.expected(),lineage,List.of(new DerivedSegment("Generic synthetic music","transcript","Acoustic description",null,null,null,0.,1.,null,null,null,null)),List.of(vector()));return null;});
+        }
+        when(dispatch.approvedSourceFingerprints()).thenReturn(fingerprints);
+        when(audioSignals.verify(any(),eq(question),any(),eq(1d))).thenAnswer(call->{((KnowledgeQueryGate.EvidencePermit)call.getArgument(0)).requireGoogleAudio(question);assertOutsideTransaction();return new AudioSignalPort.Verification("supported","Synthetic matching sounds",0,1000);});
+        query(question).andExpect(status().isOk());verify(audioSignals,times(3)).embed(any(),eq(question),any());verify(audioSignals,times(3)).verify(any(),eq(question),any(),eq(1d));assertThat(capturedEvidence()).hasSize(3);
+    }
+    @ParameterizedTest @ValueSource(strings={"supported","contradicted","uncertain"})
+    void mp4SoundtrackRequiresSupportedObservationAndKeepsOriginalVideoCitation(String decision)throws Exception {
+        String question="find synthetic video with background noise";UUID attachment=directMediaFixture(question,"video");
+        when(audioSignals.verifyVideo(any(),eq(question),any(),eq(1d))).thenAnswer(call->{((KnowledgeQueryGate.EvidencePermit)call.getArgument(0)).requireGoogleVideo(question);assertOutsideTransaction();return new AudioSignalPort.Verification(decision,"Possibly synthetic chattering-like sounds",100,900);});
+        var result=json.readTree(query(question).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        verify(audioSignals,never()).embed(any(),any(),any());verify(audioSignals,never()).verify(any(),any(),any(),anyDouble());verify(audioSignals,times(1)).verifyVideo(any(),eq(question),any(),eq(1d));
+        if(decision.equals("supported")) {
+            assertThat(result.get("aiAnswer").toString()).contains("chattering-like");var citation=result.get("citations").get(0);
+            assertThat(citation.get("attachmentId").asText()).isEqualTo(attachment.toString());assertThat(citation.get("location").get("kind").asText()).isEqualTo("video_scene");
+            assertThat(citation.get("location").get("timeStart").asDouble()).isEqualTo(.1);assertThat(citation.get("location").get("timeEnd").asDouble()).isEqualTo(.9);
+        }else {assertThat(result.get("aiAnswer").isNull()).isTrue();assertThat(result.get("citations").size()).isZero();verify(provider,never()).generate(any(),any(),any(),any());}
+    }
+    @Test void soundtrackInspectionPrecedesAnswerContextTruncationAndStillHonorsThreeSourceLimit()throws Exception {
+        String question="find synthetic video with background noise";UUID first=directMediaFixture(question,"video");
+        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),"video");
+        var firstSource=sources.source(owner,note,first);var segments=new ArrayList<DerivedSegment>();var embeddings=new ArrayList<float[]>();
+        for(int i=0;i<12;i++){
+            segments.add(new DerivedSegment("Generic early synthetic sound "+i,"video_scene","Acoustic description",null,null,null,0.,1.,null,null,null,null));embeddings.add(vector());
+        }
+        tx(()->{representations.activate(firstSource.expected(),lineage,segments,embeddings);return null;});
+        var fingerprints=new ArrayList<>(dispatch.approvedSourceFingerprints());var attachments=new ArrayList<UUID>();attachments.add(first);
+        for(int i=1;i<4;i++){
+            UUID id=upload("video");attachments.add(id);var source=sources.source(owner,note,id);fingerprints.add(ProviderDispatchPolicy.fingerprint(source.expected()));
+            float[] embedding=new float[]{1,i*.2f,0,0,0,0,0,0};
+            tx(()->{representations.activate(source.expected(),lineage,List.of(new DerivedSegment("Generic later synthetic sound","video_scene","Acoustic description",null,null,null,0.,1.,null,null,null,null)),List.of(embedding));return null;});
+        }
+        when(dispatch.approvedSourceFingerprints()).thenReturn(fingerprints);var inspections=new java.util.concurrent.atomic.AtomicInteger();
+        when(audioSignals.verifyVideo(any(),eq(question),any(),eq(1d))).thenAnswer(call->{
+            ((KnowledgeQueryGate.EvidencePermit)call.getArgument(0)).requireGoogleVideo(question);assertOutsideTransaction();
+            return new AudioSignalPort.Verification(inspections.incrementAndGet()==3?"supported":"contradicted","Synthetic matching chimes",100,900);
+        });
+        var result=json.readTree(query(question).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        verify(audioSignals,times(3)).verifyVideo(any(),eq(question),any(),eq(1d));verify(audioSignals,never()).embed(any(),any(),any());
+        assertThat(capturedEvidence()).hasSize(1);assertThat(capturedEvidence().getFirst().text()).contains("matching chimes");
+        assertThat(result.get("citations").size()).isEqualTo(1);assertThat(result.get("citations").get(0).get("attachmentId").asText()).isEqualTo(attachments.get(2).toString());
+    }
+    @Test void explicitVideoSoundQuestionCannotBeAnsweredByStandaloneWav()throws Exception {
+        String question="find synthetic video with background noise";UUID video=directMediaFixture(question,"video");
+        UUID wav=upload("audio");var audio=sources.source(owner,note,wav);var fingerprints=new ArrayList<>(dispatch.approvedSourceFingerprints());fingerprints.add(ProviderDispatchPolicy.fingerprint(audio.expected()));when(dispatch.approvedSourceFingerprints()).thenReturn(fingerprints);
+        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),"audio");
+        tx(()->{representations.activate(audio.expected(),lineage,List.of(new DerivedSegment("Synthetic matching music","transcript","Acoustic description",null,null,null,0.,1.,null,null,null,null)),List.of(vector()));return null;});
+        when(audioSignals.verifyVideo(any(),eq(question),any(),eq(1d))).thenReturn(new AudioSignalPort.Verification("supported","Synthetic matching soundtrack",0,1000));
+        var result=json.readTree(query(question).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        verify(audioSignals,never()).embed(any(),any(),any());verify(audioSignals,never()).verify(any(),any(),any(),anyDouble());
+        assertThat(capturedEvidence()).allSatisfy(e->assertThat(e.modality()).isEqualTo("video"));
+        assertThat(result.get("citations").get(0).get("attachmentId").asText()).isEqualTo(video.toString());
+    }
+    @Test void mp4AudioVerificationPreservesGroundedVisualEvidenceWithinTheSameContextCaps()throws Exception {
+        String question="find synthetic video with a blue poster and soft background noise";UUID id=directMediaFixture(question,"video");var source=sources.source(owner,note,id);
+        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),"video");
+        var visual=new DerivedSegment("A blue rectangular poster is visible","video_scene","Visual description",null,null,null,0.,1.,null,null,null,null);
+        var acoustic=new DerivedSegment("Generic synthetic music","video_scene","Acoustic description",null,null,null,0.,1.,null,null,null,null);
+        tx(()->{representations.activate(source.expected(),lineage,List.of(visual,acoustic),List.of(vector(),vector()));return null;});
+        when(audioSignals.verifyVideo(any(),eq(question),any(),eq(1d))).thenReturn(new AudioSignalPort.Verification("supported","Soft synthetic chimes",100,900));
+        query(question).andExpect(status().isOk());var supplied=capturedEvidence();assertThat(supplied).hasSize(2);
+        assertThat(supplied).extracting(StructuredKnowledgePort.Evidence::text).anyMatch(text->text.contains("blue rectangular poster")).anyMatch(text->text.contains("Soft synthetic chimes")).noneMatch(text->text.contains("Generic synthetic music"));
+        assertThat(supplied.stream().mapToInt(e->e.text().length()).sum()).isLessThanOrEqualTo(KnowledgeQueryLimits.CHARACTERS);
+        verify(audioSignals,times(1)).verifyVideo(any(),eq(question),any(),eq(1d));verify(audioSignals,never()).embed(any(),any(),any());
+    }
+    @ParameterizedTest @ValueSource(strings={"aiOff","stale","foreign"})
+    void mp4SoundtrackNeverDispatchesExcludedSources(String exclusion)throws Exception {
+        String question="find synthetic video with background noise";directMediaFixture(question,"video");
+        if(exclusion.equals("aiOff"))jdbc.update("update notes.note set ai_enabled=false,ai_generation=ai_generation+1 where note_id=?",note);
+        else if(exclusion.equals("stale"))jdbc.update("update notes.note set ai_generation=ai_generation+1 where note_id=?",note);
+        else {UUID other=account();ack(other);browser=browser(other);}
+        query(question).andExpect(status().isOk());verify(audioSignals,never()).embed(any(),any(),any());verify(audioSignals,never()).verifyVideo(any(),any(),any(),anyDouble());
+    }
+    @Test void mp4SoundtrackPostEffectDenialCannotBecomeAnAnswer()throws Exception {
+        String question="find synthetic video with background noise";directMediaFixture(question,"video");var checks=new java.util.concurrent.atomic.AtomicInteger();
+        when(audioSignals.verifyVideo(any(),eq(question),any(),eq(1d))).thenAnswer(call->{((KnowledgeQueryGate.EvidencePermit)call.getArgument(0)).requireGoogleVideo(question);assertOutsideTransaction();return new AudioSignalPort.Verification("supported","Synthetic soundtrack",0,1000);});
+        doAnswer(call->checks.incrementAndGet()<2&&((Boolean)call.callRealMethod())).when(evidenceRows).current(any(),any());
+        var result=json.readTree(query(question).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());assertThat(result.get("degraded").asText()).isEqualTo("sourceChanged");assertThat(result.get("aiAnswer").isNull()).isTrue();
+        verify(provider,never()).generate(any(),any(),any(),any());var bytes=org.mockito.ArgumentCaptor.forClass(byte[].class);verify(audioSignals).verifyVideo(any(),eq(question),bytes.capture(),eq(1d));assertThat(bytes.getValue()).containsOnly((byte)0);
+    }
+    @Test void wavAndMp4ShareOneThreeSourceBudget()throws Exception {
+        String question="find synthetic background music";directAudioFixture(question);when(configuration.directVideoSoundtrackSearch()).thenReturn(true);
+        var fingerprints=new ArrayList<>(dispatch.approvedSourceFingerprints());var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),"video");
+        for(int i=0;i<3;i++){UUID id=upload("video");var source=sources.source(owner,note,id);fingerprints.add(ProviderDispatchPolicy.fingerprint(source.expected()));
+            tx(()->{representations.activate(source.expected(),lineage,List.of(new DerivedSegment("Synthetic background music","video_scene","Acoustic description",null,null,null,0.,1.,null,null,null,null)),List.of(vector()));return null;});}
+        when(dispatch.approvedSourceFingerprints()).thenReturn(fingerprints);
+        when(audioSignals.verify(any(),eq(question),any(),eq(1d))).thenAnswer(call->{((KnowledgeQueryGate.EvidencePermit)call.getArgument(0)).requireGoogleAudio(question);assertOutsideTransaction();return new AudioSignalPort.Verification("supported","Synthetic music",0,1000);});
+        when(audioSignals.verifyVideo(any(),eq(question),any(),eq(1d))).thenAnswer(call->{((KnowledgeQueryGate.EvidencePermit)call.getArgument(0)).requireGoogleVideo(question);assertOutsideTransaction();return new AudioSignalPort.Verification("supported","Synthetic music",0,1000);});
+        query(question).andExpect(status().isOk());verify(audioSignals,times(1)).embed(any(),eq(question),any());verify(audioSignals,times(1)).verify(any(),eq(question),any(),eq(1d));verify(audioSignals,times(2)).verifyVideo(any(),eq(question),any(),eq(1d));assertThat(capturedEvidence()).hasSize(3);
+    }
+    @Test void mp4HistoryBindsQueryRecipeWithoutInvalidatingTheVideoIndex()throws Exception {
+        String question="find synthetic video with background noise";UUID id=directMediaFixture(question,"video");var source=sources.source(owner,note,id);
+        var index=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),"video");
+        when(audioSignals.verifyVideo(any(),eq(question),any(),eq(1d))).thenReturn(new AudioSignalPort.Verification("supported","Synthetic background sounds",0,1000));
+        var response=query(question).andExpect(status().isOk()).andReturn().getResponse();String location=response.getHeader("Content-Location");assertThat(location).startsWith("/api/knowledge/history/");
+        var before=json.readTree(mvc.perform(get(location).cookie(browser.cookie)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());assertThat(before.get("status").asText()).isEqualTo("completed");
+        when(configuration.directVideoSoundtrackSearch()).thenReturn(false);
+        assertThat(EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),"video")).isEqualTo(index);assertThat(tx(()->representations.ready(source.expected(),index))).isTrue();
+        var after=json.readTree(mvc.perform(get(location).cookie(browser.cookie)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());assertThat(after.get("status").asText()).isEqualTo("obsolete");assertThat(after.get("result").isNull()).isTrue();
+    }
 
     @Test void controlledZephyrScenarioReportsEachGroundingStageAndUnequalEvidenceSurvives() throws Exception {
         String fact="The fictional Zephyr observatory is located on the northern ridge of planet Aster. Its telescope dome is silver.";

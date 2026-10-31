@@ -22,9 +22,9 @@ RUN echo '8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e  /sou
     && ./configure --prefix=/opt/video/tools --disable-autodetect --disable-gpl --disable-nonfree \
        --disable-doc --disable-debug --disable-network --disable-everything \
        --enable-ffmpeg --enable-ffprobe --enable-libopenh264 --enable-protocol=file,pipe \
-       --enable-demuxer=mov --enable-muxer=mp4,segment,null --enable-decoder=h264,wrapped_avframe \
-       --enable-parser=h264 --enable-encoder=libopenh264 --enable-bsf=h264_mp4toannexb \
-       --enable-filter=format,null,scale,setsar,setpts,trim,testsrc,color --enable-indev=lavfi \
+       --enable-demuxer=mov --enable-muxer=mp4,segment,null,wav --enable-decoder=h264,wrapped_avframe,aac \
+       --enable-parser=h264,aac --enable-encoder=libopenh264,pcm_s16le --enable-bsf=h264_mp4toannexb \
+       --enable-filter=format,null,scale,setsar,setpts,trim,testsrc,color,aresample,apad,atrim,asetpts,aformat --enable-indev=lavfi \
     && make -j2 && make install
 RUN mkdir -p /opt/pdf /opt/video /fixtures /provenance /native-diagnostics \
     && gcc -std=c11 -O2 -Wall -Wextra -Werror=implicit-function-declaration -o /opt/pdf/helper /native/pdf-sandbox.c \
@@ -48,6 +48,7 @@ RUN mkdir -p /opt/pdf /opt/video /fixtures /provenance /native-diagnostics \
 # jlink's trusted legal-notice aliases are materialized as regular files above.
 # Runtime identity/custody still reject every symlink; that check is not relaxed.
 COPY artifacts/ /opt/pdf/artifacts/
+COPY native/audio-preflight.mp4 /opt/video/tools/audio-preflight.mp4
 RUN cp -a /opt/pdf/artifacts /opt/video/artifacts
 RUN /opt/video/tools/bin/ffmpeg -hide_banner -loglevel error -nostdin -y -f lavfi \
     -i 'color=c=blue:duration=1:size=64x64:rate=25' -vf 'format=yuv420p,setsar=0' \

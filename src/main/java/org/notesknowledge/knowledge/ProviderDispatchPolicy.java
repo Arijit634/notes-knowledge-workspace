@@ -82,7 +82,8 @@ class ProviderDispatchPolicy {
     boolean permitsUnpaidGeminiChild(AiDerivationProperties configuration,TransformedMediaIdentity child) {
         validate(properties);
         return child!=null&&permitsUnpaidGemini(configuration,child.original())
-            &&configuration.provider().equals(child.provider())&&configuration.mediaModel().equals(child.model())
+            &&configuration.provider().equals(child.provider())
+            &&child.model().equals("video_audio".equals(child.scope().kind())?configuration.soundtrackModel():configuration.mediaModel())
             &&configuration.approvedPolicyFingerprint().equals(child.policySha256())
             &&(workspace(child.original().owner())||properties.approvedChildFingerprints().contains(child.approvalFingerprint()));
     }

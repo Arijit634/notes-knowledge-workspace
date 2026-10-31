@@ -111,16 +111,31 @@ class DerivationExecutor {
                     segments=List.copyOf(extracted);
                 } else if(initial.source().modality().equals("video")&&configuration.videoChildren()) {
                     if(!work.heartbeat(claim))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
+                    var soundtrack=coordinated(claim,dispatches,permit->material.videoAudioPlan(bytes));
                     var plan=coordinated(claim,dispatches,permit->material.videoPlan(bytes));
-                    segments=VideoDerivation.derive(initial,bytes,plan,configuration,(timeline,first,last)->{
+                    var extracted=new ArrayList<>(VideoDerivation.derive(initial,bytes,plan,soundtrack,configuration,(timeline,first,last)->{
                         if(!work.heartbeat(claim))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
                         return coordinated(claim,dispatches,permit->material.videoChild(bytes,timeline,first,last));
-                    },(identity,payload,request)->understandChild(claim,dispatches,understand,identity,bytes,payload,request,budget),budget);
+                    },(identity,payload,request)->understandChild(claim,dispatches,understand,identity,bytes,payload,request,budget),budget));
+                    extracted.addAll(VideoSoundtrackDerivation.derive(initial,bytes,soundtrack,configuration,audio->{
+                        if(!work.heartbeat(claim))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
+                        return coordinated(claim,dispatches,permit->material.videoAudioChild(bytes,audio));
+                    },(identity,payload,request)->understandChild(claim,dispatches,understand,identity,bytes,payload,request,budget),budget));
+                    segments=List.copyOf(extracted);
                 } else {
                     // The full accepted WAV (<=10 MiB) fits the encoded budget. Keep its
                     // original bytes and time base; no transformed-source approval is inferred.
-                    var request=new MediaUnderstandingRequest(initial.source().mediaType(),null,null,initial.source().durationSeconds());
+                    var request=new MediaUnderstandingRequest(initial.source().mediaType(),null,null,initial.source().durationSeconds(),false);
                     segments=understand(claim,dispatches,understand,bytes,request,budget);
+                    if(initial.source().modality().equals("video")) {
+                        // A separate listening pass keeps visual captioning from
+                        // consuming the audio task. It uses the same authorized
+                        // original bytes, fresh dispatch gate and attempt budget.
+                        var listening=new MediaUnderstandingRequest("video/mp4",null,null,request.durationSeconds(),true,true);
+                        var combined=new ArrayList<>(segments);
+                        combined.addAll(understand(claim,dispatches,understand,bytes,listening,budget));
+                        segments=combined.stream().distinct().toList();
+                    }
                 }
                 validateMedia(initial,segments);
                 } finally {java.util.Arrays.fill(bytes,(byte)0);}
@@ -213,7 +228,7 @@ class DerivationExecutor {
         });
         budget.check();
         GoogleDerivationAdapters.validateScope(request,segments);
-        if(segments.isEmpty()&&!request.mediaType().equals("application/pdf"))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
+        if(segments.isEmpty()&&!request.mediaType().equals("application/pdf")&&!request.soundtrackOnly())throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
         return List.copyOf(segments);
     }
     private <T> T coordinated(KnowledgeWork.Claim claim,List<org.notesknowledge.DispatchCoordinator.Handle> outcomes,
@@ -230,6 +245,7 @@ class DerivationExecutor {
         if(!handle.safelyReleased()) {
             if(result instanceof org.notesknowledge.knowledge.spi.PrivateDerivationSource.PdfChild child)child.close();
             if(result instanceof org.notesknowledge.knowledge.spi.PrivateDerivationSource.VideoChild child)child.close();
+            if(result instanceof org.notesknowledge.knowledge.spi.PrivateDerivationSource.VideoAudioChild child)child.close();
             if(result instanceof byte[] bytes)java.util.Arrays.fill(bytes,(byte)0);
             throw new DerivationFailure(KnowledgeWork.Failure.TRANSIENT_DEPENDENCY);
         }

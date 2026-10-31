@@ -85,7 +85,7 @@ class MediaProcessingScopeTest {
         assertThat(GoogleDerivationAdapters.mediaInstruction(audio)).contains("not spoken words","instruments","uncertainty");
     }
     @Test void videoOnlyScenesCannotAcceptInventedSpeechAndPartialCoverageIsRejected() {
-        var video=new MediaUnderstandingRequest("video/mp4",null,null,2.);
+        var video=new MediaUnderstandingRequest("video/mp4",null,null,2.,false);
         var scene=new DerivedSegment("Synthetic blue square","video_scene","",null,null,null,0.,1.,null,null,null,null);
         var speech=new DerivedSegment("Invented speech","transcript","",null,null,null,0.,1.,null,null,null,null);
         assertThat(GoogleDerivationAdapters.validateMediaOutput(video,new GoogleDerivationAdapters.MediaOutput(true,List.of(),false,List.of(scene)))).containsExactly(scene);

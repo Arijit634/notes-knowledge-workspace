@@ -13,12 +13,16 @@ record EmbeddingLineage(String id,String configuration,String modality,int dimen
         String normalized=String.join("\n",c.provider(),c.adapterVersion(),c.embeddingModel(),c.mediaModel(),c.modelRevision(),
             GeminiTextEmbeddings.embedding2(c)?GeminiTextEmbeddings.EMBEDDING_2_FORMAT:"document/text-surrogate/float32",c.dimension().toString(),c.operator(),c.normalization(),modality,
             modality.equals("note")?"markdown-weighted-600-900-overlap80-title-fallback-v3":"markdown-weighted-600-900-overlap80-v2", modality.equals("note")?"media-typed-bounded-v1":
-                modality.equals("audio")?"audio-speech-acoustic-surrogate-v3":
-                modality.equals("video")?"video-visual-high-2fps-surrogate-v4":
+                modality.equals("audio")?"audio-layered-listening-low-language-surrogate-v5":
+                modality.equals("video")?"video-segments-only-audio1fps-low-millis-surrogate-v14":
                 modality.equals("pdf")&&c.pdfPageChildren()?"pdf-page-rgb144-cap2048-v1":"media-scoped-coverage-surrogate-v2",c.configurationId(),c.region(),c.tier(),
             p.policyId().toString(),Long.toString(p.version()),p.fingerprint());
         if(modality.equals("pdf")&&c.pdfPageChildren())normalized+="\n"+c.pdfTransformFingerprint();
-        if(modality.equals("video")&&c.videoChildren())normalized+="\nvideo-avc-baseline-preserve-ticks-v1\n"+c.videoTransformFingerprint();
+        if(modality.equals("video")&&c.videoChildren())normalized+="\nvideo-scenes-pcm16k-preserve-time-v2\n"+c.videoTransformFingerprint();
+        if(modality.equals("video")&&c.videoSoundtrackModel()!=null)normalized+="\nvideo-soundtrack-model="+c.soundtrackModel();
+        // Persisted vectors stay textual surrogates. Native audio vectors are
+        // request-local ranking signals; this version also invalidates old answers.
+        if(modality.equals("audio")&&c.directAudioSearch())normalized+="\ndirect-audio-query/native-wav180-inline/verify-ms-low-v1";
         try { return new EmbeddingLineage(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
             .digest(normalized.getBytes(StandardCharsets.UTF_8))),normalized,modality,c.dimension(),c.operator(),p.policyId(),c.normalization()); }
         catch(java.security.NoSuchAlgorithmException impossible) { throw new IllegalStateException("SHA-256 unavailable"); }

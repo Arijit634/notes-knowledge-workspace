@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react'
 
 const paths = {
+  appearance: 'M12 3a9 9 0 1 0 0 18V3 M12 3a9 9 0 0 1 0 18',
   notes: 'M6 3h9l4 4v14H6z M14 3v5h5 M9 12h7 M9 16h6',
   ask: 'M4 4h16v12H9l-5 4z M8 8h8 M8 12h5',
   sparkle: 'M12 3l2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5z M20 3v4 M18 5h4',

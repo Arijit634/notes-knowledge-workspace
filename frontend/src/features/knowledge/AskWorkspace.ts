@@ -3,8 +3,8 @@ import type { AuthRuntime } from '../auth/AuthRuntime'
 import { knowledgeApi, type KnowledgeResult, type Operation, type SearchHistory } from './KnowledgeApi'
 import { featureError } from '../../app/ui/featureError'
 
-type Snapshot = { period: DateFilter; submittedDuring: SavedDuring | null; input: string; result: KnowledgeResult | null; operation: Operation | null; historyId: string | null; busy: boolean; error: string; serial: number }
-const empty = (): Snapshot => ({ period: anyDate(), submittedDuring: null, input: '', result: null, operation: null, historyId: null, busy: false, error: '', serial: 0 })
+type Snapshot = { period: DateFilter; submittedDuring: SavedDuring | null; requestStartedAt: number | null; input: string; result: KnowledgeResult | null; operation: Operation | null; historyId: string | null; busy: boolean; error: string; serial: number }
+const empty = (): Snapshot => ({ period: anyDate(), submittedDuring: null, requestStartedAt: null, input: '', result: null, operation: null, historyId: null, busy: false, error: '', serial: 0 })
 
 /** One private, memory-only workflow. Route navigation is not cancellation. */
 export class AskWorkspace {
@@ -37,7 +37,7 @@ export class AskWorkspace {
     try { period = savedPeriod(this.value.period) } catch (e) { this.update({ error: e instanceof Error ? e.message : 'Choose valid dates.' }); return }
     const scope = this.auth.session.viewerScope, controller = new AbortController()
     this.controller = controller
-    this.update({ busy: true, error: '', historyId: null, submittedDuring: period, result: null, operation: null, serial: this.value.serial + 1 })
+    this.update({ busy: true, requestStartedAt: Date.now(), error: '', historyId: null, submittedDuring: period, result: null, operation: null, serial: this.value.serial + 1 })
     const current = () => this.controller === controller && !controller.signal.aborted && this.auth.session.viewerScope === scope
     try {
       const response = await knowledgeApi.query(this.auth, this.value.input.trim(), controller.signal, period)

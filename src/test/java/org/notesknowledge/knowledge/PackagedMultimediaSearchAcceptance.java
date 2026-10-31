@@ -419,9 +419,18 @@ public final class PackagedMultimediaSearchAcceptance {
                         if(inline!=null){byte[] bytes=Base64.getDecoder().decode(inline.get("inlineData").get("data").asText());
                             if(Objects.equals(blockDigest,TransformedMediaIdentity.digest(bytes))){blockEntered.countDown();require(blockRelease.await(8,java.util.concurrent.TimeUnit.SECONDS),"controlled_media_block_deadline");}
                             if(failOnce.remove(TransformedMediaIdentity.digest(bytes))){Arrays.fill(bytes,(byte)0);transientFailures.incrementAndGet();exchange.sendResponseHeaders(503,-1);return;}
-                            var scope=java.util.regex.Pattern.compile("ONLY original PDF page ([0-9]+)").matcher(parts.get(0).get("text").asText());int page=scope.find()?Integer.parseInt(scope.group(1)):0;
+                            var scope=java.util.regex.Pattern.compile("ONLY original PDF page ([0-9]+)").matcher(parts.valueStream().filter(p->p.has("text")).findFirst().orElseThrow().get("text").asText());int page=scope.find()?Integer.parseInt(scope.group(1)):0;
                             var segments=media.get(TransformedMediaIdentity.digest(bytes)+"/"+page);Arrays.fill(bytes,(byte)0);require(segments!=null,"unknown_media_bytes");
-                            var pages=segments.stream().map(DerivedSegment::page).filter(Objects::nonNull).distinct().toList();boolean noSpeech=segments.stream().allMatch(s->s.heading().equals("Acoustic description"));structured=Map.of("complete",true,"checkedPages",pages,"noSpeech",noSpeech,"segments",segments);
+                            var pages=segments.stream().map(DerivedSegment::page).filter(Objects::nonNull).distinct().toList();boolean noSpeech=segments.stream().allMatch(s->s.heading().equals("Acoustic description"));
+                            Object wireSegments=segments;
+                            if(inline.get("inlineData").get("mimeType").asText().equals("video/mp4")) {
+                                wireSegments=segments.stream().map(s->Map.of("text",s.text(),"kind",s.kind(),"heading",s.heading(),
+                                    "startMs",java.math.BigDecimal.valueOf(s.timeStart()).movePointRight(3).setScale(0,java.math.RoundingMode.FLOOR).longValueExact(),
+                                    "endMs",java.math.BigDecimal.valueOf(s.timeEnd()).movePointRight(3).setScale(0,java.math.RoundingMode.FLOOR).longValueExact())).toList();
+                                noSpeech=false;
+                            }
+                            structured=inline.get("inlineData").get("mimeType").asText().equals("video/mp4")?Map.of("complete",true,"segments",wireSegments)
+                                :Map.of("complete",true,"checkedPages",pages,"noSpeech",noSpeech,"segments",wireSegments);
                         }else{
                             if(generationMode.equals("outage")){exchange.sendResponseHeaders(503,-1);return;}
                             String text=parts.get(0).get("text").asText();var task=JSON.readTree(text.substring(text.indexOf('{')));String query=task.get("query").asText();var claims=new ArrayList<Object>();

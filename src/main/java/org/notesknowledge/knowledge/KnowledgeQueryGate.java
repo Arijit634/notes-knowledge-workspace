@@ -10,6 +10,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 class KnowledgeQueryGate {
+    static final String VIDEO_QUERY_RECIPE=TransformedMediaIdentity.digest("direct-mp4-soundtrack-query/inline30-audio1fps-low/retrieved3-verify-ms-v2".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    static String videoQueryHistoryBinding(String indexLineage){return TransformedMediaIdentity.digest((indexLineage+"\n"+VIDEO_QUERY_RECIPE).getBytes(java.nio.charset.StandardCharsets.UTF_8));}
     private final ProcessingPolicyService policies;
     private final AiDerivationProperties configuration;
     private final ProviderDispatchPolicy dispatch;
@@ -24,6 +26,11 @@ class KnowledgeQueryGate {
         private final Instant expires=Instant.now().plusSeconds(15);
         private QueryPermit(UUID owner,ProcessingPolicyService.AcknowledgedProcessingPolicy policy,String query){this.owner=owner;this.policy=policy;this.normalizedQuery=query;}
         EmbeddingLineage lineage(String modality){return EmbeddingLineage.create(configuration,policy,modality);}
+        boolean matchesStoredLineage(String key,String value){
+            if(key==null||value==null||!java.util.Set.of("note","image","audio","video","pdf").contains(key))return false;
+            String current=lineage(key).id();
+            return current.equals(value)||key.equals("video")&&configuration.directVideoSoundtrackSearch()&&videoQueryHistoryBinding(current).equals(value);
+        }
         void requireDispatch(){
             if(Instant.now().isAfter(expires)||org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()||!configuration.configured())throw new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE);
         }
@@ -41,6 +48,8 @@ class KnowledgeQueryGate {
         void requireDispatch(){query.requireDispatch();handle.requireDispatchScopes(query.owner,evidence.stream().map(e->e.expected().noteId()).distinct().toList());
             if(evidence.stream().anyMatch(e->!dispatch.permits(configuration,e.expected(),e.modality())))throw new DerivationFailure(KnowledgeWork.Failure.POLICY_BLOCKED);}
         void requireGoogle(String value){query.requireGoogle(value);requireDispatch();if(!googleApproved||evidence.stream().anyMatch(e->!dispatch.permitsUnpaidGemini(configuration,e.expected())))throw new DerivationFailure(KnowledgeWork.Failure.POLICY_BLOCKED);}
+        void requireGoogleAudio(String value){requireGoogle(value);if(evidence.size()!=1||!"audio".equals(evidence.getFirst().modality())||evidence.getFirst().expected().attachmentId()==null)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);}
+        void requireGoogleVideo(String value){requireGoogle(value);if(evidence.size()!=1||!"video".equals(evidence.getFirst().modality())||evidence.getFirst().expected().attachmentId()==null)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);}
         @Override public String toString(){return "QueryEvidencePermit[REDACTED]";}
     }
     @Transactional(timeout=3)

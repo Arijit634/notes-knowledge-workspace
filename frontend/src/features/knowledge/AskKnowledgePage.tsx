@@ -10,6 +10,7 @@ import { ApiProblemError } from '../../app/api/ProblemDetailsDecoder'
 import { ConfirmDialog } from '../../app/ui/ConfirmDialog'
 import { periodLabel, savedPeriod, type DateFilter } from './SearchPeriod'
 import { processingPolicyApi } from './ProcessingPolicyApi'
+import { elapsedLabel, PendingSearch, SearchSpinner } from './SearchActivity'
 
 export function CitationList({ citations }: { citations: readonly DeterministicOccurrence[] }) {
   return <ol className="studio-citations">{citations.map((c, index) => <li key={`${c.noteId}:${c.attachmentId}:${index}`}>
@@ -28,11 +29,11 @@ export function KnowledgeResults({ result }: { result: KnowledgeResult }) {
       {result.aiAnswer.claims.map((claim, index) => <p key={index}>{claim}</p>)}
       <h3>Evidence</h3><CitationList citations={result.citations} /></section>}
     <section className="studio-result" aria-label="Deterministic results"><h2>Saved matches</h2>
-      {result.deterministicResults.length === 0 ? <p>No deterministic matches in this result.</p> : result.deterministicResults.map((item, index) =>
+      {result.deterministicResults.length === 0 ? <p>No saved matches.</p> : result.deterministicResults.map((item, index) =>
         <div key={index} className="studio-evidence"><strong>{item.kind.replaceAll('_', ' ')}</strong><p>{item.value}</p>
           {!item.aiEnabled && <span className="notes-pill">AI OFF · deterministic only</span>}<CitationList citations={item.occurrences} /></div>)}</section>
     <section className="studio-coverage" aria-label="Coverage"><h2>Coverage</h2><p>{c.inspectedSources} source{c.inspectedSources === 1 ? '' : 's'} inspected · {c.boundary === 'acceptedAiSources' ? 'AI-eligible sources' : c.boundary === 'acceptedNoteAndPdfText' ? 'Saved Note and PDF text' : 'Bounded retrieval'}</p>
-      <p>{c.completed && !c.truncated && !c.corpusChanged ? 'Completed within the reported search boundary.' : 'Partial coverage — this is not a claim to have searched every source.'}</p>
+      <p>{c.completed && !c.truncated && !c.corpusChanged ? 'Search complete within this scope.' : 'Some sources weren’t checked.'}</p>
       {c.corpusChanged && <p>Saved content changed during this request.</p>}{c.truncated && <p>A processing limit was reached.</p>}
       {c.retryRequired && <p>Submit a new request to search the current saved state.</p>}{c.classificationUncertain && <p>Semantic classification may be uncertain. Check the sources.</p>}</section>
   </section>
@@ -64,11 +65,12 @@ function OperationProgress({ auth, initial, serial }: { auth: AuthRuntime; initi
   }
   const value = query.data ?? initial, running = activeOperation(value) && !cancelled
   const elapsed = Math.max(0, now - Date.parse(value.submittedAt)), checked = value.inspectedSources ?? 0, total = value.totalSources
-  const remaining = total && checked > 0 && elapsed > 30000 ? elapsed / checked * Math.max(0, total - checked) : null
+  const finishing = value.status === 'running' && total != null && total > 0 && checked >= total
+  const remaining = value.status === 'running' && total && checked > 0 && checked < total && elapsed > 30000 ? elapsed / checked * (total - checked) : null
   const expired = operationInterval(value, now, false) === false && running
-  return <section className="studio-result" aria-label="Knowledge operation"><h2>Request status</h2><p role="status">{cancelled ? 'Request cancelled.' : expired ? 'This request has expired.' : value.status === 'completed' ? 'Request completed.' : value.status === 'obsolete' ? 'This request is no longer current. Submit again if needed.' : value.status === 'failed' ? 'The request could not finish.' : value.status === 'cancelled' ? 'Request cancelled.' : value.status === 'queued' ? 'Queued' : value.status === 'retry_wait' ? 'Waiting for provider availability' : 'Processing your notes…'}</p>
+  return <section className="studio-result" aria-label="Knowledge operation"><h2>Request status</h2><p role="status" className="search-running-label">{running && !expired && <SearchSpinner />}{cancelled ? 'Request cancelled.' : expired ? 'This request has expired.' : value.status === 'completed' ? 'Request completed.' : value.status === 'obsolete' ? 'This request is no longer current. Submit again if needed.' : value.status === 'failed' ? 'The request could not finish.' : value.status === 'cancelled' ? 'Request cancelled.' : value.status === 'queued' ? 'Queued' : value.status === 'retry_wait' ? 'Waiting for provider availability' : finishing ? 'Sources checked. Finishing results…' : 'Processing your notes…'}</p>
     <p role="status">{checked}{total != null ? ` of ${total}` : ''} sources checked</p>
-    {running && !expired && <><p>{Math.floor(elapsed / 60000)}m elapsed · {remaining == null ? 'Estimating remaining time…' : `Roughly ${Math.max(1, Math.floor(remaining / 90000))}–${Math.max(2, Math.ceil(remaining / 40000))}m remaining`}</p>{total != null && total > 0 && <progress aria-label="Sources checked" max={total} value={Math.min(total, checked)} />}<p className="notes-help">Provider waits and long notes can change this estimate. You can leave this page; the request stays in History.</p></>}
+    {running && !expired && <><p>{elapsedLabel(elapsed)} elapsed{remaining != null && ` · Roughly ${Math.max(1, Math.floor(remaining / 90000))}–${Math.max(2, Math.ceil(remaining / 40000))}m remaining`}</p>{total != null && total > 0 && <progress aria-label="Sources checked" max={total} value={Math.min(total, checked)} />}<p className="notes-help">{finishing ? 'Source review is complete; the answer is still processing.' : 'The answer may take longer after source review.'} You can leave this page and return to History.</p></>}
     {query.dataUpdatedAt > 0 && <p className="notes-help" role="status">{query.isFetching ? 'Checking status…' : `Last checked ${new Date(query.dataUpdatedAt).toLocaleTimeString()}`}</p>}{!visible && <p>Status checks pause while this tab is hidden or offline.</p>}
     {query.isError && <p role="alert">{featureError(query.error)}{!(query.error instanceof ApiProblemError && query.error.problem.status === 404) && ' Status checks will retry; your question will not be resubmitted.'}</p>}{error && <p role="alert">{error}</p>}
     {running && !expired && <div className="actions"><button className="button-secondary" disabled={cancelBusy || query.isFetching} onClick={() => void query.refetch()}>{query.isFetching ? 'Checking…' : 'Check status'}</button><button className="button-secondary" disabled={cancelBusy} onClick={() => void cancel()}>Cancel request</button></div>}
@@ -113,7 +115,8 @@ export function AskKnowledgePage({ auth }: { auth: AuthRuntime }) {
           <label htmlFor="search-to">Through</label><input id="search-to" type="date" required disabled={busy} value={state.period.to} aria-describedby="search-date-help" onChange={e => auth.ask.period({ ...state.period, to: e.target.value })} /></>}
       </div>{state.period.preset !== 'any' && <p id="search-date-help" className="notes-help">Note creation or file upload date · your local timezone · both selected days included</p>}
       {dateError && <p role="status">{dateError}</p>}
-      <div className="actions"><button disabled={!input.trim() || busy || !!dateError}>{busy ? 'Submitting…' : 'Ask your knowledge'}</button><button className="button-secondary" type="button" disabled={busy} onClick={() => auth.ask.clear()}>New search</button></div></form>
+      <div className="actions"><button aria-busy={busy} disabled={!input.trim() || busy || !!dateError}>{busy ? <><SearchSpinner />Searching…</> : 'Ask your knowledge'}</button><button className="button-secondary" type="button" disabled={busy} onClick={() => auth.ask.clear()}>New search</button></div></form>
+    {busy && state.requestStartedAt != null && <PendingSearch startedAt={state.requestStartedAt} />}
     {error && <p role="alert" className="alert">{error}</p>}
     {(operation || result) && <p aria-label="Search date boundary">Saved during: {periodLabel(state.submittedDuring)}</p>}
     {operation && <OperationProgress key={serial} auth={auth} initial={operation} serial={serial} />}

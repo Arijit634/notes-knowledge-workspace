@@ -6,6 +6,12 @@ import org.junit.jupiter.api.*;
 
 @Tag("FAST") @Tag("SECURITY") @Tag("EVALUATION")
 class MediaQualityQualificationCommandTest {
+    @Test void anApprovedLegacyPlanCannotAuthorizeTheNewMediaProtocol() {
+        var old=new MediaQualityQualificationCommand.Plan(null,null,null,List.of(),List.of(),List.of(),null);
+        assertThatThrownBy(()->MediaQualityQualificationCommand.requireCurrentPlan(old)).isInstanceOf(IllegalStateException.class);
+        var changed=new MediaQualityQualificationCommand.Plan(null,null,null,List.of(),List.of(),List.of(),"unrecognized");
+        assertThatThrownBy(()->MediaQualityQualificationCommand.requireCurrentPlan(changed)).isInstanceOf(IllegalStateException.class);
+    }
     @Test void claimSelectionRequiresTheExactSourceKindAndApprovedLineage() {
         var source=new org.notesknowledge.knowledge.spi.PrivateAiSourceCurrentness.Expected(new UUID(0,1),new UUID(0,2),new UUID(0,3),1,1,1L);
         var other=new org.notesknowledge.knowledge.spi.PrivateAiSourceCurrentness.Expected(new UUID(0,4),new UUID(0,2),new UUID(0,3),1,1,1L);
