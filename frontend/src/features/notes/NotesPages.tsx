@@ -18,6 +18,7 @@ import { notesApi, type NoteCore, type NoteOrganizationCommand, type NoteVersion
 import { noteKeys, notePreferenceKeys } from './NotesKeys'
 import { usePrivateScope } from '../../app/security/usePrivateScope'
 import { Icon } from '../../app/ui/Icon'
+import { restoreFocus } from '../../app/ui/ConfirmDialog'
 import { NoteNavigator } from './NoteNavigator'
 import { NewNotePage } from './NewNotePage'
 const MarkdownEditorAdapter = lazy(() => import('./MarkdownEditorAdapter').then(module => ({ default: module.MarkdownEditorAdapter })))
@@ -155,7 +156,13 @@ function SavedNoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; cr
   })
   useEffect(() => {
     if (blocker.state === 'blocked') leaveCancel.current?.focus()
-    else if (leaveInvoker.current) { leaveInvoker.current.focus(); leaveInvoker.current = null }
+    else if (leaveInvoker.current) {
+      const previous = leaveInvoker.current
+      leaveInvoker.current = null
+      // The persistent frame removes navigation inertness in its own render.
+      const frame = requestAnimationFrame(() => restoreFocus(previous))
+      return () => cancelAnimationFrame(frame)
+    }
   }, [blocker.state])
   useEffect(() => { if (busy) dialogRoot.current?.focus({ preventScroll: true }) }, [busy])
   useEffect(() => {

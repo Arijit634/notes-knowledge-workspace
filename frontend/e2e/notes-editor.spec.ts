@@ -15,7 +15,10 @@ for (const width of [1920, 1280, 834, 390, 320]) test(`new Note uses the referen
     expect(control!.width).toBeGreaterThanOrEqual(16)
     const shell = await page.locator('.notes-shell').boundingBox()
     expect(shell!.x).toBe(0)
-    expect(shell!.width).toBe(width)
+    const contentWidth = await page.locator('body').evaluate(body => body.getBoundingClientRect().width)
+    expect(contentWidth).toBeGreaterThanOrEqual(width - 20)
+    expect(contentWidth).toBeLessThanOrEqual(width)
+    expect(shell!.width).toBe(contentWidth)
     await expect(page.getByRole('button', { name: 'Create note', exact: true })).toBeInViewport()
     await expect(page.getByLabel('Title', { exact: true })).toHaveAttribute('placeholder', 'Untitled note')
     await noPageOverflow(page)
@@ -48,9 +51,9 @@ test('the 320px writing surface accommodates a reserved browser scrollbar', asyn
   await page.setViewportSize({ width: 320, height: 900 })
   await page.goto('/notes/new')
   await expect(page.getByRole('textbox', { name: 'Note body', exact: true })).toBeVisible()
-  // Headless Chromium uses overlay scrollbars. Model the exact 305px content
-  // width observed in headed Windows Chrome with its 15px classic scrollbar.
-  await page.addStyleTag({ content: 'body { width: calc(100% - 15px); }' })
+  // Model a 305px writing surface without subtracting a second gutter when
+  // the browser already reserves its classic 15px scrollbar.
+  await page.addStyleTag({ content: 'body { width: 305px; }' })
   expect((await page.locator('body').boundingBox())!.width).toBe(305)
   expect((await page.locator('.notes-shell').boundingBox())!.width).toBe(305)
   await noPageOverflow(page)
