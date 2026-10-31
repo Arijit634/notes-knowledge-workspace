@@ -21,7 +21,9 @@ record TransformedMediaIdentity(PrivateAiSourceCurrentness.Expected original, St
             boolean video="video_samples".equals(kind) && first>=0 && last>first && last<=18_000
                 && timescale>0 && timescale<=0xffff_ffffL && startTick>=0 && endTick>startTick
                 && endTick<=300L*timescale;
-            if(!pdf&&!video)invalid();
+            boolean soundtrack="video_audio".equals(kind)&&first==0&&last>0&&last<=4_800_000
+                &&timescale==16000&&startTick==0&&endTick==last;
+            if(!pdf&&!video&&!soundtrack)invalid();
         }
         @Override public String toString(){return "TransformedMediaScope[REDACTED]";}
     }
@@ -35,7 +37,9 @@ record TransformedMediaIdentity(PrivateAiSourceCurrentness.Expected original, St
         boolean pdf="application/pdf".equals(originalType)&&"pdf_pages".equals(scope.kind())
             &&("application/pdf".equals(childType)||"image/png".equals(childType));
         boolean video="video/mp4".equals(originalType)&&"video_samples".equals(scope.kind())&&"video/mp4".equals(childType);
-        if(!pdf&&!video)invalid();
+        boolean soundtrack="video/mp4".equals(originalType)&&"video_audio".equals(scope.kind())&&"audio/wav".equals(childType)
+            &&org.notesknowledge.knowledge.spi.PrivateDerivationSource.VideoAudioChild.PROFILE.equals(profile)&&childBytes==44+2*scope.last();
+        if(!pdf&&!video&&!soundtrack)invalid();
     }
     static String digest(byte[] bytes) {
         if(bytes==null)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);

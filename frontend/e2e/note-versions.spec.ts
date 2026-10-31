@@ -17,6 +17,7 @@ async function backend(page: Page, stale: boolean) {
     let status = 200, response: unknown = {}, headers: Record<string, string> = { 'Content-Type': 'application/json' }
     if (method !== 'GET') mutations.push(method + ' ' + path)
     if (path === '/api/auth/session') response = { state: 'authenticated' }
+    else if (path === '/api/me/profile') response = { displayName: 'Synthetic writer', biography: '', handle: null, avatar: null, updatedAt: null }
     else if (path === '/api/auth/csrf') response = { csrfToken: 'synthetic-csrf' }
     else if (path === `/api/notes/${id}/attachments`) response = { items: [], nextCursor: null }
     else if (path === `/api/notes/${id}/versions`) response = { items: [checkpoint], nextCursor: null }

@@ -30,11 +30,42 @@ public interface PrivateDerivationSource {
         /** Qualified isolated processing only. Metadata/child values grant no dispatch authority. */
         default VideoPlan videoPlan(byte[] original) {throw unavailableVideo();}
         default VideoChild videoChild(byte[] original,VideoPlan plan,int first,int last) {throw unavailableVideo();}
+        default VideoAudioPlan videoAudioPlan(byte[] original) {throw unavailableVideo();}
+        default VideoAudioChild videoAudioChild(byte[] original,VideoAudioPlan plan) {throw unavailableVideo();}
         private static org.notesknowledge.websupport.ApiFailureException unavailableVideo() {
             return org.notesknowledge.websupport.ApiFailureException.of(org.notesknowledge.websupport.ApiFailureException.Kind.SERVICE_UNAVAILABLE);
         }
         /** One-shot bounded private stream, opened/consumed/closed outside database transactions. */
         InputStream open();
+    }
+    record VideoAudioPlan(long timescale,long ticks,boolean hasAudio) {
+        public VideoAudioPlan {
+            if(timescale<1||timescale>1_000_000||ticks<1||ticks>300*timescale||hasAudio&&ticks*16000/timescale<1)
+                throw new IllegalArgumentException("Invalid video audio plan");
+        }
+        public long samples(){return ticks*16000/timescale;}
+        public double durationSeconds(){return (double)ticks/timescale;}
+        @Override public String toString(){return "VideoAudioPlan[private timing omitted]";}
+    }
+    record VideoAudioChild(VideoAudioPlan plan,byte[] bytes,String profile,String implementationVersion,
+            String artifactSha256,String configurationSha256) implements AutoCloseable {
+        public static final String PROFILE="video-scenes-pcm16k-preserve-time-v2";
+        public VideoAudioChild {
+            if(plan==null||!plan.hasAudio()||bytes==null||bytes.length!=44+2*plan.samples()||bytes.length>9_600_044
+                    ||!PROFILE.equals(profile)||implementationVersion==null||!implementationVersion.matches("[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}")
+                    ||artifactSha256==null||!artifactSha256.matches("[0-9a-f]{64}")
+                    ||configurationSha256==null||!configurationSha256.matches("[0-9a-f]{64}"))throw new IllegalArgumentException("Invalid video audio child");
+            var h=java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            if(h.getInt(0)!=0x46464952||h.getInt(4)!=bytes.length-8||h.getInt(8)!=0x45564157||h.getInt(12)!=0x20746d66
+                    ||h.getInt(16)!=16||h.getShort(20)!=1||h.getShort(22)!=1||h.getInt(24)!=16000||h.getInt(28)!=32000
+                    ||h.getShort(32)!=2||h.getShort(34)!=16||h.getInt(36)!=0x61746164||h.getInt(40)!=bytes.length-44)
+                throw new IllegalArgumentException("Invalid video audio child");
+            bytes=bytes.clone();
+        }
+        @Override public byte[] bytes(){return bytes.clone();}
+        public String transformFingerprint(){return PdfChild.transformFingerprint(profile,implementationVersion,artifactSha256,configurationSha256);}
+        @Override public void close(){java.util.Arrays.fill(bytes,(byte)0);}
+        @Override public String toString(){return "VideoAudioChild[private media omitted]";}
     }
     record VideoPlan(long timescale,List<Long> durations) {
         public VideoPlan {
@@ -62,7 +93,7 @@ public interface PrivateDerivationSource {
             String artifactSha256,String configurationSha256) implements AutoCloseable {
         public VideoChild {
             if(plan==null||first<0||last<=first||last>plan.durations().size()||plan.tick(last)-plan.tick(first)>30*plan.timescale()
-                    ||bytes==null||bytes.length<8||bytes.length>4_194_304||!"video-avc-baseline-preserve-ticks-v1".equals(profile)
+                    ||bytes==null||bytes.length<8||bytes.length>4_194_304||!("video-avc-baseline-preserve-ticks-v1".equals(profile)||VideoAudioChild.PROFILE.equals(profile))
                     ||implementationVersion==null||!implementationVersion.matches("[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}")
                     ||artifactSha256==null||!artifactSha256.matches("[0-9a-f]{64}")
                     ||configurationSha256==null||!configurationSha256.matches("[0-9a-f]{64}"))throw new IllegalArgumentException("Invalid video child");

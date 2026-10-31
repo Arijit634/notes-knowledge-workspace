@@ -124,6 +124,16 @@ class AttachmentUploadIntegrationTest {
         assertThat(content.getResponse().getHeader("ETag")).isEqualTo(response.getResponse().getHeader("ETag"));
     }
 
+    @Test void commonIsomVideoUsesTheSameAuthorizedUploadAndContentBoundary() throws Exception {
+        UUID owner=account(),note=note(owner);Browser browser=browser(owner,"ROLE_USER");
+        byte[] bytes=getClass().getResourceAsStream("/attachments/synthetic-common-avc.mp4").readAllBytes();
+        var accepted=upload(browser,note,new MockMultipartFile("file","synthetic-common.mp4","video/mp4",bytes)).andExpect(status().isCreated()).andReturn().getResponse();
+        var body=json.readTree(accepted.getContentAsString());String contentPath=path(note)+"/"+body.get("id").asText()+"/content";
+        assertThat(body.get("mediaKind").asText()).isEqualTo("video");assertThat(body.get("width").asInt()).isEqualTo(128);
+        assertThat(mvc.perform(get(contentPath).cookie(browser.cookie())).andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray()).isEqualTo(bytes);
+        mvc.perform(get(contentPath).cookie(browser(account(),"ROLE_USER").cookie())).andExpect(status().isNotFound());
+        assertThat(jdbc.queryForObject("select revision from notes.note where note_id=?",Long.class,note)).isEqualTo(1);assertThat(store.sawTransaction).isFalse();
+    }
     @Test void authorityAndCsrfFailBeforeStaging() throws Exception {
         UUID owner = account(), note = note(owner); Browser browser = browser(owner, "ROLE_USER"), anonymous = csrf(null);
         upload(anonymous, note, media("image")).andExpect(status().isUnauthorized());
@@ -323,7 +333,7 @@ class AttachmentUploadIntegrationTest {
                     to_jsonb(a) || jsonb_build_object('attachment_id',uuidv7()))).* from notes.attachment a where attachment_id=?
                 """, id)).isInstanceOf(DataIntegrityViolationException.class);
         assertThat(jdbc.queryForList("select confdeltype::text from pg_constraint where conrelid='notes.attachment'::regclass and contype='f'", String.class)).containsExactly("r");
-        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname in ('identity','profile','notes','knowledge','publishing','discovery','moderation')", Integer.class)).isEqualTo(38);
+        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname in ('identity','profile','notes','knowledge','publishing','discovery','moderation')", Integer.class)).isEqualTo(39);
         assertThat(jdbc.queryForObject("show server_version_num", Integer.class)).isGreaterThanOrEqualTo(180000);
         jdbc.execute("create role attachment_runtime login password 'synthetic-attachment-runtime-password'");
         jdbc.execute("grant usage on schema notes to attachment_runtime");

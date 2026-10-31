@@ -19,7 +19,30 @@ class MediaQualityQualificationHarnessTest {
     private final MediaQualityQualificationHarness.Consent consent=new MediaQualityQualificationHarness.Consent(true,true,4,16_000_000,32768,15);
     private final Expected expected=new Expected(UUID.fromString("01990111-1111-7111-8111-111111111111"),
         UUID.fromString("01990222-2222-7222-8222-222222222222"),UUID.fromString("01990333-3333-7333-8333-333333333333"),1,1,1L);
+    @Test void distinctVideoPassesAreChargedSeparatelyAndNeitherCanBeReplayed()throws Exception {
+        var p=permit();var bytes=fixture("video");
+        var visual=new MediaUnderstandingRequest("video/mp4",null,null,2.,false);
+        var listening=new MediaUnderstandingRequest("video/mp4",null,null,2.,true,true);
+        when(delegate.describe(p,bytes,visual)).thenReturn(List.of());when(delegate.describe(p,bytes,listening)).thenReturn(List.of());
+        try(var recorder=open(consent)) {
+            recorder.describe(p,bytes,visual);clock.advance();recorder.describe(p,bytes,listening);clock.advance();
+            assertThat(recorder.ledger().stream().filter(e->e.state().equals("reserved")).count()).isEqualTo(2);
+            assertThatThrownBy(()->recorder.describe(p,bytes,visual)).isInstanceOf(IllegalStateException.class);
+            assertThatThrownBy(()->recorder.describe(p,bytes,listening)).isInstanceOf(IllegalStateException.class);
+        }
+        verify(delegate,times(1)).describe(p,bytes,visual);verify(delegate,times(1)).describe(p,bytes,listening);
+    }
 
+    @Test void failureJournalContainsOnlyBoundedTransportDiagnosticsAndNoExceptionMaterial() throws Exception {
+        var permit=permit();var image=fixture("image");var request=imageRequest();
+        var diagnostic=ProviderFailureDiagnostic.capture(ProviderFailureDiagnostic.Stage.MEDIA,new IllegalStateException("SYNTHETIC_PRIVATE_RESPONSE",new java.net.SocketTimeoutException("SYNTHETIC_PRIVATE_ADDRESS")),System.nanoTime());
+        when(delegate.describe(permit,image,request)).thenThrow(new DerivationFailure(KnowledgeWork.Failure.TRANSIENT_DEPENDENCY,diagnostic));
+        try(var recorder=open(consent)) {
+            assertThatThrownBy(()->recorder.describe(permit,image,request)).isInstanceOf(DerivationFailure.class);
+            assertThat(recorder.ledger().getLast().checks()).containsEntry("kind","SOCKET_TIMEOUT").containsEntry("providerReached","UNKNOWN");
+        }
+        assertThat(Files.readString(temporary.resolve("000002.json"))).doesNotContain("SYNTHETIC_PRIVATE_RESPONSE","SYNTHETIC_PRIVATE_ADDRESS");
+    }
     @Test void defaultOrUnpaidUnconfirmedConsentCreatesNothingAndNeverCallsProvider() {
         for(var invalid:List.of(new MediaQualityQualificationHarness.Consent(false,true,4,16_000_000,32768,15),
                 new MediaQualityQualificationHarness.Consent(true,false,4,16_000_000,32768,15),

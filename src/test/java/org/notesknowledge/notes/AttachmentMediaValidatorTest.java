@@ -47,6 +47,35 @@ class AttachmentMediaValidatorTest {
             invalid(() -> validator.validate(pdf(1, true), "synthetic.pdf", "application/pdf"));
         }
     }
+    @Test void ordinaryDocumentAndPageXmpDoNotBecomeEmbeddedFileRejections()throws Exception {
+        Path input=directory.resolve("synthetic-xmp.pdf");
+        try(var document=new PDDocument()){
+            var page=new PDPage();document.addPage(page);
+            byte[] xml="<?xpacket begin=''?><x:xmpmeta xmlns:x='adobe:ns:meta/'><rdf:RDF xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#'/></x:xmpmeta><?xpacket end='w'?>".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            var metadata=new org.apache.pdfbox.pdmodel.common.PDMetadata(document);metadata.importXMPMetadata(xml);document.getDocumentCatalog().setMetadata(metadata);
+            var pageMetadata=new org.apache.pdfbox.pdmodel.common.PDMetadata(document);pageMetadata.importXMPMetadata(xml);page.setMetadata(pageMetadata);document.save(input.toFile());
+        }
+        byte[] before=Files.readAllBytes(input);
+        try(var validator=new AttachmentMediaValidator()){assertThat(validator.validate(input,"synthetic.pdf","application/pdf").pageCount()).isEqualTo(1);}
+        assertThat(Files.readAllBytes(input)).isEqualTo(before);
+    }
+    @Test void realEmbeddedFilesAndActionsRemainRejectedEvenWithXmpMetadata()throws Exception {
+        for(boolean attachment:java.util.List.of(true,false)){
+            Path input=directory.resolve(attachment?"embedded.pdf":"action.pdf");
+            try(var document=new PDDocument()){
+                document.addPage(new PDPage());var metadata=new org.apache.pdfbox.pdmodel.common.PDMetadata(document);
+                metadata.importXMPMetadata("<x:xmpmeta xmlns:x='adobe:ns:meta/'/>".getBytes(java.nio.charset.StandardCharsets.UTF_8));document.getDocumentCatalog().setMetadata(metadata);
+                if(attachment){
+                    var spec=new org.apache.pdfbox.pdmodel.common.filespecification.PDComplexFileSpecification();spec.setFile("synthetic.txt");
+                    spec.setEmbeddedFile(new org.apache.pdfbox.pdmodel.common.filespecification.PDEmbeddedFile(document,new java.io.ByteArrayInputStream(new byte[]{1,2,3})));
+                    var tree=new org.apache.pdfbox.pdmodel.PDEmbeddedFilesNameTreeNode();tree.setNames(java.util.Map.of("synthetic.txt",spec));
+                    var names=new org.apache.pdfbox.pdmodel.PDDocumentNameDictionary(document.getDocumentCatalog());names.setEmbeddedFiles(tree);document.getDocumentCatalog().setNames(names);
+                }else{var action=new PDActionLaunch();action.setF("synthetic-never-executed.exe");document.getDocumentCatalog().setOpenAction(action);}
+                document.save(input.toFile());
+            }
+            try(var validator=new AttachmentMediaValidator()){invalid(()->validator.validate(input,"synthetic.pdf","application/pdf"));}
+        }
+    }
 
     @Test void wavContainerTimingAndExactEofAreMandatory() throws Exception {
         try (var validator = new AttachmentMediaValidator()) {

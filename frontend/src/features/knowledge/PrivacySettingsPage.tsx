@@ -46,20 +46,20 @@ export function PrivacySettingsPage({ auth }: { auth: AuthRuntime }) {
     } finally { if (current()) setBusy(false) }
   }
   return <NotesWorkspace auth={auth} modalOpen={confirmation !== null}><div className="settings-card" inert={confirmation !== null}>
-    <h1>AI &amp; Privacy</h1><p>Your notes, your choice. Ordinary writing and search work with AI off.</p>
-    <section className="studio-setting"><h2>Default AI access for new notes</h2><p>This only initializes the choice when creating a note. Existing notes keep their own AI state.</p>
+    <h1>AI &amp; Privacy</h1><p>Writing and ordinary search work with AI off.</p>
+    <section className="studio-setting"><h2>Default AI access for new notes</h2><p>New notes start with this choice. Existing notes are unchanged.</p>
       {preference.isPending ? <p role="status">Loading preference…</p> : preference.isError ? <p role="alert">{featureError(preference.error)} <button onClick={() => void preference.refetch()}>Retry preference</button></p>
         : <label><input type="checkbox" checked={preference.data} disabled={busy} onChange={e => void run(() => setPreference(e.target.checked), 'Future-note preference saved. Existing notes were not changed.')} />Default AI access for new notes</label>}</section>
     <section className="studio-setting"><h2>Processing disclosure</h2>
-      <p>AI processing can send eligible saved content to an external provider. The following is an explanation of the controls, not the current provider’s processing disclosure.</p>
-      <p>AI ON is permission to participate, not proof that processing has happened. Acknowledging this disclosure does not turn any note ON. AI OFF excludes a note from AI processing; it is not encryption and does not change who can see it.</p>
+      <p>AI can send saved content to an external provider. Review its disclosure below.</p>
+      <p>Turning AI on allows processing once all checks pass. Accepting this disclosure does not turn AI on. AI off excludes a note from AI features; it does not encrypt it.</p>
       {policy.isPending ? <p role="status">Loading current disclosure…</p> : policy.isError ? <p role="alert">{featureError(policy.error)} <button onClick={() => void policy.refetch()}>Retry disclosure</button></p> : policy.data && <>
         <p>Disclosure revision: {policy.data.disclosureRevision} · Policy version {policy.data.policyVersion}</p>
         <div aria-label="Current approved processing disclosure" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{policy.data.disclosureContent}</div>
         <h3>Processing covered by this disclosure</h3><ul>{policy.data.providerProcessingCategories.map(category => <li key={category}>{processingCategories[category]}</li>)}</ul>
-        {policy.data.acknowledged ? <p role="status">The server records acknowledgement of the current policy.</p>
+        {policy.data.acknowledged ? <p role="status">Current disclosure acknowledged.</p>
           : <button disabled={busy || policy.isFetching} onClick={() => void acknowledge()}>I acknowledge this processing disclosure</button>}</>}
-    </section><section className="studio-setting"><h2>Change existing notes</h2><p>A separate explicit action changes AI access on existing notes. It does not change the default above.</p>
+    </section><section className="studio-setting"><h2>Change existing notes</h2><p>Apply a choice to existing notes. Your new-note default stays unchanged.</p>
       <div className="actions"><button className="button-secondary" disabled={busy} onClick={event => confirm(event, true)}>Enable AI on existing notes</button>
         <button className="button-secondary" disabled={busy} onClick={event => confirm(event, false)}>Disable AI on existing notes</button></div></section>
     {error && <p role="alert" className="alert">{error}</p>}{status && <p role="status" className="success">{status}</p>}

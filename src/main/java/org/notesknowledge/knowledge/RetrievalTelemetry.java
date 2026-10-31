@@ -27,6 +27,12 @@ final class RetrievalTelemetry {
         try{meters.summary("notes.workspace.retrieval.candidates","queryClass",plan.name().toLowerCase(Locale.ROOT),
             "stage",stage.name().toLowerCase(Locale.ROOT)).record(Math.max(0,count));}catch(RuntimeException unavailable){/* diagnostic only */}
     }
+    void acousticContext(int count) {
+        try {
+            org.slf4j.LoggerFactory.getLogger(RetrievalTelemetry.class).atInfo()
+                .addKeyValue("acousticSegments",Math.max(0,count)).log("knowledge_acoustic_context");
+        }catch(RuntimeException unavailable){/* diagnostic only */}
+    }
     void coverage(KnowledgeQueryRequest.Plan plan,KnowledgeQueryResult.Coverage value,boolean degraded){
         Coverage state=degraded?Coverage.DEGRADED:value.corpusChanged()?Coverage.CHANGED:value.truncated()?Coverage.TRUNCATED:value.completed()?Coverage.COMPLETE:Coverage.BOUNDED;
         // Fraction of observed operations by declared coverage, never a last-user

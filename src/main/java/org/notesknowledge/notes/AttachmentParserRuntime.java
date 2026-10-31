@@ -194,6 +194,7 @@ final class AttachmentParserRuntime implements AutoCloseable {
                 // Trusted, fixed class resource only: no input-selected class extraction.
                 Path trustedClasses=Files.createDirectory(directory.resolve("classes"));
                 for(String evidenceClass:List.of("org/notesknowledge/notes/PdfEvidenceParser.class",
+                        "org/notesknowledge/notes/PdfAdmissionParser.class",
                         "org/notesknowledge/notes/PdfEvidenceParser$1.class",
                         "org/notesknowledge/notes/PdfPageRasterWorker.class",
                         "org/notesknowledge/notes/PdfPageRasterWorker$BoundedPng.class")) {

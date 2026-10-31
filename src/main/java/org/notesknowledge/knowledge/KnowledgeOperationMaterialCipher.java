@@ -21,7 +21,7 @@ final class KnowledgeOperationMaterialCipher {
     record Context(UUID work,UUID owner,String purpose,Kind kind,long version) {
         Context {
             if(work==null||owner==null||kind==null||version<0
-                ||!java.util.Set.of("semantic_corpus","deterministic_corpus").contains(purpose)) throw new IllegalArgumentException("Invalid envelope context");
+                ||!java.util.Set.of("semantic_corpus","deterministic_corpus","search_history").contains(purpose)) throw new IllegalArgumentException("Invalid envelope context");
         }
         @Override public String toString(){return "OperationEnvelopeContext[REDACTED]";}
     }
@@ -63,7 +63,8 @@ final class KnowledgeOperationMaterialCipher {
         } catch(GeneralSecurityException failure){throw unavailable();}
     }
     private static byte[] aad(Context c,String key) {
-        return String.join("\n","knowledge-operation-envelope",c.work().toString(),c.owner().toString(),"private_knowledge_operation",
+        boolean history="search_history".equals(c.purpose());
+        return String.join("\n",history?"knowledge-search-history-envelope":"knowledge-operation-envelope",c.work().toString(),c.owner().toString(),history?"private_search_history":"private_knowledge_operation",
             c.purpose(),c.kind().name(),"schema-1",Long.toString(c.version()),key).getBytes(StandardCharsets.US_ASCII);
     }
     private static SecretKey key(String encoded) {

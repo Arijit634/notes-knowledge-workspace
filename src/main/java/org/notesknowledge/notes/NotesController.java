@@ -47,7 +47,7 @@ final class NotesController {
     }
 
     @GetMapping
-    ResponseEntity<CursorPage<NoteRecord.NoteView>> list(@RequestParam Map<String, String> query) {
+    ResponseEntity<CursorPage<NoteCollectionItem>> list(@RequestParam Map<String, String> query) {
         if (!LIST_FIELDS.containsAll(query.keySet())) {
             throw ApiFailureException.of(ApiFailureException.Kind.MALFORMED_REQUEST);
         }

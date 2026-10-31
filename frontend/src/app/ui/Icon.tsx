@@ -1,8 +1,11 @@
 import type { CSSProperties } from 'react'
 
 const paths = {
+  appearance: 'M12 3a9 9 0 1 0 0 18V3 M12 3a9 9 0 0 1 0 18',
   notes: 'M6 3h9l4 4v14H6z M14 3v5h5 M9 12h7 M9 16h6',
   ask: 'M4 4h16v12H9l-5 4z M8 8h8 M8 12h5',
+  sparkle: 'M12 3l2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5z M20 3v4 M18 5h4',
+  attach: 'M8 13l7-7a3 3 0 0 1 4 4l-9 9a5 5 0 0 1-7-7l9-9 M6 15l8-8',
   settings: 'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M12 3v2 M12 19v2 M3 12h2 M19 12h2 M5.6 5.6 7 7 M17 17l1.4 1.4 M5.6 18.4 7 17 M17 7l1.4-1.4',
   plus: 'M12 5v14 M5 12h14',
   search: 'M10.5 3a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15 M16 16l5 5',

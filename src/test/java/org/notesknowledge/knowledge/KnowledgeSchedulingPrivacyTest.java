@@ -19,6 +19,25 @@ import org.springframework.test.util.ReflectionTestUtils;
 @Tag("FAST") @Tag("SECURITY")
 @ExtendWith(OutputCaptureExtension.class)
 class KnowledgeSchedulingPrivacyTest {
+    @org.junit.jupiter.api.Test void configuredClaimPauseStillReconcilesMetadataAndDoesNotSleepWithALease() throws Exception {
+        var reconciler=mock(DerivationReconciler.class);var work=mock(KnowledgeWorkService.class);var executor=mock(DerivationExecutor.class);
+        var claim=mock(KnowledgeWork.Claim.class);var embedding=mock(TextEmbeddingPort.class);
+        @SuppressWarnings("unchecked") ObjectProvider<TextEmbeddingPort> providers=mock(ObjectProvider.class);
+        when(providers.getIfAvailable()).thenReturn(embedding);when(embedding.available()).thenReturn(true);
+        when(work.reclaim(any(),anyInt())).thenReturn(List.of(claim));
+        var ticker=new java.util.concurrent.atomic.AtomicLong();var executed=new CountDownLatch(1);
+        doAnswer(call->{executed.countDown();return null;}).when(executor).execute(claim);
+        var registry=new SimpleMeterRegistry();
+        try(var scheduling=new DerivationSchedulingConfiguration(reconciler,work,executor,providers,registry)){
+            ReflectionTestUtils.setField(scheduling,"ticker",(java.util.function.LongSupplier)ticker::get);scheduling.claimPauseMillis(30000);
+            scheduling.poll();assertThat(executed.await(5,TimeUnit.SECONDS)).isTrue();
+            ticker.set(java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(29999));scheduling.poll();
+            verify(work,times(1)).reclaim(any(),anyInt());verify(reconciler,times(2)).page(any());
+            ticker.set(java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(30000));scheduling.poll();verify(work,times(2)).reclaim(any(),anyInt());
+            assertThatThrownBy(()->scheduling.claimPauseMillis(-1)).isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(()->scheduling.claimPauseMillis(60001)).isInstanceOf(IllegalArgumentException.class);
+        }finally{registry.close();}
+    }
     @org.junit.jupiter.api.Test void contextClosingStopsFurtherClaimsBeforeDrain(){
         var service=mock(KnowledgeOperationService.class);var publicWorker=mock(PublicKnowledgeWorker.class);
         var registry=new SimpleMeterRegistry();

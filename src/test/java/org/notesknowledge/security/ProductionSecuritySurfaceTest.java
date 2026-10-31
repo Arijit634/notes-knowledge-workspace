@@ -72,7 +72,7 @@ class ProductionSecuritySurfaceTest {
                 "/api/notes/{noteId}/versions/{versionId}/restore", "/api/me/profile", "/api/me/profile/avatar", "/api/me/profile/avatar/content",
                 "/api/notes/{noteId}/attachments", "/api/notes/{noteId}/attachments/{attachmentId}",
                 "/api/notes/{noteId}/attachments/{attachmentId}/content", "/api/ai/processing-policy", "/api/ai/processing-policy/acknowledgements", "/api/notes/{noteId}/ai-processing",
-                "/api/knowledge/query", "/api/knowledge/operations/{operationId}",
+                "/api/knowledge/history", "/api/knowledge/history/{historyId}", "/api/knowledge/query", "/api/knowledge/operations/{operationId}",
                 "/api/notes/{noteId}/related", "/api/notes/{noteId}/organization-suggestions",
                 "/api/me/public-profile", "/api/public/profiles/{handle}", "/api/public/profiles/{handle}/publications",
                 "/api/public/profiles/{handle}/avatar/{publicAvatarId}/content",

@@ -42,7 +42,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 import tools.jackson.databind.ObjectMapper;
 
 @Tag("DATABASE") @Tag("API") @Tag("SECURITY") @Tag("RETRIEVAL") @Tag("EVALUATION")
-@Testcontainers @SpringBootTest(properties="knowledge.operations.scheduling-enabled=false") @AutoConfigureMockMvc
+@Testcontainers @SpringBootTest(properties={"knowledge.operations.scheduling-enabled=false","knowledge.operations.extraction-batch-size=32"}) @AutoConfigureMockMvc
 @org.springframework.context.annotation.Import(org.notesknowledge.notes.DerivationMediaFixtures.class)
 class KnowledgeQueryIntegrationTest {
     private ProcessingDisclosureFixtures disclosureFixtures;
@@ -63,11 +63,13 @@ class KnowledgeQueryIntegrationTest {
     @MockitoSpyBean PrivateAiSourceCurrentness currentSources;
     @MockitoBean AiDerivationProperties configuration; @MockitoBean ProviderDispatchProperties dispatch;
     @MockitoBean KnowledgePolicyProperties policyConfiguration; @MockitoBean StructuredKnowledgePort provider;
+    @MockitoBean AudioSignalPort audioSignals;
+    @MockitoSpyBean QueryEvidenceRepository evidenceRows;
     @MockitoBean RateLimitPort rates;
     @MockitoBean ProcessingDisclosureResolver disclosures;
     UUID owner,note,policy; Browser browser;
     @BeforeEach void prepare() throws Exception {
-        reset(configuration,dispatch,policyConfiguration,provider,rates,operationRows,sources,currentSources);
+        reset(configuration,dispatch,policyConfiguration,provider,audioSignals,evidenceRows,rates,operationRows,sources,currentSources);
         when(configuration.configured()).thenReturn(true);when(configuration.provider()).thenReturn("synthetic");
         when(configuration.embeddingModel()).thenReturn("synthetic-embedding");when(configuration.mediaModel()).thenReturn("synthetic-media");
         when(configuration.modelRevision()).thenReturn("v1");when(configuration.configurationId()).thenReturn("synthetic-v1");
@@ -143,6 +145,45 @@ class KnowledgeQueryIntegrationTest {
         assertThat(captured.getFirst().modality()).isEqualTo(relevant.equals("media")?"image":"note");
         var citation=t.get("citations").get(0);if(relevant.equals("media"))assertThat(citation.get("attachmentId").asText()).isEqualTo(attachment.toString());else assertThat(citation.get("attachmentId").isNull()).isTrue();
     }
+    @Test void soundtrackEvidenceRetrievesBothSavedOccurrencesWithOriginalVideoCitations()throws Exception {
+        UUID first=note,second=note(owner,true,"Another saved clip","No soundtrack hint in the private note text");
+        var expectedAttachments=new java.util.HashSet<String>();
+        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),"video");
+        for(UUID parent:List.of(first,second)){
+            note=parent;UUID attachment=upload("video");expectedAttachments.add(attachment.toString());
+            var source=sources.source(owner,parent,attachment);
+            var scene=new DerivedSegment("Audio description (model inference, not spoken words): Possibly chattering calls over a bass rhythm","video_scene","Acoustic description",null,null,null,0.,.5,null,null,null,null);
+            tx(()->{representations.activate(source.expected(),lineage,List.of(scene),List.of(vector()));return null;});
+        }
+        note=first;
+        doAnswer(call->{
+            KnowledgeQueryGate.EvidencePermit permit=call.getArgument(0);permit.requireDispatch();assertOutsideTransaction();
+            List<StructuredKnowledgePort.Evidence> supplied=call.getArgument(3);
+            return new StructuredKnowledgePort.Output(supplied.stream().map(e->new StructuredKnowledgePort.Claim(e.text(),List.of(e.id()))).toList(),false);
+        }).when(provider).generate(any(),any(),any(),any());
+        var result=json.readTree(query("find the clip with chattering sounds in the background").andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(capturedEvidence()).hasSize(2).allSatisfy(e->assertThat(e.modality()).isEqualTo("video"));
+        var actualAttachments=new java.util.HashSet<String>();var actualNotes=new java.util.HashSet<String>();
+        for(var citation:result.get("citations")){actualAttachments.add(citation.get("attachmentId").asText());actualNotes.add(citation.get("noteId").asText());}
+        assertThat(actualAttachments).isEqualTo(expectedAttachments);assertThat(actualNotes).containsExactlyInAnyOrder(first.toString(),second.toString());
+    }
+    @ParameterizedTest @org.junit.jupiter.params.provider.CsvSource({"16,video","60,video","16,audio","60,audio"})
+    void repeatedTextMatchesCannotCrowdRelevantVideoAudioOutOfBoundedContext(int count,String modality)throws Exception {
+        UUID original=note;
+        for(int i=0;i<count;i++) {
+            UUID text=note(owner,true,"Electronic background music bass reference "+i,"Video electronic background music repeated bass reference notes");
+            derive(text,"Electronic background music repeated bass reference",vector());
+        }
+        note=original;UUID attachment=upload(modality);var source=sources.source(owner,note,attachment);
+        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),modality);
+        String kind=modality.equals("video")?"video_scene":"transcript";
+        var sound=new DerivedSegment("Audio description (model inference, not spoken words): Repeated electronic bass music",kind,"Acoustic description",null,null,null,0.,.5,null,null,null,null);
+        var foreground=new DerivedSegment("A fictional foreground observation",kind,modality.equals("video")?"Visual description":"Transcript",null,null,null,0.,.5,null,null,null,null);
+        tx(()->{representations.activate(source.expected(),lineage,List.of(foreground,sound),List.of(vector(),new float[]{.9f,.1f,0,0,0,0,0,0}));return null;});
+        query("Find a "+modality+" with electronic background music and repeated bass").andExpect(status().isOk());
+        assertThat(capturedEvidence()).hasSizeLessThanOrEqualTo(12)
+            .anySatisfy(e->{assertThat(e.modality()).isEqualTo(modality);assertThat(e.text()).startsWith("Audio description");});
+    }
     @Test void overlappingSemanticAndLexicalCandidatesDoNotExpandContext() throws Exception {
         jdbc.update("update notes.note set title='Kyoto plans' where note_id=?",note);
         deriveChunks(List.of(DerivedSegment.note("Kyoto supported overlapping evidence one","",0,100),DerivedSegment.note("Kyoto supported overlapping evidence two","",5,105)),List.of(vector(),vector()));
@@ -184,6 +225,171 @@ class KnowledgeQueryIntegrationTest {
     }
     private static float[] orthogonal(){return new float[]{0,1,0,0,0,0,0,0};}
 
+    private UUID directAudioFixture(String query) throws Exception {
+        return directMediaFixture(query,"audio");
+    }
+    private UUID directMediaFixture(String query,String modality) throws Exception {
+        when(configuration.directAudioSearch()).thenReturn(true);when(configuration.provider()).thenReturn("gemini");
+        when(configuration.directVideoSoundtrackSearch()).thenReturn(modality.equals("video"));
+        when(configuration.embeddingModel()).thenReturn("gemini-embedding-2");when(configuration.mediaModel()).thenReturn("gemini-3.5-flash-lite");
+        when(configuration.region()).thenReturn("global");when(configuration.tier()).thenReturn("unpaid");
+        String code="synthetic-direct-audio-"+UUID.randomUUID();when(policyConfiguration.code()).thenReturn(code);
+        policy=disclosureFixtures.insert(jdbc,code,1,true);ack(owner);
+        when(dispatch.dispatchPolicy()).thenReturn("unpaid-synthetic-demo");when(audioSignals.available()).thenReturn(true);
+        UUID attachment=upload(modality);var source=sources.source(owner,note,attachment);
+        when(dispatch.approvedSourceFingerprints()).thenReturn(List.of(ProviderDispatchPolicy.fingerprint(source.expected())));
+        when(dispatch.approvedQueryFingerprints()).thenReturn(List.of(ProviderDispatchPolicy.queryFingerprint(query)));
+        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),modality);
+        tx(()->{representations.activate(source.expected(),lineage,List.of(new DerivedSegment("Generic synthetic music",modality.equals("video")?"video_scene":"transcript","Acoustic description",null,null,null,0.,1.,null,null,null,null)),List.of(vector()));return null;});
+        when(audioSignals.embed(any(),eq(query),any())).thenAnswer(call->{((KnowledgeQueryGate.EvidencePermit)call.getArgument(0)).requireGoogleAudio(query);assertOutsideTransaction();return vector();});
+        doAnswer(call->{((KnowledgeQueryGate.EvidencePermit)call.getArgument(0)).requireGoogle(query);assertOutsideTransaction();
+            @SuppressWarnings("unchecked") var items=(List<StructuredKnowledgePort.Evidence>)call.getArgument(3);
+            return new StructuredKnowledgePort.Output(List.of(new StructuredKnowledgePort.Claim(items.getFirst().text(),List.of(items.getFirst().id()))),false);
+        }).when(provider).generate(any(),any(),any(),any());
+        return attachment;
+    }
+    @ParameterizedTest @ValueSource(strings={"supported","contradicted","uncertain"})
+    void directAudioRequiresActualSupportedVerificationRatherThanItsSimilarity(String decision) throws Exception {
+        String question="find synthetic audio";UUID attachment=directAudioFixture(question);
+        when(audioSignals.verify(any(),eq(question),any(),eq(1d))).thenAnswer(call->{((KnowledgeQueryGate.EvidencePermit)call.getArgument(0)).requireGoogleAudio(question);assertOutsideTransaction();return new AudioSignalPort.Verification(decision,"Possibly synthetic chattering-like sounds",100,900);});
+        var result=json.readTree(query(question).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        verify(audioSignals,times(1)).embed(any(),eq(question),any());verify(audioSignals,times(1)).verify(any(),eq(question),any(),eq(1d));
+        if(decision.equals("supported")) {
+            assertThat(result.get("aiAnswer").toString()).contains("chattering-like");
+            assertThat(result.get("citations").get(0).get("attachmentId").asText()).isEqualTo(attachment.toString());
+            assertThat(result.get("citations").get(0).get("location").get("timeStart").asDouble()).isEqualTo(.1);
+            assertThat(result.get("citations").get(0).get("location").get("timeEnd").asDouble()).isEqualTo(.9);
+        }else{assertThat(result.get("aiAnswer").isNull()).isTrue();assertThat(result.get("citations").size()).isZero();verify(provider,never()).generate(any(),any(),any(),any());}
+    }
+    @ParameterizedTest @ValueSource(strings={"aiOff","stale","foreign"})
+    void directAudioNeverReadsOrDispatchesExcludedSources(String exclusion)throws Exception {
+        String question="find synthetic audio";directAudioFixture(question);
+        if(exclusion.equals("aiOff"))jdbc.update("update notes.note set ai_enabled=false,ai_generation=ai_generation+1 where note_id=?",note);
+        else if(exclusion.equals("stale"))jdbc.update("update notes.note set ai_generation=ai_generation+1 where note_id=?",note);
+        else {UUID other=account();ack(other);browser=browser(other);}
+        query(question).andExpect(status().isOk());verify(audioSignals,never()).embed(any(),any(),any());verify(audioSignals,never()).verify(any(),any(),any(),anyDouble());
+    }
+    @Test void directAudioProviderFailureCannotFallBackToAnUnverifiedAcousticClaim()throws Exception {
+        String question="find synthetic audio";directAudioFixture(question);
+        when(audioSignals.embed(any(),eq(question),any())).thenThrow(new DerivationFailure(KnowledgeWork.Failure.QUOTA));
+        var result=json.readTree(query(question).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(result.get("degraded").asText()).isEqualTo("providerUnavailable");assertThat(result.get("aiAnswer").isNull()).isTrue();
+        verify(audioSignals,never()).verify(any(),any(),any(),anyDouble());verify(provider,never()).generate(any(),any(),any(),any());
+    }
+    @Test void directAudioRevalidatesAfterNativeInspectionBeforeVerificationOrAnswer()throws Exception {
+        String question="find synthetic audio";directAudioFixture(question);var checks=new java.util.concurrent.atomic.AtomicInteger();
+        doAnswer(call->checks.incrementAndGet()<2&&((Boolean)call.callRealMethod())).when(evidenceRows).current(any(),any());
+        var result=json.readTree(query(question).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(result.get("degraded").asText()).isEqualTo("sourceChanged");assertThat(result.get("aiAnswer").isNull()).isTrue();
+        verify(audioSignals,times(1)).embed(any(),eq(question),any());verify(audioSignals,never()).verify(any(),any(),any(),anyDouble());verify(provider,never()).generate(any(),any(),any(),any());
+        var bytes=org.mockito.ArgumentCaptor.forClass(byte[].class);verify(audioSignals).embed(any(),eq(question),bytes.capture());assertThat(bytes.getValue()).containsOnly((byte)0);
+    }
+    @Test void directAudioBoundsInspectedSourcesAndDoesNotExpandItsEvidenceWindow()throws Exception {
+        String question="find synthetic audio";UUID first=directAudioFixture(question);var fingerprints=new ArrayList<>(dispatch.approvedSourceFingerprints());
+        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),"audio");
+        for(int i=0;i<3;i++){
+            UUID attachment=upload("audio");var source=sources.source(owner,note,attachment);fingerprints.add(ProviderDispatchPolicy.fingerprint(source.expected()));
+            tx(()->{representations.activate(source.expected(),lineage,List.of(new DerivedSegment("Generic synthetic music","transcript","Acoustic description",null,null,null,0.,1.,null,null,null,null)),List.of(vector()));return null;});
+        }
+        when(dispatch.approvedSourceFingerprints()).thenReturn(fingerprints);
+        when(audioSignals.verify(any(),eq(question),any(),eq(1d))).thenAnswer(call->{((KnowledgeQueryGate.EvidencePermit)call.getArgument(0)).requireGoogleAudio(question);assertOutsideTransaction();return new AudioSignalPort.Verification("supported","Synthetic matching sounds",0,1000);});
+        query(question).andExpect(status().isOk());verify(audioSignals,times(3)).embed(any(),eq(question),any());verify(audioSignals,times(3)).verify(any(),eq(question),any(),eq(1d));assertThat(capturedEvidence()).hasSize(3);
+    }
+    @ParameterizedTest @ValueSource(strings={"supported","contradicted","uncertain"})
+    void mp4SoundtrackRequiresSupportedObservationAndKeepsOriginalVideoCitation(String decision)throws Exception {
+        String question="find synthetic video with background noise";UUID attachment=directMediaFixture(question,"video");
+        when(audioSignals.verifyVideo(any(),eq(question),any(),eq(1d))).thenAnswer(call->{((KnowledgeQueryGate.EvidencePermit)call.getArgument(0)).requireGoogleVideo(question);assertOutsideTransaction();return new AudioSignalPort.Verification(decision,"Possibly synthetic chattering-like sounds",100,900);});
+        var result=json.readTree(query(question).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        verify(audioSignals,never()).embed(any(),any(),any());verify(audioSignals,never()).verify(any(),any(),any(),anyDouble());verify(audioSignals,times(1)).verifyVideo(any(),eq(question),any(),eq(1d));
+        if(decision.equals("supported")) {
+            assertThat(result.get("aiAnswer").toString()).contains("chattering-like");var citation=result.get("citations").get(0);
+            assertThat(citation.get("attachmentId").asText()).isEqualTo(attachment.toString());assertThat(citation.get("location").get("kind").asText()).isEqualTo("video_scene");
+            assertThat(citation.get("location").get("timeStart").asDouble()).isEqualTo(.1);assertThat(citation.get("location").get("timeEnd").asDouble()).isEqualTo(.9);
+        }else {assertThat(result.get("aiAnswer").isNull()).isTrue();assertThat(result.get("citations").size()).isZero();verify(provider,never()).generate(any(),any(),any(),any());}
+    }
+    @Test void soundtrackInspectionPrecedesAnswerContextTruncationAndStillHonorsThreeSourceLimit()throws Exception {
+        String question="find synthetic video with background noise";UUID first=directMediaFixture(question,"video");
+        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),"video");
+        var firstSource=sources.source(owner,note,first);var segments=new ArrayList<DerivedSegment>();var embeddings=new ArrayList<float[]>();
+        for(int i=0;i<12;i++){
+            segments.add(new DerivedSegment("Generic early synthetic sound "+i,"video_scene","Acoustic description",null,null,null,0.,1.,null,null,null,null));embeddings.add(vector());
+        }
+        tx(()->{representations.activate(firstSource.expected(),lineage,segments,embeddings);return null;});
+        var fingerprints=new ArrayList<>(dispatch.approvedSourceFingerprints());var attachments=new ArrayList<UUID>();attachments.add(first);
+        for(int i=1;i<4;i++){
+            UUID id=upload("video");attachments.add(id);var source=sources.source(owner,note,id);fingerprints.add(ProviderDispatchPolicy.fingerprint(source.expected()));
+            float[] embedding=new float[]{1,i*.2f,0,0,0,0,0,0};
+            tx(()->{representations.activate(source.expected(),lineage,List.of(new DerivedSegment("Generic later synthetic sound","video_scene","Acoustic description",null,null,null,0.,1.,null,null,null,null)),List.of(embedding));return null;});
+        }
+        when(dispatch.approvedSourceFingerprints()).thenReturn(fingerprints);var inspections=new java.util.concurrent.atomic.AtomicInteger();
+        when(audioSignals.verifyVideo(any(),eq(question),any(),eq(1d))).thenAnswer(call->{
+            ((KnowledgeQueryGate.EvidencePermit)call.getArgument(0)).requireGoogleVideo(question);assertOutsideTransaction();
+            return new AudioSignalPort.Verification(inspections.incrementAndGet()==3?"supported":"contradicted","Synthetic matching chimes",100,900);
+        });
+        var result=json.readTree(query(question).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        verify(audioSignals,times(3)).verifyVideo(any(),eq(question),any(),eq(1d));verify(audioSignals,never()).embed(any(),any(),any());
+        assertThat(capturedEvidence()).hasSize(1);assertThat(capturedEvidence().getFirst().text()).contains("matching chimes");
+        assertThat(result.get("citations").size()).isEqualTo(1);assertThat(result.get("citations").get(0).get("attachmentId").asText()).isEqualTo(attachments.get(2).toString());
+    }
+    @Test void explicitVideoSoundQuestionCannotBeAnsweredByStandaloneWav()throws Exception {
+        String question="find synthetic video with background noise";UUID video=directMediaFixture(question,"video");
+        UUID wav=upload("audio");var audio=sources.source(owner,note,wav);var fingerprints=new ArrayList<>(dispatch.approvedSourceFingerprints());fingerprints.add(ProviderDispatchPolicy.fingerprint(audio.expected()));when(dispatch.approvedSourceFingerprints()).thenReturn(fingerprints);
+        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),"audio");
+        tx(()->{representations.activate(audio.expected(),lineage,List.of(new DerivedSegment("Synthetic matching music","transcript","Acoustic description",null,null,null,0.,1.,null,null,null,null)),List.of(vector()));return null;});
+        when(audioSignals.verifyVideo(any(),eq(question),any(),eq(1d))).thenReturn(new AudioSignalPort.Verification("supported","Synthetic matching soundtrack",0,1000));
+        var result=json.readTree(query(question).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        verify(audioSignals,never()).embed(any(),any(),any());verify(audioSignals,never()).verify(any(),any(),any(),anyDouble());
+        assertThat(capturedEvidence()).allSatisfy(e->assertThat(e.modality()).isEqualTo("video"));
+        assertThat(result.get("citations").get(0).get("attachmentId").asText()).isEqualTo(video.toString());
+    }
+    @Test void mp4AudioVerificationPreservesGroundedVisualEvidenceWithinTheSameContextCaps()throws Exception {
+        String question="find synthetic video with a blue poster and soft background noise";UUID id=directMediaFixture(question,"video");var source=sources.source(owner,note,id);
+        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),"video");
+        var visual=new DerivedSegment("A blue rectangular poster is visible","video_scene","Visual description",null,null,null,0.,1.,null,null,null,null);
+        var acoustic=new DerivedSegment("Generic synthetic music","video_scene","Acoustic description",null,null,null,0.,1.,null,null,null,null);
+        tx(()->{representations.activate(source.expected(),lineage,List.of(visual,acoustic),List.of(vector(),vector()));return null;});
+        when(audioSignals.verifyVideo(any(),eq(question),any(),eq(1d))).thenReturn(new AudioSignalPort.Verification("supported","Soft synthetic chimes",100,900));
+        query(question).andExpect(status().isOk());var supplied=capturedEvidence();assertThat(supplied).hasSize(2);
+        assertThat(supplied).extracting(StructuredKnowledgePort.Evidence::text).anyMatch(text->text.contains("blue rectangular poster")).anyMatch(text->text.contains("Soft synthetic chimes")).noneMatch(text->text.contains("Generic synthetic music"));
+        assertThat(supplied.stream().mapToInt(e->e.text().length()).sum()).isLessThanOrEqualTo(KnowledgeQueryLimits.CHARACTERS);
+        verify(audioSignals,times(1)).verifyVideo(any(),eq(question),any(),eq(1d));verify(audioSignals,never()).embed(any(),any(),any());
+    }
+    @ParameterizedTest @ValueSource(strings={"aiOff","stale","foreign"})
+    void mp4SoundtrackNeverDispatchesExcludedSources(String exclusion)throws Exception {
+        String question="find synthetic video with background noise";directMediaFixture(question,"video");
+        if(exclusion.equals("aiOff"))jdbc.update("update notes.note set ai_enabled=false,ai_generation=ai_generation+1 where note_id=?",note);
+        else if(exclusion.equals("stale"))jdbc.update("update notes.note set ai_generation=ai_generation+1 where note_id=?",note);
+        else {UUID other=account();ack(other);browser=browser(other);}
+        query(question).andExpect(status().isOk());verify(audioSignals,never()).embed(any(),any(),any());verify(audioSignals,never()).verifyVideo(any(),any(),any(),anyDouble());
+    }
+    @Test void mp4SoundtrackPostEffectDenialCannotBecomeAnAnswer()throws Exception {
+        String question="find synthetic video with background noise";directMediaFixture(question,"video");var checks=new java.util.concurrent.atomic.AtomicInteger();
+        when(audioSignals.verifyVideo(any(),eq(question),any(),eq(1d))).thenAnswer(call->{((KnowledgeQueryGate.EvidencePermit)call.getArgument(0)).requireGoogleVideo(question);assertOutsideTransaction();return new AudioSignalPort.Verification("supported","Synthetic soundtrack",0,1000);});
+        doAnswer(call->checks.incrementAndGet()<2&&((Boolean)call.callRealMethod())).when(evidenceRows).current(any(),any());
+        var result=json.readTree(query(question).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());assertThat(result.get("degraded").asText()).isEqualTo("sourceChanged");assertThat(result.get("aiAnswer").isNull()).isTrue();
+        verify(provider,never()).generate(any(),any(),any(),any());var bytes=org.mockito.ArgumentCaptor.forClass(byte[].class);verify(audioSignals).verifyVideo(any(),eq(question),bytes.capture(),eq(1d));assertThat(bytes.getValue()).containsOnly((byte)0);
+    }
+    @Test void wavAndMp4ShareOneThreeSourceBudget()throws Exception {
+        String question="find synthetic background music";directAudioFixture(question);when(configuration.directVideoSoundtrackSearch()).thenReturn(true);
+        var fingerprints=new ArrayList<>(dispatch.approvedSourceFingerprints());var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),"video");
+        for(int i=0;i<3;i++){UUID id=upload("video");var source=sources.source(owner,note,id);fingerprints.add(ProviderDispatchPolicy.fingerprint(source.expected()));
+            tx(()->{representations.activate(source.expected(),lineage,List.of(new DerivedSegment("Synthetic background music","video_scene","Acoustic description",null,null,null,0.,1.,null,null,null,null)),List.of(vector()));return null;});}
+        when(dispatch.approvedSourceFingerprints()).thenReturn(fingerprints);
+        when(audioSignals.verify(any(),eq(question),any(),eq(1d))).thenAnswer(call->{((KnowledgeQueryGate.EvidencePermit)call.getArgument(0)).requireGoogleAudio(question);assertOutsideTransaction();return new AudioSignalPort.Verification("supported","Synthetic music",0,1000);});
+        when(audioSignals.verifyVideo(any(),eq(question),any(),eq(1d))).thenAnswer(call->{((KnowledgeQueryGate.EvidencePermit)call.getArgument(0)).requireGoogleVideo(question);assertOutsideTransaction();return new AudioSignalPort.Verification("supported","Synthetic music",0,1000);});
+        query(question).andExpect(status().isOk());verify(audioSignals,times(1)).embed(any(),eq(question),any());verify(audioSignals,times(1)).verify(any(),eq(question),any(),eq(1d));verify(audioSignals,times(2)).verifyVideo(any(),eq(question),any(),eq(1d));assertThat(capturedEvidence()).hasSize(3);
+    }
+    @Test void mp4HistoryBindsQueryRecipeWithoutInvalidatingTheVideoIndex()throws Exception {
+        String question="find synthetic video with background noise";UUID id=directMediaFixture(question,"video");var source=sources.source(owner,note,id);
+        var index=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),"video");
+        when(audioSignals.verifyVideo(any(),eq(question),any(),eq(1d))).thenReturn(new AudioSignalPort.Verification("supported","Synthetic background sounds",0,1000));
+        var response=query(question).andExpect(status().isOk()).andReturn().getResponse();String location=response.getHeader("Content-Location");assertThat(location).startsWith("/api/knowledge/history/");
+        var before=json.readTree(mvc.perform(get(location).cookie(browser.cookie)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());assertThat(before.get("status").asText()).isEqualTo("completed");
+        when(configuration.directVideoSoundtrackSearch()).thenReturn(false);
+        assertThat(EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),"video")).isEqualTo(index);assertThat(tx(()->representations.ready(source.expected(),index))).isTrue();
+        var after=json.readTree(mvc.perform(get(location).cookie(browser.cookie)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());assertThat(after.get("status").asText()).isEqualTo("obsolete");assertThat(after.get("result").isNull()).isTrue();
+    }
+
     @Test void controlledZephyrScenarioReportsEachGroundingStageAndUnequalEvidenceSurvives() throws Exception {
         String fact="The fictional Zephyr observatory is located on the northern ridge of planet Aster. Its telescope dome is silver.";
         jdbc.update("update notes.note set title='Zephyr observatory',markdown=? where note_id=?",fact,note);
@@ -209,28 +415,28 @@ class KnowledgeQueryIntegrationTest {
             "postGenerationAuthorization",true));
     }
 
-    @Test void longSemanticSourceCheckpointsAllSegmentsWithoutExceedingTwelvePerDispatch() throws Exception {
+    @Test void longSemanticSourceCheckpointsAllSegmentsWithoutExceedingThirtyTwoPerDispatch() throws Exception {
         var chunks=new ArrayList<DerivedSegment>();var embeddings=new ArrayList<float[]>();
         var body=new StringBuilder();
-        for(int i=0;i<29;i++){String text="Frozen film "+i;int offset=body.length();body.append(text).append('\n');chunks.add(DerivedSegment.note(text,"",offset,offset+text.length()));embeddings.add(vector());}
+        for(int i=0;i<69;i++){String text="Frozen film "+i;int offset=body.length();body.append(text).append('\n');chunks.add(DerivedSegment.note(text,"",offset,offset+text.length()));embeddings.add(vector());}
         jdbc.update("update notes.note set markdown=? where note_id=?",body.toString(),note);
         deriveChunks(chunks,embeddings);
         var visited=new HashSet<String>();
         doAnswer(call->{
             KnowledgeQueryGate.EvidencePermit permit=call.getArgument(0);permit.requireDispatch();assertOutsideTransaction();
-            List<StructuredKnowledgePort.Evidence> e=call.getArgument(3);assertThat(e.size()).isBetween(1,12);
+            List<StructuredKnowledgePort.Evidence> e=call.getArgument(3);assertThat(e.size()).isBetween(1,32);
             e.forEach(item->assertThat(visited.add(item.text())).isTrue());
             return new StructuredKnowledgePort.Output(e.stream().map(item->new StructuredKnowledgePort.Claim(item.text(),List.of(item.id()))).toList(),false);
         }).when(provider).generate(any(),any(),eq("extract"),any());
         String handle=accept("list all films");operations.execute(claim());var r=poll(handle).get("result");
-        assertThat(visited).hasSize(29);assertThat(r.get("aiAnswer").get("claims").size()).isEqualTo(29);
-        assertThat(r.get("citations").size()).isEqualTo(29);assertThat(r.get("coverage").get("completed").asBoolean()).isTrue();
+        assertThat(visited).hasSize(69);assertThat(r.get("aiAnswer").get("claims").size()).isEqualTo(69);
+        assertThat(r.get("citations").size()).isEqualTo(69);assertThat(r.get("coverage").get("completed").asBoolean()).isTrue();
         assertThat(r.get("coverage").get("inspectedSources").asLong()).isEqualTo(1);
         verify(provider,times(3)).generate(any(),any(),eq("extract"),any());
         var actual=new HashSet<String>();r.get("aiAnswer").get("claims").forEach(value->actual.add(value.asText()));
         assertFrozenSetQuality(actual,new HashSet<>(chunks.stream().map(DerivedSegment::text).toList()));
-        writeEvaluation("long-semantic-source",Map.of("segments",29,"dispatches",3,"maximumSegmentsPerDispatch",12,
-            "extractionPrecision",1.0,"extractionRecall",1.0,"correctLocationCitations",29,"inspectedSources",1,
+        writeEvaluation("long-semantic-source",Map.of("segments",69,"dispatches",3,"maximumSegmentsPerDispatch",32,
+            "extractionPrecision",1.0,"extractionRecall",1.0,"correctLocationCitations",69,"inspectedSources",1,
             "coverageComplete",true,"provider","controlled-double-NOT-Gemini-quality"));
     }
 
@@ -548,8 +754,13 @@ class KnowledgeQueryIntegrationTest {
         assertThat(ids).contains(note.toString(),off.toString()).doesNotContain(other.toString());
         var ranked=new ArrayList<String>();tree.get("deterministicResults").forEach(i->ranked.add(i.get("occurrences").get(0).get("noteId").asText()));
         assertFrozenSetQuality(new HashSet<>(ranked.subList(0,Math.min(2,ranked.size()))),Set.of(note.toString(),off.toString()));
-        double reciprocalRank=ranked.indexOf(note.toString())<0?0:1.0/(ranked.indexOf(note.toString())+1);
-        assertThat(reciprocalRank).isEqualTo(1.0);
+        // Ordinary matches must keep ordinary lexical relevance, independent of AI
+        // permission/vector similarity; preserve the exact source set above.
+        var ordinary=json.readTree(mvc.perform(post("/api/notes/search").cookie(browser.cookie).header("X-CSRF-TOKEN",browser.csrf)
+            .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(Map.of("query","find Kyoto","limit",50))))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        var lexicalOrder=new ArrayList<String>();ordinary.get("items").forEach(item->lexicalOrder.add(item.get("id").asText()));
+        assertThat(ranked).containsExactlyElementsOf(lexicalOrder);
         var captured=org.mockito.ArgumentCaptor.forClass(List.class);verify(provider).generate(any(),any(),eq("answer"),captured.capture());
         @SuppressWarnings("unchecked") List<StructuredKnowledgePort.Evidence> payload=(List<StructuredKnowledgePort.Evidence>)captured.getValue();
         assertThat(payload).allSatisfy(e->assertThat(e.text()).doesNotContain("excluded marker","Foreign secret marker"));
@@ -562,7 +773,15 @@ class KnowledgeQueryIntegrationTest {
         switch(outcome){
             case "unavailable"->when(provider.available()).thenReturn(false);
             case "policy"->disclosureFixtures.insert(jdbc,policyConfiguration.code(),2,true);
-            case "lineage"->when(configuration.configurationId()).thenReturn("synthetic-v2");
+            case "lineage"->{
+                when(configuration.configurationId()).thenReturn("synthetic-v2");
+                doAnswer(call->{
+                    List<StructuredKnowledgePort.Evidence> supplied=call.getArgument(3);
+                    assertThat(supplied).hasSize(1);assertThat(supplied.getFirst().text()).isEqualTo("Synthetic ordinary body")
+                        .doesNotContain("PlayStation synthetic login");
+                    return new StructuredKnowledgePort.Output(List.of(),false);
+                }).when(provider).generate(any(),any(),eq("answer"),any());
+            }
             case "invalid-output"->doReturn(new StructuredKnowledgePort.Output(List.of(new StructuredKnowledgePort.Claim("Invented",List.of("foreign"))),false)).when(provider).generate(any(),any(),any(),any());
             case "empty"->doReturn(new StructuredKnowledgePort.Output(List.of(),false)).when(provider).generate(any(),any(),any(),any());
             case "conflict"->doReturn(new StructuredKnowledgePort.Output(List.of(new StructuredKnowledgePort.Claim("Conflicting evidence",List.of("e0"))),true)).when(provider).generate(any(),any(),any(),any());
@@ -572,6 +791,7 @@ class KnowledgeQueryIntegrationTest {
         if(outcome.equals("conflict")){assertThat(t.get("aiAnswer").get("conflicting").asBoolean()).isTrue();assertThat(t.get("citations").size()).isPositive();}
         else {assertThat(t.get("aiAnswer").isNull()).isTrue();assertThat(t.get("citations").size()).isZero();
             assertThat(t.get("insufficientEvidence").asBoolean()).isEqualTo(outcome.equals("empty")||outcome.equals("lineage"));}
+        if(outcome.equals("lineage")){verify(provider).generate(any(),any(),eq("answer"),any());verify(sources).currentMarkdown(any());}
     }
     @Test void deterministicUrlsTraverseTheWholeBoundaryIncludingAiOffAndRetainOccurrences() throws Exception {
         jdbc.update("update notes.note set markdown='https://example.test/a https://example.test/a' where note_id=?",note);
@@ -592,19 +812,224 @@ class KnowledgeQueryIntegrationTest {
     }
     @Test void durableSemanticCorpusCoversArbitraryCategoryBeyondTopKAndRecordsUncertainty() throws Exception {
         jdbc.update("update notes.note set ai_enabled=false where note_id=?",note);
-        List<UUID> expected=new ArrayList<>();for(int i=0;i<13;i++){UUID n=note(owner,true,"City "+i,"Synthetic city "+i);expected.add(n);derive(n,"Synthetic city "+i);}
-        var known=new HashMap<String,String>();for(int i=0;i<13;i++)known.put("Synthetic city "+i,"City "+i);
+        List<UUID> expected=new ArrayList<>();for(int i=0;i<33;i++){UUID n=note(owner,true,"City "+i,"Synthetic city "+i);expected.add(n);derive(n,"Synthetic city "+i);}
+        var known=new HashMap<String,String>();for(int i=0;i<33;i++)known.put("Synthetic city "+i,"City "+i);
         doAnswer(call->{assertOutsideTransaction();KnowledgeQueryGate.EvidencePermit permit=call.getArgument(0);permit.requireDispatch();List<StructuredKnowledgePort.Evidence> e=call.getArgument(3);
-            return new StructuredKnowledgePort.Output(List.of(new StructuredKnowledgePort.Claim(known.get(e.getFirst().text()),List.of("e0"))),false);}).when(provider).generate(any(),any(),eq("extract"),any());
+            return new StructuredKnowledgePort.Output(e.stream().map(item->new StructuredKnowledgePort.Claim(known.get(item.text()),List.of(item.id()))).toList(),false);}).when(provider).generate(any(),any(),eq("extract"),any());
         String handle=accept("list every city I mentioned");operations.execute(claim());var t=poll(handle).get("result");
-        assertThat(t.get("aiAnswer").get("claims").size()).isEqualTo(13);assertThat(t.get("coverage").get("completed").asBoolean()).isTrue();
-        assertThat(t.get("coverage").get("classificationUncertain").asBoolean()).isTrue();assertThat(t.get("citations").size()).isEqualTo(13);
+        assertThat(t.get("aiAnswer").get("claims").size()).isEqualTo(33);assertThat(t.get("coverage").get("completed").asBoolean()).isTrue();
+        assertThat(t.get("coverage").get("classificationUncertain").asBoolean()).isTrue();assertThat(t.get("citations").size()).isEqualTo(33);
         Set<String> found=new HashSet<>();t.get("citations").forEach(c->found.add(c.get("noteId").asText()));assertThat(found).containsExactlyInAnyOrderElementsOf(expected.stream().map(UUID::toString).toList());
         // Frozen synthetic extraction scores are independent from traversal coverage and real-world classification recall.
         Set<String> claims=new HashSet<>();t.get("aiAnswer").get("claims").forEach(c->claims.add(c.asText()));
         assertFrozenSetQuality(claims,new HashSet<>(known.values()));
         assertFrozenSetQuality(found,new HashSet<>(expected.stream().map(UUID::toString).toList()));
-        verify(provider,times(13)).generate(any(),any(),eq("extract"),any());verify(provider,never()).embedQuery(any(),any());
+        verify(provider,times(2)).generate(any(),any(),eq("extract"),any());verify(provider,never()).embedQuery(any(),any());
+    }
+    @Test void semanticBatchCrossesSourceAndSegmentBoundariesWithoutDroppingOrReplayingEvidence() throws Exception {
+        UUID second=note(owner,true,"Second long source","temporary fixture body");
+        for(UUID id:List.of(note,second)){
+            var chunks=new ArrayList<DerivedSegment>();var body=new StringBuilder();
+            for(int i=0;i<33;i++){String text="Frozen record "+(id.equals(note)?"A":"B")+i;int start=body.length();body.append(text).append('\n');chunks.add(DerivedSegment.note(text,"",start,start+text.length()));}
+            jdbc.update("update notes.note set markdown=? where note_id=?",body.toString(),id);
+            var source=sources.note(owner,id);var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),"note");
+            tx(()->{representations.activate(source.expected(),lineage,chunks,chunks.stream().map(c->vector()).toList());return null;});
+        }
+        var visited=new HashSet<String>();
+        doAnswer(call->{assertOutsideTransaction();KnowledgeQueryGate.EvidencePermit permit=call.getArgument(0);permit.requireDispatch();
+            List<StructuredKnowledgePort.Evidence> supplied=call.getArgument(3);assertThat(supplied).hasSizeBetween(1,32);
+            supplied.forEach(e->assertThat(visited.add(e.text())).isTrue());
+            return new StructuredKnowledgePort.Output(supplied.stream().map(e->new StructuredKnowledgePort.Claim(e.text(),List.of(e.id()))).toList(),false);
+        }).when(provider).generate(any(),any(),eq("extract"),any());
+        String handle=accept("list every frozen record");operations.execute(claim());var result=poll(handle).get("result");
+        assertThat(visited).hasSize(66);assertThat(result.get("citations").size()).isEqualTo(66);
+        assertThat(result.get("coverage").get("completed").asBoolean()).isTrue();
+        assertThat(result.get("coverage").get("inspectedSources").asLong()).isEqualTo(2);
+        verify(provider,times(3)).generate(any(),any(),eq("extract"),any());
+    }
+    @Test void semanticBatchTraversesElevenHundredSourcesAndRetainsOnlySupportedClaims() throws Exception {
+        jdbc.update("update notes.note set ai_enabled=false where note_id=?",note);
+        FrozenScaleCorpus.text(jdbc,owner,1100,configuration,policy);
+        var expected=jdbc.queryForList("select note_id from notes.note where owner_user_id=? and ai_enabled order by note_id limit 10",UUID.class,owner);
+        for(int i=0;i<expected.size();i++)derive(expected.get(i),"Frozen profession entry "+i);
+        var inspected=new HashSet<String>();
+        doAnswer(call->{assertOutsideTransaction();KnowledgeQueryGate.EvidencePermit permit=call.getArgument(0);permit.requireDispatch();
+            List<StructuredKnowledgePort.Evidence> supplied=call.getArgument(3);assertThat(supplied).hasSizeBetween(1,32);
+            return new StructuredKnowledgePort.Output(supplied.stream().filter(e->e.text().startsWith("Frozen profession entry "))
+                .map(e->{assertThat(inspected.add(e.text())).isTrue();return new StructuredKnowledgePort.Claim(e.text(),List.of(e.id()));}).toList(),false);
+        }).when(provider).generate(any(),any(),eq("extract"),any());
+        String handle=accept("list every frozen profession entry");int slices=0;
+        while(!poll(handle).get("status").asText().equals("completed")){assertThat(++slices).isLessThan(10);operations.execute(claim());}
+        var result=poll(handle).get("result");assertThat(result.get("coverage").get("inspectedSources").asLong()).isEqualTo(1100);
+        assertThat(result.get("coverage").get("completed").asBoolean()).isTrue();assertThat(result.get("coverage").get("truncated").asBoolean()).isFalse();
+        assertThat(result.get("aiAnswer").get("claims").size()).isEqualTo(10);assertThat(result.get("citations").size()).isEqualTo(10);
+        Set<String> citations=new HashSet<>();result.get("citations").forEach(c->citations.add(c.get("noteId").asText()));
+        assertThat(citations).containsExactlyInAnyOrderElementsOf(expected.stream().map(UUID::toString).toList());
+        verify(provider,times(35)).generate(any(),any(),eq("extract"),any());verify(provider,never()).embedQuery(any(),any());
+    }
+    @Test void semanticPausePersistsContinuationWithoutHoldingTheClaimOrConsumingAnotherAttempt() throws Exception {
+        derive(note,"Frozen initial source");for(int i=0;i<32;i++){UUID id=note(owner,true,"Frozen source "+i,"Frozen body "+i);derive(id,"Frozen body "+i);}
+        try{operations.semanticPauseMillis(15000);String handle=accept("list every frozen body");var row=claim();operations.execute(row);
+            assertThat(poll(handle).get("status").asText()).isEqualTo("queued");
+            assertThat(tx(()->operationRows.current(row))).isFalse();assertThat(operations.claim(2)).isEmpty();
+            assertThat(jdbc.queryForObject("select next_attempt_at>clock_timestamp() and lease_token is null and checkpoint_version=1 and attempt_count=1 from knowledge.knowledge_work_intent where knowledge_work_intent_id=?",Boolean.class,row.id())).isTrue();
+            verify(provider,times(1)).generate(any(),any(),eq("extract"),any());
+        }finally{operations.semanticPauseMillis(0);}
+    }
+    @Test void exhaustiveClassificationUsesCurrentNoteSnapshotsWithoutInventingEmbeddingsOrScanningForeignOrAiOffText() throws Exception {
+        jdbc.update("update notes.note set ai_enabled=false,markdown='AI_OFF_CANARY' where note_id=?",note);
+        UUID foreign=account();note(foreign,true,"Foreign only","OTHER_OWNER_CANARY");
+        jdbc.update("""
+            insert into notes.note(note_id,owner_user_id,title,markdown,lifecycle_state,ai_enabled,revision,ai_generation,created_at,updated_at)
+            select uuidv7(),?,'Frozen everyday entry '||i,
+                case when i%110=0 then 'Fixture profession name '||i else 'Unrelated daily fixture '||i end,
+                'active',true,1,1,clock_timestamp(),clock_timestamp() from generate_series(1,1100) i
+            """,owner);
+        var claimed=new HashSet<String>();
+        doAnswer(call->{assertOutsideTransaction();KnowledgeQueryGate.EvidencePermit permit=call.getArgument(0);permit.requireDispatch();
+            List<StructuredKnowledgePort.Evidence> supplied=call.getArgument(3);assertThat(supplied).hasSizeBetween(1,32);
+            supplied.forEach(e->{assertThat(e.text()).doesNotContain("AI_OFF_CANARY","OTHER_OWNER_CANARY");assertThat(e.location().kind()).isEqualTo("note_text");});
+            return new StructuredKnowledgePort.Output(supplied.stream().filter(e->e.text().startsWith("Fixture profession name "))
+                .map(e->{assertThat(claimed.add(e.text())).isTrue();return new StructuredKnowledgePort.Claim(e.text(),List.of(e.id()));}).toList(),false);
+        }).when(provider).generate(any(),any(),eq("extract"),any());
+        String handle=accept("list every fixture profession name");int slices=0;
+        while(!poll(handle).get("status").asText().equals("completed")){assertThat(++slices).isLessThan(10);operations.execute(claim());}
+        var result=poll(handle).get("result");assertThat(claimed).hasSize(10);assertThat(result.get("citations").size()).isEqualTo(10);
+        assertThat(result.get("coverage").get("inspectedSources").asLong()).isEqualTo(1100);assertThat(result.get("coverage").get("completed").asBoolean()).isTrue();
+        assertThat(jdbc.queryForObject("select count(*) from knowledge.private_derived_representation where owner_user_id=?",Integer.class,owner)).isZero();
+        verify(provider,times(35)).generate(any(),any(),eq("extract"),any());verify(provider,never()).embedQuery(any(),any());
+        verify(sources,times(1100)).currentMarkdown(any());
+    }
+    @Test void unapprovedCurrentNoteSnapshotIsDeniedBeforeItsBodyIsRead() throws Exception {
+        String query="list every fixture profession name";
+        when(configuration.provider()).thenReturn("gemini");when(configuration.tier()).thenReturn("unpaid");when(configuration.region()).thenReturn("global");
+        String code="synthetic-"+UUID.randomUUID();when(policyConfiguration.code()).thenReturn(code);
+        policy=disclosureFixtures.insert(jdbc,code,1,true);ack(owner);
+        when(dispatch.dispatchPolicy()).thenReturn("unpaid-synthetic-demo");
+        when(dispatch.approvedQueryFingerprints()).thenReturn(List.of(ProviderDispatchPolicy.queryFingerprint(query)));
+        when(dispatch.approvedSourceFingerprints()).thenReturn(List.of());
+        String handle=accept(query);operations.execute(claim());
+        assertThat(poll(handle).get("status").asText()).isEqualTo("obsolete");
+        verify(sources,never()).currentMarkdown(any());verify(provider,never()).generate(any(),any(),any(),any());
+    }
+    @Test void isolatedWorkspaceAcceptsNewAndEditedNotesWithoutFingerprintingButStillRejectsStaleAiOffAndForeignSources() throws Exception {
+        when(configuration.provider()).thenReturn("gemini");when(configuration.tier()).thenReturn("unpaid");when(configuration.region()).thenReturn("global");
+        String code="synthetic-workspace-"+UUID.randomUUID();when(policyConfiguration.code()).thenReturn(code);
+        policy=disclosureFixtures.insert(jdbc,code,1,true);ack(owner);
+        var properties=new ProviderDispatchProperties("unpaid-synthetic-demo",List.of(),List.of(),List.of(),owner);
+        var gate=new KnowledgeQueryGate(workspaceProcessingPolicies,configuration,new ProviderDispatchPolicy(properties,true),properties,sources);
+        UUID fresh=note(owner,true,"New fictional reminder","Bring the fictional silver compass.");
+        var original=sources.note(owner,fresh);String question="What did I just write about the fictional compass?";
+        try(var handle=coordination.dispatch(owner,fresh)) {
+            var permit=tx(()->gate.evidence(owner,question,List.of(original),handle));permit.requireGoogle(question);
+            jdbc.update("update notes.note set markdown='Bring the fictional bronze compass.',revision=revision+1 where note_id=?",fresh);
+            assertThatThrownBy(()->tx(()->gate.evidence(owner,question,List.of(original),handle))).isInstanceOf(DerivationFailure.class);
+            var edited=sources.note(owner,fresh);tx(()->gate.evidence(owner,question,List.of(edited),handle)).requireGoogle(question);
+            jdbc.update("update notes.note set ai_enabled=false,ai_generation=ai_generation+1 where note_id=?",fresh);
+            assertThatThrownBy(()->tx(()->gate.evidence(owner,question,List.of(edited),handle))).isInstanceOf(DerivationFailure.class);
+        }
+        assertThatThrownBy(()->tx(()->gate.query(account(),question))).isInstanceOf(DerivationFailure.class);
+    }
+    @Test void naturalNameEnumerationUsesTheTrackedCorpusOperationAndItsCompleteBoundary() throws Exception {
+        note(owner,true,"Fictional name one","Fictional scientist Orin.");note(owner,true,"Fictional name two","Fictional scientist Luma.");
+        String handle=accept("Which fictional scientist names did I save???");operations.execute(claim());
+        var result=poll(handle).get("result");assertThat(result.get("coverage").get("completed").asBoolean()).isTrue();
+        assertThat(result.get("coverage").get("inspectedSources").asLong()).isEqualTo(3);
+        verify(provider,never()).embedQuery(any(),any());verify(provider).generate(any(),any(),eq("extract"),any());
+    }
+    @Autowired ProcessingPolicyService workspaceProcessingPolicies;
+    @Test void currentNoteSnapshotReaderRejectsDisabledAndStaleSources() {
+        var source=sources.note(owner,note);
+        assertThat(sources.currentMarkdown(source)).isEqualTo("Synthetic ordinary body");
+        jdbc.update("update notes.note set revision=revision+1 where note_id=?",note);
+        assertThatThrownBy(()->sources.currentMarkdown(source)).isInstanceOf(org.notesknowledge.websupport.ApiFailureException.class);
+        var current=sources.note(owner,note);jdbc.update("update notes.note set ai_enabled=false,ai_generation=ai_generation+1 where note_id=?",note);
+        assertThatThrownBy(()->sources.currentMarkdown(current)).isInstanceOf(org.notesknowledge.websupport.ApiFailureException.class);
+    }
+    @Test void focusedFactCanUseItsCurrentLexicalNoteBeforeBackgroundEmbeddingExists() throws Exception {
+        jdbc.update("update notes.note set title='Fictional weekend budget',markdown='The current fictional weekend budget is 4850 units.' where note_id=?",note);
+        doAnswer(call->{KnowledgeQueryGate.EvidencePermit permit=call.getArgument(0);permit.requireDispatch();assertOutsideTransaction();
+            List<StructuredKnowledgePort.Evidence> supplied=call.getArgument(3);assertThat(supplied).hasSize(1);
+            assertThat(supplied.getFirst().text()).contains("4850");
+            return new StructuredKnowledgePort.Output(List.of(new StructuredKnowledgePort.Claim("4850 units",List.of(supplied.getFirst().id()))),false);
+        }).when(provider).generate(any(),any(),eq("answer"),any());
+        var result=json.readTree(query("What is the fictional weekend budget?").andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(result.get("aiAnswer").get("claims").get(0).asText()).isEqualTo("4850 units");
+        assertThat(result.get("citations").get(0).get("noteId").asText()).isEqualTo(note.toString());
+        assertThat(result.get("citations").get(0).get("location").get("kind").asText()).isEqualTo("note_text");
+        assertThat(jdbc.queryForObject("select count(*) from knowledge.private_derived_representation where owner_user_id=?",Integer.class,owner)).isZero();
+    }
+    @Test void unrepresentedNoteDisabledDuringGenerationNeverExposesItsSnapshotClaim() throws Exception {
+        doAnswer(call->{assertOutsideTransaction();KnowledgeQueryGate.EvidencePermit permit=call.getArgument(0);permit.requireDispatch();
+            jdbc.update("update notes.note set ai_enabled=false,ai_generation=ai_generation+1,revision=revision+1 where note_id=?",note);
+            return new StructuredKnowledgePort.Output(List.of(new StructuredKnowledgePort.Claim("Must not expose stale snapshot",List.of("e0"))),false);
+        }).when(provider).generate(any(),any(),eq("extract"),any());
+        String handle=accept("list every frozen fact");operations.execute(claim());var result=poll(handle).get("result");
+        assertThat(result.get("aiAnswer").isNull()).isTrue();assertThat(result.get("citations").size()).isZero();
+        assertThat(result.toString()).doesNotContain("Must not expose stale snapshot");verify(provider,times(1)).generate(any(),any(),eq("extract"),any());
+    }
+    @Test void semanticProviderFailureStopsAfterOneBoundedBatchAndCannotClaimCompleteCoverage() throws Exception {
+        derive(note,"Frozen initial source");for(int i=0;i<32;i++){UUID id=note(owner,true,"Frozen source "+i,"Frozen body "+i);derive(id,"Frozen body "+i);}
+        doThrow(new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE)).when(provider).generate(any(),any(),eq("extract"),any());
+        String handle=accept("list every frozen body");operations.execute(claim());var result=poll(handle).get("result");
+        assertThat(result.get("coverage").get("completed").asBoolean()).isFalse();assertThat(result.get("coverage").get("truncated").asBoolean()).isTrue();
+        assertThat(result.get("degraded").asText()).isEqualTo("providerUnavailable");assertThat(result.get("aiAnswer").isNull()).isTrue();
+        verify(provider,times(1)).generate(any(),any(),eq("extract"),any());
+    }
+    private static DerivationFailure transientGeneration() {
+        return new DerivationFailure(KnowledgeWork.Failure.TRANSIENT_DEPENDENCY,new ProviderFailureDiagnostic(
+            ProviderFailureDiagnostic.Stage.GENERATION,ProviderFailureDiagnostic.Kind.SOCKET_TIMEOUT,null,
+            ProviderFailureDiagnostic.Elapsed.OVER_THIRTY_SECONDS,ProviderFailureDiagnostic.Reach.UNKNOWN,false));
+    }
+    @Test void transientCorpusFailureResumesTheUncommittedBatchAndPreservesEarlierClaims() throws Exception {
+        for(int i=0;i<32;i++)note(owner,true,"Frozen continuation "+i,"Continuation body "+i);
+        var successful=new ArrayList<String>();var calls=new java.util.concurrent.atomic.AtomicInteger();
+        doAnswer(call->{assertOutsideTransaction();KnowledgeQueryGate.EvidencePermit permit=call.getArgument(0);permit.requireDispatch();
+            List<StructuredKnowledgePort.Evidence> supplied=call.getArgument(3);
+            if(calls.incrementAndGet()==2)throw transientGeneration();
+            supplied.forEach(e->{assertThat(successful).doesNotContain(e.text());successful.add(e.text());});
+            return new StructuredKnowledgePort.Output(supplied.stream().map(e->new StructuredKnowledgePort.Claim(e.text(),List.of(e.id()))).toList(),false);
+        }).when(provider).generate(any(),any(),eq("extract"),any());
+        String handle=accept("list every continuation body");var first=claim();operations.execute(first);
+        assertThat(poll(handle).get("status").asText()).isEqualTo("retry_wait");
+        assertThat(poll(handle).get("inspectedSources").asLong()).isEqualTo(32);
+        assertThat(operationVersion(first.id())).isEqualTo(1);assertThat(operations.claim(2)).isEmpty();
+        assertThat(jdbc.queryForObject("select lease_token is null and attempt_count=1 and next_attempt_at between clock_timestamp()+interval '28 seconds' and clock_timestamp()+interval '41 seconds' from knowledge.knowledge_work_intent where knowledge_work_intent_id=?",Boolean.class,first.id())).isTrue();
+        jdbc.update("update knowledge.knowledge_work_intent set next_attempt_at=clock_timestamp()-interval '1 second' where knowledge_work_intent_id=?",first.id());
+        var resumed=claim();assertThat(resumed.version()).isEqualTo(1);assertThat(resumed.lease().value()).isNotEqualTo(first.lease().value());
+        operations.execute(resumed);var result=poll(handle).get("result");
+        assertThat(successful).hasSize(33);assertThat(calls).hasValue(3);
+        assertThat(result.get("coverage").get("inspectedSources").asLong()).isEqualTo(33);
+        assertThat(result.get("coverage").get("completed").asBoolean()).isTrue();assertThat(result.get("coverage").get("truncated").asBoolean()).isFalse();
+        assertThat(result.get("citations").size()).isEqualTo(33);assertThat(result.get("aiAnswer").get("claims").size()).isEqualTo(33);
+    }
+    @Test void repeatedTransientFailureStopsAtThePersistedAttemptBudget() throws Exception {
+        doThrow(transientGeneration()).when(provider).generate(any(),any(),eq("extract"),any());
+        String handle=accept("list every synthetic body");
+        for(int attempt=1;attempt<=3;attempt++){
+            var row=claim();operations.execute(row);
+            assertThat(poll(handle).get("status").asText()).isEqualTo(attempt<3?"retry_wait":"failed");
+            assertThat(operationVersion(row.id())).isZero();
+            if(attempt<3)jdbc.update("update knowledge.knowledge_work_intent set next_attempt_at=clock_timestamp()-interval '1 second' where knowledge_work_intent_id=?",row.id());
+        }
+        verify(provider,times(3)).generate(any(),any(),eq("extract"),any());assertThat(operations.claim(2)).isEmpty();
+    }
+    @Test void transientFailureCannotRequeueACancelledOperation() throws Exception {
+        var handle=new java.util.concurrent.atomic.AtomicReference<String>();
+        doAnswer(call->{mvc.perform(delete("/api/knowledge/operations/"+handle.get()).cookie(browser.cookie).header("X-CSRF-TOKEN",browser.csrf)).andExpect(status().isNoContent());throw transientGeneration();})
+            .when(provider).generate(any(),any(),eq("extract"),any());
+        handle.set(accept("list every synthetic body"));operations.execute(claim());
+        assertThat(poll(handle.get()).get("status").asText()).isEqualTo("cancelled");assertThat(operations.claim(2)).isEmpty();
+    }
+    @Test void disabledSourceIsExcludedBeforeAnyRetryCanReadOrDispatchIt() throws Exception {
+        doThrow(transientGeneration()).when(provider).generate(any(),any(),eq("extract"),any());
+        String handle=accept("list every synthetic body");var row=claim();operations.execute(row);
+        assertThat(poll(handle).get("status").asText()).isEqualTo("retry_wait");
+        jdbc.update("update notes.note set ai_enabled=false,ai_generation=ai_generation+1,revision=revision+1 where note_id=?",note);
+        jdbc.update("update knowledge.knowledge_work_intent set next_attempt_at=clock_timestamp()-interval '1 second' where knowledge_work_intent_id=?",row.id());
+        clearInvocations(provider,sources);operations.execute(claim());var result=poll(handle).get("result");
+        assertThat(result.get("aiAnswer").isNull()).isTrue();assertThat(result.get("citations").size()).isZero();
+        verify(provider,never()).generate(any(),any(),any(),any());verify(sources,never()).currentMarkdown(any());
     }
     @Test void checkpointSurvivesWorkerLossAndReclaimDoesNotLosePriorAggregate() throws Exception {
         jdbc.update("update notes.note set markdown='https://example.test/first' where note_id=?",note);note(owner,false,"Second","https://example.test/second");
@@ -790,6 +1215,205 @@ class KnowledgeQueryIntegrationTest {
         try{String url="http://127.0.0.1:"+server.getAddress().getPort()+"/inert";jdbc.update("update notes.note set markdown=? where note_id=?",url,note);String handle=accept("all links");operations.execute(claim());
             assertThat(poll(handle).get("result").get("deterministicResults").get(0).get("value").asText()).isEqualTo(url);assertThat(contacts).hasValue(0);verify(provider,never()).generate(any(),any(),any(),any());}
         finally{server.stop(0);}
+    }
+    @Autowired SearchHistoryService history;
+    @Autowired KnowledgeQueryEngine queryEngine;
+    @Autowired org.springframework.context.ApplicationContext application;
+    @ParameterizedTest @ValueSource(strings={"find cobaltbeacon","what is cobaltbeacon"})
+    void savedMatchesAreIndependentLexicalHitsNotNearestVideoCandidates(String question)throws Exception {
+        UUID hit=note(owner,true,"cobaltbeacon saved detail","cobaltbeacon evidence");derive(hit,"cobaltbeacon evidence");
+        UUID aiOff=note(owner,false,"cobaltbeacon manual reference","cobaltbeacon ordinary-only");
+        UUID attachment=upload("video");var source=sources.source(owner,note,attachment);
+        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),"video");
+        tx(()->{representations.activate(source.expected(),lineage,List.of(new DerivedSegment("Unrelated basketball video","video_scene","",null,null,null,0.0,0.5,null,null,null,null)),List.of(vector()));return null;});
+        doAnswer(call->{List<StructuredKnowledgePort.Evidence> supplied=call.getArgument(3);
+            return new StructuredKnowledgePort.Output(supplied.stream().filter(e->e.text().contains("cobaltbeacon"))
+                .map(e->new StructuredKnowledgePort.Claim("Supported saved detail",List.of(e.id()))).toList(),false);
+        }).when(provider).generate(any(),any(),any(),any());
+        var result=json.readTree(query(question).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        var matches=result.get("deterministicResults").toString();assertThat(matches).contains(hit.toString(),aiOff.toString()).doesNotContain(note.toString(),attachment.toString());
+        assertThat(result.get("citations").toString()).contains(hit.toString()).doesNotContain(aiOff.toString(),attachment.toString());
+        assertThat(capturedEvidence()).noneMatch(e->e.text().contains("ordinary-only"));
+        // Controlled provider reports no supported claim for the unrelated question.
+        doReturn(new StructuredKnowledgePort.Output(List.of(),false)).when(provider).generate(any(),eq("find xylophonenosource"),any(),any());
+        var unsupported=json.readTree(query("find xylophonenosource").andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(unsupported.get("deterministicResults").size()).isZero();assertThat(unsupported.get("aiAnswer").isNull()).isTrue();
+        when(provider.available()).thenReturn(false);
+        var degraded=json.readTree(query(question).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(degraded.get("deterministicResults").toString()).contains(aiOff.toString(),hit.toString()).doesNotContain(attachment.toString(),note.toString());
+    }
+    @ParameterizedTest @org.junit.jupiter.params.provider.CsvSource({"true,true","true,false","false,true","false,false"})
+    void historyReplayAndPollingPreserveExactlyTheOriginalOccurrencePresentation(boolean deduplicate,boolean includeOccurrences)throws Exception {
+        jdbc.update("update notes.note set markdown='https://example.test/shared https://example.test/shared',created_at='2021-01-01T00:00:00Z'::timestamptz where note_id=?",note);
+        UUID second=note(owner,false,"Second URL source","https://example.test/shared");jdbc.update("update notes.note set created_at='2021-02-01T00:00:00Z'::timestamptz where note_id=?",second);
+        UUID outside=note(owner,false,"Outside scope","https://example.test/excluded");jdbc.update("update notes.note set created_at='2022-01-01T00:00:00Z'::timestamptz where note_id=?",outside);
+        var response=mvc.perform(post("/api/knowledge/query").cookie(browser.cookie).header("X-CSRF-TOKEN",browser.csrf).contentType(MediaType.APPLICATION_JSON)
+            .content(json.writeValueAsString(Map.of("query","all links","scope",Map.of("savedDuring",syntheticPeriod()),"presentation",Map.of("deduplicate",deduplicate,"includeOccurrences",includeOccurrences)))))
+            .andExpect(status().isAccepted()).andReturn().getResponse();
+        var accepted=json.readTree(response.getContentAsString());var row=claim();operations.execute(row);var original=poll(accepted.get("operationId").asText()).get("result");
+        var detail=json.readTree(mvc.perform(get(response.getHeader("Content-Location")).cookie(browser.cookie)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(detail.get("result")).isEqualTo(original);assertThat(detail.get("savedDuring").get("from").asText()).isEqualTo("2021-01-01T00:00:00Z");
+        assertThat(original.toString()).doesNotContain(outside.toString(),"excluded");
+        if(deduplicate){assertThat(original.get("deterministicResults").size()).isEqualTo(1);assertThat(original.get("deterministicResults").get(0).get("occurrences").size()).isEqualTo(includeOccurrences?3:1);}
+        assertThat(jdbc.queryForObject("select input_ciphertext is null from knowledge.knowledge_work_intent where knowledge_work_intent_id=?",Boolean.class,row.id())).isTrue();
+        var replay=json.readTree(json.writeValueAsBytes(history.detail(owner,history.idForWork(owner,row.id())).result()));assertThat(replay).isEqualTo(original);
+        // Reproduce the previously shipped V020 envelope: full occurrences were
+        // stored even when the original request asked for a collapsed view.
+        var completed=operationRows.owner(owner,row.id()).orElseThrow();
+        var stored=json.readValue(cipher.open(new KnowledgeOperationMaterialCipher.Context(row.id(),owner,row.purpose(),KnowledgeOperationMaterialCipher.Kind.RESULT,completed.version()),completed.result()),KnowledgeQueryResult.Stored.class);
+        UUID historyId=history.idForWork(owner,row.id());var legacy=cipher.seal(new KnowledgeOperationMaterialCipher.Context(historyId,owner,"search_history",KnowledgeOperationMaterialCipher.Kind.RESULT,1),json.writeValueAsBytes(new SearchHistoryService.Snapshot(1,false,json.readValue(completed.metadata(),KnowledgeOperationService.Metadata.class).boundary(),stored)));
+        jdbc.update("update knowledge.search_history_entry set result_ciphertext=?,result_nonce=?,result_key_version=? where history_id=?",legacy.ciphertext(),legacy.nonce(),legacy.keyVersion(),historyId);
+        var legacyReplay=json.readTree(json.writeValueAsBytes(history.detail(owner,historyId).result()));assertThat(legacyReplay).isEqualTo(original);
+        var other=browser(account());mvc.perform(get(response.getHeader("Content-Location")).cookie(other.cookie)).andExpect(status().isNotFound());
+        verify(provider,never()).generate(any(),any(),any(),any());
+    }
+    @Test void expiredOperationalInputDoesNotEraseOwnerBoundHistoryPresentationMetadata(){
+        UUID id=jdbc.queryForObject("select uuidv7()",UUID.class);Instant created=Instant.now().minusSeconds(172800),expiry=created.plusSeconds(86400);
+        var frame=cipher.seal(new KnowledgeOperationMaterialCipher.Context(id,owner,"deterministic_corpus",KnowledgeOperationMaterialCipher.Kind.INPUT,0),new byte[]{1});
+        tx(()->{operationRows.insert(id,owner,"deterministic_corpus",created,expiry,"{\"includeOccurrences\":false}",frame);operationRows.expire();return null;});
+        assertThat(operationRows.owner(owner,id)).isEmpty();assertThat(json.readTree(operationRows.historyMetadata(owner,id).orElseThrow()).get("includeOccurrences").asBoolean()).isFalse();
+        assertThat(operationRows.historyMetadata(account(),id)).isEmpty();
+    }
+    @Test void retainedHistoryRemainsDecryptableAcrossPlannedKeyRotationAndFailsClosedWithoutTheFormerKey()throws Exception {
+        var response=query("find synthetic").andExpect(status().isOk()).andReturn().getResponse();UUID id=UUID.fromString(response.getHeader("Content-Location").replace("/api/knowledge/history/",""));
+        jdbc.update("update knowledge.search_history_entry set created_at=clock_timestamp()-interval '29 days',expires_at=clock_timestamp()+interval '1 hour' where history_id=?",id);
+        byte[] changed=new byte[32];java.util.Arrays.fill(changed,(byte)70);
+        var rotated=historyWith(new KnowledgeOperationMaterialCipher("v2",Base64.getEncoder().encodeToString(changed),"v1",Base64.getEncoder().encodeToString(new byte[32])));
+        assertThat(rotated.detail(owner,id).query()).isEqualTo("find synthetic");
+        var unavailable=historyWith(new KnowledgeOperationMaterialCipher("v2",Base64.getEncoder().encodeToString(changed),"",""));
+        assertThatThrownBy(()->unavailable.detail(owner,id)).isInstanceOfSatisfying(org.notesknowledge.websupport.ApiFailureException.class,e->assertThat(e.kind()).isEqualTo(org.notesknowledge.websupport.ApiFailureException.Kind.SERVICE_UNAVAILABLE));
+    }
+    private SearchHistoryService historyWith(KnowledgeOperationMaterialCipher keys){return new SearchHistoryService(application.getBean(SearchHistoryRepository.class),operationRows,keys,application.getBean(KnowledgeOperationHandleCodec.class),application.getBeanProvider(org.notesknowledge.identity.AccountEligibilityApi.class),application.getBeanProvider(PlatformTransactionManager.class),application.getBeanProvider(org.notesknowledge.websupport.OpaqueCursorCodec.class),sources,application.getBean(KnowledgeQueryGate.class),application.getBean(org.notesknowledge.DatabaseUuidV7Generator.class),application.getBean(java.time.Clock.class),json);}
+    @Test void conservativeBatchSizeTraversesEverySourceWithoutLargerModelContexts() throws Exception {
+        try{queryEngine.extractionBatchSize(12);for(int i=0;i<32;i++)note(owner,true,"Synthetic record "+i,"Frozen conservative record "+i);
+            var seen=new HashSet<String>();var sizes=new ArrayList<Integer>();
+            doAnswer(call->{List<StructuredKnowledgePort.Evidence> supplied=call.getArgument(3);sizes.add(supplied.size());supplied.forEach(e->assertThat(seen.add(e.text())).isTrue());return new StructuredKnowledgePort.Output(supplied.stream().map(e->new StructuredKnowledgePort.Claim(e.text(),List.of(e.id()))).toList(),false);}).when(provider).generate(any(),any(),eq("extract"),any());
+            String handle=accept("list all synthetic records");operations.execute(claim());var result=poll(handle).get("result");
+            assertThat(sizes).containsExactly(12,12,9);assertThat(seen).hasSize(33);assertThat(result.get("citations").size()).isEqualTo(33);assertThat(result.get("coverage").get("completed").asBoolean()).isTrue();
+        }finally{queryEngine.extractionBatchSize(32);}
+    }
+    @Test void historyEncryptedOwnerOnlyAndSurvivesNewSession() throws Exception {
+        String q="find synthetic privacy marker";var response=query(q).andExpect(status().isOk()).andReturn().getResponse();
+        String path=response.getHeader("Content-Location");assertThat(path).startsWith("/api/knowledge/history/");
+        UUID id=UUID.fromString(path.substring(path.lastIndexOf('/')+1));
+        assertThat(jdbc.queryForObject("select position(?::bytea in question_ciphertext)=0 from knowledge.search_history_entry where history_id=?",Boolean.class,q.getBytes(StandardCharsets.UTF_8),id)).isTrue();
+        browser=browser(owner);var detail=mvc.perform(get(path).cookie(browser.cookie)).andExpect(status().isOk()).andReturn().getResponse();
+        assertThat(detail.getHeader("Cache-Control")).contains("no-store");assertThat(json.readTree(detail.getContentAsString()).get("query").asText()).isEqualTo(q);
+        var other=browser(account());mvc.perform(get(path).cookie(other.cookie)).andExpect(status().isNotFound());
+        mvc.perform(delete(path).cookie(other.cookie).header("X-CSRF-TOKEN",other.csrf)).andExpect(status().isNotFound());
+        mvc.perform(delete(path).cookie(browser.cookie)).andExpect(status().isForbidden());
+        var list=json.readTree(mvc.perform(get("/api/knowledge/history").cookie(browser.cookie)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(list.get("items").size()).isEqualTo(1);assertThat(list.get("items").get(0).get("result").isNull()).isTrue();
+    }
+    @Test void historyRemoveFencesLateWorkerAndMakesOldOperationUnavailable() throws Exception {
+        String handle=accept("all synthetic books");var row=claim();UUID id=history.idForWork(owner,row.id());
+        mvc.perform(delete("/api/knowledge/history/"+id).cookie(browser.cookie).header("X-CSRF-TOKEN",browser.csrf)).andExpect(status().isNoContent());
+        operations.execute(row);assertThat(poll(handle).get("status").asText()).isEqualTo("cancelled");
+        assertThat(jdbc.queryForObject("select count(*) from knowledge.search_history_entry where history_id=?",Integer.class,id)).isZero();
+        assertThat(jdbc.queryForObject("select input_ciphertext is null and result_ciphertext is null from knowledge.knowledge_work_intent where knowledge_work_intent_id=?",Boolean.class,row.id())).isTrue();
+    }
+    @Test void historyClearErasesCompletedAnswersAndCancelsQueuedSearches() throws Exception {
+        String handle=accept("all links");var row=claim();operations.execute(row);assertThat(poll(handle).get("status").asText()).isEqualTo("completed");
+        String queued=accept("all other links");mvc.perform(delete("/api/knowledge/history").cookie(browser.cookie).header("X-CSRF-TOKEN",browser.csrf)).andExpect(status().isNoContent());
+        assertThat(poll(handle).get("status").asText()).isEqualTo("obsolete");assertThat(poll(queued).get("status").asText()).isEqualTo("cancelled");
+        assertThat(jdbc.queryForObject("select count(*) from knowledge.search_history_entry where owner_user_id=?",Integer.class,owner)).isZero();
+    }
+    @Test void historyCapExpiryCursorAndEnvelopeConstraintsAreDatabaseTruth() throws Exception {
+        var request=KnowledgeQueryRequest.parse(Map.of("query","find synthetic"));
+        for(int i=0;i<52;i++){var id=history.begin(owner,request,null);history.fail(owner,id);}
+        assertThat(jdbc.queryForObject("select count(*) from knowledge.search_history_entry where owner_user_id=?",Integer.class,owner)).isEqualTo(50);
+        var page=history.list(owner,null,20);assertThat(page.items()).hasSize(20);assertThat(page.nextCursor()).isNotBlank();
+        var second=history.list(owner,page.nextCursor(),20);assertThat(second.items()).hasSize(20);assertThat(second.items().stream().map(SearchHistoryService.View::id)).doesNotContainAnyElementsOf(page.items().stream().map(SearchHistoryService.View::id).toList());
+        UUID id=page.items().getFirst().id();
+        assertThatThrownBy(()->jdbc.update("update knowledge.search_history_entry set question_nonce=decode('00','hex') where history_id=?",id)).isInstanceOf(org.springframework.dao.DataAccessException.class);
+        assertThatThrownBy(()->jdbc.update("update knowledge.search_history_entry set expires_at=created_at+interval '31 days' where history_id=?",id)).isInstanceOf(org.springframework.dao.DataAccessException.class);
+        assertThatThrownBy(()->jdbc.update("update knowledge.search_history_entry set state='completed' where history_id=?",id)).isInstanceOf(org.springframework.dao.DataAccessException.class);
+        jdbc.update("update knowledge.search_history_entry set created_at=statement_timestamp()-interval '31 days',expires_at=statement_timestamp()-interval '1 day' where history_id=?",id);
+        assertThatThrownBy(()->history.detail(owner,id)).isInstanceOf(org.notesknowledge.websupport.ApiFailureException.class);tx(()->{history.sweep();return null;});
+        assertThat(jdbc.queryForObject("select count(*) from knowledge.search_history_entry where history_id=?",Integer.class,id)).isZero();
+        assertThatThrownBy(()->history.list(account(),page.nextCursor(),20)).isInstanceOf(org.notesknowledge.websupport.ApiFailureException.class);
+    }
+    @Test void historySourceChangeAndAiOffCannotExposeRetainedAiAnswer() throws Exception {
+        derive(note,"Synthetic supported source");String handle=accept("all synthetic names");var row=claim();operations.execute(row);var id=history.idForWork(owner,row.id());
+        assertThat(history.detail(owner,id).result().aiAnswer()).isNotNull();jdbc.update("update notes.note set ai_enabled=false,ai_generation=ai_generation+1 where note_id=?",note);
+        var hidden=history.detail(owner,id);assertThat(hidden.status()).isEqualTo("obsolete");assertThat(hidden.result()).isNull();
+        assertThat(jdbc.queryForObject("select result_ciphertext is null from knowledge.search_history_entry where history_id=?",Boolean.class,id)).isTrue();
+    }
+    @Test void historyAiOffDeterministicMatchesRemainAllowedButChangedSourceIsDenied() throws Exception {
+        jdbc.update("update notes.note set ai_enabled=false,markdown='https://example.test/synthetic' where note_id=?",note);
+        String handle=accept("all links");var row=claim();operations.execute(row);var id=history.idForWork(owner,row.id());
+        assertThat(history.detail(owner,id).result().deterministicResults()).hasSize(1);
+        jdbc.update("update notes.note set revision=revision+1,markdown='changed' where note_id=?",note);
+        assertThat(history.detail(owner,id).result()).isNull();
+    }
+    @Test void historyDeletionDuringProviderCallCannotRestoreItsAnswer() throws Exception {
+        derive(note,"Synthetic concurrent history source");String handle=accept("all synthetic names");var row=claim();UUID id=history.idForWork(owner,row.id());
+        var entered=new CountDownLatch(1);var release=new CountDownLatch(1);
+        doAnswer(call->{KnowledgeQueryGate.EvidencePermit permit=call.getArgument(0);permit.requireDispatch();assertOutsideTransaction();entered.countDown();assertThat(release.await(5,TimeUnit.SECONDS)).isTrue();return new StructuredKnowledgePort.Output(List.of(new StructuredKnowledgePort.Claim("Synthetic late answer",List.of("e0"))),false);}).when(provider).generate(any(),any(),eq("extract"),any());
+        try(var pool=Executors.newSingleThreadExecutor()){var running=pool.submit(()->operations.execute(row));try{assertThat(entered.await(5,TimeUnit.SECONDS)).isTrue();history.remove(owner,id);}finally{release.countDown();}running.get(5,TimeUnit.SECONDS);}
+        assertThat(poll(handle).get("status").asText()).isEqualTo("cancelled");assertThat(history.list(owner,null,20).items()).isEmpty();
+    }
+    @Test void historySuspensionAndTamperedEnvelopeFailClosed() throws Exception {
+        String handle=accept("all links");var row=claim();UUID id=history.idForWork(owner,row.id());operations.execute(row);
+        jdbc.update("update knowledge.search_history_entry set result_ciphertext=set_byte(result_ciphertext,0,get_byte(result_ciphertext,0)#1) where history_id=?",id);
+        var failed=mvc.perform(get("/api/knowledge/history/"+id).cookie(browser.cookie)).andExpect(status().isServiceUnavailable()).andReturn().getResponse();
+        assertThat(json.readTree(failed.getContentAsString()).get("code").asText()).isEqualTo("service_unavailable");assertThat(failed.getContentAsString()).doesNotContain("ciphertext","Synthetic",owner.toString());
+        jdbc.update("update identity.account set account_state='suspended' where user_id=?",owner);
+        assertThat(mvc.perform(get("/api/knowledge/history").cookie(browser.cookie)).andReturn().getResponse().getStatus()).isIn(401,403);
+    }
+    @Test void historyAccountDeletionConsequenceErasesWithoutResurrection() throws Exception {
+        String handle=accept("all links");var row=claim();tx(()->{history.erase(owner);return null;});operations.execute(row);
+        assertThat(poll(handle).get("status").asText()).isEqualTo("cancelled");assertThat(history.list(owner,null,20).items()).isEmpty();
+    }
+    @Test void largerExtractionBatchesKeepEverySourceAndReduceDispatches() throws Exception {
+        for(int i=0;i<64;i++)note(owner,true,"Synthetic football record "+i,"Frozen record "+i);
+        var visited=new HashSet<String>();var sizes=new ArrayList<Integer>();
+        doAnswer(call->{assertOutsideTransaction();KnowledgeQueryGate.EvidencePermit permit=call.getArgument(0);permit.requireDispatch();List<StructuredKnowledgePort.Evidence> supplied=call.getArgument(3);sizes.add(supplied.size());
+            supplied.forEach(e->assertThat(visited.add(e.text())).isTrue());return new StructuredKnowledgePort.Output(supplied.stream().map(e->new StructuredKnowledgePort.Claim(e.text(),List.of(e.id()))).toList(),false);
+        }).when(provider).generate(any(),any(),eq("extract"),any());
+        String handle=accept("which all footballers i have saved");operations.execute(claim());var result=poll(handle);
+        assertThat(sizes).containsExactly(32,32,1);assertThat(visited).hasSize(65);assertThat(result.get("totalSources").asLong()).isEqualTo(65);
+        assertThat(result.get("result").get("coverage").get("completed").asBoolean()).isTrue();assertThat(result.get("result").get("citations").size()).isEqualTo(65);
+    }
+    private PrivateQuerySource.SavedDuring syntheticPeriod(){return new PrivateQuerySource.SavedDuring(Instant.parse("2021-01-01T00:00:00Z"),Instant.parse("2022-01-01T00:00:00Z"));}
+    @Test void savedPeriodScopesCountsPagesFingerprintAndAttachmentUploadIndependentlyOfParent()throws Exception {
+        jdbc.update("update notes.note set created_at='2020-01-01T00:00:00Z'::timestamptz where note_id=?",note);
+        UUID inside=note(owner,true,"Period source","https://example.test/inside");
+        jdbc.update("update notes.note set created_at='2021-01-01T00:00:00Z'::timestamptz where note_id=?",inside);
+        UUID media=syntheticAttachment(Instant.parse("2021-06-01T00:00:00Z"),"image");
+        UUID excluded=syntheticAttachment(Instant.parse("2022-01-01T00:00:00Z"),"image");
+        var b=sources.capture(owner,List.of("active"),syntheticPeriod());
+        assertThat(sources.count(owner,b,true)).isEqualTo(2);
+        var page=sources.page(owner,b,null,32,true);assertThat(page.sources()).hasSize(2);
+        assertThat(page.sources()).extracting(x->x.expected().attachmentId()).containsExactly(null,media);
+        String fingerprint=sources.fingerprint(owner,b,true);jdbc.update("update notes.note set markdown='outside mutation' where note_id=?",note);
+        assertThat(sources.fingerprint(owner,b,true)).isEqualTo(fingerprint);
+        var e=sources.source(owner,note,media).expected();var out=sources.source(owner,note,excluded).expected();
+        assertThat(tx(()->currentSources.matching(List.of(e,out),syntheticPeriod()))).containsExactly(e);
+        UUID other=account();assertThat(sources.count(other,sources.capture(other,List.of("active"),syntheticPeriod()),true)).isZero();
+    }
+    @Test void savedPeriodFiltersVectorAndLexicalCandidatesBeforeTheirBudgets()throws Exception {
+        jdbc.update("update notes.note set title='periodword',created_at='2020-01-01T00:00:00Z'::timestamptz where note_id=?",note);derive(note,"periodword old nearest",vector());
+        UUID inside=note(owner,true,"periodword","periodword inside evidence");jdbc.update("update notes.note set created_at='2021-01-01T00:00:00Z'::timestamptz where note_id=?",inside);derive(inside,"periodword inside evidence",new float[]{.8f,.6f,0,0,0,0,0,0});
+        var expected=sources.note(owner,inside).expected();assertThat(tx(()->currentSources.matching(List.of(expected),syntheticPeriod()))).as("current in-period source before vector scoring").containsExactly(expected);
+        assertThat(vectors.search(owner,"note",vector(),2)).as("unfiltered fixture vectors").hasSize(2);
+        assertThat(vectors.search(owner,"note",vector(),1,syntheticPeriod())).extracting(x->x.expected().noteId()).containsExactly(inside);
+        var r=json.readTree(mvc.perform(post("/api/knowledge/query").cookie(browser.cookie).header("X-CSRF-TOKEN",browser.csrf).contentType(MediaType.APPLICATION_JSON)
+            .content(json.writeValueAsString(Map.of("query","find periodword","scope",Map.of("savedDuring",syntheticPeriod()))))).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(r.get("deterministicResults").toString()).contains(inside.toString()).doesNotContain(note.toString());
+        assertThat(capturedEvidence()).allSatisfy(e->assertThat(e.text()).doesNotContain("old nearest"));
+    }
+    @Test void savedPeriodDurableOperationAndEncryptedHistoryKeepExactScopeAndNoWidening()throws Exception {
+        jdbc.update("update notes.note set markdown='https://example.test/outside',created_at='2020-01-01T00:00:00Z'::timestamptz where note_id=?",note);
+        UUID inside=note(owner,false,"Inside","https://example.test/inside");jdbc.update("update notes.note set created_at='2021-06-01T00:00:00Z'::timestamptz where note_id=?",inside);
+        var response=mvc.perform(post("/api/knowledge/query").cookie(browser.cookie).header("X-CSRF-TOKEN",browser.csrf).contentType(MediaType.APPLICATION_JSON)
+            .content(json.writeValueAsString(Map.of("query","all links","scope",Map.of("savedDuring",syntheticPeriod()))))).andExpect(status().isAccepted()).andReturn().getResponse();
+        var accepted=json.readTree(response.getContentAsString());assertThat(accepted.get("totalSources").asLong()).isEqualTo(1);var row=claim();operations.execute(row);
+        var result=poll(accepted.get("operationId").asText());assertThat(result.get("status").asText()).isEqualTo("completed");
+        assertThat(result.get("result").get("deterministicResults").toString()).contains("https://example.test/inside").doesNotContain("https://example.test/outside");
+        var entry=history.detail(owner,history.idForWork(owner,row.id()));assertThat(entry.savedDuring()).isEqualTo(syntheticPeriod());assertThat(entry.query()).isEqualTo("all links");
+        assertThat(history.list(owner,null,20).items().getFirst().savedDuring()).isEqualTo(syntheticPeriod());
+        verify(provider,never()).embedQuery(any(),any());verify(provider,never()).generate(any(),any(),any(),any());
     }
     private UUID upload(String kind)throws Exception{var response=mvc.perform(multipart("/api/notes/"+note+"/attachments").file(org.notesknowledge.notes.DerivationMediaFixtures.media(kind)).cookie(browser.cookie).header("X-CSRF-TOKEN",browser.csrf)).andExpect(status().isCreated()).andReturn().getResponse();return UUID.fromString(json.readTree(response.getContentAsString()).get("id").asText());}
     private static class SyntheticWorkerLoss extends RuntimeException { }

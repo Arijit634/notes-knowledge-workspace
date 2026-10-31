@@ -4,6 +4,7 @@ export interface ApiResponseMetadata {
   readonly location: string | null
   readonly retryAfter: string | null
   readonly contentRange: string | null
+  readonly contentLocation?: string | null
 }
 
 function boundedHeader(response: Response, name: string): string | null {
@@ -19,5 +20,6 @@ export function readResponseMetadata(response: Response): ApiResponseMetadata {
     location: boundedHeader(response, 'Location'),
     retryAfter: boundedHeader(response, 'Retry-After'),
     contentRange: boundedHeader(response, 'Content-Range'),
+    contentLocation: boundedHeader(response, 'Content-Location'),
   }
 }

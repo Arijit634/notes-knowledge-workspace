@@ -39,15 +39,19 @@ class ExactPrivateVectorSearch {
     }
     @Transactional(timeout=3)
     List<Candidate> search(UUID owner,String modality,float[] query,int limit) {
-        return rank(owner,null,modality,query,limit);
+        return rank(owner,null,modality,query,limit,null);
     }
+    @Transactional(timeout=3)
+    List<Candidate> search(UUID owner,String modality,float[] query,int limit,org.notesknowledge.knowledge.spi.PrivateQuerySource.SavedDuring period){return rank(owner,null,modality,query,limit,period);}
     @Transactional(timeout=3)
     List<Candidate> searchNotes(UUID owner,List<UUID> notes,float[] query,int limit) {
         if(notes.isEmpty())return List.of();
         if(notes.size()>100)throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);
-        return rank(owner,notes,"note",query,limit);
+        return rank(owner,notes,"note",query,limit,null);
     }
-    private List<Candidate> rank(UUID owner,List<UUID> notes,String modality,float[] query,int limit) {
+    @Transactional(timeout=3)
+    List<Candidate> searchNotes(UUID owner,List<UUID> notes,float[] query,int limit,org.notesknowledge.knowledge.spi.PrivateQuerySource.SavedDuring period){if(notes.isEmpty())return List.of();if(notes.size()>100)throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);return rank(owner,notes,"note",query,limit,period);}
+    private List<Candidate> rank(UUID owner,List<UUID> notes,String modality,float[] query,int limit,org.notesknowledge.knowledge.spi.PrivateQuerySource.SavedDuring period) {
         if(limit<1||limit>100)throw new IllegalArgumentException("Invalid candidate budget");
         if(!accounts.getObject().isEligible(owner))throw ApiFailureException.of(ApiFailureException.Kind.INVALID_CREDENTIALS);
         var policy=policies.policyPrerequisite(owner).orElseThrow(()->new DerivationFailure(KnowledgeWork.Failure.POLICY_BLOCKED));
@@ -72,7 +76,7 @@ class ExactPrivateVectorSearch {
                 .param("batch",PrivateAiSourceCurrentness.MAX_BATCH)
                 .query((r,i)->new Root(r.getObject(1,UUID.class),new PrivateAiSourceCurrentness.Expected(owner,r.getObject(2,UUID.class),r.getObject(3,UUID.class),r.getLong(4),r.getLong(5),r.getObject(6,Long.class)))).list();
             if(roots.isEmpty())break;
-            var current=new java.util.HashSet<>(sources.matching(roots.stream().map(Root::expected).toList()));
+            var current=new java.util.HashSet<>(period==null?sources.matching(roots.stream().map(Root::expected).toList()):sources.matching(roots.stream().map(Root::expected).toList(),period));
             var eligible=roots.stream().filter(r->current.contains(r.expected())).toList();
             if(!eligible.isEmpty()) {
                 best.addAll(score(owner,lineage,preparedQuery,limit,operator,eligible));
@@ -84,7 +88,7 @@ class ExactPrivateVectorSearch {
         }
         // Defensive revalidation never grants authority to a stale retained candidate.
         var current=new java.util.HashSet<PrivateAiSourceCurrentness.Expected>();
-        for(int i=0;i<best.size();i+=64)current.addAll(sources.matching(best.subList(i,Math.min(i+64,best.size())).stream().map(Candidate::expected).distinct().toList()));
+        for(int i=0;i<best.size();i+=64)current.addAll(period==null?sources.matching(best.subList(i,Math.min(i+64,best.size())).stream().map(Candidate::expected).distinct().toList()):sources.matching(best.subList(i,Math.min(i+64,best.size())).stream().map(Candidate::expected).distinct().toList(),period));
         return best.stream().filter(c->current.contains(c.expected())).toList();
     }
     private JdbcClient.StatementSpec rootStatement(String sql,UUID owner,List<UUID> notes,String modality,EmbeddingLineage lineage) {

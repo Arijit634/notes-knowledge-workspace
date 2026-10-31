@@ -7,7 +7,7 @@
     "socketTimeoutMillis": 20000
   },
   "parsers": [
-    {"pdf-parser": {
+    {"pdf-admission-parser": {
       "pages": {"text": "NONE", "inference": [], "emit": {"enabled": false}},
       "extractInlineImages": false,
       "extractInlineImageMetadataOnly": false,

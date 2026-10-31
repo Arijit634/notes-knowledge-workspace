@@ -25,6 +25,30 @@ class NotesRepository {
 
     private JdbcClient jdbc() { return clients.getObject(); }
 
+    java.util.Map<UUID, NoteCollectionItem.AttachmentSummary> attachmentSummaries(UUID owner, List<UUID> notes) {
+        if (notes.isEmpty()) return java.util.Map.of();
+        var summaries = new java.util.HashMap<UUID, NoteCollectionItem.AttachmentSummary>();
+        jdbc().sql("""
+                select a.note_id, count(*) filter(where a.media_kind='image') as images,
+                    count(*) filter(where a.media_kind='audio') as audio,
+                    count(*) filter(where a.media_kind='video') as video,
+                    count(*) filter(where a.media_kind='pdf') as documents
+                from notes.attachment a join notes.note n
+                    on n.note_id=a.note_id and n.owner_user_id=a.owner_user_id
+                where a.owner_user_id=:owner and a.note_id in (:notes)
+                    and n.lifecycle_state <> 'logically_deleted'
+                    and a.cleanup_state='retained' and a.storage_state='stored'
+                    and a.validation_state='accepted' and a.size_bytes>0
+                group by a.note_id
+                """).param("owner", owner).param("notes", notes).query((row, index) -> {
+                    summaries.put(row.getObject("note_id", UUID.class),
+                            new NoteCollectionItem.AttachmentSummary(row.getInt("images"), row.getInt("audio"),
+                                    row.getInt("video"), row.getInt("documents")));
+                    return row.getObject("note_id", UUID.class);
+                }).list();
+        return java.util.Map.copyOf(summaries);
+    }
+
     boolean preference(UUID owner) {
         return jdbc().sql("select default_ai_enabled from notes.note_preferences where user_id = :owner")
                 .param("owner", owner).query(Boolean.class).optional().orElse(false);

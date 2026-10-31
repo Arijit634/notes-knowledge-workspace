@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import { AuthRuntime } from '../features/auth/AuthRuntime'
 import { knowledgeResult, operation } from '../features/knowledge/KnowledgeApi'
@@ -36,9 +36,33 @@ function mount(path: string, handler: (call: Call) => Response | Promise<Respons
   const auth = new AuthRuntime(); render(<App auth={auth} />); return { auth, calls }
 }
 beforeAll(async () => { await Promise.all([import('../features/knowledge/AskKnowledgePage'), import('../features/knowledge/PrivacySettingsPage'), import('../features/profile/ProfileSettingsPage'), import('../features/notes/NotesPages'), import('../features/notes/MarkdownEditorAdapter')]) }, 60_000)
+// Fixtures below deliberately use this submission epoch. Keep real timers for
+// transport/React, but make authority expiry independent of the runner's date.
+beforeEach(() => { vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-20T00:05:00Z')) })
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); window.history.replaceState(null, '', '/') })
 
 describe('real private-workspace transport contracts', () => {
+  it('renders the AI answer and a whole-Note deterministic match without inventing a location', async () => {
+    mount('/ask', c => c.path === '/api/knowledge/query' ? json({ ...result,
+      deterministicResults: [{ kind: 'note', value: 'Synthetic whole-Note match', aiEnabled: false,
+        occurrences: [{ noteId: id, attachmentId: null, location: null }] }] }) : undefined)
+    fireEvent.change(await screen.findByLabelText('What would you like to find?'), { target: { value: 'Find a saved fact' } })
+    fireEvent.submit(screen.getByLabelText('What would you like to find?').closest('form')!)
+    expect((await screen.findByRole('region', { name: 'AI answer' })).textContent).toContain('A grounded synthetic answer.')
+    const matches = screen.getByRole('region', { name: 'Deterministic results' })
+    expect(matches.textContent).toContain('Synthetic whole-Note match')
+    expect(matches.textContent).toContain('AI OFF · deterministic only')
+    expect(within(matches).getByRole('link', { name: 'Source 1 · Note' }).getAttribute('href')).toBe(`/notes/${id}`)
+    expect(matches.textContent).not.toContain('undefined')
+  })
+  it('explains unavailable AI prerequisites without blocking ordinary search or claiming provider readiness', async () => {
+    const { calls } = mount('/ask', call => call.path === '/api/ai/processing-policy' ? problem(503) : undefined)
+    await screen.findByText(/AI setup is unavailable/)
+    expect(within(screen.getByLabelText('AI processing prerequisites')).getByRole('link', { name: 'AI & Privacy' }).getAttribute('href')).toBe('/settings/privacy')
+    expect(screen.getByRole('searchbox', { name: 'Search notes' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Ordinary search' })).toBeNull()
+    expect(calls.some(call => call.path === '/api/knowledge/query')).toBe(false)
+  })
   it.each(['insufficient', 'degraded'])('presents %s evidence without inventing an AI answer', async outcome => {
     mount('/ask', c => c.path === '/api/knowledge/query' ? json({ ...result, aiAnswer: null, citations: [],
       insufficientEvidence: outcome === 'insufficient', degraded: outcome === 'degraded' ? 'providerUnavailable' : null }) : undefined)
@@ -115,7 +139,7 @@ describe('real private-workspace transport contracts', () => {
     fireEvent.submit(screen.getByLabelText('What would you like to find?').closest('form')!)
     await screen.findByText('A grounded synthetic answer.')
     expect(within(screen.getByRole('region', { name: 'Deterministic results' })).getByText('AI OFF · deterministic only')).toBeTruthy()
-    expect(screen.getByText(/Partial coverage/)).toBeTruthy()
+    expect(screen.getByText(/Some sources weren’t checked/)).toBeTruthy()
     expect(screen.getAllByRole('link', { name: /Source 1/ }).every(link => link.getAttribute('href') === `/notes/${id}`)).toBe(true)
     const request = calls.find(c => c.path === '/api/knowledge/query')!
     expect(request.body).toEqual({ query: question }); expect(request.headers.get('X-CSRF-TOKEN')).toBe('synthetic-csrf')
@@ -182,13 +206,14 @@ describe('real private-workspace transport contracts', () => {
   })
   it('uses POST for ordinary search with tags, and never puts private terms in keys or URLs', async () => {
     const { calls, auth } = mount('/ask', c => c.path === '/api/notes/search' ? json({ items: [{ id, title: 'Saved result', lifecycle: 'active', pinned: false, tags: ['Idea'], updatedAt: '2026-10-20T00:00:00Z', snippet: '<script>plain text</script>', matchLabels: ['body'] }], nextCursor: null }) : undefined)
-    fireEvent.click(await screen.findByRole('button', { name: 'Ordinary search' }))
-    fireEvent.change(screen.getByLabelText('Search saved notes'), { target: { value: 'synthetic-private-search' } })
-    fireEvent.change(screen.getByLabelText('Tags (comma separated, optional)'), { target: { value: 'Idea' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Search notes' }))
+    const searchbox = await screen.findByRole('searchbox', { name: 'Search notes' })
+    fireEvent.change(searchbox, { target: { value: 'synthetic-private-search' } })
+    fireEvent.submit(searchbox.closest('form')!)
+    fireEvent.change(await screen.findByLabelText('Tags (comma separated)'), { target: { value: 'Idea' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Apply filters' }))
     await screen.findByRole('link', { name: /Saved result/ })
     expect(document.querySelector('script')).toBeNull()
-    expect(calls.find(c => c.path === '/api/notes/search')?.body).toEqual({ query: 'synthetic-private-search', tags: ['Idea'], lifecycle: 'active' })
+    expect(calls.filter(c => c.path === '/api/notes/search').at(-1)?.body).toEqual({ query: 'synthetic-private-search', tags: ['Idea'], lifecycle: 'active' })
     expect(JSON.stringify(auth.queries.getQueryCache().getAll().map(q => q.queryKey))).not.toContain('synthetic-private-search')
   })
   it('updates only allowlisted private Profile fields and does not activate publishing', async () => {
@@ -196,7 +221,7 @@ describe('real private-workspace transport contracts', () => {
     await screen.findByDisplayValue('Synthetic writer')
     fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Changed name' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }))
-    await screen.findByText('Profile saved. Nothing was published.')
+    await screen.findByText('Profile saved.')
     expect(calls.find(c => c.method === 'PUT')?.body).toEqual({ displayName: 'Changed name', biography: profile.biography, handle: null })
     expect(calls.some(c => /public-profile|publication/.test(c.path))).toBe(false)
   })
@@ -326,4 +351,49 @@ describe('bounded decoding and navigation', () => {
     const f = new File(['x'], `synthetic.${extension}`, { type }); Object.defineProperty(f, 'size', { value: bytes }); expect(attachmentPreflight(f)).toBeNull()
     const oversized = new File(['x'], `synthetic.${extension}`, { type }); Object.defineProperty(oversized, 'size', { value: bytes + 1 }); expect(attachmentPreflight(oversized)).toContain('too large')
   })
+  it('retains the active AI request across Explore and resumes it without submitting twice', async () => {
+    const accepted = { operationId: handle, status: 'running', submittedAt: '2026-10-20T00:00:00Z', result: null, inspectedSources: 48 }
+    let finished = false
+    const { calls, auth } = mount('/ask', c => c.path === '/api/knowledge/query' ? json(accepted, 202, { Location: `/api/knowledge/operations/${handle}` })
+      : c.path === `/api/knowledge/operations/${handle}` ? json(finished ? { ...accepted, status: 'completed', result, inspectedSources: 1112 } : accepted)
+        : c.path.startsWith('/api/public/explore') ? json({ items: [], nextCursor: null }) : undefined)
+    fireEvent.change(await screen.findByLabelText('What would you like to find?'), { target: { value: 'List every fictional saved name' } })
+    fireEvent.submit(screen.getByLabelText('What would you like to find?').closest('form')!)
+    await screen.findByText('48 sources checked')
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Workspace navigation' })).getByRole('link', { name: 'Explore' }))
+    await screen.findByRole('heading', { name: 'Explore' })
+    expect(screen.getByRole('navigation', { name: 'Workspace navigation' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('link', { name: 'AI Search' }))
+    expect((await screen.findByLabelText('What would you like to find?') as HTMLTextAreaElement).value).toBe('List every fictional saved name')
+    await screen.findByText('48 sources checked')
+    finished = true
+    const button = await screen.findByRole('button', { name: 'Check status' })
+    await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(button)
+    await screen.findByText('A grounded synthetic answer.')
+    expect(screen.getByText('1112 sources checked')).toBeTruthy()
+    expect(screen.getByText(/Last checked/)).toBeTruthy()
+    expect(calls.filter(c => c.path === '/api/knowledge/query')).toHaveLength(1)
+    expect(JSON.stringify(auth.queries.getQueryCache().getAll().map(q => q.queryKey))).not.toContain(handle)
+    expect(window.localStorage.length).toBe(0); expect(window.sessionStorage.length).toBe(0)
+    await act(async () => { await auth.establish('anonymous') })
+    expect(auth.ask.snapshot().input).toBe(''); expect(auth.ask.snapshot().operation).toBeNull()
+  })
+  it('keeps an in-flight AI acceptance when navigation happens before the POST returns', async () => {
+    let complete!: (response: Response) => void
+    const pending = new Promise<Response>(resolve => { complete = resolve })
+    const accepted = { operationId: handle, status: 'running', submittedAt: '2026-10-20T00:00:00Z', result: null }
+    const { calls } = mount('/ask', c => c.path === '/api/knowledge/query' ? pending : c.path === `/api/knowledge/operations/${handle}` ? json(accepted)
+      : c.path.startsWith('/api/public/explore') ? json({ items: [], nextCursor: null }) : undefined)
+    fireEvent.change(await screen.findByLabelText('What would you like to find?'), { target: { value: 'All fictional sources' } })
+    fireEvent.submit(screen.getByLabelText('What would you like to find?').closest('form')!)
+    await waitFor(() => expect(calls.some(c => c.path === '/api/knowledge/query')).toBe(true))
+    fireEvent.click(screen.getByRole('link', { name: 'Explore' }))
+    await screen.findByRole('heading', { name: 'Explore' })
+    await act(async () => { complete(json(accepted, 202, { Location: `/api/knowledge/operations/${handle}` })); await pending })
+    fireEvent.click(screen.getByRole('link', { name: 'AI Search' }))
+    await screen.findByRole('region', { name: 'Knowledge operation' })
+    expect(calls.filter(c => c.path === '/api/knowledge/query')).toHaveLength(1)
+  })
+
 })

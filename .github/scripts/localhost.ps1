@@ -3,7 +3,8 @@ param(
     [Parameter(Mandatory)][ValidateSet('Prepare','Build','Start','Stop','Status','Outbox','RemoveTrust')][string]$Mode,
     [string]$JavaHome = $env:JAVA_HOME,
     [string]$NodeHome = $env:NKW_LOCAL_NODE_HOME,
-    [switch]$TrustCertificate
+    [switch]$TrustCertificate,
+    [switch]$SyntheticAi
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -125,6 +126,11 @@ function AppConfiguration($Settings,[string]$StopName) {
         "nkw.localhost.directory=$($stateRoot.Replace('\','/'))", "nkw.localhost.stop-name=$StopName"
     )
     foreach ($entry in $Settings.keys.PSObject.Properties) { $lines += "$($entry.Name)=$($entry.Value)" }
+    if ($SyntheticAi) {
+        $approved=Join-Path $stateRoot 'synthetic-ai/approved.properties'
+        $lines += @("spring.config.import=file:$($approved.Replace('\','/'))",
+            'nkw.localhost.synthetic-ai=true', 'spring.ai.google.genai.api-key=${NKW_LOCAL_GEMINI_API_KEY:}')
+    }
     WritePrivate 'application.properties' (($lines -join "`n")+"`n")
 }
 function StopApplication {
@@ -237,6 +243,12 @@ if ($Mode -eq 'Start') {
     RequireTools $false
     Require (!(LiveProcess)) 'The owned application is already running; use Status.'
     Require (Test-Path -LiteralPath $jar) 'Build the packaged application first.'
+    if ($SyntheticAi) {
+        $approved=Join-Path $stateRoot 'synthetic-ai/approved.properties'
+        Require ((Test-Path -LiteralPath $approved -PathType Leaf) -and
+            !((Get-Item -LiteralPath $approved).Attributes -band [IO.FileAttributes]::ReparsePoint)) 'Prepare the owned, approved synthetic-AI configuration first.'
+        Require (![string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable('GEMINI_API_KEY','User'))) 'User GEMINI_API_KEY is unavailable. No provider was enabled.'
+    }
     foreach ($port in @(9443,19081)) { FreePort $port }
     Require (Test-Path -LiteralPath "Cert:\CurrentUser\Root\$($settings.certificateThumbprint)") 'Localhost certificate is not trusted. Do not bypass browser warnings.'
     $certificate=Get-Item -LiteralPath "Cert:\CurrentUser\Root\$($settings.certificateThumbprint)"
@@ -256,6 +268,11 @@ if ($Mode -eq 'Start') {
         AppConfiguration $settings $stopName
         $config=Join-Path $stateRoot 'application.properties'
         $start=[Diagnostics.ProcessStartInfo]::new($script:java)
+        if ($SyntheticAi) {
+            # Only the owned Java child receives the existing key. The generated
+            # configuration contains an environment placeholder, never its value.
+            $start.Environment['NKW_LOCAL_GEMINI_API_KEY']=[Environment]::GetEnvironmentVariable('GEMINI_API_KEY','User')
+        }
         $start.UseShellExecute=$false; $start.CreateNoWindow=$true; $start.WorkingDirectory=$repo
         $start.RedirectStandardOutput=$true; $start.RedirectStandardError=$true
         foreach ($key in @($start.Environment.Keys)) {
@@ -281,7 +298,8 @@ if ($Mode -eq 'Start') {
         }
         Require $ready 'Application did not become ready; inspect only sanitized diagnostics in the troubleshooting guide.'
         $started=$true
-        Write-Output "Ready: $origin — persistent local PostgreSQL; controlled local outbox/objects; no live AI/OIDC/SMTP/cloud."
+        $ai=if($SyntheticAi){'Gemini enabled for explicitly approved synthetic sources/queries only'}else{'AI disabled'}
+        Write-Output "Ready: $origin — persistent local PostgreSQL; controlled local outbox/objects; $ai; no live OIDC/SMTP/cloud."
         # Keep the supervising command alive. Ctrl+C is not the stop contract:
         # use the explicit Stop command in another shell for graceful shutdown.
         $process.WaitForExit()

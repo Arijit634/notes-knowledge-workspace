@@ -81,6 +81,7 @@ final class MediaQualityQualificationHarness implements MediaUnderstandingPort, 
         lock=acquired;
         try {
             var identity=new TreeMap<String,Object>();identity.put("consent",consent);
+            identity.put("scopeProtocol",MediaQualityQualificationCommand.PLAN_PROTOCOL);
             identity.put("corpus",corpus.entrySet().stream().collect(java.util.stream.Collectors.toMap(e->e.getValue().id(),Map.Entry::getKey)));
             var expected=JSON.readTree(JSON.writeValueAsBytes(identity));Path header=directory.resolve("identity.json");
             if(!Files.exists(header))QualificationJournal.forceCreate(header,JSON.writeValueAsBytes(identity));
@@ -130,7 +131,8 @@ final class MediaQualityQualificationHarness implements MediaUnderstandingPort, 
             +GoogleDerivationAdapters.mediaInstruction(request).getBytes(java.nio.charset.StandardCharsets.UTF_8).length
             +GoogleDerivationAdapters.mediaSchema().getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
         String key=QualificationJournal.hash(ProviderDispatchPolicy.fingerprint(source)+"\n"+Objects.toString(child,"original")
-            +"\n"+TransformedMediaIdentity.digest(bytes)+"\n"+request.mediaType()+"\n"+request.firstPage()+"\n"+request.lastPage()+"\n"+request.durationSeconds());
+            +"\n"+TransformedMediaIdentity.digest(bytes)+"\n"+request.mediaType()+"\n"+request.firstPage()+"\n"+request.lastPage()+"\n"+request.durationSeconds()
+            +"\n"+request.videoAudioPossible()+"\n"+request.soundtrackOnly());
         var reservations=events.stream().filter(e->e.state().equals("reserved")).toList();
         if(events.stream().anyMatch(e->e.key().equals(key))||reservations.size()>=consent.requests()
                 ||reservations.stream().mapToLong(Event::estimatedBytes).sum()+estimate>consent.estimatedRequestBytes()
@@ -143,8 +145,14 @@ final class MediaQualityQualificationHarness implements MediaUnderstandingPort, 
             return result;
         } catch(RuntimeException failure) {
             stopped=true;
-            append(key,fixture.id(),"failed",0,0,(System.nanoTime()-started)/1_000_000,
-                Map.of("outcome",failure instanceof DerivationFailure d?d.category.name():"unclassified_failure"));
+            var safe=new LinkedHashMap<String,Object>();
+            safe.put("outcome",failure instanceof DerivationFailure d?d.category.name():"unclassified_failure");
+            if(failure instanceof DerivationFailure d && d.diagnostic!=null){
+                safe.put("stage",d.diagnostic.stage().name());safe.put("kind",d.diagnostic.kind().name());
+                safe.put("elapsedBand",d.diagnostic.elapsed().name());safe.put("providerReached",d.diagnostic.providerReached().name());
+                if(d.diagnostic.httpStatus()!=null)safe.put("httpStatus",d.diagnostic.httpStatus());
+            }
+            append(key,fixture.id(),"failed",0,0,(System.nanoTime()-started)/1_000_000,safe);
             if(failure instanceof DerivationFailure)throw failure;
             throw new IllegalStateException("Qualification provider failure"); // No raw external message/cause.
         } finally {

@@ -6,11 +6,17 @@ import java.util.UUID;
 
 /** Explicit owner scope for durable work; every provider implementation re-resolves current source facts. */
 public interface PrivateQuerySource {
+    /** Explicit half-open saved-time scope; metadata only, never authority. */
+    record SavedDuring(Instant from,Instant toExclusive) {
+        public SavedDuring {if(from==null||toExclusive==null||!from.isBefore(toExclusive)||from.isBefore(Instant.parse("0001-01-01T00:00:00Z"))||toExclusive.isAfter(Instant.parse("+10000-01-01T00:00:00Z")))throw new IllegalArgumentException("Invalid saved period");}
+        public boolean contains(Instant value){return value!=null&&!value.isBefore(from)&&value.isBefore(toExclusive);}
+    }
     record FamilyBoundary(boolean empty,Instant createdAt,UUID sourceId) {
         public FamilyBoundary {if(empty?(createdAt!=null||sourceId!=null):(createdAt==null||sourceId==null))throw new IllegalArgumentException("Invalid source boundary");}
         public static FamilyBoundary emptyFamily(){return new FamilyBoundary(true,null,null);}
     }
-    record Boundary(int schemaVersion,Instant startedAt,List<String> lifecycles,FamilyBoundary notes,FamilyBoundary attachments) {
+    record Boundary(int schemaVersion,Instant startedAt,List<String> lifecycles,FamilyBoundary notes,FamilyBoundary attachments,SavedDuring savedDuring) {
+        public Boundary(int schemaVersion,Instant startedAt,List<String> lifecycles,FamilyBoundary notes,FamilyBoundary attachments){this(schemaVersion,startedAt,lifecycles,notes,attachments,null);}
         public Boundary {lifecycles=List.copyOf(lifecycles);if(schemaVersion!=1||startedAt==null||notes==null||attachments==null
             ||lifecycles.isEmpty()||lifecycles.size()>2||!java.util.Set.of("active","archived").containsAll(lifecycles))throw new IllegalArgumentException("Invalid corpus boundary");}
     }
@@ -25,6 +31,9 @@ public interface PrivateQuerySource {
     record Page(List<Source> sources,Position continuation) {public Page {sources=List.copyOf(sources);}}
     record Text(String value,Integer page) {@Override public String toString(){return "QuerySourceText[REDACTED]";}}
     Boundary capture(UUID owner,List<String> lifecycles);
+    default Boundary capture(UUID owner,List<String> lifecycles,SavedDuring period){if(period!=null)throw new UnsupportedOperationException("Saved period unsupported");return capture(owner,lifecycles);}
+    /** Progress only, never authority. A provider may report unknown rather than guess. */
+    default long count(UUID owner,Boundary boundary,boolean aiOnly){return -1;}
     Page page(UUID owner,Boundary boundary,Position after,int limit,boolean aiOnly);
     Source note(UUID owner,UUID noteId);
     Source source(UUID owner,UUID noteId,UUID attachmentId);
@@ -33,4 +42,6 @@ public interface PrivateQuerySource {
     String fingerprint(UUID owner,Boundary boundary,boolean aiOnly);
     /** Deterministic Note/PDF text only; implementation performs byte IO outside transactions. */
     List<Text> deterministicText(Source source);
+    /** Current AI-eligible Note body only; the caller also holds provider/coordination gates. */
+    String currentMarkdown(Source source);
 }

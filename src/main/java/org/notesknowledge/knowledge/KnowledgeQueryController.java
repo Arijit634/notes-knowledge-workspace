@@ -19,10 +19,11 @@ final class KnowledgeQueryController {
     private final org.notesknowledge.security.RateKeyDeriver keys;
     private final tools.jackson.databind.ObjectMapper json;
     private final org.notesknowledge.websupport.ApiProblemWriter problems;
+    private final SearchHistoryService history;
     private RetrievalTelemetry telemetry;
     @org.springframework.beans.factory.annotation.Autowired void telemetry(RetrievalTelemetry telemetry){this.telemetry=telemetry;}
     KnowledgeQueryController(KnowledgeOperationService operations,KnowledgeQueryEngine engine,NoteKnowledgeService notes,io.micrometer.core.instrument.MeterRegistry metrics,
-        org.notesknowledge.security.RateControlService rates,org.notesknowledge.security.RateKeyDeriver keys,tools.jackson.databind.ObjectMapper json,org.notesknowledge.websupport.ApiProblemWriter problems){this.operations=operations;this.engine=engine;this.notes=notes;this.metrics=metrics;this.rates=rates;this.keys=keys;this.json=json;this.problems=problems;}
+        org.notesknowledge.security.RateControlService rates,org.notesknowledge.security.RateKeyDeriver keys,tools.jackson.databind.ObjectMapper json,org.notesknowledge.websupport.ApiProblemWriter problems,SearchHistoryService history){this.operations=operations;this.engine=engine;this.notes=notes;this.metrics=metrics;this.rates=rates;this.keys=keys;this.json=json;this.problems=problems;this.history=history;}
     @PostMapping(value="/api/knowledge/query",consumes="application/json")
     @SuppressWarnings("unchecked")
     ResponseEntity<?> query(HttpServletRequest browser)throws java.io.IOException {
@@ -33,10 +34,14 @@ final class KnowledgeQueryController {
         long started=System.nanoTime();var outcome=org.notesknowledge.BackendTelemetry.Outcome.UNAVAILABLE;
         try {
         try{metrics.counter("notes.workspace.retrieval.query","queryClass",request.plan().name()).increment();}catch(RuntimeException unavailable){/* diagnostic only */}
-        if(request.plan()==KnowledgeQueryRequest.Plan.SEMANTIC_CORPUS||request.plan()==KnowledgeQueryRequest.Plan.DETERMINISTIC_CORPUS){var accepted=operations.accept(owner,request,browser);outcome=org.notesknowledge.BackendTelemetry.Outcome.SUCCESS;return ResponseEntity.accepted().cacheControl(CacheControl.noStore()).location(URI.create("/api/knowledge/operations/"+accepted.operationId())).body(accepted);}
-        var result=engine.ranked(owner,request).result();outcome=result.degraded()==null?org.notesknowledge.BackendTelemetry.Outcome.SUCCESS:org.notesknowledge.BackendTelemetry.Outcome.DEGRADED;
+        if(request.plan()==KnowledgeQueryRequest.Plan.SEMANTIC_CORPUS||request.plan()==KnowledgeQueryRequest.Plan.DETERMINISTIC_CORPUS){var accepted=operations.accept(owner,request,browser);outcome=org.notesknowledge.BackendTelemetry.Outcome.SUCCESS;return ResponseEntity.accepted().cacheControl(CacheControl.noStore()).header("Content-Location","/api/knowledge/history/"+accepted.historyId()).location(URI.create("/api/knowledge/operations/"+accepted.operationId())).body(accepted);}
+        UUID entry=history.begin(owner,request,null);KnowledgeQueryResult result;
+        try{var generated=engine.ranked(owner,request);result=generated.result();
+            if(!history.complete(owner,entry,new SearchHistoryService.Snapshot(1,false,null,new KnowledgeQueryResult.Stored(result,generated.provenance(),"",generated.lineages()))))throw ApiFailureException.of(ApiFailureException.Kind.INVALID_LIFECYCLE_TRANSITION);
+        }catch(RuntimeException failed){history.fail(owner,entry);throw failed;}
+        outcome=result.degraded()==null?org.notesknowledge.BackendTelemetry.Outcome.SUCCESS:org.notesknowledge.BackendTelemetry.Outcome.DEGRADED;
         if(telemetry!=null)telemetry.coverage(request.plan(),result.coverage(),result.degraded()!=null);
-        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(result);
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).header("Content-Location","/api/knowledge/history/"+entry).body(result);
         }finally{org.notesknowledge.BackendTelemetry.record(metrics,org.notesknowledge.BackendTelemetry.Event.RETRIEVAL,
             org.notesknowledge.BackendTelemetry.Operation.valueOf(request.plan().name()),outcome,System.nanoTime()-started);}
     }

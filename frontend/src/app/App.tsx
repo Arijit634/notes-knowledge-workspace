@@ -10,6 +10,8 @@ import { AuthRuntime } from '../features/auth/AuthRuntime'
 import { navigateToGoogle } from '../features/auth/OidcNavigationCoordinator'
 import { securityKeys, securitySummary } from '../features/security/SecurityApi'
 import { safeDestination } from '../features/auth/SafeDestination'
+import { Brand, GoogleMark } from './ui/Brand'
+import { AppearanceControl, AppearanceRoot } from './ui/Appearance'
 
 export const AUTH_ROUTES = ['/', '/signup', '/verify-email', '/login', '/mfa',
   '/forgot-password', '/reset-password', '/auth/complete', '/reauth'] as const
@@ -77,10 +79,12 @@ function message(error: unknown): string {
 }
 const Alert = ({ children }: { children: ReactNode }) => <p className="alert" role="alert">{children}</p>
 const BlindAcceptedPanel = () => <div className="success" role="status"><h2>Check your email</h2><p>If the details can be used, check your email for the next step.</p></div>
-function Shell({ title, eyebrow, children }: { title: string; eyebrow?: string; children: ReactNode }) {
+function Shell({ title, children }: { title: string; eyebrow?: string; children: ReactNode }) {
+  const auth = useAuth()
   return <main className="auth-layout"><section className="auth-card" aria-labelledby="page-title">
-    <Link className="brand" to="/">Notes <span>&amp;</span> Knowledge</Link>
-    {eyebrow && <p className="eyebrow">{eyebrow}</p>}<h1 id="page-title">{title}</h1>{children}
+    <AppearanceControl /><Brand /><h1 id="page-title">{title}</h1>
+    {auth.presentation.syntheticEmailOnly && <p className="local-environment-note">Local test workspace · use an <strong>@example.test</strong> address. Verification links are delivered to your protected local outbox, not an internet inbox.</p>}
+    {children}
   </section></main>
 }
 function Gate({ access, children }: { access: RouteAccess; children: ReactNode }) {
@@ -105,26 +109,24 @@ function RestartLogin() {
 function Landing() {
   const auth = useAuth()
   if (auth.state === 'authenticated') return <Navigate to="/notes" replace />
-  return <Shell title="A quieter place for what you need to remember" eyebrow="Your workspace starts here">
-    <p className="lead">Keep your notes and knowledge together. Sign in to continue when your workspace is ready.</p>
-    {auth.state === 'mfaRequired' ? <Link className="button" to={auth.continuation.challengeId ? '/mfa' : '/login'}>{auth.continuation.challengeId ? 'Continue verification' : 'Restart sign in'}</Link>
-        : <nav className="actions" aria-label="Get started"><Link className="button" to="/signup">Create an account</Link><Link className="button button-secondary" to="/login">Log in</Link></nav>}
-  </Shell>
+  return <Navigate to={auth.state === 'mfaRequired' && auth.continuation.challengeId ? '/mfa' : '/login'} replace />
 }
 type Credentials = { email: string; password: string }
 function CredentialsFields({ register, errors, creating = false }: { register: ReturnType<typeof useForm<Credentials>>['register']; errors: ReturnType<typeof useForm<Credentials>>['formState']['errors']; creating?: boolean }) {
-  return <><label htmlFor="email">Email</label><input id="email" type="email" autoComplete="email" aria-invalid={!!errors.email} aria-describedby={errors.email ? 'email-error' : undefined}
-    {...register('email', { required: 'Enter your email.', maxLength: { value: 254, message: 'Email is too long.' } })} />
+  const auth = useAuth()
+  return <><label htmlFor="email">Email</label><input id="email" type="email" autoComplete="email" placeholder={auth.presentation.syntheticEmailOnly ? 'you@example.test' : 'you@example.com'} aria-invalid={!!errors.email} aria-describedby={errors.email ? 'email-error' : undefined}
+    {...register('email', { required: 'Enter your email.', maxLength: { value: 254, message: 'Email is too long.' }, validate: value => !creating || !auth.presentation.syntheticEmailOnly || value.trim().toLowerCase().endsWith('@example.test') || 'Use an @example.test address for this local workspace. Other addresses cannot receive local verification.' })} />
     {errors.email && <span id="email-error" className="field-error">{errors.email.message}</span>}
-    <label htmlFor="password">{creating ? 'Create password' : 'Password'}</label><input id="password" type="password" autoComplete={creating ? 'new-password' : 'current-password'} aria-invalid={!!errors.password} aria-describedby={errors.password ? 'password-error' : undefined}
-      {...register('password', { required: 'Enter a password.', maxLength: { value: 1024, message: 'Password is too long.' } })} />
+    <label htmlFor="password">{creating ? 'Create password' : 'Password'}</label><input id="password" type="password" autoComplete={creating ? 'new-password' : 'current-password'} aria-invalid={!!errors.password} aria-describedby={[creating ? 'password-help' : '', errors.password ? 'password-error' : ''].filter(Boolean).join(' ') || undefined}
+      {...register('password', { required: 'Enter a password.', ...(creating ? { minLength: { value: 12, message: 'Use at least 12 characters.' } } : {}), maxLength: { value: 256, message: 'Use no more than 256 characters.' } })} />
+    {creating && <span id="password-help" className="field-help">12–256 characters. Use a unique password you do not use elsewhere.</span>}
     {errors.password && <span id="password-error" className="field-error">{errors.password.message}</span>}</>
 }
 function Signup() {
   const auth = useAuth(), { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<Credentials>()
   const [accepted, setAccepted] = useState(false), [error, setError] = useState('')
   const submit = handleSubmit(async values => { setError(''); try { await auth.api.request('POST', '/api/auth/registrations', { json: values }); setAccepted(true) } catch (e) { setError(message(e)) } })
-  return <Shell title="Create your account" eyebrow="Get started">
+  return <Shell title="Create your account">
     {accepted ? <BlindAcceptedPanel /> : <form onSubmit={submit} noValidate><CredentialsFields register={register} errors={errors} creating />{error && <Alert>{error}</Alert>}<button disabled={isSubmitting}>Create account</button></form>}
     <p className="footnote">Already have an account? <Link to="/login">Log in</Link></p>
   </Shell>
@@ -169,9 +171,10 @@ function Login() {
       else setError('Sign in could not be completed safely.')
     } catch (e) { setError(message(e)) }
   })
-  async function google() { setGoogleBusy(true); setError(''); try { const intendedDestination = safeDestination(location.state?.from) ?? auth.signInDestination.consume(); const r = await auth.api.request<{ authorizationUrl?: unknown }>('POST', '/api/auth/oidc/google/authorizations', { json: { intendedDestination }, retryOnCsrfInvalid: false }); navigateToGoogle(r.body?.authorizationUrl) } catch (e) { setError(message(e)) } finally { setGoogleBusy(false) } }
-  return <Shell title="Welcome back" eyebrow="Log in"><form onSubmit={submit} noValidate><CredentialsFields register={register} errors={errors} />{error && <Alert>{error}</Alert>}<button disabled={isSubmitting || googleBusy}>Log in</button></form>
-    <div className="divider" aria-hidden="true">or</div><button className="button-secondary" onClick={google} disabled={isSubmitting || googleBusy}>Continue with Google</button>
+  async function google() { if (!auth.presentation.googleEnabled) return; setGoogleBusy(true); setError(''); try { const intendedDestination = safeDestination(location.state?.from) ?? auth.signInDestination.consume(); const r = await auth.api.request<{ authorizationUrl?: unknown }>('POST', '/api/auth/oidc/google/authorizations', { json: { intendedDestination }, retryOnCsrfInvalid: false }); navigateToGoogle(r.body?.authorizationUrl) } catch (e) { setError(message(e)) } finally { setGoogleBusy(false) } }
+  return <Shell title="Welcome back"><form onSubmit={submit} noValidate><CredentialsFields register={register} errors={errors} />{error && <Alert>{error}</Alert>}<button disabled={isSubmitting || googleBusy}>Log in</button></form>
+    <div className="divider" aria-hidden="true">or</div><button className="button-secondary google-button" onClick={google} aria-describedby={!auth.presentation.googleEnabled ? 'google-unavailable' : undefined} disabled={!auth.presentation.googleEnabled || isSubmitting || googleBusy}><GoogleMark />Continue with Google</button>
+    {!auth.presentation.googleEnabled && <p id="google-unavailable" className="field-help">Google sign-in is not enabled for this deployment. Use email and password instead.</p>}
     <p className="footnote"><Link to="/forgot-password">Forgot password?</Link></p><p className="footnote">New here? <Link to="/signup">Create an account</Link></p></Shell>
 }
 function Mfa() {
@@ -218,7 +221,8 @@ function ResetPassword() {
   })
   return <Shell title="Choose a new password" eyebrow="Account recovery">
     {state === 'ready' && <form onSubmit={submit} noValidate><label htmlFor="new-password">New password</label><input id="new-password" type="password" autoComplete="new-password" aria-invalid={!!errors.password} aria-describedby={errors.password ? 'new-password-error' : undefined}
-      {...register('password', { required: 'Enter a new password.', maxLength: { value: 1024, message: 'Password is too long.' } })} />
+      {...register('password', { required: 'Enter a new password.', minLength: { value: 12, message: 'Use at least 12 characters.' }, maxLength: { value: 256, message: 'Use no more than 256 characters.' } })} />
+      <p className="field-help">12–256 characters. Choose a unique password.</p>
       {errors.password && <span id="new-password-error" className="field-error">{errors.password.message}</span>}
       <label htmlFor="confirm-password">Confirm new password</label><input id="confirm-password" type="password" autoComplete="new-password" aria-invalid={!!errors.confirmation} aria-describedby={errors.confirmation ? 'confirm-password-error' : undefined}
         {...register('confirmation', { required: 'Confirm the new password.' })} />
@@ -262,7 +266,7 @@ function AuthRoutes() {
     if (priorPath.current === '/settings/security' && location.pathname !== '/settings/security') auth.continuation.emailChangeToken = null
     priorPath.current = location.pathname
   }, [auth, location.pathname])
-  return <Routes>
+  const routes = <Routes>
     <Route path={AUTH_ROUTES[0]} element={<Gate access="PUBLIC"><Landing /></Gate>} />
     <Route path={AUTH_ROUTES[1]} element={<Gate access="ANONYMOUS_ONLY"><Signup /></Gate>} />
     <Route path={AUTH_ROUTES[2]} element={<Gate access="PUBLIC"><VerifyEmail /></Gate>} />
@@ -275,9 +279,9 @@ function AuthRoutes() {
     <Route path={SECURITY_ROUTES[0]} element={<Gate access="FULL_AUTHENTICATED"><NotesWorkspace auth={auth}><Suspense fallback={<p role="status">Loading security settings…</p>}><SecuritySettingsPage auth={auth} /></Suspense></NotesWorkspace></Gate>} />
     <Route path={SECURITY_ROUTES[1]} element={<Gate access="FULL_AUTHENTICATED"><NotesWorkspace auth={auth}><Suspense fallback={<p role="status">Loading MFA settings…</p>}><MfaSettingsPage auth={auth} /></Suspense></NotesWorkspace></Gate>} />
     <Route path={SECURITY_ROUTES[2]} element={<Gate access="FULL_AUTHENTICATED"><NotesWorkspace auth={auth}><Suspense fallback={<p role="status">Loading sessions…</p>}><SessionsSettingsPage auth={auth} /></Suspense></NotesWorkspace></Gate>} />
-    <Route path={NOTES_ROUTES[0]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<Shell title="Loading notes"><p role="status">Please wait…</p></Shell>}><NotesListPage auth={auth} /></Suspense></Gate>} />
-    <Route path={NOTES_ROUTES[1]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<Shell title="Loading editor"><p role="status">Please wait…</p></Shell>}><NoteEditorPage auth={auth} creating /></Suspense></Gate>} />
-    <Route path={NOTES_ROUTES[2]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<Shell title="Loading editor"><p role="status">Please wait…</p></Shell>}><NoteEditorPage key={location.pathname} auth={auth} /></Suspense></Gate>} />
+    <Route path={NOTES_ROUTES[0]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<p className="route-loading" role="status">Loading…</p>}><NotesListPage auth={auth} /></Suspense></Gate>} />
+    <Route path={NOTES_ROUTES[1]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<p className="route-loading" role="status">Loading…</p>}><NoteEditorPage auth={auth} creating /></Suspense></Gate>} />
+    <Route path={NOTES_ROUTES[2]} element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<p className="route-loading" role="status">Loading…</p>}><NoteEditorPage key={location.pathname} auth={auth} /></Suspense></Gate>} />
     <Route path="/ask" element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<p role="status">Loading knowledge…</p>}><AskKnowledgePage auth={auth} /></Suspense></Gate>} />
     <Route path="/settings/profile" element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<p role="status">Loading profile…</p>}><ProfileSettingsPage auth={auth} /></Suspense></Gate>} />
     <Route path="/settings/privacy" element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<p role="status">Loading privacy…</p>}><PrivacySettingsPage auth={auth} /></Suspense></Gate>} />
@@ -293,6 +297,10 @@ function AuthRoutes() {
     <Route path="/moderation/reports/:reportId" element={<Gate access="FULL_AUTHENTICATED"><Suspense fallback={<p role="status">Loading report…</p>}><ModerationReportPage key={location.pathname} auth={auth} /></Suspense></Gate>} />
     <Route path="*" element={<Shell title="Page not found"><p>That page is unavailable.</p><Link to="/">Go home</Link></Shell>} />
   </Routes>
+  // Keep navigation mounted during route and lazy-chunk transitions. Nested page
+  // shells contribute modal state, while this single frame owns navigation.
+  return auth.state === 'authenticated' && !(AUTH_ROUTES as readonly string[]).includes(location.pathname)
+    ? <NotesWorkspace auth={auth}>{routes}</NotesWorkspace> : routes
 }
 function SafeRouteError() {
   return <main className="auth-layout"><section className="auth-card" role="alert"><h1>This view is unavailable</h1><p>It could not be displayed safely. Unsaved work is not guaranteed after a rendering failure.</p><a href="/notes">Return to notes</a></section></main>
@@ -303,5 +311,5 @@ export function App({ auth = defaultRuntime }: { auth?: AuthRuntime }) {
   const [router] = useState(() => createBrowserRouter([{ path: '*', element: <AuthRoutes />, errorElement: <SafeRouteError /> }]))
   useEffect(() => auth.subscribe(() => rerender(value => value + 1)), [auth])
   useEffect(() => { auth.bootstrap().catch(() => setStartupError(true)) }, [auth])
-  return <Context.Provider value={{ auth, version, completeNavigation: (destination, from) => router.navigate(destination, { replace: true, flushSync: true, state: from ? { from } : undefined }) }}>{startupError ? <Shell title="Session unavailable"><Alert>We could not check your session safely. Refresh to try again.</Alert></Shell> : <RouterProvider router={router} onError={() => { /* Never report raw route errors or private props. */ }} />}</Context.Provider>
+  return <Context.Provider value={{ auth, version, completeNavigation: (destination, from) => router.navigate(destination, { replace: true, flushSync: true, state: from ? { from } : undefined }) }}><AppearanceRoot />{startupError ? <Shell title="Session unavailable"><Alert>We could not check your session safely. Refresh to try again.</Alert></Shell> : <RouterProvider router={router} onError={() => { /* Never report raw route errors or private props. */ }} />}</Context.Provider>
 }

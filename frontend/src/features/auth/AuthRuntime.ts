@@ -8,13 +8,19 @@ import { SessionCoordinator, type LocalSessionState } from '../../app/security/S
 import { AuthContinuationState, validChallenge } from './AuthContinuationState'
 import { captureSecurityLink } from './SecurityLinkIngress'
 import { SignInDestination } from './SafeDestination'
+import { deploymentPresentation } from './DeploymentPresentation'
+import { AskWorkspace } from '../knowledge/AskWorkspace'
+import { LibrarySearch } from '../notes/LibrarySearch'
 
 type SessionProjection = { state?: unknown; challengeId?: unknown }
 
 export class AuthRuntime {
+  readonly presentation = deploymentPresentation(document)
   readonly continuation = new AuthContinuationState()
   readonly signInDestination = new SignInDestination()
   readonly sensitive = new SensitiveStateRegistry()
+  readonly ask = new AskWorkspace(this)
+  readonly librarySearch = new LibrarySearch(this)
   readonly queries = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   readonly csrf: CsrfManager
   readonly api: ApiClient

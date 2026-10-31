@@ -97,6 +97,8 @@ class MultimodalPipelineQualificationTest {
             jdbc.update("update notes.note set markdown=? where note_id=?",kind.equals("long-note")?"# Inventory\n"+("Ordinary fictional inventory without an answer.\n".repeat(300))+"\n# Deep vault\n"+FACTS.get(gold):FACTS.get(gold),note);modality="note";
         } else {
             attachment=upload(kind);when(media.describe(any(),any(),any())).thenAnswer(call->{outside();AiProcessingGate.SourceAiPermit p=call.getArgument(0);p.requireDispatch();
+                MediaUnderstandingRequest scope=call.getArgument(2);
+                if(scope.soundtrackOnly())return List.of(); // Frozen visual fixture has no acoustic gold fact.
                 byte[] actual=call.getArgument(1);
                 if(kind.equals("scan"))try(var pdf=org.apache.pdfbox.Loader.loadPDF(actual)) {
                     assertThat(pdf.getNumberOfPages()).isEqualTo(1);assertThat(new org.apache.pdfbox.text.PDFTextStripper().getText(pdf)).isBlank();
@@ -176,7 +178,10 @@ class MultimodalPipelineQualificationTest {
     }
     @Test void partialTranscriptAndSampledFramesCannotFabricateMissingFactsOrCompleteCoverage()throws Exception {
         for(String kind:List.of("audio","video")) {
-            UUID id=upload(kind);when(media.describe(any(),any(),any())).thenReturn(List.of(segment(kind,"A limited fictional excerpt without the requested destination.")));
+            UUID id=upload(kind);doAnswer(call->{
+                MediaUnderstandingRequest scope=call.getArgument(2);
+                return scope.soundtrackOnly()?List.of():List.of(segment(kind,"A limited fictional excerpt without the requested destination."));
+            }).when(media).describe(any(),any(),any());
             assertThat(state(derive(id,kind))).isEqualTo("completed");
         }
         assertThat(jdbc.queryForObject("select count(*) from knowledge.private_derived_segment where owner_user_id=?",Integer.class,owner)).isEqualTo(2);
@@ -242,7 +247,7 @@ class MultimodalPipelineQualificationTest {
         UUID attachment=upload("tones");
         var expected=new Expected(owner,note,attachment,1,1,1L);
         var current=EmbeddingLineage.create(config,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,config.approvedPolicyFingerprint()),"audio");
-        String legacyConfiguration=current.configuration().replace("audio-speech-acoustic-surrogate-v3","media-scoped-coverage-surrogate-v2");
+        String legacyConfiguration=current.configuration().replace("audio-layered-listening-low-language-surrogate-v5","media-scoped-coverage-surrogate-v2");
         var legacy=new EmbeddingLineage(java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
             .digest(legacyConfiguration.getBytes(StandardCharsets.UTF_8))),legacyConfiguration,"audio",8,"cosine",policy,"none");
         // Model an already-completed prior extraction, not a pending new upload.

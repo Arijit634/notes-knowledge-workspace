@@ -24,7 +24,7 @@ export function ProfileSettingsPage({ auth }: { auth: AuthRuntime }) {
     if (busy) return
     setBusy(true); setError(''); setStatus('')
     try { const p = await profileApi.save(auth, { displayName: draft.displayName, biography: draft.biography, handle: draft.handle || null });
-      if (current()) { auth.queries.setQueryData(key, p); reset(p); setStatus('Profile saved. Nothing was published.') } }
+      if (current()) { auth.queries.setQueryData(key, p); reset(p); setStatus('Profile saved.') } }
     catch (e) { if (current()) setError(featureError(e)) } finally { if (current()) setBusy(false) }
   })
   async function avatar(file: File | undefined) {
@@ -40,16 +40,16 @@ export function ProfileSettingsPage({ auth }: { auth: AuthRuntime }) {
     try { await profileApi.removeAvatar(auth); if (current()) { auth.queries.setQueryData(key, (previous: PrivateProfile | undefined) => previous && { ...previous, avatar: null }); setAvatarEpoch(value => value + 1); await profile.refetch(); setStatus('Avatar removed.') } }
     catch (e) { if (current()) setError(featureError(e)) } finally { if (current()) setBusy(false) }
   }
-  return <NotesWorkspace auth={auth}><div className="settings-card"><h1>Your profile</h1><p>Make this space yours. Your private profile is not a public profile.</p><Link to="/settings/public-profile">Public profile &amp; publishing identity</Link>
+  return <NotesWorkspace auth={auth}><div className="settings-card"><h1>Your profile</h1><Link to="/settings/public-profile">Public profile</Link>
     {profile.isPending ? <p role="status">Loading profile…</p> : profile.isError ? <p role="alert">{featureError(profile.error)} <button onClick={() => void profile.refetch()}>Retry</button></p> : profile.data && <>
       <div className="studio-profile-avatar">{profile.data.avatar ? <PrivateAvatar key={`${avatarEpoch}:${profile.data.avatar.createdAt}`} auth={auth} /> : <span className="studio-avatar-symbol"><Icon name="profile" /></span>}<div>
-        <strong>{profile.data.avatar ? 'Avatar is configured' : 'No avatar yet'}</strong><p>PNG or JPEG · validated by the server</p>
+        <strong>{profile.data.avatar ? 'Avatar is configured' : 'No avatar yet'}</strong><p>PNG or JPG · up to 5 MiB</p>
         <label htmlFor="profile-avatar">Choose avatar</label><input ref={fileInput} id="profile-avatar" type="file" accept="image/png,image/jpeg" disabled={busy} onChange={e => void avatar(e.target.files?.[0])} />
         {profile.data.avatar && <button type="button" disabled={busy} className="button-secondary" onClick={() => void removeAvatar()}>Remove avatar</button>}</div></div>
       <form className="settings-form" onSubmit={event => void save(event)}><label htmlFor="display-name">Display name</label>
         <input id="display-name" maxLength={100} disabled={busy} {...register('displayName')} />
         <label htmlFor="biography">About you</label><textarea id="biography" maxLength={500} disabled={busy} {...register('biography')} />
         <label htmlFor="profile-handle">Public handle (optional)</label><input id="profile-handle" maxLength={30} disabled={busy} pattern="[a-zA-Z][a-zA-Z0-9_]{2,29}" {...register('handle')} />
-        <p className="notes-help">Reserving a handle does not activate a public profile or publish any note.</p><button disabled={busy}>Save profile</button></form></>}
+        <p className="notes-help">Your handle stays private until you activate your public profile.</p><button disabled={busy}>Save profile</button></form></>}
     {error && <p role="alert" className="alert">{error}</p>}{status && <p role="status" className="success">{status}</p>}</div></NotesWorkspace>
 }

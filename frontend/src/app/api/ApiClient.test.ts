@@ -170,7 +170,7 @@ describe('ApiClient transport', () => {
       expect(error).toBeInstanceOf(ApiProblemError)
       const metadata = (error as ApiProblemError).metadata
       expect(metadata).toEqual({ status: 412, etag: '"current-revision"',
-        location: '/api/notes/synthetic', retryAfter: null, contentRange: null })
+        location: '/api/notes/synthetic', retryAfter: null, contentRange: null, contentLocation: null })
       expect(JSON.stringify(metadata)).not.toContain('PRIVATE_MARKER')
     }
   })

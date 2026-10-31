@@ -53,6 +53,55 @@ class LocalhostTransportTest {
             assertThatThrownBy(() -> new LocalhostMode(invalid)).isInstanceOf(IllegalStateException.class).hasNoCause();
         }
     }
+    MockEnvironment syntheticAi() throws Exception {
+        var environment=configuration();var approved=root.resolve("synthetic-ai");Files.createDirectories(approved);
+        Files.writeString(approved.resolve("disclosure.json"),"Synthetic bundle fixture; actual policy validation belongs to Knowledge");
+        return environment.withProperty("knowledge.derivation.enabled","true").withProperty("nkw.localhost.synthetic-ai","true")
+                .withProperty("knowledge.derivation.provider","gemini").withProperty("knowledge.derivation.tier","unpaid")
+                .withProperty("knowledge.derivation.region","global").withProperty("knowledge.derivation.embedding-model","gemini-embedding-2")
+                .withProperty("knowledge.derivation.media-model","gemini-3.6-flash")
+                .withProperty("knowledge.derivation.dispatch-policy","unpaid-synthetic-demo")
+                .withProperty("knowledge.derivation.approved-source-fingerprints","b".repeat(64))
+                .withProperty("knowledge.derivation.approved-query-fingerprints","c".repeat(64))
+                .withProperty("knowledge.derivation.approved-policy-fingerprint","a".repeat(64))
+                .withProperty("knowledge.processing-disclosure.approved-fingerprint","a".repeat(64))
+                .withProperty("knowledge.processing-disclosure.provider","gemini").withProperty("knowledge.processing-disclosure.tier","unpaid")
+                .withProperty("knowledge.processing-disclosure.region","global")
+                .withProperty("knowledge.processing-disclosure.path",approved.resolve("disclosure.json").toString());
+    }
+    @Test void boundedSyntheticAiOptInDoesNotRelaxTransportOrManifestBoundaries() throws Exception {
+        assertThat(new LocalhostMode(syntheticAi())).isNotNull();
+        var invalid=java.util.Map.ofEntries(
+                java.util.Map.entry("nkw.localhost.synthetic-ai","false"),java.util.Map.entry("knowledge.derivation.enabled","false"),
+                java.util.Map.entry("knowledge.derivation.provider","other"),java.util.Map.entry("knowledge.derivation.tier","paid"),
+                java.util.Map.entry("knowledge.derivation.region","other"),java.util.Map.entry("knowledge.derivation.media-model","unqualified"),
+                java.util.Map.entry("knowledge.derivation.dispatch-policy","allow-all"),java.util.Map.entry("knowledge.derivation.approved-source-fingerprints","*"),
+                java.util.Map.entry("knowledge.derivation.approved-query-fingerprints",""),java.util.Map.entry("knowledge.processing-disclosure.approved-fingerprint","d".repeat(64)),
+                java.util.Map.entry("knowledge.processing-disclosure.tier","paid"),java.util.Map.entry("identity.delivery.smtp-enabled","true"),
+                java.util.Map.entry("identity.oidc.google.enabled","true"),java.util.Map.entry("server.ssl.enabled","false"));
+        for(var entry:invalid.entrySet())assertThatThrownBy(()->new LocalhostMode(syntheticAi().withProperty(entry.getKey(),entry.getValue())))
+                .isInstanceOf(IllegalStateException.class).hasMessage("Protected loopback localhost configuration required").hasNoCause();
+    }
+    @Test void designatedSyntheticWorkspaceNeedsNoQuestionOrSourceListButStillRequiresProtectedTransport() throws Exception {
+        var e=syntheticAi().withProperty("knowledge.derivation.synthetic-workspace-owner","01999000-0000-7000-8000-000000000001")
+            .withProperty("knowledge.derivation.approved-query-fingerprints","").withProperty("knowledge.derivation.approved-source-fingerprints","");
+        assertThat(new LocalhostMode(e)).isNotNull();
+        assertThatThrownBy(()->new LocalhostMode(e.withProperty("server.address","0.0.0.0"))).hasMessage("Protected loopback localhost configuration required");
+        assertThatThrownBy(()->new LocalhostMode(syntheticAi().withProperty("knowledge.derivation.synthetic-workspace-owner","not-an-id"))).hasMessage("Protected loopback localhost configuration required");
+    }
+    @Test void syntheticAiCannotLoadAnUnownedBundleOrUnboundedApprovalList() throws Exception {
+        var environment=syntheticAi();var outside=root.resolve("unapproved.json");Files.writeString(outside,"not an approved bundle");
+        assertThatThrownBy(()->new LocalhostMode(environment.withProperty("knowledge.processing-disclosure.path",outside.toString())))
+                .isInstanceOf(IllegalStateException.class).hasNoCause();
+        String excessive=String.join(",",java.util.Collections.nCopies(2049,"b".repeat(64)));
+        assertThatThrownBy(()->new LocalhostMode(syntheticAi().withProperty("knowledge.derivation.approved-source-fingerprints",excessive)))
+                .isInstanceOf(IllegalStateException.class).hasNoCause();
+        assertThat(new LocalhostMode(syntheticAi().withProperty("knowledge.derivation.approved-source-fingerprints",
+                String.join(",",java.util.Collections.nCopies(2048,"b".repeat(64)))))).isNotNull();
+        assertThatThrownBy(()->new LocalhostMode(syntheticAi().withProperty("knowledge.derivation.approved-query-fingerprints",
+                String.join(",",java.util.Collections.nCopies(257,"c".repeat(64))))))
+                .isInstanceOf(IllegalStateException.class).hasNoCause();
+    }
     @Test void controlledModeCannotAccidentallyUseAnotherDatabaseOrDdlRole() throws Exception {
         for (String url : java.util.List.of("jdbc:postgresql://example.invalid:5432/nkw_owner_local",
                 "jdbc:postgresql://127.0.0.1:55438/unrelated", "jdbc:postgresql://127.0.0.1:55438/nkw_owner_local?user=another")) {
@@ -61,6 +110,11 @@ class LocalhostTransportTest {
         }
         var invalid = configuration().withProperty("spring.datasource.username", "nkw_local_migrator");
         assertThatThrownBy(() -> new LocalhostMode(invalid)).isInstanceOf(IllegalStateException.class);
+    }
+    @Test void explicitVideoSoundtrackModelKeepsProtectedLocalProviderAllowlist() throws Exception {
+        assertThat(new LocalhostMode(syntheticAi().withProperty("knowledge.derivation.video-soundtrack-model","gemini-3.6-flash"))).isNotNull();
+        assertThatThrownBy(()->new LocalhostMode(syntheticAi().withProperty("knowledge.derivation.video-soundtrack-model","unqualified")))
+            .hasMessage("Protected loopback localhost configuration required").hasNoCause();
     }
     @Test void objectWritesAreCreateOnlyAndSurviveReconstruction() throws Exception {
         var objects = objects(); objects.write(KEY, new ByteArrayInputStream(new byte[]{1,2,3}), 3);

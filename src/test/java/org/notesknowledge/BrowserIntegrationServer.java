@@ -114,7 +114,7 @@ public final class BrowserIntegrationServer {
             try (var app = launcher.run(arguments.toArray(String[]::new))) {
                 var runtime = app.getBean(JdbcTemplate.class);
                 require(Boolean.FALSE.equals(runtime.queryForObject("select rolsuper or rolcreatedb or rolcreaterole from pg_roles where rolname=current_user", Boolean.class)));
-                require(runtime.queryForObject("select count(*) from information_schema.tables where table_schema in ('identity','profile','notes','knowledge','publishing','discovery','moderation') and table_type='BASE TABLE'", Integer.class) == 38);
+                require(runtime.queryForObject("select count(*) from information_schema.tables where table_schema in ('identity','profile','notes','knowledge','publishing','discovery','moderation') and table_type='BASE TABLE'", Integer.class) == 39);
                 for (String kind : java.util.List.of("image", "pdf", "audio", "video")) {
                     var media = MeaningfulMediaFixtures.media(kind);
                     writeFixture(root.resolve("fixtures"), media);

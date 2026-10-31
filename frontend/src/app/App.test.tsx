@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App, AUTH_ROUTES } from './App'
 import { AuthRuntime } from '../features/auth/AuthRuntime'
 import { approvedGoogleNavigation } from '../features/auth/OidcNavigationCoordinator'
@@ -10,6 +10,9 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
   status, headers: { 'Content-Type': 'application/json' },
 })
 const noContent = () => new Response(null, { status: 204 })
+beforeEach(() => {
+  const meta = document.createElement('meta'); meta.name = 'nkw-presentation'; meta.content = 'google=enabled;email=ordinary'; document.head.append(meta)
+})
 
 function mount(path: string, state: 'anonymous' | 'mfaRequired' | 'authenticated' = 'anonymous',
   handler?: (method: string, path: string, body: unknown) => Response,
@@ -36,6 +39,7 @@ function mount(path: string, state: 'anonymous' | 'mfaRequired' | 'authenticated
 afterEach(() => {
   cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks()
   window.history.replaceState(null, '', '/')
+  document.querySelectorAll('meta[name="nkw-presentation"]').forEach(node => node.remove())
 })
 
 describe('authentication browser journey', () => {
@@ -44,9 +48,9 @@ describe('authentication browser journey', () => {
       '/forgot-password', '/reset-password', '/auth/complete', '/reauth'])
   })
 
-  it('bootstraps anonymous session and CSRF, then shows landing', async () => {
+  it('bootstraps anonymous session and CSRF, then redirects root to login', async () => {
     const { calls } = mount('/')
-    await screen.findByRole('heading', { name: /quieter place/i })
+    await screen.findByRole('heading', { name: 'Welcome back' })
     expect(calls.map(call => call.path)).toContain('/api/auth/session')
     expect(calls.map(call => call.path)).toContain('/api/auth/csrf')
     expect(screen.getByRole('link', { name: 'Create an account' })).toBeTruthy()
@@ -75,6 +79,43 @@ describe('authentication browser journey', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create account' }))
     await screen.findByText(/if the details can be used/i)
     expect(calls.some(call => call.path === '/api/auth/registrations' && call.method === 'POST')).toBe(true)
+  })
+
+  it('explains the password policy and blocks a short password before registration', async () => {
+    const { calls } = mount('/signup')
+    await screen.findByRole('heading', { name: 'Create your account' })
+    expect(screen.getByText(/12–256 characters/)).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'person@example.test' } })
+    fireEvent.change(screen.getByLabelText('Create password'), { target: { value: 'short' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create account' }))
+    await screen.findByText('Use at least 12 characters.')
+    expect(calls.some(call => call.path === '/api/auth/registrations')).toBe(false)
+    expect(screen.getByLabelText('Create password').getAttribute('aria-describedby')).toContain('password-help')
+  })
+
+  it('rejects unsupported local delivery addresses before blind acceptance and keeps valid local acceptance generic', async () => {
+    document.querySelector('meta[name="nkw-presentation"]')!.setAttribute('content', 'google=disabled;email=synthetic')
+    const { calls } = mount('/signup', 'anonymous', () => json(null, 202))
+    await screen.findByRole('heading', { name: 'Create your account' })
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'person@example.org' } })
+    fireEvent.change(screen.getByLabelText('Create password'), { target: { value: 'Synthetic-password-123!' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create account' }))
+    await screen.findByText(/Other addresses cannot receive local verification/)
+    expect(calls.some(call => call.path === '/api/auth/registrations')).toBe(false)
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'person@example.test' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create account' }))
+    await screen.findByText(/If the details can be used/)
+    expect(calls.filter(call => call.path === '/api/auth/registrations')).toHaveLength(1)
+  })
+
+  it('keeps disabled or unconfigured Google UI inert without making an authorization request', async () => {
+    document.querySelector('meta[name="nkw-presentation"]')!.setAttribute('content', 'google=disabled;email=synthetic')
+    const { calls } = mount('/login')
+    const button = await screen.findByRole('button', { name: 'Continue with Google' })
+    expect((button as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByText(/Google sign-in is not enabled/)).toBeTruthy()
+    fireEvent.click(button)
+    expect(calls.some(call => call.path === '/api/auth/oidc/google/authorizations')).toBe(false)
   })
 
   it('captures and immediately scrubs verification fragment before confirmation', async () => {

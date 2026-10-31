@@ -98,7 +98,7 @@ class NotesService {
         return get(owner, id);
     }
 
-    CursorPage<NoteRecord.NoteView> list(UUID owner, String lifecycle, Boolean pinned,
+    CursorPage<NoteCollectionItem> list(UUID owner, String lifecycle, Boolean pinned,
             String sort, Integer requestedLimit, String cursor) {
         String state = lifecycle == null ? "active" : lifecycle;
         if (!List.of("active", "archived", "trashed").contains(state)
@@ -132,7 +132,9 @@ class NotesService {
                     new OpaqueCursorCodec.EpochMillisValue(last.updatedAt().toEpochMilli()),
                     new OpaqueCursorCodec.UuidValue(last.id()))), CURSOR_LIFETIME);
         }
-        return new CursorPage<>(visible.stream().map(NoteRecord::view).toList(), next);
+        var summaries = repository.attachmentSummaries(owner, visible.stream().map(NoteRecord::id).toList());
+        return new CursorPage<>(visible.stream().map(note -> NoteCollectionItem.of(note,
+                summaries.getOrDefault(note.id(), NoteCollectionItem.AttachmentSummary.EMPTY))).toList(), next);
     }
 
     private EtaggedNote etagged(NoteRecord note) {

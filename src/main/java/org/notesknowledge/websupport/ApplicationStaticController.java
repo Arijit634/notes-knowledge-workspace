@@ -8,6 +8,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnResource;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.Resource;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.core.env.Environment;
+import java.nio.charset.StandardCharsets;
 import org.springframework.http.CacheControl;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -35,10 +38,22 @@ public final class ApplicationStaticController implements RequestMatcher {
         + "img-src 'self' blob: data:; media-src 'self' blob:; font-src 'self'; connect-src 'self'; "
         + "object-src 'none'; frame-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
     private final Resource index;
+    private final String presentation;
 
     @Autowired
-    public ApplicationStaticController() { this(new ClassPathResource("static/index.html")); }
-    ApplicationStaticController(Resource index) { this.index = index; }
+    public ApplicationStaticController(Environment environment) {
+        this(new ClassPathResource("static/index.html"),
+            environment.getProperty("identity.oidc.google.enabled", Boolean.class, false),
+            environment.matchesProfiles("localhost"));
+    }
+    ApplicationStaticController(Resource index) { this(index, false, false); }
+    ApplicationStaticController(Resource index, boolean googleEnabled, boolean syntheticEmailOnly) {
+        this.index = index;
+        // Non-secret deployment presentation only. Never session/Account authority,
+        // provider identifiers, credentials, arbitrary strings or an inline script.
+        presentation = "google=" + (googleEnabled ? "enabled" : "disabled")
+            + ";email=" + (syntheticEmailOnly ? "synthetic" : "ordinary");
+    }
 
     static boolean page(String path) {
         return path != null && (PAGES.contains(path) || RESOURCE_PAGE.matcher(path).matches() || AUTHOR_PAGE.matcher(path).matches());
@@ -55,10 +70,12 @@ public final class ApplicationStaticController implements RequestMatcher {
         "/settings/security/mfa", "/settings/security/sessions", "/settings/profile", "/settings/privacy",
         "/settings/public-profile", "/publications", "/publications/{publicationId}", "/explore", "/explore/search",
         "/profile/{handle}", "/publication/{publicationId}", "/p/{publicationId}", "/moderation/reports", "/moderation/reports/{reportId}"})
-    ResponseEntity<Resource> shell(HttpServletRequest request) {
+    ResponseEntity<Resource> shell(HttpServletRequest request) throws java.io.IOException {
         if (!page(path(request)) || !index.exists()) return missing();
+        var content = index.getContentAsString(StandardCharsets.UTF_8)
+            .replace("name=\"nkw-presentation\" content=\"unconfigured\"", "name=\"nkw-presentation\" content=\"" + presentation + "\"");
         return ResponseEntity.ok().contentType(MediaType.TEXT_HTML).cacheControl(CacheControl.noCache().mustRevalidate())
-            .header("Content-Security-Policy", CSP).body(index);
+            .header("Content-Security-Policy", CSP).body(new ByteArrayResource(content.getBytes(StandardCharsets.UTF_8)));
     }
 
     @GetMapping("/assets/{file}")

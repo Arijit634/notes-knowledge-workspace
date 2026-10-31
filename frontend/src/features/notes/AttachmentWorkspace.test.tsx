@@ -66,6 +66,27 @@ beforeEach(() => {
 beforeAll(async () => { await Promise.all([import('./NotesPages'), import('./MarkdownEditorAdapter')]) }, 60_000)
 
 describe('Attachment panel', () => {
+  it('accepts a dropped file once and rejects a multiple-file drop without dispatch', async () => {
+    const { uploads } = panel(call => call.method === 'POST' ? json(file, 201, { ETag: '"a1"', Location: `/api/notes/${noteId}/attachments/${id}` }) : undefined)
+    await screen.findByText('synthetic.png', { selector: 'strong' })
+    const selected = new File(['synthetic'], 'drop.png', { type: 'image/png' })
+    fireEvent.drop(screen.getByRole('region', { name: 'Attachments' }), { dataTransfer: { types: ['Files'], files: [selected, selected] } })
+    await screen.findByText('Drop one file at a time.'); expect(uploads).toHaveLength(0)
+    fireEvent.drop(screen.getByRole('region', { name: 'Attachments' }), { dataTransfer: { types: ['Files'], files: [selected] } })
+    await screen.findByText('File added.'); expect(uploads).toHaveLength(1)
+  })
+  it.each(['error', 'unmount'])('renders video inline and releases native bytes immediately on %s', async transition => {
+    const clip = { ...file, mediaKind: 'video', mediaType: 'video/mp4', displayFilename: 'synthetic.mp4', durationSeconds: 4 }
+    const view = panel(c => c.method === 'GET' && c.path === `/api/notes/${noteId}/attachments` ? json({ items: [clip], nextCursor: null }) : undefined)
+    const video = await screen.findByLabelText('synthetic.mp4') as HTMLVideoElement
+    expect(video.controls).toBe(true); expect(video.getAttribute('src')).toBe(`/api/notes/${noteId}/attachments/${id}/content`)
+    if (transition === 'error') {
+      fireEvent.error(video)
+      expect(await screen.findByText(/Preview unavailable in this browser/)).toBeTruthy()
+    } else view.view.unmount()
+    expect(video.getAttribute('src')).toBeNull(); expect(HTMLMediaElement.prototype.pause).toHaveBeenCalled()
+  })
+
   it('shows loading, an empty state and safe labelled file input', async () => {
     let resolve!: (response: Response) => void
     panel(() => new Promise<Response>(done => { resolve = done }))
@@ -194,6 +215,7 @@ describe('Attachment panel', () => {
   it.each([413, 415, 422, 429, 503])('contains upload %s and resets the input without retry', async status => {
     const state = panel(call => call.method === 'POST' ? problem(status) : undefined)
     await screen.findByText('synthetic.png', { selector: 'strong' }); pick(); await screen.findByRole('alert')
+    if (status === 422) { expect(screen.getByRole('alert').textContent).not.toContain('Videos must'); expect(screen.getByRole('alert').textContent).toContain('PDFs') }
     expect(state.calls.filter(call => call.method === 'POST')).toHaveLength(1)
     expect((screen.getByLabelText('Add file') as HTMLInputElement).value).toBe('')
   })

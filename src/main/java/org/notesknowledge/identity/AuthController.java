@@ -11,6 +11,7 @@ import org.notesknowledge.security.RateKeyDeriver;
 import org.notesknowledge.security.RateLimitPort;
 import org.notesknowledge.websupport.ApiFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.core.env.Environment;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.web.csrf.CsrfToken;
@@ -38,12 +39,13 @@ final class AuthController {
     private final RateKeyDeriver rateKeys;
     private final MfaRateControl mfaRates;
     private final AuthenticationSessionService sessions;
+    private final boolean syntheticEmailOnly;
 
     AuthController(RegistrationService registration, EmailVerificationService verification,
             PasswordAuthenticationService passwords,
             PasswordRecoveryService recovery,
             RateControlService rates, RateKeyDeriver rateKeys,
-            MfaRateControl mfaRates, AuthenticationSessionService sessions) {
+            MfaRateControl mfaRates, AuthenticationSessionService sessions, Environment environment) {
         this.registration = registration;
         this.verification = verification;
         this.passwords = passwords;
@@ -52,6 +54,7 @@ final class AuthController {
         this.rateKeys = rateKeys;
         this.mfaRates = mfaRates;
         this.sessions = sessions;
+        this.syntheticEmailOnly = environment.matchesProfiles("localhost");
     }
 
     @GetMapping("/csrf")
@@ -78,6 +81,12 @@ final class AuthController {
             throw ApiFailureException.of(ApiFailureException.Kind.INVALID_INPUT);
         }
         rate("REGISTRATION", input.email(), request);
+        // Controlled localhost delivery cannot reach internet addresses. Reject
+        // the deployment-wide unsupported input before any Account lookup/write;
+        // never condition this guidance on whether an Account already exists.
+        if (syntheticEmailOnly && !IdentityInput.canonicalEmail(input.email()).endsWith("@example.test")) {
+            throw ApiFailureException.of(ApiFailureException.Kind.INVALID_INPUT);
+        }
         try {
             registration.begin(input.email(), input.password());
         } catch (DataIntegrityViolationException exception) {

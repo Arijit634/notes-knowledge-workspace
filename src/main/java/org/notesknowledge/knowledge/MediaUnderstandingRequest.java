@@ -1,14 +1,23 @@
 package org.notesknowledge.knowledge;
 
 /** Server-owned processing scope, not authorization. Time locations are relative to these bytes. */
-record MediaUnderstandingRequest(String mediaType,Integer firstPage,Integer lastPage,Double durationSeconds) {
+record MediaUnderstandingRequest(String mediaType,Integer firstPage,Integer lastPage,Double durationSeconds,boolean videoAudioPossible,boolean soundtrackOnly) {
     static final int PDF_BATCH_PAGES=8;
     static final int MAX_INLINE_REQUEST_BYTES=18_000_000;
     static final int ENVELOPE_RESERVE_BYTES=65_536;
     static final int MAX_DIRECT_VIDEO_SECONDS=30;
 
+    MediaUnderstandingRequest(String mediaType,Integer firstPage,Integer lastPage,Double durationSeconds) {
+        this(mediaType,firstPage,lastPage,durationSeconds,"video/mp4".equals(mediaType),false);
+    }
+    MediaUnderstandingRequest(String mediaType,Integer firstPage,Integer lastPage,Double durationSeconds,boolean videoAudioPossible) {
+        this(mediaType,firstPage,lastPage,durationSeconds,videoAudioPossible,false);
+    }
+
     MediaUnderstandingRequest {
         if(mediaType==null||!java.util.Set.of("image/png","image/jpeg","audio/wav","video/mp4","application/pdf").contains(mediaType)
+                ||videoAudioPossible&&!"video/mp4".equals(mediaType)
+                ||soundtrackOnly&&(!videoAudioPossible||!"video/mp4".equals(mediaType))
                 ||(firstPage==null)!=(lastPage==null)
                 ||mediaType.equals("application/pdf")&&firstPage==null
                 ||firstPage!=null&&!mediaType.equals("application/pdf")&&!(mediaType.equals("image/png")&&firstPage.equals(lastPage))
@@ -18,6 +27,8 @@ record MediaUnderstandingRequest(String mediaType,Integer firstPage,Integer last
             throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
     }
     boolean pdfScope(){return firstPage!=null;}
+    long videoMillis(){return java.math.BigDecimal.valueOf(durationSeconds).movePointRight(3)
+        .setScale(0,java.math.RoundingMode.FLOOR).longValueExact();}
     void requireInlineBudget(int bytes,String instruction,String schema) {
         // Fixed options/model/MIME/scope keys are bounded well below 64 KiB. Count
         // Base64, not raw bytes; leave another 2 MB below the 20 MB guidance.

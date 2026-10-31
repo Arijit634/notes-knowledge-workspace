@@ -12,6 +12,7 @@ export type NoteCore = {
   aiEnabled: boolean
   createdAt: string
   updatedAt: string
+  attachmentSummary?: { images: number; audio: number; video: number; documents: number }
 }
 
 export type NoteOrganizationCommand = 'pin' | 'unpin' | 'archive' | 'returnFromArchive'
@@ -43,6 +44,10 @@ function note(value: unknown): NoteCore {
       || typeof value.pinned !== 'boolean' || typeof value.aiEnabled !== 'boolean'
       || !Array.isArray(value.tags) || !value.tags.every(tag => typeof tag === 'string')
       || typeof value.createdAt !== 'string' || typeof value.updatedAt !== 'string') throw new ApiProtocolError()
+  if (value.attachmentSummary !== undefined) {
+    const summary = value.attachmentSummary
+    if (!object(summary) || !['images', 'audio', 'video', 'documents'].every(k => Number.isSafeInteger(summary[k]) && Number(summary[k]) >= 0)) throw new ApiProtocolError()
+  }
   return value as NoteCore
 }
 

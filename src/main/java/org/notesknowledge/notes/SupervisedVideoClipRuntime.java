@@ -9,6 +9,8 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import org.notesknowledge.knowledge.spi.PrivateDerivationSource.VideoPlan;
 import org.notesknowledge.knowledge.spi.PrivateDerivationSource.VideoChild;
+import org.notesknowledge.knowledge.spi.PrivateDerivationSource.VideoAudioPlan;
+import org.notesknowledge.knowledge.spi.PrivateDerivationSource.VideoAudioChild;
 import org.notesknowledge.websupport.ApiFailureException;
 
 /** Explicitly selected confined native runtime. Deployment and codec-use
@@ -16,8 +18,8 @@ import org.notesknowledge.websupport.ApiFailureException;
  * shell, arbitrary executable/options, provider configuration or media logging.
  */
 final class SupervisedVideoClipRuntime implements VideoClipRuntime,AutoCloseable {
-    static final String PROFILE="video-avc-baseline-preserve-ticks-v1";
-    static final String CONFIGURATION="frame-trim;preserve-vfr-ticks;max1280x720;avc-constrained-baseline;600k;gop25;no-audio;no-metadata;unspecified-sar;no-btrt;20s-target;4MiB-child;30s-wall;25s-cpu;x64-as1GiB-arm64-as2GiB;data512MiB;container-ram2GiB-cpu2-pids512;single-child;v1";
+    static final String PROFILE=VideoAudioChild.PROFILE;
+    static final String CONFIGURATION="frame-trim;preserve-vfr-ticks;max1280x720;avc-constrained-baseline;600k;gop25;visual-child-silent;whole-source-aac-to-pcm16k-mono;sample-timeline-zero-fill;no-metadata;unspecified-sar;no-btrt;20s-target;4MiB-visual-child;9600044-audio-child;30s-wall;25s-cpu;x64-as1GiB-arm64-as2GiB;data512MiB;container-ram2GiB-cpu2-pids512;single-child;v2";
     private final Path helper,runtime,artifacts,tools,scratch;
     private final String identity,version;
     private final PdfWorkerAttemptStore journal;
@@ -44,19 +46,36 @@ final class SupervisedVideoClipRuntime implements VideoClipRuntime,AutoCloseable
         this.identity=identity;this.version=version;this.journal=journal;scavenge();
     }
     @Override public VideoPlan plan(byte[] original) {
-        return attempt(original,path->readPlan(path));
+        return attempt(original,path->readPlan(path,false));
+    }
+    @Override public VideoAudioPlan audioPlan(byte[] original){return attempt(original,this::readAudioPlan);}
+    @Override public VideoAudioChild audio(byte[] original,VideoAudioPlan plan) {
+        if(plan==null||!plan.hasAudio())throw failure();
+        return attempt(original,path->{
+            if(!readAudioPlan(path).equals(plan))throw unavailable();
+            Path output=path.resolve("output.wav");Files.createFile(output,permissions(false));
+            run(path,"audio",0,Math.toIntExact(plan.samples()),16000,p->{if(p.getInputStream().read()!=-1)throw unavailable();return null;});
+            requirePrivate(output,false);long size=Files.size(output);
+            if(size!=44+2*plan.samples()||size>9_600_044)throw unavailable();
+            byte[] bytes;try(var input=Files.newInputStream(output,LinkOption.NOFOLLOW_LINKS)){bytes=input.readNBytes(9_600_045);}
+            try {
+                if(bytes.length!=size)throw unavailable();
+                return new VideoAudioChild(plan,bytes,PROFILE,version,identity,
+                    PdfPageWorkerProtocol.digest(CONFIGURATION.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            }finally{java.util.Arrays.fill(bytes,(byte)0);}
+        });
     }
     @Override public VideoChild render(byte[] original,VideoPlan plan,int first,int last) {
         if(plan==null||first<0||last<=first||last>plan.durations().size()||plan.tick(last)-plan.tick(first)>30*plan.timescale())throw failure();
         return attempt(original,path->{
-            if(!readPlan(path).equals(plan))throw unavailable();
+            if(!readPlan(path,false).equals(plan))throw unavailable();
             Path output=path.resolve("output.mp4");
             Files.createFile(output,permissions(false));
             run(path,"clip",first,last,plan.timescale(),p->{if(p.getInputStream().read()!=-1)throw unavailable();return null;});
             requirePrivate(output,false);long size=Files.size(output);
             if(size<8||size>4_194_304)throw unavailable();
             Files.delete(path.resolve("input.mp4"));Files.move(output,path.resolve("input.mp4"));
-            VideoPlan encoded=readPlan(path);
+            VideoPlan encoded=readPlan(path,true);
             if(encoded.timescale()!=plan.timescale()||!encoded.durations().equals(plan.durations().subList(first,last)))throw unavailable();
             byte[] bytes;
             try(var input=Files.newInputStream(path.resolve("input.mp4"),LinkOption.NOFOLLOW_LINKS)){bytes=input.readNBytes(4_194_305);}
@@ -82,8 +101,8 @@ final class SupervisedVideoClipRuntime implements VideoClipRuntime,AutoCloseable
             try(var out=Files.newOutputStream(input,java.nio.file.StandardOpenOption.WRITE,LinkOption.NOFOLLOW_LINKS)){out.write(original);}
             result=effect.apply(path);
             clear(path);path=null;return result;
-        }catch(InterruptedException cancelled){Thread.currentThread().interrupt();if(result instanceof VideoChild c)c.close();throw failure();}
-        catch(Exception invalid){if(result instanceof VideoChild c)c.close();throw failure();}
+        }catch(InterruptedException cancelled){Thread.currentThread().interrupt();if(result instanceof VideoChild c)c.close();if(result instanceof VideoAudioChild c)c.close();throw failure();}
+        catch(Exception invalid){if(result instanceof VideoChild c)c.close();if(result instanceof VideoAudioChild c)c.close();throw failure();}
         finally {
             try {
                 if(path!=null){boolean interrupted=Thread.interrupted();try{clear(path);}catch(IOException uncertain){poisoned=true;throw failure();}
@@ -91,13 +110,21 @@ final class SupervisedVideoClipRuntime implements VideoClipRuntime,AutoCloseable
             }finally{if(acquired)capacity.release();}
         }
     }
-    private VideoPlan readPlan(Path path)throws Exception {
-        return run(path,"plan",0,0,1,p->{
+    private VideoPlan readPlan(Path path,boolean canonical)throws Exception {
+        return run(path,canonical?"verify":"plan",0,0,1,p->{
             var input=new java.io.DataInputStream(p.getInputStream());
             if(input.readInt()!=0x4e4b5654)throw unavailable();long scale=input.readLong();int count=input.readInt();
             if(count<1||count>18_000)throw unavailable();var deltas=new java.util.ArrayList<Long>(count);
             for(int i=0;i<count;i++)deltas.add(input.readLong());
             if(input.read()!=-1)throw unavailable();return new VideoPlan(scale,deltas);
+        });
+    }
+    private VideoAudioPlan readAudioPlan(Path path)throws Exception {
+        return run(path,"inspect",0,0,1,p->{
+            var input=new java.io.DataInputStream(p.getInputStream());
+            if(input.readInt()!=0x4e4b5641)throw unavailable();
+            long scale=input.readLong(),ticks=input.readLong();int hasAudio=input.readUnsignedByte();
+            if(hasAudio>1||input.read()!=-1)throw unavailable();return new VideoAudioPlan(scale,ticks,hasAudio==1);
         });
     }
     @FunctionalInterface private interface Read<T>{T apply(Process process)throws Exception;}
@@ -143,7 +170,7 @@ final class SupervisedVideoClipRuntime implements VideoClipRuntime,AutoCloseable
         requirePrivate(path,true);if(!path.getFileName().toString().matches("video-[0-9]{1,24}"))throw unavailable();
         List<Path> entries;try(var list=Files.list(path)){entries=list.limit(3).toList();}if(entries.size()>2)throw unavailable();
         for(Path entry:entries){requirePrivate(entry,false);String name=entry.getFileName().toString();
-            if(!java.util.Set.of("input.mp4","output.mp4").contains(name)||Files.size(entry)>(name.equals("input.mp4")?20_000_000:4_194_304))throw unavailable();}
+            if(!java.util.Set.of("input.mp4","output.mp4","output.wav").contains(name)||Files.size(entry)>(name.equals("input.mp4")?20_000_000:name.equals("output.wav")?9_600_044:4_194_304))throw unavailable();}
         return entries;
     }
     private static void clear(Path path)throws IOException {for(Path entry:inventory(path))Files.delete(entry);Files.delete(path);}

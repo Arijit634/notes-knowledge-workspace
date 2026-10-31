@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useReducer, useRef, useState, type FormEvent } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useReducer, useRef, useState, useSyncExternalStore, type FormEvent } from 'react'
 import { Link, useBlocker, useLocation, useNavigate, useParams } from 'react-router'
 import { flushSync } from 'react-dom'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
@@ -10,12 +10,17 @@ import { NoteProcessingPanel } from '../knowledge/NoteProcessingPanel'
 import { NotePublicationPanel } from '../publishing/NotePublicationPanel'
 import { sourceChanged } from '../publishing/PublicationCache'
 import { NoteVersionPanel } from './NoteVersionPanel'
-import { AttachmentPanel } from './AttachmentPanel'
+import { AttachmentPanel, type AttachmentDropHandle } from './AttachmentPanel'
+import { FileDropSurface } from './FileDropSurface'
 import { NotesWorkspace } from './NotesWorkspace'
 import { emptyEditorSession, isDirty, noteEditorSession } from './NoteEditorSession'
 import { notesApi, type NoteCore, type NoteOrganizationCommand, type NoteVersion } from './NotesApi'
 import { noteKeys, notePreferenceKeys } from './NotesKeys'
 import { usePrivateScope } from '../../app/security/usePrivateScope'
+import { Icon } from '../../app/ui/Icon'
+import { restoreFocus } from '../../app/ui/ConfirmDialog'
+import { NoteNavigator } from './NoteNavigator'
+import { NewNotePage } from './NewNotePage'
 const MarkdownEditorAdapter = lazy(() => import('./MarkdownEditorAdapter').then(module => ({ default: module.MarkdownEditorAdapter })))
 
 function issue(error: unknown): string {
@@ -31,7 +36,8 @@ export function NotesListPage({ auth }: { auth: AuthRuntime }) {
   const scope = auth.session.viewerScope
   const location = useLocation()
   const [lifecycle, setLifecycle] = useState<NoteCore['lifecycle']>(location.state?.notesView === 'trashed' ? 'trashed' : 'active')
-  const [searching, setSearching] = useState(false), [rows, setRows] = useState(false)
+  const search = useSyncExternalStore(auth.librarySearch.subscribe, auth.librarySearch.snapshot)
+  const [rows, setRows] = useState(false)
   const [searchActive, setSearchActive] = useState(false)
   const page = useInfiniteQuery({ queryKey: noteKeys.list(scope, { lifecycle, sort: 'updatedAtDesc' }),
     queryFn: ({ pageParam }) => notesApi.list(auth, pageParam, lifecycle), initialPageParam: null as string | null,
@@ -42,27 +48,27 @@ export function NotesListPage({ auth }: { auth: AuthRuntime }) {
   function cards(notes: NoteCore[]) { return <ul className="notes-list">{notes.map(note => <li key={note.id}>
     <Link to={`/notes/${note.id}`}><div className="notes-card-heading"><strong>{note.title}</strong>{note.pinned && <span className="notes-pill">Pinned</span>}</div>
       <p className="notes-card-snippet">{note.markdown.slice(0, 2400).replace(/^#{1,6}\s+/gm, '').replace(/(^|\n)\s*(?:[-*+] |\d+\. )(?:\[[ x]\] )?/g, '$1').replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/```[^\n]*\n/g, '').replace(/[#*_`>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 240)}</p>
-      <span className="notes-card-meta">Updated <time dateTime={note.updatedAt}>{new Date(note.updatedAt).toLocaleString()}</time></span>
-      {note.tags.length > 0 && <ul className="notes-tags" aria-label="Tags">{note.tags.slice(0, 5).map(tag => <li key={tag}>{tag}</li>)}{note.tags.length > 5 && <li>+{note.tags.length - 5}</li>}</ul>}</Link>
+      {note.attachmentSummary && Object.values(note.attachmentSummary).some(count => count > 0) && <div className="note-media-badges" aria-label="Attached media">{([['images', 'photo', 'photos'], ['video', 'video', 'videos'], ['audio', 'audio clip', 'audio clips'], ['documents', 'PDF', 'PDFs']] as const).map(([key, one, many]) => note.attachmentSummary![key] > 0 && <span key={key}><Icon name="attach" />{note.attachmentSummary![key]} {note.attachmentSummary![key] === 1 ? one : many}</span>)}</div>}
+      <div className="notes-card-footer">{note.tags.length > 0 && <ul className="notes-tags" aria-label="Tags">{note.tags.slice(0, 5).map(tag => <li key={tag}>{tag}</li>)}{note.tags.length > 5 && <li>+{note.tags.length - 5}</li>}</ul>}
+      <span className="notes-card-meta">Updated <time dateTime={note.updatedAt} title={new Date(note.updatedAt).toLocaleString()}>{new Date(note.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</time></span></div></Link>
   </li>)}</ul> }
   return <NotesWorkspace auth={auth}><div className={rows ? 'studio-library-rows' : undefined}>
-    <header className="notes-heading"><div><p className="eyebrow">Your workspace</p><h1>Notes</h1></div>
-      <Link className="button" to="/notes/new">New note</Link></header>
-    <p className="notes-intro">A home for your thoughts. Pick a note, or start something new.</p>
-    <div className="studio-library-controls"><button type="button" className="button-secondary" aria-expanded={searching} onClick={() => setSearching(v => !v)}>{searching ? 'Close search' : 'Find a note'}</button>
+    <header className="notes-heading"><div><h1>Notes</h1></div>
+</header>
+    <div className="studio-library-toolbar"><div className="studio-library-controls">
       <button className="button-secondary" type="button" aria-pressed={rows} onClick={() => setRows(v => !v)}>{rows ? 'Card view' : 'List view'}</button></div>
     <nav aria-label="Note views" className="notes-views">
       <button type="button" className="button-secondary" aria-pressed={lifecycle === 'active'} onClick={() => setLifecycle('active')}>Active notes</button>
       <button type="button" className="button-secondary" aria-pressed={lifecycle === 'archived'} onClick={() => setLifecycle('archived')}>Archived notes</button>
       <button type="button" className="button-secondary" aria-pressed={lifecycle === 'trashed'} onClick={() => setLifecycle('trashed')}>Trashed notes</button>
-    </nav>
-    {searching && <PrivateSearchPanel auth={auth} lifecycle={lifecycle} onActiveChange={setSearchActive} />}
-    {!searchActive && <>
+    </nav></div>
+    {search.request && <div className="library-search-results"><button type="button" className="button-secondary" onClick={() => auth.librarySearch.clear()}>Clear search</button><PrivateSearchPanel auth={auth} lifecycle={lifecycle} externalRequest={search.request} compact onActiveChange={setSearchActive} /></div>}
+    {!search.request && <>
     {page.isPending && <p className="notes-message" role="status">Loading notes…</p>}
     {page.isError && <p className="notes-message notes-message-error" role="alert">{issue(page.error)} <button onClick={() => void page.refetch()}>Retry</button></p>}
-    {!page.isPending && !page.isError && entries.length === 0 && <div className="notes-empty"><h2>{lifecycle === 'active' ? 'No notes yet' : lifecycle === 'archived' ? 'No archived notes' : 'No trashed notes'}</h2><p>{lifecycle === 'active' ? 'Start with a thought worth keeping.' : 'Notes in this view will appear here.'}</p><Link to="/notes/new">Create a note</Link></div>}
+    {!page.isPending && !page.isError && entries.length === 0 && <div className="notes-empty"><h2>{lifecycle === 'active' ? 'No notes yet' : lifecycle === 'archived' ? 'No archived notes' : 'No trashed notes'}</h2><p>{lifecycle === 'active' ? 'Create your first note.' : 'Notes in this view will appear here.'}</p><Link to="/notes/new">Create a note</Link></div>}
     {pinned.length > 0 && <section aria-label="Pinned notes"><h2 className="studio-section-label">Pinned notes</h2>{cards(pinned)}</section>}
-    {regular.length > 0 && <section aria-label="Notes library"><h2 className="studio-section-label">{pinned.length ? 'Other notes' : 'Your notes'}</h2>{cards(regular)}</section>}
+    {regular.length > 0 && <section className="studio-regular-notes" aria-label="Notes library"><h2 className="studio-section-label">{pinned.length ? 'Other notes' : 'Your notes'}</h2>{cards(regular)}</section>}
     {page.hasNextPage && <button className="button-secondary" disabled={page.isFetchingNextPage}
       onClick={() => void page.fetchNextPage()}>Load more</button>}
     </>}
@@ -70,6 +76,9 @@ export function NotesListPage({ auth }: { auth: AuthRuntime }) {
 }
 
 export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; creating?: boolean }) {
+  return creating ? <NewNotePage auth={auth} /> : <SavedNoteEditorPage auth={auth} />
+}
+function SavedNoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; creating?: boolean }) {
   const { id } = useParams(), navigate = useNavigate()
   const location = useLocation()
   const requestedAttachment = typeof location.state?.attachmentId === 'string' && /^[0-9a-f-]{36}$/.test(location.state.attachmentId) ? location.state.attachmentId as string : undefined
@@ -85,6 +94,7 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
   const [historyOpen, setHistoryOpen] = useState(false)
   const [processingOpen, setProcessingOpen] = useState(false)
   const [attachmentModal, setAttachmentModal] = useState(false)
+  const attachmentDrop = useRef<AttachmentDropHandle>(null)
   const attachmentModalRef = useRef(false)
   const changeAttachmentModal = useCallback((open: boolean) => {
     attachmentModalRef.current = open; setAttachmentModal(open)
@@ -146,7 +156,13 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
   })
   useEffect(() => {
     if (blocker.state === 'blocked') leaveCancel.current?.focus()
-    else if (leaveInvoker.current) { leaveInvoker.current.focus(); leaveInvoker.current = null }
+    else if (leaveInvoker.current) {
+      const previous = leaveInvoker.current
+      leaveInvoker.current = null
+      // The persistent frame removes navigation inertness in its own render.
+      const frame = requestAnimationFrame(() => restoreFocus(previous))
+      return () => cancelAnimationFrame(frame)
+    }
   }, [blocker.state])
   useEffect(() => { if (busy) dialogRoot.current?.focus({ preventScroll: true }) }, [busy])
   useEffect(() => {
@@ -378,27 +394,31 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
   const loadError = creating ? preference.error : loaded.error
   if (deleted) return <main><p role="status">Note permanently deleted.</p></main>
   return <NotesWorkspace auth={auth} modalOpen={attachmentModal || archiveConfirmation || trashConfirmation !== null || deleteConfirmation !== null || restoreConfirmation !== null || blocker.state === 'blocked'}>
-    <div inert={attachmentModal || archiveConfirmation || trashConfirmation !== null || deleteConfirmation !== null || restoreConfirmation !== null || blocker.state === 'blocked'}>
+    <div className="studio-note-layout" inert={attachmentModal || archiveConfirmation || trashConfirmation !== null || deleteConfirmation !== null || restoreConfirmation !== null || blocker.state === 'blocked'}>
+    {!creating && !loading && !loadError && id && <NoteNavigator auth={auth} selectedId={id} />}
     {loading ? <p className="notes-message" role="status">Loading editor…</p> : loadError
       ? <p className="notes-message notes-message-error" role="alert">{issue(loadError)} <button onClick={() => void (creating ? preference.refetch() : loaded.refetch())}>Retry</button></p>
-        : <><header className="notes-heading studio-editor-heading"><div><Link to="/notes">Back to notes</Link><p className="eyebrow">{creating ? 'New note' : 'Private note'}</p>
-          <h1>{creating ? 'Create a note' : 'Edit note'}</h1></div><span role="status" aria-label="Save status" className="notes-state" data-phase={session.phase}>
+        : <><header className="notes-heading studio-editor-heading"><div><Link to="/notes">Back to notes</Link>
+          <h1>{creating ? 'Create a note' : 'Edit note'}</h1></div><div className="studio-editor-actions"><span role="status" aria-label="Save status" className="notes-state" data-phase={session.phase}>
             {session.phase === 'Clean' ? creating ? dirty ? 'Unsaved changes' : 'Not created' : 'Saved' : session.phase === 'Dirty' ? 'Unsaved changes'
               : session.phase === 'Saving' ? 'Saving…' : session.phase === 'SaveFailed' ? 'Save failed'
-                : 'Conflict'}</span></header>
-          {!creating && <div className="studio-tools-toggle"><button type="button" className="button-secondary studio-quiet-action" aria-expanded={toolsOpen} aria-controls="note-tools" onClick={() => setToolsOpen(v => !v)}>Note tools</button></div>}
+                : 'Conflict'}</span>
+          {!creating && <button type="button" className="button-secondary" onClick={() => document.getElementById('note-attachment-file')?.click()}><Icon name="attach" />Add files</button>}
+          {!creating && <button type="button" className="button-secondary studio-quiet-action" aria-expanded={toolsOpen} aria-controls="note-tools" onClick={() => setToolsOpen(v => !v)}><Icon name="settings" />Note tools</button>}
+          <button type="submit" form="note-editor-form" disabled={busy || archiveConfirmation || trashConfirmation !== null || archived || trashed || !dirty || session.phase === 'Conflict' || !session.draft.title.trim()}>
+            {creating ? 'Create note' : session.phase === 'SaveFailed' ? 'Retry save' : 'Save note'}</button></div></header>
           <div className={`notes-workbench${creating ? ' notes-workbench-new' : ''}`}>
-          <div className="notes-authoring">
-          <form className="notes-editor" onSubmit={submit}>
-            <label htmlFor="note-title">Title</label><input id="note-title" maxLength={500} required
+          <FileDropSurface className={`notes-authoring${!session.serverVersion?.value.markdown.trim() ? ' notes-authoring-empty' : ''}`} label="Note file drop area"
+            onFiles={files => attachmentDrop.current?.dropFiles(files)} disabled={creating || busy || trashed || attachmentModal || archiveConfirmation || trashConfirmation !== null || deleteConfirmation !== null || restoreConfirmation !== null || blocker.state === 'blocked'}>
+          <form id="note-editor-form" className="notes-editor" onSubmit={submit}>
+            <label htmlFor="note-title" className="visually-hidden">Title</label><input id="note-title" placeholder="Untitled note" maxLength={500} required
               disabled={creating && busy}
               value={session.draft.title} onChange={event => dispatch({ type: 'edit', field: 'title', value: event.target.value })} />
-            {creating && <label className="notes-checkbox"><input type="checkbox" checked={aiEnabled} disabled={busy}
-              onChange={event => setAiEnabled(event.target.checked)} />Use this note with AI</label>}
+            {creating && <div className="notes-draft-options"><label className="notes-checkbox"><input type="checkbox" checked={aiEnabled} disabled={busy}
+              onChange={event => setAiEnabled(event.target.checked)} />Use this note with AI</label><Link to="/settings/privacy">Processing permissions</Link></div>}
             <p id="markdown-help" className="notes-help">Save when you’re ready — Ctrl/Cmd + S.</p>
             <Suspense fallback={<p role="status">Loading writing tools…</p>}><MarkdownEditorAdapter value={session.draft.markdown} disabled={creating && busy} onChange={value => dispatch({ type: 'edit', field: 'markdown', value })} /></Suspense>
-            <div className="notes-actions"><button type="submit" disabled={busy || archiveConfirmation || trashConfirmation !== null || archived || trashed || !dirty || session.phase === 'Conflict' || !session.draft.title.trim()}>
-              {creating ? 'Create note' : session.phase === 'SaveFailed' ? 'Retry save' : 'Save note'}</button></div>
+          {session.id && <AttachmentPanel ref={attachmentDrop} auth={auth} noteId={session.id} lifecycle={session.serverVersion?.value.lifecycle ?? loaded.data?.value.lifecycle ?? 'trashed'} onModalChange={changeAttachmentModal} initialAttachmentId={requestedAttachment} sourceIntentKey={location.key} sourceLocation={location.state?.sourceLocation} />}
           </form>
           {error && <p className="notes-message notes-message-error" role="alert">{error}</p>}
           {session.serverChangedWhileDirty && session.phase !== 'Conflict'
@@ -414,9 +434,8 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
               <button type="button" className="button-secondary" onClick={() => dispatch({ type: 'reloadServer' })}>Discard my draft and load saved version</button>
               <button type="button" className="button-secondary" onClick={() => dispatch({ type: 'rebase' })}>Keep my draft and use current version as save base</button></>}
           </section>}
-          </div>
+          </FileDropSurface>
           {!creating && toolsOpen && <aside id="note-tools" className="notes-tools" aria-label="Note tools">
-          {session.id && <AttachmentPanel auth={auth} noteId={session.id} lifecycle={session.serverVersion?.value.lifecycle ?? loaded.data?.value.lifecycle ?? 'trashed'} onModalChange={changeAttachmentModal} initialAttachmentId={requestedAttachment} sourceIntentKey={location.key} sourceLocation={location.state?.sourceLocation} />}
           <section className="notes-tool" aria-label="Note organization">
             <h2>Organization</h2><p>{session.serverVersion
               ? `${trashed ? 'Trashed' : archived ? 'Archived' : organizationEligible ? 'Active' : 'Organization changes unavailable'} · ${session.serverVersion.value.pinned ? 'Pinned' : 'Not pinned'}`
@@ -451,7 +470,7 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
                 <label htmlFor="note-tags">Tags, one per line</label>
                 <textarea id="note-tags" rows={4} maxLength={5100} value={tagInput} disabled={busy}
                   onChange={event => setTagInput(event.target.value)} aria-describedby="tags-help" />
-                <p id="tags-help">Up to 50 tags, 100 characters each. Apply tags separately; your title and Markdown draft are not saved.</p>
+                <p id="tags-help">Up to 50 tags, 100 characters each. Applying tags does not save your draft.</p>
                 <button type="submit" disabled={busy || !organizationEligible || session.phase === 'Conflict' || session.serverChangedWhileDirty}>Apply tags</button>
                 <button type="button" className="button-secondary" disabled={busy}
                   onClick={() => { setTagsEditing(false); setTagError('') }}>Cancel tag editing</button>
@@ -462,9 +481,9 @@ export function NoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; 
             <h2>Use this note with AI</h2>
             <p aria-live="polite">AI access is {session.serverVersion?.value.aiEnabled ? 'ON' : 'OFF'}.</p>
             <p id="note-ai-help">{session.serverVersion?.value.aiEnabled
-              ? 'This note may participate in AI features once all processing permissions and availability checks are satisfied. Enabling access does not mean processing is ready.'
-              : 'Normal note use remains available with AI off. This is not encryption or a visibility change.'}</p>
-            <p>Changing AI access does not save your title or Markdown draft.</p>
+              ? 'AI can use this saved note after permission and processing checks pass.'
+              : 'AI will not use this note. Writing and ordinary search still work. AI off is not encryption or a visibility change.'}</p>
+            <p>This choice does not save your draft.</p>
             <button type="button" className="button-secondary" aria-describedby="note-ai-help"
               disabled={lifecycleBlocked} onClick={() => void changeAiAccess()}>
               {session.serverVersion?.value.aiEnabled ? 'Disable AI' : 'Enable AI'}</button>

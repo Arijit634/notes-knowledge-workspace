@@ -45,6 +45,7 @@ export async function login(page: Page, email: string) {
   await expect(page.getByRole('heading', { name: 'Notes', exact: true })).toBeVisible()
 }
 export async function logout(page: Page) {
+  await page.locator('.workspace-account > summary').click()
   await page.getByRole('button', { name: 'Log out', exact: true }).first().click()
   await page.getByRole('dialog', { name: 'Log out of this workspace?' }).getByRole('button', { name: 'Log out', exact: true }).click()
   await expect(page).toHaveURL('/login')

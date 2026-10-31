@@ -13,8 +13,13 @@ final class VideoDerivation {
     static List<DerivedSegment> derive(AiProcessingGate.SourceAiPermit initial,byte[] original,
             PrivateDerivationSource.VideoPlan plan,AiDerivationProperties config,Transform transform,Dispatch dispatch,
             DerivationAttemptBudget budget) {
+        return derive(initial,original,plan,null,config,transform,dispatch,budget);
+    }
+    static List<DerivedSegment> derive(AiProcessingGate.SourceAiPermit initial,byte[] original,
+            PrivateDerivationSource.VideoPlan plan,PrivateDerivationSource.VideoAudioPlan soundtrack,
+            AiDerivationProperties config,Transform transform,Dispatch dispatch,DerivationAttemptBudget budget) {
         if(!config.videoChildren()||plan==null||initial.source().durationSeconds()==null
-                ||Double.compare((double)plan.tick(plan.durations().size())/plan.timescale(),initial.source().durationSeconds())!=0)
+                ||!compatibleDuration(initial,plan,soundtrack))
             throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
         var result=new ArrayList<DerivedSegment>();int regions=0;
         for(int first=0;first<plan.durations().size();) {
@@ -33,7 +38,9 @@ final class VideoDerivation {
                         child.configurationSha256(),TransformedMediaIdentity.digest(payload),payload.length,"video/mp4",
                         new TransformedMediaIdentity.Scope("video_samples",first,last,plan.timescale(),start,end),
                         initial.lineage().id(),config.provider(),config.mediaModel(),"media-understanding",config.approvedPolicyFingerprint());
-                    var request=new MediaUnderstandingRequest("video/mp4",null,null,(double)(end-start)/plan.timescale());
+                    // This canonical visual child deliberately has no audio. Soundtrack
+                    // evidence must come from its separately validated original scope.
+                    var request=new MediaUnderstandingRequest("video/mp4",null,null,(double)(end-start)/plan.timescale(),false);
                     var described=dispatch.describe(identity,payload,request);
                     GoogleDerivationAdapters.validateScope(request,described);
                     if(described.isEmpty())throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
@@ -48,6 +55,14 @@ final class VideoDerivation {
             first=last;
         }
         budget.check();return List.copyOf(result);
+    }
+    private static boolean compatibleDuration(AiProcessingGate.SourceAiPermit initial,PrivateDerivationSource.VideoPlan plan,
+            PrivateDerivationSource.VideoAudioPlan soundtrack) {
+        double video=(double)plan.tick(plan.durations().size())/plan.timescale(),source=initial.source().durationSeconds();
+        if(soundtrack==null||!soundtrack.hasAudio())return Double.compare(video,source)==0;
+        // The independently validated movie duration can include a short audio tail.
+        // Do not extend visual evidence to that tail; the whole soundtrack covers it.
+        return Double.compare(soundtrack.durationSeconds(),source)==0&&video<=source&&source-video<=1;
     }
     private VideoDerivation(){ }
 }

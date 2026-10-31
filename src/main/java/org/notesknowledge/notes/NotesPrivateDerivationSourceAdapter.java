@@ -90,6 +90,8 @@ class NotesPrivateDerivationSourceAdapter implements PrivateDerivationSource {
             }
             public VideoPlan videoPlan(byte[] original){return videoRuntime().plan(original);}
             public VideoChild videoChild(byte[] original,VideoPlan plan,int first,int last){return videoRuntime().render(original,plan,first,last);}
+            public VideoAudioPlan videoAudioPlan(byte[] original){return videoRuntime().audioPlan(original);}
+            public VideoAudioChild videoAudioChild(byte[] original,VideoAudioPlan plan){return videoRuntime().audio(original,plan);}
             public InputStream open() {
                 if(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()
                     ||!used.compareAndSet(false,true))throw new IllegalStateException("One-shot media outside transaction required");

@@ -35,7 +35,7 @@ test('private Save leaves snapshot unchanged; fresh preview explicitly updates i
   await page.getByRole('button', { name: 'Save note', exact: true }).click(); await expect(page.getByRole('status', { name: 'Save status' })).toHaveText('Saved')
   expect(s.publication.markdown).toBe(f.owner.markdown)
   await page.getByRole('link', { name: 'Publications', exact: true }).click(); await page.getByRole('link', { name: 'Inspect & manage' }).click()
-  await expect(page.getByText('Private changes are waiting. Readers still see the existing public copy.')).toBeVisible()
+  await expect(page.getByText('Your private note has unpublished changes.')).toBeVisible()
   await ownerPreview(page); await page.getByRole('button', { name: 'Confirm public update' }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0); expect(s.publication.markdown).toBe('A private revision, not public yet.')
   expect(s.calls.filter(c => c.method === 'PUT' && c.path === `/api/me/publications/${f.pubId}`).at(-1)?.ifMatch).toBe('"p1"')
@@ -51,7 +51,7 @@ test('unpublish denies public article/media and eligible republish retains stabl
 test('unusable source blocks update and republish instead of treating missing source as safe', async ({ page }) => {
   const s = await publicBackend(page, true); s.sourceUsable = false
   await page.goto(`/publications/${f.pubId}`); await expect(page.getByRole('button', { name: 'Update public copy', exact: true })).toBeDisabled()
-  await expect(page.getByText('The source is not currently usable for publishing.')).toBeVisible()
+  await expect(page.getByText("Your private note is not available for publishing.")).toBeVisible()
 })
 test('anonymous Latest and Trending are backend ordered, cursor paginated without per-card reads', async ({ page }) => {
   const s = await publicBackend(page); s.pages = true
@@ -101,7 +101,7 @@ test('acknowledged Like and Unlike reconcile current viewer counts without optim
 test('a pending old-viewer Like cannot repopulate viewer-specific state after logout', async ({ page }) => {
   const s = await publicBackend(page, true); s.holdLike = true
   await page.goto(`/publication/${f.pubId}`); await page.getByRole('button', { name: 'Like', exact: true }).click(); await expect.poll(() => s.likeStarted).toBe(true)
-  await page.getByRole('link', { name: 'Workspace', exact: true }).click(); await page.getByRole('button', { name: 'Log out', exact: true }).click(); await page.getByRole('dialog').getByRole('button', { name: 'Log out', exact: true }).click(); await expect(page).toHaveURL('/login')
+  await page.locator('.workspace-account > summary').click(); await page.getByRole('button', { name: 'Log out', exact: true }).click(); await page.getByRole('dialog').getByRole('button', { name: 'Log out', exact: true }).click(); await expect(page).toHaveURL('/login')
   s.releaseLike(); await page.goto(`/publication/${f.pubId}`); await expect(page.getByRole('button', { name: 'Like', exact: true })).toHaveAttribute('aria-pressed', 'false')
   expect(s.authenticated).toBe(false)
 })
@@ -168,7 +168,7 @@ test('known moderation removal evicts reader and all public list families on sam
   const s = await publicBackend(page, true); s.review = s.enforce = true; s.report.status = 'under_review'
   await page.goto('/explore'); await page.getByRole('heading', { name: f.owner.title }).getByRole('link').click(); await page.getByRole('link', { name: /The Synthetic Writer/ }).click(); await expect(page.getByRole('heading', { name: f.author.displayName })).toBeVisible()
   // Follow a first-party route without replacing the SPA/query client.
-  await page.getByRole('link', { name: 'Workspace', exact: true }).click()
+  await page.getByRole('link', { name: 'All notes', exact: true }).click()
   await page.evaluate((id) => { history.pushState({}, '', `/moderation/reports/${id}`); dispatchEvent(new PopStateEvent('popstate')) }, f.reportId)
   await page.getByLabel('Consequence', { exact: true }).selectOption('removePublication'); await page.getByRole('button', { name: 'Review decision' }).click(); await page.getByRole('button', { name: 'Confirm decision' }).click(); await expect(page.getByText('The server confirmed the decision and its required logical consequences.')).toBeVisible()
   await page.getByRole('link', { name: 'Explore', exact: true }).click(); await expect(page.locator('.public-card')).toHaveCount(0)
@@ -213,8 +213,8 @@ for (const width of [1440, 1024, 834, 390, 320]) {
     await page.setViewportSize({ width, height: 1000 })
     for (const [name, path, heading] of [
       ['publications', '/publications', 'Publications'], ['publication-detail', `/publications/${f.pubId}`, f.owner.title],
-      ['public-profile-settings', '/settings/public-profile', 'Public author profile'], ['author', `/profile/${f.author.handle}`, f.author.displayName],
-      ['latest', '/explore', 'A little perspective.'], ['trending', '/explore?sort=trending', 'A little perspective.'], ['search', '/explore/search?q=idea', 'Find your next idea'],
+      ['public-profile-settings', '/settings/public-profile', 'Public profile'], ['author', `/profile/${f.author.handle}`, f.author.displayName],
+      ['latest', '/explore', 'Explore'], ['trending', '/explore?sort=trending', 'Explore'], ['search', '/explore/search?q=idea', 'Search public notes'],
       ['reader', `/publication/${f.pubId}`, f.owner.title], ['moderation-queue', '/moderation/reports', 'Report review'], ['moderation-detail', `/moderation/reports/${f.reportId}`, 'Public report review'],
     ]) { await page.goto(path); await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible(); await noOverflow(page); await page.screenshot({ path: testInfo.outputPath(`${name}-${width}.png`), fullPage: (await page.getByRole('dialog').count()) === 0, animations: 'disabled' }) }
     await ownerPreview(page, false, async () => { await noOverflow(page); await page.screenshot({ path: testInfo.outputPath(`media-selection-${width}.png`), fullPage: (await page.getByRole('dialog').count()) === 0, animations: 'disabled' }) }); await noOverflow(page); await page.screenshot({ path: testInfo.outputPath(`preview-${width}.png`), fullPage: (await page.getByRole('dialog').count()) === 0, animations: 'disabled' }); await page.getByRole('button', { name: 'Close', exact: true }).click()

@@ -14,6 +14,8 @@ class DerivationReconciler {
     private final ProviderDispatchPolicy dispatchPolicy;
     private final org.springframework.beans.factory.ObjectProvider<TextEmbeddingPort> embeddings;
     private final org.springframework.beans.factory.ObjectProvider<MediaUnderstandingPort> media;
+    @org.springframework.beans.factory.annotation.Value("${knowledge.derivation.schedule-notes:true}")
+    private boolean scheduleNotes=true;
     DerivationReconciler(PrivateDerivationSource sources,ProcessingPolicyService policies,AiDerivationProperties configuration,
             PrivateRepresentationRepository representations,KnowledgeWorkRepository work,
             org.springframework.beans.factory.ObjectProvider<TextEmbeddingPort> embeddings,
@@ -30,6 +32,7 @@ class DerivationReconciler {
         var inventory=sources.inventory(after,25);
         for(var source:inventory.sources()) {
             if(!source.aiEnabled()||!java.util.Set.of("active","archived").contains(source.lifecycle()))continue;
+            if(!scheduleNotes&&source.expected().attachmentId()==null)continue;
             if(!dispatchPolicy.permits(configuration,source.expected(),source.modality()))continue;
             if(!java.util.Set.of("note","pdf").contains(source.modality())&&(media.getIfAvailable()==null||!media.getIfAvailable().available()))continue;
             var policy=policies.policyPrerequisite(source.expected().owner());

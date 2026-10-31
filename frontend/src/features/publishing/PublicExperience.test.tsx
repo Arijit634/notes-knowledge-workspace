@@ -103,7 +103,7 @@ describe('deliberate owner workflow', () => {
   })
   it('shows authoritative source booleans, never treats the status as an ETag', async () => {
     mount(`/publications/${f.pubId}`, 'authenticated', c => c.path.endsWith('/source-status') ? json({ ...f.status, sourceUsable: false, updatePublicCopyReady: false }) : undefined)
-    await screen.findByText('The source is not currently usable for publishing.'); expect((screen.getByRole('button', { name: 'Update public copy' }) as HTMLButtonElement).disabled).toBe(true)
+    await screen.findByText("Your private note is not available for publishing."); expect((screen.getByRole('button', { name: 'Update public copy' }) as HTMLButtonElement).disabled).toBe(true)
   })
   it('unpublish uses aggregate If-Match and removes cached reader immediately', async () => {
     const { auth, calls } = mount(`/publications/${f.pubId}`, 'authenticated', c => c.path.endsWith('/unpublish') ? json({ ...f.owner, availability: 'unpublished' }, 200, { ETag: '"p2"' }) : undefined)

@@ -82,6 +82,9 @@ export async function publicBackend(page: Page, authenticated = false) {
     else if (path === `/api/notes/${f.noteId}`) {
       if (method === 'PUT') { if (request.headers()['if-match'] !== `"n${state.noteRevision}"`) { status = 412; code = 'stale_write' } else { state.note = { ...state.note, ...body }; state.noteRevision++; state.sourceChanged = true } }
       output = state.note; headers.ETag = `"n${state.noteRevision}"`
+    } else if (path === `/api/notes/${f.noteId}/attachments/${f.attachment.id}/content`) {
+      if (!state.authenticated || !state.eligible || !state.sourceUsable) { status = 404; code = 'resource_not_found' }
+      else { await route.fulfill({ status: 200, contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/a9sAAAAASUVORK5CYII=', 'base64') }); return }
     } else if (path.endsWith('/attachments')) output = { items: state.attachments, nextCursor: null }
     else if (path.endsWith('/versions')) output = { items: [], nextCursor: null }
     else if (path.endsWith('/publication-preview')) {

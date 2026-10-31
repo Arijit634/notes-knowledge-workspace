@@ -16,6 +16,12 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class KnowledgeWorkService {
     static final LeasePolicy POLICY=new LeasePolicy(Duration.ofSeconds(30),10);
+    private LeasePolicy policy=POLICY;
+    @org.springframework.beans.factory.annotation.Value("${knowledge.derivation.lease-seconds:30}")
+    void leaseSeconds(int value){
+        if(value<30||value>120)throw new IllegalArgumentException("Invalid derivation lease configuration");
+        policy=new LeasePolicy(Duration.ofSeconds(value),10);
+    }
     private final KnowledgeWorkRepository repository;
     private final PrivateAiSourceCurrentness sources;
     private final ProcessingPolicyService policies;
@@ -28,11 +34,11 @@ public class KnowledgeWorkService {
         return repository.enqueue(kind,expected);
     }
     @Transactional(timeout=3)
-    public List<KnowledgeWork.Claim> claim(LeaseOwner owner,int limit) { return repository.claim(owner,POLICY,POLICY.checkedBatchSize(limit),false); }
+    public List<KnowledgeWork.Claim> claim(LeaseOwner owner,int limit) { return repository.claim(owner,policy,policy.checkedBatchSize(limit),false); }
     @Transactional(timeout=3)
-    public List<KnowledgeWork.Claim> reclaim(LeaseOwner owner,int limit) { return repository.claim(owner,POLICY,POLICY.checkedBatchSize(limit),true); }
+    public List<KnowledgeWork.Claim> reclaim(LeaseOwner owner,int limit) { return repository.claim(owner,policy,policy.checkedBatchSize(limit),true); }
     @Transactional(timeout=3)
-    public boolean heartbeat(KnowledgeWork.Claim claim) { return repository.heartbeat(claim,POLICY); }
+    public boolean heartbeat(KnowledgeWork.Claim claim) { return repository.heartbeat(claim,policy); }
     /** Metadata/policy prerequisites only. Future source access/provider dispatch must revalidate ALL additional gates. */
     @Transactional(timeout=3)
     public Optional<CurrentWorkPrerequisites> revalidate(KnowledgeWork.Claim claim) {

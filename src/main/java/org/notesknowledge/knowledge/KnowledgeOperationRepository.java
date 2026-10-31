@@ -61,7 +61,22 @@ class KnowledgeOperationRepository {
     }
     /** A successful bounded slice is continuation, not a failed attempt. Crash reclaim still consumes an attempt. */
     boolean yield(Row row) {
-        return fenced(row,"update knowledge.knowledge_work_intent set state='queued',next_attempt_at=clock_timestamp(),lease_owner=null,lease_token=null,lease_until=null,updated_at=greatest(updated_at,clock_timestamp()) where checkpoint_version>0 and").update()==1;
+        return this.yield(row,0);
+    }
+    boolean yield(Row row,int pauseMillis) {
+        if(pauseMillis<0||pauseMillis>60000)throw new IllegalArgumentException("Invalid operation pause");
+        return fenced(row,"update knowledge.knowledge_work_intent set state='queued',next_attempt_at=clock_timestamp()+(:pause * interval '1 millisecond'),lease_owner=null,lease_token=null,lease_until=null,updated_at=greatest(updated_at,clock_timestamp()) where checkpoint_version>0 and")
+            .param("pause",pauseMillis).update()==1;
+    }
+    boolean retryTransient(Row row) {
+        // Leave the last successful encrypted checkpoint/continuation untouched.
+        // Retry consumes a fresh claim/attempt, unlike successful continuation.
+        return fenced(row,"""
+            update knowledge.knowledge_work_intent set state='retry_wait',
+                next_attempt_at=clock_timestamp()+((30*power(2,least(attempt_count-1,2))+random()*10)*interval '1 second'),
+                lease_owner=null,lease_token=null,lease_until=null,updated_at=greatest(updated_at,clock_timestamp())
+            where attempt_count<max_attempts and
+            """).update()==1;
     }
     boolean complete(Row row,String metadata,KnowledgeOperationMaterialCipher.Envelope result) {
         return fenced(row,"update knowledge.knowledge_work_intent set state='completed',operation_metadata=:metadata::jsonb,result_ciphertext=:cipher,result_nonce=:nonce,result_key_version=:key,checkpoint_version=checkpoint_version+1,input_ciphertext=null,input_nonce=null,input_key_version=null,lease_owner=null,lease_token=null,lease_until=null,updated_at=greatest(updated_at,clock_timestamp()) where")
@@ -77,6 +92,12 @@ class KnowledgeOperationRepository {
             result_ciphertext=null,result_nonce=null,result_key_version=null,lease_owner=null,lease_token=null,lease_until=null,next_attempt_at=null,updated_at=greatest(updated_at,clock_timestamp())
         where owner_user_id=:owner and knowledge_work_intent_id=:id and work_class='private_knowledge_operation' and state in ('queued','retry_wait','claimed')
         """).param("owner",owner).param("id",id).update();}
+    void forget(UUID owner,UUID id){clients.getObject().sql("""
+        update knowledge.knowledge_work_intent set state=case when state in ('queued','claimed','retry_wait') then 'cancelled' when state='completed' then 'obsolete' else state end,
+            input_ciphertext=null,input_nonce=null,input_key_version=null,result_ciphertext=null,result_nonce=null,result_key_version=null,
+            lease_owner=null,lease_token=null,lease_until=null,next_attempt_at=null,updated_at=greatest(updated_at,clock_timestamp())
+        where owner_user_id=:owner and knowledge_work_intent_id=:id and work_class='private_knowledge_operation'
+        """).param("owner",owner).param("id",id).update();}
     void obsolete(UUID owner,UUID id){clients.getObject().sql("""
         update knowledge.knowledge_work_intent set state='obsolete',result_ciphertext=null,result_nonce=null,result_key_version=null,updated_at=greatest(updated_at,clock_timestamp())
         where owner_user_id=:owner and knowledge_work_intent_id=:id and work_class='private_knowledge_operation' and state='completed'
@@ -91,6 +112,10 @@ class KnowledgeOperationRepository {
             lease_owner=null,lease_token=null,lease_until=null,next_attempt_at=null,updated_at=greatest(w.updated_at,clock_timestamp())
             from picked where w.knowledge_work_intent_id=picked.knowledge_work_intent_id
         """).update();}
+    java.util.Optional<String> historyMetadata(UUID owner,UUID id){return clients.getObject().sql("""
+        select operation_metadata::text from knowledge.knowledge_work_intent
+        where owner_user_id=:owner and knowledge_work_intent_id=:id and work_class='private_knowledge_operation'
+        """).param("owner",owner).param("id",id).query(String.class).optional();}
     private static Row map(java.sql.ResultSet r,int ignored)throws java.sql.SQLException {
         return new Row(r.getObject("knowledge_work_intent_id",UUID.class),r.getObject("owner_user_id",UUID.class),r.getString("operation_purpose"),r.getString("state"),
             r.getTimestamp("created_at").toInstant(),r.getTimestamp("operation_expires_at").toInstant(),r.getLong("checkpoint_version"),frame(r,"input"),frame(r,"result"),r.getString("operation_metadata"),

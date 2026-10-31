@@ -22,6 +22,14 @@ class DerivationSchedulingConfiguration implements AutoCloseable {
     private final ThreadPoolTaskExecutor pool=new ThreadPoolTaskExecutor();
     private PrivateDerivationSource.Cursor cursor;
     private boolean stopping;
+    private java.util.function.LongSupplier ticker=System::nanoTime;
+    private Long lastClaimStarted;
+    private long claimPauseNanos;
+    @org.springframework.beans.factory.annotation.Value("${knowledge.derivation.claim-pause-ms:0}")
+    void claimPauseMillis(long value){
+        if(value<0||value>60000)throw new IllegalArgumentException("Invalid derivation claim pause");
+        claimPauseNanos=java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(value);
+    }
     @org.springframework.context.event.EventListener
     synchronized void stopClaiming(org.springframework.context.event.ContextClosedEvent event){stopping=true;}
     DerivationSchedulingConfiguration(DerivationReconciler reconciler,KnowledgeWorkService work,DerivationExecutor executor,
@@ -42,10 +50,13 @@ class DerivationSchedulingConfiguration implements AutoCloseable {
     private void pollAvailable() {
         if(embeddings==null||!embeddings.available())return;
         cursor=reconciler.page(cursor);
+        long now=ticker.getAsLong();
+        if(lastClaimStarted!=null&&now-lastClaimStarted<claimPauseNanos)return;
         int capacity=2-pool.getActiveCount();if(capacity<=0)return;
         var owner=new LeaseOwner("knowledge-local");
         var claims=work.reclaim(owner,capacity);
         if(claims.isEmpty())claims=work.claim(owner,capacity);
+        if(!claims.isEmpty())lastClaimStarted=now;
         for(var claim:claims) {
             try {pool.execute(()->{
                 try {executor.execute(claim);}

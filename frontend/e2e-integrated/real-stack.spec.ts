@@ -2,14 +2,14 @@ import { expect, test, type Page, type Response, type TestInfo } from '@playwrig
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { openTools, sourceEditor } from '../e2e/editor-support'
-import { control, csrf, logout, mutate, noOverflow, observation, register, runtime } from './stack-support'
+import { control, csrf, login, logout, mutate, noOverflow, observation, register, runtime } from './stack-support'
 import { playNativeMedia } from './native-media-support'
 
 // No page.route/route.fulfill: every application request reaches Spring and PostgreSQL.
 test.beforeEach(async () => { await control('isolate-transient-rate-state') })
 test('real browser persists explicit Notes, isolates owners and uses deterministic search', async ({ page, browser }, info) => {
   const started = performance.now()
-  await register(page)
+  const email = await register(page)
   await observation(info, 'browser-and-startup', { browser: info.project.name, version: browser.version(),
     registrationVerificationLoginAndLibraryMs: Math.round(performance.now() - started), samples: 1, percentileClaim: false })
   await page.goto('/notes/new')
@@ -72,24 +72,47 @@ test('real browser persists explicit Notes, isolates owners and uses determinist
   await page.getByRole('button', { name: 'Remove avatar' }).click()
   await expect(page.getByRole('img', { name: 'Your private profile avatar' })).toHaveCount(0)
   expect((await page.request.get('/api/me/profile/avatar/content')).status()).toBe(404)
-  await page.goto('/ask')
-  await page.getByRole('button', { name: 'Ordinary search', exact: true }).click()
-  await page.getByLabel('Search saved notes', { exact: true }).fill('observatory')
-  await page.getByRole('button', { name: 'Search notes', exact: true }).click()
+  await page.goto('/notes')
+  await page.getByRole('searchbox', { name: 'Search notes', exact: true }).fill('observatory')
+  await page.getByRole('searchbox', { name: 'Search notes', exact: true }).press('Enter')
   await expect(page.getByRole('link', { name: /Fictional Aster observatory/ })).toBeVisible()
-  await page.getByRole('button', { name: 'Ask your knowledge', exact: true }).first().click()
+  await page.getByRole('link', { name: 'AI Search', exact: true }).click()
   await page.getByLabel('What would you like to find?').fill('List every URL')
   await page.getByRole('button', { name: 'Ask your knowledge', exact: true }).last().click()
   await expect(page.getByText('Request completed.', { exact: true })).toBeVisible({ timeout: 30_000 })
   await expect(page.getByRole('region', { name: 'Deterministic results' })).toContainText('https://example.test/aster')
+  const retained = await page.request.get('/api/knowledge/history')
+  expect(retained.status()).toBe(200); expect(retained.headers()['cache-control']).toBe('no-store')
+  const entries = (await retained.json()).items
+  expect(entries).toHaveLength(1)
+  const historyId = entries[0].id as string
+  const historyPath = '/api/knowledge/history/' + historyId
+  const savedResult = (await (await page.request.get(historyPath)).json()).result
+  expect(savedResult.deterministicResults[0].value).toBe('https://example.test/aster')
+  // Reloading after a new authenticated session must replay durable owner history,
+  // not resubmit the question or depend on the previous in-memory workflow.
+  await logout(page)
+  // Drop the former document's transient return intent: history must survive a
+  // fresh app document and a new session, independently of in-memory navigation.
+  await page.goto('about:blank'); await login(page, email); await page.goto('/ask')
+  await page.getByRole('region', { name: 'Search history' }).getByRole('button', { name: 'List every URL', exact: true }).click()
+  await expect(page.getByRole('region', { name: 'Deterministic results' })).toContainText('https://example.test/aster')
+  expect((await (await page.request.get('/api/knowledge/history')).json()).items).toHaveLength(1)
+  expect((await (await page.request.get(historyPath)).json()).result).toEqual(savedResult)
+  expect((await page.request.delete(historyPath)).status()).toBe(403)
   await page.screenshot({ path: info.outputPath('real-deterministic-ask.png'), animations: 'disabled' })
   const other = await browser.newContext({ baseURL: 'https://localhost:4175' })
   try {
     const second = await other.newPage(); await register(second)
     expect((await second.request.get('/api/notes/' + noteId)).status()).toBe(404)
+    expect((await second.request.get(historyPath)).status()).toBe(404)
     await expect(second.getByText('Fictional Aster observatory')).toHaveCount(0)
     expect((await second.request.get('/api/moderation/reports')).status()).toBe(403)
   } finally { await other.close() }
+  await page.getByRole('button', { name: 'Remove search: List every URL', exact: true }).click()
+  await page.getByRole('dialog', { name: 'Remove this search?' }).getByRole('button', { name: 'Remove', exact: true }).click()
+  await expect(page.getByText('No saved searches yet.', { exact: true })).toBeVisible()
+  expect((await page.request.get(historyPath)).status()).toBe(404)
   await logout(page)
   expect((await page.request.get('/api/notes/' + noteId)).status()).toBe(401)
   expect(await page.evaluate(() => Object.keys(localStorage).length + Object.keys(sessionStorage).length)).toBe(0)
@@ -368,7 +391,7 @@ for (const width of [1440, 1024, 834, 390, 320]) test(`real anonymous shell has 
     const asset = await page.request.get(entry!)
     expect(asset.status()).toBe(200); expect(asset.headers()['cache-control']).toContain('immutable')
   }
-  await expect(page.getByRole('heading', { name: 'A little perspective.' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Explore', exact: true })).toBeVisible()
   await expect(page.getByText('Opening the library…')).toHaveCount(0)
   await noOverflow(page)
   const labels = await page.locator('button:visible, input:visible, select:visible, textarea:visible').evaluateAll(elements => elements.every(element => {

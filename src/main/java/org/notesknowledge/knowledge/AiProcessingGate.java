@@ -55,6 +55,8 @@ class AiProcessingGate {
             requireGoogleDispatch();
             if(child==null||!source.expected().equals(child.original())||source.sizeBytes()!=child.originalBytes()
                     ||!source.mediaType().equals(child.originalType())||!lineage.id().equals(child.lineage())
+                    ||"video_audio".equals(child.scope().kind())&&(source.durationSeconds()==null||!Double.isFinite(source.durationSeconds())||source.durationSeconds()<=0
+                        ||(double)child.scope().endTick()/child.scope().timescale()>source.durationSeconds())
                     ||configuration.pdfPageChildren()&&"pdf".equals(source.modality())
                         &&!org.notesknowledge.knowledge.spi.PrivateDerivationSource.PdfChild.transformFingerprint(
                             child.profile(),child.implementationVersion(),child.binarySha256(),child.configurationSha256())

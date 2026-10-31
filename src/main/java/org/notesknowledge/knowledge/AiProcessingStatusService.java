@@ -41,6 +41,9 @@ class AiProcessingStatusService {
             var state=state(s);return new AttachmentState(s.expected().attachmentId(),state.status(),state.reason());}).toList();
         return new View(noteState,attachments);
     }
+    private boolean scheduleNotes=true;
+    @org.springframework.beans.factory.annotation.Value("${knowledge.derivation.schedule-notes:true}")
+    void scheduleNotes(boolean value){scheduleNotes=value;}
     State state(PrivateDerivationSource.Metadata source) {
         if(!source.aiEnabled())return new State("excluded",source.expected().attachmentId()==null?"aiDisabled":"parentAiDisabled");
         if(!java.util.Set.of("active","archived").contains(source.lifecycle()))return new State("excluded","lifecycleExcluded");
@@ -59,6 +62,6 @@ class AiProcessingStatusService {
         if("claimed".equals(work))return new State(old?"reprocessing":"processing",null);
         if("failed".equals(work))return new State("failed","processingFailed");
         if(old||"obsolete".equals(work))return new State("obsolete","sourceChanged");
-        return new State("blocked","providerUnavailable");
+        return new State("blocked",source.expected().attachmentId()==null&&!scheduleNotes?"noteTextIndexingPaused":"processingNotScheduled");
     }
 }

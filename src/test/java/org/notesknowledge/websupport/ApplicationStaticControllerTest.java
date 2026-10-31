@@ -51,6 +51,20 @@ class ApplicationStaticControllerTest {
         assertThat(controller.matches(api)).isFalse();
         assertThat(controller.matches(new MockHttpServletRequest("GET", "/notes%2f" + ID))).isFalse();
     }
+    @Test void deploymentPresentationContainsOnlyFixedPublicFlagsAndDoesNotChangeRoutesOrCsp() throws Exception {
+        var resource = new ByteArrayResource("<html><head><meta name=\"nkw-presentation\" content=\"unconfigured\" /></head><body>App</body></html>".getBytes(StandardCharsets.UTF_8));
+        for (boolean google : new boolean[]{false, true}) {
+            for (boolean local : new boolean[]{false, true}) {
+                var selected = new ApplicationStaticController(resource, google, local);
+                var mvc = MockMvcBuilders.standaloneSetup(selected).build();
+                mvc.perform(get("/login")).andExpect(status().isOk())
+                    .andExpect(content().string(org.hamcrest.Matchers.containsString("content=\"google=" + (google ? "enabled" : "disabled") + ";email=" + (local ? "synthetic" : "ordinary") + "\"")))
+                    .andExpect(header().string("Cache-Control", "no-cache, must-revalidate"))
+                    .andExpect(header().string("Content-Security-Policy", org.hamcrest.Matchers.containsString("script-src 'self'")));
+                assertThat(selected.matches(new MockHttpServletRequest("GET", "/api/presentation"))).isFalse();
+            }
+        }
+    }
     private boolean matches(String method, String path) {
         var request = new MockHttpServletRequest(method, path); request.setServletPath(path); return controller.matches(request);
     }

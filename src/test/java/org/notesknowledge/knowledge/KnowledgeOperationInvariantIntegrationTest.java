@@ -38,7 +38,7 @@ class KnowledgeOperationInvariantIntegrationTest {
         var beans=new StaticListableBeanFactory();beans.addBean("jdbc",JdbcClient.create(jdbc));
         rows=new KnowledgeOperationRepository(beans.getBeanProvider(JdbcClient.class));
         transactions=new TransactionTemplate(new JdbcTransactionManager(ds));
-        assertThat(jdbc.queryForObject("select max(version::int) from flyway_schema_history",Integer.class)).isEqualTo(19);
+        assertThat(jdbc.queryForObject("select max(version::int) from flyway_schema_history",Integer.class)).isEqualTo(20);
     }
     @BeforeEach void prepare(){owner=account();}
     @AfterEach void cleanup(){for(UUID user:owners)jdbc.update("delete from knowledge.knowledge_work_intent where owner_user_id=?",user);}

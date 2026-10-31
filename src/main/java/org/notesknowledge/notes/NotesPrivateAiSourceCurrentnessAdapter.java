@@ -13,7 +13,8 @@ class NotesPrivateAiSourceCurrentnessAdapter implements PrivateAiSourceCurrentne
     private final ObjectProvider<JdbcClient> clients;
     private final tools.jackson.databind.ObjectMapper expectedJson=new tools.jackson.databind.ObjectMapper();
     NotesPrivateAiSourceCurrentnessAdapter(ObjectProvider<JdbcClient> clients) { this.clients=clients; }
-    public java.util.List<Expected> matching(java.util.List<Expected> expected) {
+    public java.util.List<Expected> matching(java.util.List<Expected> expected) {return matching(expected,null);}
+    public java.util.List<Expected> matching(java.util.List<Expected> expected,org.notesknowledge.knowledge.spi.PrivateQuerySource.SavedDuring period) {
         if(expected.isEmpty())return java.util.List.of();
         if(expected.size()>MAX_BATCH)throw new IllegalArgumentException("Invalid currentness batch");
         var owner=expected.getFirst().owner();
@@ -26,12 +27,16 @@ class NotesPrivateAiSourceCurrentnessAdapter implements PrivateAiSourceCurrentne
             select e.* from expected e join notes.note n on n.note_id=e."noteId" and n.owner_user_id=e.owner
             left join notes.attachment a on a.attachment_id=e."attachmentId" and a.note_id=n.note_id and a.owner_user_id=n.owner_user_id
             where n.owner_user_id=:owner and n.lifecycle_state in ('active','archived') and n.ai_enabled
-                and n.ai_generation=e."aiGeneration" and (
+                and n.ai_generation=e."aiGeneration"
+                and (:allDates or (case when e."attachmentId" is null then n.created_at else a.created_at end>=:savedFrom::timestamptz
+                    and case when e."attachmentId" is null then n.created_at else a.created_at end<:savedUntil::timestamptz)) and (
                     (e."attachmentId" is null and n.revision=e.revision) or
                     (e."attachmentId" is not null and a.revision=e.revision and a.processing_generation=e."attachmentGeneration"
                         and a.storage_state='stored' and a.validation_state='accepted' and a.cleanup_state='retained' and a.removed_at is null))
             order by n.note_id,e."attachmentId" nulls first for share of n
-            """).param("expected",payload).param("owner",owner)
+            """).param("expected",payload).param("owner",owner).param("allDates",period==null)
+            .param("savedFrom",period==null?null:period.from().atOffset(java.time.ZoneOffset.UTC),java.sql.Types.TIMESTAMP_WITH_TIMEZONE)
+            .param("savedUntil",period==null?null:period.toExclusive().atOffset(java.time.ZoneOffset.UTC),java.sql.Types.TIMESTAMP_WITH_TIMEZONE)
             .query((r,i)->new Expected(owner,r.getObject("noteId",java.util.UUID.class),r.getObject("attachmentId",java.util.UUID.class),
                 r.getLong("revision"),r.getLong("aiGeneration"),r.getObject("attachmentGeneration",Long.class)));
         var result=query.list();

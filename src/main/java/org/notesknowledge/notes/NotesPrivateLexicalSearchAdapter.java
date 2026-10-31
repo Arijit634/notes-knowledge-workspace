@@ -16,7 +16,7 @@ class NotesPrivateLexicalSearchAdapter implements PrivateLexicalSearch {
     public List<Candidate> search(Query query) {
         var owner=source.owner();
         var request=PrivateSearchRequest.decode(Map.of("query",query.text(),"lifecycle",query.lifecycle().name().toLowerCase(java.util.Locale.ROOT),"tags",query.tags()));
-        return repository.search(owner,request,null,null,50).stream().map(row->new Candidate(
+        return repository.search(owner,request,null,null,50,query.savedDuring()).stream().map(row->new Candidate(
                 row.result().id(),row.revision(),query.lifecycle(),row.rank(),row.result().matchLabels())).toList();
     }
 }

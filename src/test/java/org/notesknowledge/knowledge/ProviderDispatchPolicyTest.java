@@ -58,11 +58,11 @@ class ProviderDispatchPolicyTest {
             .isInstanceOf(IllegalArgumentException.class).hasMessage("Invalid provider dispatch policy configuration");
     }
     @Test void boundedCorpusRejectsOverflowAndUnknownPolicy() {
-        assertThatThrownBy(()->new ProviderDispatchPolicy(new ProviderDispatchProperties("unpaid-synthetic-demo",Collections.nCopies(257,"a".repeat(64)))))
+        assertThatThrownBy(()->new ProviderDispatchPolicy(new ProviderDispatchProperties("unpaid-synthetic-demo",Collections.nCopies(2049,"a".repeat(64)))))
             .hasMessage("Invalid provider dispatch policy configuration");
         assertThatThrownBy(()->new ProviderDispatchPolicy(new ProviderDispatchProperties("allow-all",List.of())))
             .hasMessage("Invalid provider dispatch policy configuration");
-        assertThat(new ProviderDispatchPolicy(new ProviderDispatchProperties("unpaid-synthetic-demo",Collections.nCopies(256,ProviderDispatchPolicy.fingerprint(source))))
+        assertThat(new ProviderDispatchPolicy(new ProviderDispatchProperties("unpaid-synthetic-demo",Collections.nCopies(2048,ProviderDispatchPolicy.fingerprint(source))))
             .permits(config("gemini","unpaid","global"),source,"note")).isTrue();
     }
     @Test void syntheticProviderExceptionNeverProvesGoogleDispatch() {
@@ -71,8 +71,35 @@ class ProviderDispatchPolicyTest {
         assertThat(policy.permitsUnpaidGemini(config("synthetic","synthetic","synthetic"),source)).isFalse();
         assertThat(policy.permits(config("gemini","synthetic","global"),source,"note")).isFalse();
     }
+    @Test void largerSourceManifestDoesNotExpandQueryOrTransformedChildApproval() {
+        var entries=java.util.stream.IntStream.range(0,1200).mapToObj(i->String.format("%064x",i)).toList();
+        assertThatCode(()->new ProviderDispatchPolicy(new ProviderDispatchProperties("unpaid-synthetic-demo",entries))).doesNotThrowAnyException();
+        var overflow=Collections.nCopies(257,"b".repeat(64));
+        assertThatThrownBy(()->new ProviderDispatchPolicy(new ProviderDispatchProperties("unpaid-synthetic-demo",entries,overflow)))
+            .hasMessage("Invalid provider dispatch policy configuration");
+        assertThatThrownBy(()->new ProviderDispatchPolicy(new ProviderDispatchProperties("unpaid-synthetic-demo",entries,List.of(),overflow)))
+            .hasMessage("Invalid provider dispatch policy configuration");
+        assertThat(new ProviderDispatchPolicy(new ProviderDispatchProperties("unpaid-synthetic-demo",entries))
+            .permits(config("gemini","unpaid","global"),source,"note")).isFalse();
+    }
     @Test void exactApprovalDoesNotApproveAnotherSourceForTheSameOwner() {
         assertThat(approved(source).permits(config("gemini","unpaid","global"),new Expected(owner,new UUID(0,4),null,1,1,null),"note")).isFalse();
+    }
+    @Test void isolatedWorkspaceAllowsNewQueriesAndSourcesOnlyForItsOperatorDesignatedOwner() {
+        var props=new ProviderDispatchProperties("unpaid-synthetic-demo",List.of(),List.of(),List.of(),owner);
+        assertThatThrownBy(()->new ProviderDispatchPolicy(props)).hasMessage("Protected synthetic workspace required");
+        var policy=new ProviderDispatchPolicy(props,true);var c=config("gemini","unpaid","global");
+        for(String q:List.of("A newly composed fictional question?","Which imaginary astronomer names did I save???")) {
+            assertThat(policy.permitsQuery(c,owner,q)).isTrue();
+            assertThat(policy.permitsUnpaidGeminiQuery(c,owner,q)).isTrue();
+            assertThat(policy.permitsUnpaidGeminiQuery(c,new UUID(0,4),q)).isFalse();
+            assertThat(policy.permitsUnpaidGeminiQuery(c,q)).isFalse();
+        }
+        assertThat(policy.permits(c,new Expected(owner,new UUID(0,5),null,7,8,null),"note")).isTrue();
+        assertThat(policy.permits(c,new Expected(new UUID(0,4),note,null,1,1,null),"note")).isFalse();
+        assertThat(policy.permits(c,source,"unknown")).isFalse();
+        assertThat(policy.permitsQuery(config("gemini","paid","global"),owner,"New question")).isFalse();
+        assertThat(props.toString()).doesNotContain(owner.toString());
     }
     private ProviderDispatchPolicy approved(Expected e){return new ProviderDispatchPolicy(new ProviderDispatchProperties("unpaid-synthetic-demo",List.of(ProviderDispatchPolicy.fingerprint(e))));}
     private AiDerivationProperties config(String provider,String tier,String region){
