@@ -475,7 +475,7 @@ function SavedNoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; cr
             <p aria-live="polite">AI access is {session.serverVersion?.value.aiEnabled ? 'ON' : 'OFF'}.</p>
             <p id="note-ai-help">{session.serverVersion?.value.aiEnabled
               ? 'AI can use this saved note after permission and processing checks pass.'
-              : 'AI will not use this note. Writing and ordinary search still work.'}</p>
+              : 'AI will not use this note. Writing and ordinary search still work. AI off is not encryption or a visibility change.'}</p>
             <p>This choice does not save your draft.</p>
             <button type="button" className="button-secondary" aria-describedby="note-ai-help"
               disabled={lifecycleBlocked} onClick={() => void changeAiAccess()}>
