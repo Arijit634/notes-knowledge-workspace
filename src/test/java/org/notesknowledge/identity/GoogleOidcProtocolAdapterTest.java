@@ -40,6 +40,12 @@ class GoogleOidcProtocolAdapterTest {
     private static final String ISSUER = "https://accounts.google.com";
     private static final String CLIENT = "synthetic-oidc-client-id";
 
+    @Test void configurationDiagnosticsNeverExposeClientSecret() {
+        var p=new GoogleOidcProperties(true,CLIENT,"synthetic-client-secret-not-a-credential",ISSUER,
+            "https://localhost:9443/api/auth/oidc/google/callback", "https://localhost:9443/api/auth/oidc/google/link-callback",Duration.ofMinutes(5));
+        assertThat(p.toString()).contains("credentials=redacted").doesNotContain("synthetic-client-secret-not-a-credential");
+    }
+
     @Test void springSecurity71ComponentsAndS256NonceRequestAreAvailableWithoutNetwork()
             throws Exception {
         var provider = new OidcAuthorizationCodeAuthenticationProvider(

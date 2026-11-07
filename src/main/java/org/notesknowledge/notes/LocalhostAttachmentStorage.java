@@ -9,7 +9,7 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 @Component
-@Profile("localhost")
+@Profile({"localhost", "google-oidc-dev"})
 final class LocalhostAttachmentStorage implements PrivateAttachmentObjectStore {
     private final LocalhostObjectDirectory objects;
     LocalhostAttachmentStorage(LocalhostMode mode) { objects = new LocalhostObjectDirectory(mode, "private-attachment"); }

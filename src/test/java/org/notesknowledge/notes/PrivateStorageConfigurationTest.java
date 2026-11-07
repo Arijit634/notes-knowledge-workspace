@@ -6,6 +6,12 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 @Tag("FAST") @Tag("SECURITY")
 class PrivateStorageConfigurationTest {
+    @Test void controlledProfilesDoNotInstallAnUnavailableStorageCompetitor(){
+        for(String profile:java.util.List.of("localhost","google-oidc-dev"))
+            new ApplicationContextRunner().withUserConfiguration(AttachmentConfiguration.class)
+                .withPropertyValues("spring.profiles.active="+profile)
+                .run(app->assertThat(app).hasNotFailed().doesNotHaveBean("unavailableAttachmentObjectStore"));
+    }
     final ApplicationContextRunner context=new ApplicationContextRunner().withUserConfiguration(AttachmentConfiguration.class);
     final String[] valid={"notes.private-storage.enabled=true","notes.private-storage.profile=oci-s3-private-v1",
             "notes.private-storage.endpoint=https://syntheticnamespace.compat.objectstorage.ap-mumbai-1.oraclecloud.com",

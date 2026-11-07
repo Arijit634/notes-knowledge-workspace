@@ -14,7 +14,8 @@ public final class LocalhostMigrationCommand {
             var properties = new Properties();
             try (var input = Files.newInputStream(Path.of(arguments[0]))) { properties.load(input); }
             String url = properties.getProperty("spring.flyway.url");
-            if (url == null || !url.matches("jdbc:postgresql://127\\.0\\.0\\.1:[0-9]{4,5}/nkw_owner_local")) throw new IllegalArgumentException();
+            if (url == null || !(url.matches("jdbc:postgresql://127\\.0\\.0\\.1:[0-9]{4,5}/nkw_owner_local")
+                    || url.equals("jdbc:postgresql://127.0.0.1:55448/nkw_oidc_dev"))) throw new IllegalArgumentException();
             // Credential-bearing driver exceptions must never reach the console.
             var flyway = Flyway.configure().dataSource(url, properties.getProperty("spring.flyway.user"),
                     properties.getProperty("spring.flyway.password")).load();

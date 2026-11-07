@@ -6,6 +6,12 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 @Tag("FAST") @Tag("SECURITY")
 class PublicMediaStorageConfigurationTest {
+    @Test void controlledProfilesDoNotInstallAnUnavailableStorageCompetitor(){
+        for(String profile:java.util.List.of("localhost","google-oidc-dev"))
+            new ApplicationContextRunner().withUserConfiguration(PublicMediaStorageConfiguration.class)
+                .withPropertyValues("spring.profiles.active="+profile)
+                .run(app->assertThat(app).hasNotFailed().doesNotHaveBean("unavailablePublicMediaStore"));
+    }
     final ApplicationContextRunner context=new ApplicationContextRunner().withUserConfiguration(PublicMediaStorageConfiguration.class);
     final String[] valid={"publishing.media-storage.enabled=true","publishing.media-storage.profile=oci-s3-private-v1",
             "publishing.media-storage.endpoint=https://syntheticnamespace.compat.objectstorage.ap-mumbai-1.oraclecloud.com",
