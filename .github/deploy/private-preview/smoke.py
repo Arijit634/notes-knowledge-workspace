@@ -85,6 +85,7 @@ def main():
             assert sql('nkw_preview_restore',"select has_database_privilege('nkw_preview_runtime',current_database(),'CONNECT')")=='f'
             assert sql('nkw_preview_restore','select count(*) from public.flyway_schema_history where success')=='20'
             probe_request('session-check')
+            probe_request('session-finalize')
             print(json.dumps({'nativeArchitecture':run('uname','-m',capture=True).strip(),
                 'image':image,'migrations':20,'coreReadiness':True,'restartReadiness':True,
                 'databaseAndContainerRecreationPersistSession':True,'isolatedLogicalRestoreQuarantine':True,

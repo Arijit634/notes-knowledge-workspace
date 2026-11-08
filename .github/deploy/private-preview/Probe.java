@@ -11,7 +11,7 @@ class Probe {
                 .timeout(Duration.ofSeconds(5)).header("X-Forwarded-Proto","https")
                 .header("X-Forwarded-Host","preview.example.test");
             var file=java.nio.file.Path.of(args[1]);
-            String[] previous=args[0].equals("session-check") ? java.nio.file.Files.readString(file).split("\n",2) : null;
+            String[] previous=!args[0].equals("session-create") ? java.nio.file.Files.readString(file).split("\n",2) : null;
             if(previous!=null)request.header("Cookie",previous[0]);
             var result=client.send(request.GET().build(),HttpResponse.BodyHandlers.ofString());
             if(result.statusCode()!=200)throw new IllegalStateException("preview_session_probe_failed");
@@ -19,7 +19,21 @@ class Probe {
                 String cookie=result.headers().firstValue("Set-Cookie").orElseThrow().split(";",2)[0];
                 java.nio.file.Files.writeString(file,cookie+"\n"+result.body());
                 java.nio.file.Files.setPosixFilePermissions(file,java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
-            } else if(!result.body().equals(previous[1]))throw new IllegalStateException("preview_session_not_persisted");
+            } else {
+                // The default BREACH defence re-masks the CSRF token per response.
+                // Check session reuse, then prove the OLD CSRF proof still works.
+                if(result.headers().firstValue("Set-Cookie").isPresent())throw new IllegalStateException("preview_session_not_reused");
+                if(args[0].equals("session-finalize")) {
+                    var token=java.util.regex.Pattern.compile("\\\"csrfToken\\\"\\s*:\\s*\\\"([A-Za-z0-9_+=/-]+)\\\"").matcher(previous[1]);
+                    if(!token.find())throw new IllegalStateException("preview_csrf_fixture_invalid");
+                    var logout=HttpRequest.newBuilder(URI.create("http://app:8080/api/auth/logout"))
+                        .timeout(Duration.ofSeconds(5)).header("X-Forwarded-Proto","https")
+                        .header("X-Forwarded-Host","preview.example.test").header("Cookie",previous[0])
+                        .header("X-CSRF-TOKEN",token.group(1)).POST(HttpRequest.BodyPublishers.noBody()).build();
+                    if(client.send(logout,HttpResponse.BodyHandlers.discarding()).statusCode()!=204)
+                        throw new IllegalStateException("preview_persisted_csrf_rejected");
+                }
+            }
             // No cookie, token, derivative or body is emitted.
             System.out.println(previous==null?"synthetic_session_created":"synthetic_session_persisted");
             return;
