@@ -40,13 +40,27 @@ jobs:
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
       - name: Validate infrastructure without credentials or real resources
         working-directory: .github/deploy/private-preview
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          terraform init -backend=false -input=false -lockfile=readonly
+          set -euo pipefail
+          # Registry signature downloads returned repeated GitHub HTTP 504s.
+          # Fetch the SAME official archive through the release API and enforce
+          # the publisher checksum already authenticated in the committed lock.
+          mirror="$RUNNER_TEMP/provider-mirror"
+          package="$mirror/registry.terraform.io/oracle/oci"
+          mkdir -p "$package"
+          gh release download v9.12.1 --repo oracle/terraform-provider-oci --pattern terraform-provider-oci_9.12.1_linux_arm64.zip --dir "$package"
+          grep -F '"zh:bd69d4c38214fb0230770adef394ad50b09f13c06602abce6dbd37171fc4ff51"' .terraform.lock.hcl
+          printf '%s  %s\n' bd69d4c38214fb0230770adef394ad50b09f13c06602abce6dbd37171fc4ff51 "$package/terraform-provider-oci_9.12.1_linux_arm64.zip" | sha256sum --check -
+          terraform init -backend=false -input=false -lockfile=readonly -plugin-dir="$mirror"
           terraform fmt -check -recursive
           terraform validate
           terraform test -no-color
       - name: Verify deployment-secret preparation boundaries
         run: python3 -m unittest discover -s .github/deploy/private-preview -p 'test_*.py'
+      - name: Verify edge error privacy with the actual pinned server
+        run: python3 .github/deploy/private-preview/test_edge.py
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
