@@ -12,8 +12,11 @@ import org.springframework.stereotype.Component;
 @Profile("localhost")
 public final class LocalhostMode {
     private final Path directory;
+    private final boolean syntheticEmailOnly;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public LocalhostMode(Environment environment) {
+        syntheticEmailOnly = true;
         try {
             if (!environment.matchesProfiles("operations")
                     || !"127.0.0.1".equals(environment.getProperty("server.address"))
@@ -36,6 +39,11 @@ public final class LocalhostMode {
                     || environment.getProperty("nkw.localhost.synthetic-ai", Boolean.class, false)) requireSyntheticAi(environment);
         } catch (Exception invalid) { throw new IllegalStateException("Protected loopback localhost configuration required"); }
     }
+
+    // Only the separately guarded development configuration supplies this bean.
+    LocalhostMode(Path directory) { this.directory = directory; syntheticEmailOnly = false; }
+
+    public boolean syntheticEmailOnly() { return syntheticEmailOnly; }
 
     private void requireSyntheticAi(Environment environment) throws Exception {
         // Local transport opt-in never grants source/query authority. Knowledge still

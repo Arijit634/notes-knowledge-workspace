@@ -6,6 +6,12 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 @Tag("FAST") @Tag("SECURITY")
 class PublicAvatarStorageConfigurationTest {
+    @Test void controlledProfilesDoNotInstallAnUnavailableStorageCompetitor(){
+        for(String profile:java.util.List.of("localhost","google-oidc-dev"))
+            new ApplicationContextRunner().withUserConfiguration(PublicAvatarStorageConfiguration.class)
+                .withPropertyValues("spring.profiles.active="+profile)
+                .run(app->assertThat(app).hasNotFailed().doesNotHaveBean("unavailablePublicAvatarStore"));
+    }
     final ApplicationContextRunner context=new ApplicationContextRunner().withUserConfiguration(PublicAvatarStorageConfiguration.class);
     final String[] valid={"profile.public-avatar-storage.enabled=true","profile.public-avatar-storage.profile=oci-s3-private-v1",
             "profile.public-avatar-storage.endpoint=https://syntheticnamespace.compat.objectstorage.ap-mumbai-1.oraclecloud.com",

@@ -13,7 +13,7 @@ import org.springframework.stereotype.Component;
 
 /** Owner-controlled filesystem stop signal; no HTTP management or authentication bypass. */
 @Component
-@Profile("localhost")
+@Profile({"localhost", "google-oidc-dev"})
 final class LocalhostShutdown {
     private final ConfigurableApplicationContext context;
     private final Path stop;

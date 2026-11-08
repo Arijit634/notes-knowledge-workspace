@@ -10,7 +10,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 /** Controlled owner-only outbox. Contains real local capabilities: never serve, log or archive it. */
 @Component
-@Profile("localhost")
+@Profile({"localhost", "google-oidc-dev"})
 final class LocalhostSecurityMail implements SecurityEmailProviderPort {
     private final LocalhostMode mode;
     LocalhostSecurityMail(LocalhostMode mode) { this.mode = mode; }
@@ -19,7 +19,7 @@ final class LocalhostSecurityMail implements SecurityEmailProviderPort {
         if (TransactionSynchronizationManager.isActualTransactionActive()) return Outcome.NON_RETRYABLE;
         try {
             var directory = mode.directory("outbox");
-            if (!directory.equals(directory.toRealPath()) || !recipient.endsWith("@example.test")) return Outcome.NON_RETRYABLE;
+            if (!directory.equals(directory.toRealPath()) || mode.syntheticEmailOnly() && !recipient.endsWith("@example.test")) return Outcome.NON_RETRYABLE;
             // The real durable worker supplies recipient and rendered message only
             // after its current eligibility checks. No account state is changed here.
             byte[] locator = new byte[16];

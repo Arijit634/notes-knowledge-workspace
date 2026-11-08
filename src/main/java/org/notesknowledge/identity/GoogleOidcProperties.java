@@ -25,6 +25,10 @@ record GoogleOidcProperties(boolean enabled, String clientId, String clientSecre
         }
     }
 
+    @Override public String toString() {
+        return "GoogleOidcProperties[enabled=" + enabled + ", credentials=redacted]";
+    }
+
     private static void requireRedirect(String value, String path) {
         URI uri;
         try {
