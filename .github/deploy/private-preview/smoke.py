@@ -49,9 +49,10 @@ def main():
             run(*compose,'run','--rm','migrate')
             run(*compose,'up','-d','--wait','--wait-timeout','180','app')
             probe=str(ROOT/'Probe.java')
-            state=temp/'probe-state';state.mkdir()
+            state=temp/'probe-state';state.mkdir(mode=0o700)
             def probe_request(mode,address='10.89.10.2'):
                 run('docker','run','--rm','--network',project+'_edge','--ip',address,
+                    '--user',f'{os.getuid()}:{os.getgid()}',
                     '--read-only','--cap-drop','ALL','--security-opt','no-new-privileges',
                     '--tmpfs','/tmp:rw,noexec,nosuid,nodev,size=32m',
                     '-v',probe+':/probe/Probe.java:ro','-v',str(state)+':/state',JDK,'java','/probe/Probe.java',

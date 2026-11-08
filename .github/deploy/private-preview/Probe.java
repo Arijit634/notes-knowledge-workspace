@@ -18,6 +18,7 @@ class Probe {
             if(previous==null) {
                 String cookie=result.headers().firstValue("Set-Cookie").orElseThrow().split(";",2)[0];
                 java.nio.file.Files.writeString(file,cookie+"\n"+result.body());
+                java.nio.file.Files.setPosixFilePermissions(file,java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
             } else if(!result.body().equals(previous[1]))throw new IllegalStateException("preview_session_not_persisted");
             // No cookie, token, derivative or body is emitted.
             System.out.println(previous==null?"synthetic_session_created":"synthetic_session_persisted");
