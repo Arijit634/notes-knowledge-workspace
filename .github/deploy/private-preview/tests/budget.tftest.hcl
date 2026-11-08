@@ -12,6 +12,30 @@ run "unverified_entitlement_cannot_plan" {
   command         = plan
   expect_failures = [oci_core_vcn.preview]
 }
+run "ipv6_is_not_one_operator_ipv4" {
+  command = plan
+  variables {
+    free_entitlement_verified = true
+    owner_ipv4_cidr           = "2001:db8::/32"
+  }
+  expect_failures = [var.owner_ipv4_cidr]
+}
+run "network_range_cannot_replace_operator_host" {
+  command = plan
+  variables {
+    free_entitlement_verified = true
+    owner_ipv4_cidr           = "192.0.2.0/24"
+  }
+  expect_failures = [var.owner_ipv4_cidr]
+}
+run "region_cannot_inject_a_quota_statement" {
+  command = plan
+  variables {
+    free_entitlement_verified = true
+    home_region               = "ap-mumbai-1' unset object-storage"
+  }
+  expect_failures = [var.home_region]
+}
 run "restricted_free_plan" {
   command = plan
   variables { free_entitlement_verified = true }

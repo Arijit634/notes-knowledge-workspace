@@ -15,7 +15,13 @@ variable "compartment_name" {
     error_message = "Use a dedicated nkw-preview compartment name."
   }
 }
-variable "home_region" { type = string }
+variable "home_region" {
+  type = string
+  validation {
+    condition     = can(regex("^[a-z]{2}-[a-z0-9]+-[0-9]+$", var.home_region))
+    error_message = "A verified OCI home-region identifier is required."
+  }
+}
 variable "availability_domain" { type = string }
 variable "ubuntu_arm64_image_id" { type = string }
 variable "ssh_public_key" { type = string }
@@ -23,7 +29,7 @@ variable "owner_ipv4_cidr" {
   type      = string
   sensitive = true
   validation {
-    condition     = can(cidrhost(var.owner_ipv4_cidr, 0)) && endswith(var.owner_ipv4_cidr, "/32")
+    condition     = can(cidrhost(var.owner_ipv4_cidr, 0)) && can(regex("^([0-9]{1,3}\\.){3}[0-9]{1,3}/32$", var.owner_ipv4_cidr))
     error_message = "One operator IPv4 /32 is required."
   }
 }
