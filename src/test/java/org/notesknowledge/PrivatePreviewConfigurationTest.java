@@ -20,7 +20,7 @@ class PrivatePreviewConfigurationTest {
     @Test void previewRequiresItsOwnRestrictedRuntime() throws Exception {
         assertThat(new PrivatePreviewConfiguration().validate(valid(),"Linux","amd64").host()).isEqualTo("preview.example.test");
         for(String key:java.util.List.of("identity.delivery.smtp-enabled","identity.delivery.polling-enabled",
-                "knowledge.derivation.enabled","knowledge.derivation.scheduling-enabled","knowledge.public.scheduling-enabled",
+                "knowledge.derivation.enabled","knowledge.derivation.scheduling-enabled","knowledge.public.scheduling-enabled","knowledge.operations.scheduling-enabled",
                 "notes.media-runtime.pdf.enabled","notes.media-runtime.video.enabled","spring.flyway.enabled","server.ssl.enabled")) {
             var e=valid().withProperty(key,"true");
             assertThatThrownBy(()->new PrivatePreviewConfiguration().validate(e,"Linux","amd64"))

@@ -1,6 +1,9 @@
 {
     admin off
     auto_https disable_redirects
+    cert_issuer acme {
+        dir https://acme-v02.api.letsencrypt.org/directory
+    }
     servers {
         protocols h1 h2
         strict_sni_host on

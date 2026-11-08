@@ -43,7 +43,7 @@ public class PrivatePreviewConfiguration {
             }
             for (String property : List.of("spring.flyway.enabled", "identity.delivery.smtp-enabled",
                     "identity.delivery.polling-enabled", "knowledge.derivation.enabled", "knowledge.derivation.scheduling-enabled",
-                    "knowledge.public.scheduling-enabled", "nkw.localhost.synthetic-ai", "notes.media-runtime.pdf.enabled",
+                    "knowledge.public.scheduling-enabled", "knowledge.operations.scheduling-enabled", "nkw.localhost.synthetic-ai", "notes.media-runtime.pdf.enabled",
                     "notes.media-runtime.video.enabled", "server.tomcat.accesslog.enabled", "server.ssl.enabled")) {
                 if (environment.getProperty(property, Boolean.class, false)) throw new IllegalStateException();
             }
