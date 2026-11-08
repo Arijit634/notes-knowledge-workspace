@@ -44,15 +44,19 @@ public final class ApplicationStaticController implements RequestMatcher {
     public ApplicationStaticController(Environment environment) {
         this(new ClassPathResource("static/index.html"),
             environment.getProperty("identity.oidc.google.enabled", Boolean.class, false),
-            environment.matchesProfiles("localhost"));
+            environment.matchesProfiles("localhost"), environment.matchesProfiles("private-preview"));
     }
     ApplicationStaticController(Resource index) { this(index, false, false); }
     ApplicationStaticController(Resource index, boolean googleEnabled, boolean syntheticEmailOnly) {
+        this(index, googleEnabled, syntheticEmailOnly, false);
+    }
+    ApplicationStaticController(Resource index, boolean googleEnabled, boolean syntheticEmailOnly, boolean privatePreview) {
         this.index = index;
         // Non-secret deployment presentation only. Never session/Account authority,
         // provider identifiers, credentials, arbitrary strings or an inline script.
-        presentation = "google=" + (googleEnabled ? "enabled" : "disabled")
-            + ";email=" + (syntheticEmailOnly ? "synthetic" : "ordinary");
+        presentation = privatePreview ? "google=enabled;email=disabled;preview=private"
+            : "google=" + (googleEnabled ? "enabled" : "disabled")
+                + ";email=" + (syntheticEmailOnly ? "synthetic" : "ordinary");
     }
 
     static boolean page(String path) {

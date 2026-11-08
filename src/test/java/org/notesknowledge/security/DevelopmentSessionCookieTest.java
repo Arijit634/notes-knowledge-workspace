@@ -15,6 +15,8 @@ class DevelopmentSessionCookieTest {
         assertThat(cookie(e)).startsWith("NKW_OIDC_DEV_SESSION=").contains("Secure","HttpOnly","SameSite=Lax","Path=/").doesNotContain("Domain=");
         e.setActiveProfiles("operations","localhost");assertThat(cookie(e)).startsWith("SESSION=");
         e.setActiveProfiles("operations");assertThat(cookie(e)).startsWith("SESSION=");
+        e.setActiveProfiles("operations","private-preview");
+        assertThat(cookie(e)).startsWith("__Host-NKW_PREVIEW=").contains("Secure","HttpOnly","SameSite=Lax","Path=/").doesNotContain("Domain=");
     }
     private String cookie(MockEnvironment e) {
         var response=new MockHttpServletResponse();

@@ -56,7 +56,8 @@ public class SecurityConfiguration {
     @Bean
     DefaultCookieSerializer sessionCookieSerializer(org.springframework.core.env.Environment environment) {
         DefaultCookieSerializer serializer = new DefaultCookieSerializer();
-        serializer.setCookieName(environment.matchesProfiles("google-oidc-dev") ? "NKW_OIDC_DEV_SESSION" : "SESSION");
+        serializer.setCookieName(environment.matchesProfiles("private-preview") ? "__Host-NKW_PREVIEW"
+            : environment.matchesProfiles("google-oidc-dev") ? "NKW_OIDC_DEV_SESSION" : "SESSION");
         serializer.setCookiePath("/");
         serializer.setUseHttpOnlyCookie(true);
         serializer.setUseSecureCookie(true);

@@ -414,7 +414,7 @@ function SavedNoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; cr
             <label htmlFor="note-title" className="visually-hidden">Title</label><input id="note-title" placeholder="Untitled note" maxLength={500} required
               disabled={creating && busy}
               value={session.draft.title} onChange={event => dispatch({ type: 'edit', field: 'title', value: event.target.value })} />
-            {creating && <div className="notes-draft-options"><label className="notes-checkbox"><input type="checkbox" checked={aiEnabled} disabled={busy}
+            {creating && !auth.presentation.privatePreview && <div className="notes-draft-options"><label className="notes-checkbox"><input type="checkbox" checked={aiEnabled} disabled={busy}
               onChange={event => setAiEnabled(event.target.checked)} />Use this note with AI</label><Link to="/settings/privacy">Processing permissions</Link></div>}
             <p id="markdown-help" className="notes-help">Save when you’re ready — Ctrl/Cmd + S.</p>
             <Suspense fallback={<p role="status">Loading writing tools…</p>}><MarkdownEditorAdapter value={session.draft.markdown} disabled={creating && busy} onChange={value => dispatch({ type: 'edit', field: 'markdown', value })} /></Suspense>
@@ -477,7 +477,7 @@ function SavedNoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; cr
               </form>}
             {tagError && <p role="alert">{tagError}</p>}
           </section>
-          <section className="notes-tool" aria-label="Note AI access">
+          {!auth.presentation.privatePreview && <section className="notes-tool" aria-label="Note AI access">
             <h2>Use this note with AI</h2>
             <p aria-live="polite">AI access is {session.serverVersion?.value.aiEnabled ? 'ON' : 'OFF'}.</p>
             <p id="note-ai-help">{session.serverVersion?.value.aiEnabled
@@ -489,8 +489,9 @@ function SavedNoteEditorPage({ auth, creating = false }: { auth: AuthRuntime; cr
               {session.serverVersion?.value.aiEnabled ? 'Disable AI' : 'Enable AI'}</button>
             <button type="button" className="button-secondary" aria-expanded={processingOpen} onClick={() => setProcessingOpen(value => !value)}>{processingOpen ? 'Hide processing status' : 'Show processing status'}</button>
             {processingOpen && session.id && <NoteProcessingPanel auth={auth} noteId={session.id} dirty={dirty} />}
-          </section>
-          {session.id && session.etag && <NotePublicationPanel auth={auth} noteId={session.id} etag={session.etag}
+          </section>}
+          {auth.presentation.privatePreview && <p>Private preview · AI and publishing are not enabled.</p>}
+          {!auth.presentation.privatePreview && session.id && session.etag && <NotePublicationPanel auth={auth} noteId={session.id} etag={session.etag}
             eligible={!dirty && !busy && !archived && !trashed && session.phase === 'Clean' && !session.serverChangedWhileDirty} onModalChange={changeAttachmentModal} />}
           {session.id && <div className="notes-tool notes-history-tool">
             <button type="button" className="button-secondary" aria-expanded={historyOpen}

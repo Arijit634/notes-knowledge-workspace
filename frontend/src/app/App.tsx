@@ -93,6 +93,9 @@ function Gate({ access, children }: { access: RouteAccess; children: ReactNode }
     if (access === 'FULL_AUTHENTICATED' && auth.state !== 'authenticated' && auth.state !== 'unknown') auth.signInDestination.remember(location.pathname)
   }, [access, auth, auth.state, location.pathname])
   if (auth.state === 'unknown') return <Shell title="Checking your session"><p role="status">Please wait…</p></Shell>
+  if (auth.presentation.privatePreview && /^\/(?:ask|explore|publications?|p|profile|moderation|signup|verify-email|forgot-password|reset-password|reauth|settings\/(?:privacy|public-profile|security\/mfa))(?:\/|$)/.test(location.pathname)) {
+    return <Shell title="Not enabled in this preview"><p>This private preview includes Notes, files, search and your profile.</p><Link to={auth.state === 'authenticated' ? '/notes' : '/login'}>Continue</Link></Shell>
+  }
   if (auth.state === 'mfaRequired' && !auth.continuation.challengeId && access !== 'PUBLIC') return <RestartLogin />
   if (canEnterRoute(auth.state, access)) {
     return <>{children}</>
@@ -126,6 +129,7 @@ function Signup() {
   const auth = useAuth(), { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<Credentials>()
   const [accepted, setAccepted] = useState(false), [error, setError] = useState('')
   const submit = handleSubmit(async values => { setError(''); try { await auth.api.request('POST', '/api/auth/registrations', { json: values }); setAccepted(true) } catch (e) { setError(message(e)) } })
+  if (auth.presentation.privatePreview) return <Navigate to="/login" replace />
   return <Shell title="Create your account">
     {accepted ? <BlindAcceptedPanel /> : <form onSubmit={submit} noValidate><CredentialsFields register={register} errors={errors} creating />{error && <Alert>{error}</Alert>}<button disabled={isSubmitting}>Create account</button></form>}
     <p className="footnote">Already have an account? <Link to="/login">Log in</Link></p>
@@ -136,6 +140,7 @@ function BlindRequest({ kind }: { kind: 'verification' | 'reset' }) {
   const [email, setEmail] = useState(''), [accepted, setAccepted] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('')
   const path = kind === 'verification' ? '/api/auth/email-verification/requests' : '/api/auth/password-reset/requests'
   async function submit(event: FormEvent) { event.preventDefault(); setBusy(true); setError(''); try { await auth.api.request('POST', path, { json: { email } }); setAccepted(true) } catch (e) { setError(message(e)) } finally { setBusy(false) } }
+  if (auth.presentation.privatePreview) return <p>Email delivery is not enabled in this private preview. <Link to="/login">Continue with Google</Link></p>
   return accepted ? <BlindAcceptedPanel /> : <form onSubmit={submit}><label htmlFor="email">Email</label><input id="email" type="email" autoComplete="email" required maxLength={254} value={email} onChange={e => setEmail(e.target.value)} />
     {error && <Alert>{error}</Alert>}<button disabled={busy}>{kind === 'verification' ? 'Request a new link' : 'Request reset link'}</button></form>
 }
@@ -172,10 +177,10 @@ function Login() {
     } catch (e) { setError(message(e)) }
   })
   async function google() { if (!auth.presentation.googleEnabled) return; setGoogleBusy(true); setError(''); try { const intendedDestination = safeDestination(location.state?.from) ?? auth.signInDestination.consume(); const r = await auth.api.request<{ authorizationUrl?: unknown }>('POST', '/api/auth/oidc/google/authorizations', { json: { intendedDestination }, retryOnCsrfInvalid: false }); navigateToGoogle(r.body?.authorizationUrl) } catch (e) { setError(message(e)) } finally { setGoogleBusy(false) } }
-  return <Shell title="Welcome back"><form onSubmit={submit} noValidate><CredentialsFields register={register} errors={errors} />{error && <Alert>{error}</Alert>}<button disabled={isSubmitting || googleBusy}>Log in</button></form>
-    <div className="divider" aria-hidden="true">or</div><button className="button-secondary google-button" onClick={google} aria-describedby={!auth.presentation.googleEnabled ? 'google-unavailable' : undefined} disabled={!auth.presentation.googleEnabled || isSubmitting || googleBusy}><GoogleMark />Continue with Google</button>
+  return <Shell title="Welcome back">{!auth.presentation.privatePreview && <><form onSubmit={submit} noValidate><CredentialsFields register={register} errors={errors} />{error && <Alert>{error}</Alert>}<button disabled={isSubmitting || googleBusy}>Log in</button></form><div className="divider" aria-hidden="true">or</div></>}
+    {auth.presentation.privatePreview && <><p>Private preview · Google sign-in</p>{error && <Alert>{error}</Alert>}</>}<button className="button-secondary google-button" onClick={google} aria-describedby={!auth.presentation.googleEnabled ? 'google-unavailable' : undefined} disabled={!auth.presentation.googleEnabled || isSubmitting || googleBusy}><GoogleMark />Continue with Google</button>
     {!auth.presentation.googleEnabled && <p id="google-unavailable" className="field-help">Google sign-in is not enabled for this deployment. Use email and password instead.</p>}
-    <p className="footnote"><Link to="/forgot-password">Forgot password?</Link></p><p className="footnote">New here? <Link to="/signup">Create an account</Link></p></Shell>
+    {!auth.presentation.privatePreview && <><p className="footnote"><Link to="/forgot-password">Forgot password?</Link></p><p className="footnote">New here? <Link to="/signup">Create an account</Link></p></>}</Shell>
 }
 function Mfa() {
   const auth = useAuth(), navigate = useNavigate(), location = useLocation()

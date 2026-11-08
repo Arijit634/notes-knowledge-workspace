@@ -1,0 +1,29 @@
+#cloud-config
+# Fresh isolated host only; no developer databases, keys or workspace copies.
+package_update: true
+packages:
+  - ca-certificates
+  - docker.io
+  - docker-compose-v2
+  - openssl
+  - jq
+ssh_pwauth: false
+disable_root: true
+write_files:
+  - path: /etc/ssh/sshd_config.d/60-nkw-preview.conf
+    owner: root:root
+    permissions: '0600'
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin no
+  - path: /opt/nkw-preview/.isolated-preview
+    owner: root:root
+    permissions: '0600'
+    content: |
+      Fresh deployment state only. Do not import localhost accounts or data.
+runcmd:
+  - [sshd, -t]
+  - [systemctl, reload, ssh]
+  - [systemctl, enable, --now, docker]
+  - [chmod, '0700', /opt/nkw-preview]

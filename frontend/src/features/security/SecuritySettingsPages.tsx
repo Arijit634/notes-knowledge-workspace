@@ -140,6 +140,12 @@ export function SecuritySettingsPage({ auth }: Props) {
       })
     }
   }
+  if (auth.presentation.privatePreview) return <Page title="Account security" overview>
+    <p>Google-only private preview. Email delivery and password-dependent security changes are not enabled.</p>
+    {summary.isError && <ErrorText>{safeError(summary.error)}</ErrorText>}
+    {summary.data && <p>Signed in with Google.</p>}
+    <Link to="/settings/security/sessions">Manage sessions</Link><Link to="/settings/profile">Profile</Link>
+  </Page>
   return <Page title="Account security" overview>
     {summary.isPending && <p role="status">Loading security settings…</p>}
     {summary.isError && <ErrorText>{safeError(summary.error)}</ErrorText>}

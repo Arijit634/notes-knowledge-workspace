@@ -25,7 +25,7 @@ function AccountMenu({ auth, onLogout }: { auth: AuthRuntime; onLogout: (event: 
   return <details ref={menu} className="workspace-account" onKeyDown={e => { if (e.key === 'Escape') { e.currentTarget.open = false; e.currentTarget.querySelector('summary')?.focus({ preventScroll: true }) } }}><summary aria-label="Account menu" title="Account">
     {profile.data?.avatar && !avatarFailed ? <span className="studio-avatar-symbol"><img key={`${profile.data.avatar.createdAt}:${profile.data.updatedAt}`} src="/api/me/profile/avatar/content" alt="Account avatar" onError={() => setAvatarFailed(true)} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }} /></span> : <span className="workspace-account-avatar" aria-hidden="true">{profile.data?.displayName?.slice(0, 1).toUpperCase() || <Icon name="profile" />}</span>}
     <span className="workspace-account-name"><strong>{profile.data?.displayName || 'Account'}</strong><small>Account settings</small></span><span className="workspace-account-chevron" aria-hidden="true">⌃</span>
-    </summary><div className="workspace-account-menu"><Link to="/settings/profile">Profile</Link><Link to="/settings/public-profile">Public profile</Link><Link to="/settings/privacy">AI &amp; Privacy</Link><Link to="/settings/security">Security settings</Link><button type="button" onClick={onLogout}>Log out</button></div></details>
+    </summary><div className="workspace-account-menu"><Link to="/settings/profile">Profile</Link>{!auth.presentation.privatePreview && <><Link to="/settings/public-profile">Public profile</Link><Link to="/settings/privacy">AI &amp; Privacy</Link></>}<Link to="/settings/security">Security settings</Link><button type="button" onClick={onLogout}>Log out</button></div></details>
 }
 function LibrarySearchBar({ auth }: { auth: AuthRuntime }) {
   const navigate = useNavigate(), state = useSyncExternalStore(auth.librarySearch.subscribe, auth.librarySearch.snapshot)
@@ -64,9 +64,9 @@ function WorkspaceShell({ children, modalOpen, auth }: { children: ReactNode; mo
         <p className="notes-nav-label">Workspace</p>
         <nav aria-label="Workspace navigation">
           <Link to="/notes" title="All notes" aria-current={location.pathname.startsWith('/notes') ? 'page' : undefined}><Icon name="notes" />All notes</Link>
-          <Link to="/ask" title="AI Search" aria-current={location.pathname === '/ask' ? 'page' : undefined}><Icon name="sparkle" />AI Search</Link>
+          {!auth?.presentation.privatePreview && <><Link to="/ask" title="AI Search" aria-current={location.pathname === '/ask' ? 'page' : undefined}><Icon name="sparkle" />AI Search</Link>
           <Link to="/publications" title="Publications" aria-current={location.pathname.startsWith('/publications') ? 'page' : undefined}><Icon name="notes" />Publications</Link>
-          <Link to="/explore" title="Explore" aria-current={/^\/(explore|publication|profile)(\/|$)/.test(location.pathname) ? 'page' : undefined}><Icon name="search" />Explore</Link>
+          <Link to="/explore" title="Explore" aria-current={/^\/(explore|publication|profile)(\/|$)/.test(location.pathname) ? 'page' : undefined}><Icon name="search" />Explore</Link></>}
         </nav>
         {auth && <AccountMenu auth={auth} onLogout={openLogout} />}
       </aside>
