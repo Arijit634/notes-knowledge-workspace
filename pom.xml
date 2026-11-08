@@ -28,10 +28,17 @@
         <tomcat.version>11.0.27</tomcat.version>
         <jackson-bom.version>3.1.7</jackson-bom.version>
         <jackson-2-bom.version>2.21.7</jackson-2-bom.version>
+        <guava.version>33.7.2-android</guava.version>
     </properties>
 
     <dependencyManagement>
         <dependencies>
+            <!-- CVE-2026-102554: preserve the Google SDK's existing Android variant. -->
+            <dependency>
+                <groupId>com.google.guava</groupId>
+                <artifactId>guava</artifactId>
+                <version>${guava.version}</version>
+            </dependency>
             <dependency>
                 <groupId>software.amazon.awssdk</groupId>
                 <artifactId>bom</artifactId>

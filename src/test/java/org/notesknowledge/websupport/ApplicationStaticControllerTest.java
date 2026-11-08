@@ -65,6 +65,14 @@ class ApplicationStaticControllerTest {
             }
         }
     }
+    @Test void previewExposesOnlyTheFixedAvailabilityFlag() throws Exception {
+        var resource = new ByteArrayResource("<html><head><meta name=\"nkw-presentation\" content=\"unconfigured\" /></head><body>App</body></html>".getBytes(StandardCharsets.UTF_8));
+        var selected = new ApplicationStaticController(resource, true, false, true);
+        MockMvcBuilders.standaloneSetup(selected).build().perform(get("/login"))
+            .andExpect(status().isOk())
+            .andExpect(content().string(org.hamcrest.Matchers.containsString("google=enabled;email=disabled;preview=private")))
+            .andExpect(header().string("Content-Security-Policy", org.hamcrest.Matchers.containsString("script-src 'self'")));
+    }
     private boolean matches(String method, String path) {
         var request = new MockHttpServletRequest(method, path); request.setServletPath(path); return controller.matches(request);
     }

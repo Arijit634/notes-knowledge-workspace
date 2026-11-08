@@ -36,6 +36,16 @@ uploads/
 *.jks
 *.keystore
 
+# Local deployment state and credentials (lockfile remains source controlled)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+*.tfvars.json
+__pycache__/
+.github/deploy/private-preview/secrets/
+
 # IDE-local state
 .idea/
 .vscode/

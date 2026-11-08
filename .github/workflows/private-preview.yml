@@ -1,0 +1,87 @@
+name: Private preview qualification
+on:
+  pull_request:
+    paths:
+      - '.github/deploy/private-preview/**'
+      - '.github/workflows/private-preview.yml'
+      - 'src/**'
+      - 'frontend/**'
+      - 'pom.xml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: private-preview-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+env:
+  SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+jobs:
+  native-preview:
+    name: Preview / native ARM and deployment controls
+    # Standard ARM runner is free for this public repository; never a larger runner.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - name: Verify native platform and pinned infrastructure tool
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          printf '%s' "$SOURCE_SHA" | grep -Eq '^[0-9a-f]{40}$'
+          cd "$RUNNER_TEMP"
+          curl --fail --silent --show-error --location -O https://releases.hashicorp.com/terraform/1.17.1/terraform_1.17.1_linux_arm64.zip
+          curl --fail --silent --show-error --location -O https://releases.hashicorp.com/terraform/1.17.1/terraform_1.17.1_SHA256SUMS
+          grep ' terraform_1.17.1_linux_arm64.zip$' terraform_1.17.1_SHA256SUMS | sha256sum --check -
+          unzip -q terraform_1.17.1_linux_arm64.zip terraform
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Validate infrastructure without credentials or real resources
+        working-directory: .github/deploy/private-preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Registry signature downloads returned repeated GitHub HTTP 504s.
+          # Fetch the SAME official archive through the release API and enforce
+          # the publisher checksum already authenticated in the committed lock.
+          mirror="$RUNNER_TEMP/provider-mirror"
+          package="$mirror/registry.terraform.io/oracle/oci"
+          mkdir -p "$package"
+          gh release download v9.12.1 --repo oracle/terraform-provider-oci --pattern terraform-provider-oci_9.12.1_linux_arm64.zip --dir "$package"
+          grep -F '"zh:bd69d4c38214fb0230770adef394ad50b09f13c06602abce6dbd37171fc4ff51"' .terraform.lock.hcl
+          printf '%s  %s\n' bd69d4c38214fb0230770adef394ad50b09f13c06602abce6dbd37171fc4ff51 "$package/terraform-provider-oci_9.12.1_linux_arm64.zip" | sha256sum --check -
+          terraform init -backend=false -input=false -lockfile=readonly -plugin-dir="$mirror"
+          terraform fmt -check -recursive
+          terraform validate
+          terraform test -no-color
+      - name: Verify deployment-secret preparation boundaries
+        run: python3 -m unittest discover -s .github/deploy/private-preview -p 'test_*.py'
+      - name: Verify edge error privacy with the actual pinned server
+        run: python3 .github/deploy/private-preview/test_edge.py
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '25.0.5'
+      - name: Verify preview boundaries and runtime role on PostgreSQL 18
+        run: >-
+          ./mvnw --batch-mode --no-transfer-progress
+          '-DargLine=-Xmx768m -XX:ActiveProcessorCount=2'
+          -Dtest=PrivatePreviewConfigurationTest,PrivatePreviewFilterTest,PreviewMigrationDatabaseTest,DevelopmentSessionCookieTest,ApplicationStaticControllerTest,PrivateStorageConfigurationTest,PrivateAvatarStorageConfigurationTest,PublicAvatarStorageConfigurationTest,PublicMediaStorageConfigurationTest,ModularityTest
+          test -q
+      - name: Build immutable same-origin application image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --build-arg "SOURCE_SHA=$SOURCE_SHA" --iidfile "$RUNNER_TEMP/preview-image" -f .github/deploy/private-preview/Dockerfile .
+      - name: Scan the actual candidate image
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="$(cat "$RUNNER_TEMP/preview-image")"
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock:ro ghcr.io/aquasecurity/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 "$image"
+      - name: Verify native boot, migration, restart and fail-closed HTTP boundaries
+        shell: bash
+        run: python3 .github/deploy/private-preview/smoke.py "$(cat "$RUNNER_TEMP/preview-image")"

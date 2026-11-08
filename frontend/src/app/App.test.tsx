@@ -43,6 +43,24 @@ afterEach(() => {
 })
 
 describe('authentication browser journey', () => {
+  it('presents Google-only login in the isolated preview without promising email delivery', async () => {
+    document.querySelector('meta[name="nkw-presentation"]')!.setAttribute('content', 'google=enabled;email=disabled;preview=private')
+    const { calls } = mount('/login')
+    await screen.findByRole('heading', { name: 'Welcome back' })
+    expect(screen.getByRole('button', { name: 'Continue with Google' })).toBeTruthy()
+    expect(screen.queryByLabelText('Password')).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Create an account' })).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Forgot password?' })).toBeNull()
+    expect(calls.some(call => /registrations|password-reset/.test(call.path))).toBe(false)
+  })
+
+  it('keeps unqualified preview features unavailable without requesting their APIs', async () => {
+    document.querySelector('meta[name="nkw-presentation"]')!.setAttribute('content', 'google=enabled;email=disabled;preview=private')
+    const { calls } = mount('/ask', 'authenticated')
+    await screen.findByRole('heading', { name: 'Not enabled in this preview' })
+    expect(calls.some(call => call.path.startsWith('/api/knowledge/'))).toBe(false)
+  })
+
   it('registers exactly the nine authorized routes', () => {
     expect(AUTH_ROUTES).toEqual(['/', '/signup', '/verify-email', '/login', '/mfa',
       '/forgot-password', '/reset-password', '/auth/complete', '/reauth'])

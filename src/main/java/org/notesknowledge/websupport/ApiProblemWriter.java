@@ -77,6 +77,10 @@ public final class ApiProblemWriter {
                 "service_unavailable", "Required service is unavailable");
     }
 
+    public void writeMalformedRequest(HttpServletRequest request, HttpServletResponse response) throws IOException {
+        write(request, response, HttpStatus.BAD_REQUEST, "malformed_request", "Malformed request");
+    }
+
     public void writeAccessDenied(
             HttpServletRequest request,
             HttpServletResponse response,
