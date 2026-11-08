@@ -7,6 +7,14 @@ terraform {
 provider "oci" { region = var.home_region }
 
 variable "compartment_id" { type = string }
+variable "compartment_name" {
+  type        = string
+  description = "Fresh isolated deployment compartment, never the tenancy root or a shared compartment."
+  validation {
+    condition     = can(regex("^nkw-preview[-a-z0-9]*$", var.compartment_name))
+    error_message = "Use a dedicated nkw-preview compartment name."
+  }
+}
 variable "home_region" { type = string }
 variable "availability_domain" { type = string }
 variable "ubuntu_arm64_image_id" { type = string }
@@ -123,7 +131,14 @@ resource "oci_core_instance" "preview" {
   lifecycle { prevent_destroy = true }
 }
 data "oci_objectstorage_namespace" "preview" { compartment_id = var.compartment_id }
+resource "oci_limits_quota" "storage" {
+  compartment_id = var.compartment_id
+  name           = "nkw-preview-storage-cap"
+  description    = "Hard 5 GB combined object/backup ceiling inside the verified free allowance."
+  statements     = ["set object-storage quota storage-bytes to 5000000000 in compartment ${var.compartment_name} where request.region = '${var.home_region}'"]
+}
 resource "oci_objectstorage_bucket" "preview" {
+  depends_on     = [oci_limits_quota.storage]
   compartment_id = var.compartment_id
   namespace      = data.oci_objectstorage_namespace.preview.namespace
   name           = "nkw-preview-${substr(sha256(var.compartment_id), 0, 12)}"

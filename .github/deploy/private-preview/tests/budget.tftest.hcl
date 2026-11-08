@@ -1,6 +1,7 @@
 mock_provider "oci" {}
 variables {
   compartment_id        = "ocid1.compartment.oc1..synthetic"
+  compartment_name      = "nkw-preview-test"
   home_region           = "ap-mumbai-1"
   availability_domain   = "synthetic:AP-MUMBAI-1-AD-1"
   ubuntu_arm64_image_id = "ocid1.image.oc1.ap-mumbai-1.synthetic"
@@ -14,6 +15,10 @@ run "unverified_entitlement_cannot_plan" {
 run "restricted_free_plan" {
   command = plan
   variables { free_entitlement_verified = true }
+  assert {
+    condition     = oci_limits_quota.storage.statements == tolist(["set object-storage quota storage-bytes to 5000000000 in compartment nkw-preview-test where request.region = 'ap-mumbai-1'"])
+    error_message = "The compartment's object/backup storage must have a hard free-tier ceiling."
+  }
   assert {
     condition     = oci_core_instance.preview.shape == "VM.Standard.A1.Flex" && oci_core_instance.preview.shape_config[0].ocpus == 2 && oci_core_instance.preview.shape_config[0].memory_in_gbs == 8
     error_message = "Only the bounded Always Free ARM shape is allowed."

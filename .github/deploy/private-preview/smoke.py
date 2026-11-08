@@ -49,15 +49,44 @@ def main():
             run(*compose,'run','--rm','migrate')
             run(*compose,'up','-d','--wait','--wait-timeout','180','app')
             probe=str(ROOT/'Probe.java')
-            for mode,address in [('trusted','10.89.10.2'),('untrusted','10.89.10.4')]:
+            state=temp/'probe-state';state.mkdir()
+            def probe_request(mode,address='10.89.10.2'):
                 run('docker','run','--rm','--network',project+'_edge','--ip',address,
                     '--read-only','--cap-drop','ALL','--security-opt','no-new-privileges',
                     '--tmpfs','/tmp:rw,noexec,nosuid,nodev,size=32m',
-                    '-v',probe+':/probe/Probe.java:ro',JDK,'java','/probe/Probe.java',mode)
-            run(*compose,'restart','app')
+                    '-v',probe+':/probe/Probe.java:ro','-v',str(state)+':/state',JDK,'java','/probe/Probe.java',
+                    mode,*(['/state/session'] if mode.startswith('session-') else []))
+            probe_request('trusted')
+            probe_request('untrusted','10.89.10.4')
+            probe_request('session-create')
+            # Recreate both containers, retaining ONLY this unique project's volumes.
+            run(*compose,'stop','app','postgres')
+            run(*compose,'rm','-f','app','postgres')
+            run(*compose,'up','-d','--wait','--wait-timeout','120','postgres')
             run(*compose,'up','-d','--wait','--wait-timeout','180','app')
+            probe_request('session-check')
+            pg=compose+['exec','-T','postgres']
+            sql=lambda database,query: run(*pg,'psql','-X','-U','nkw_preview_migrator','-d',database,
+                '-v','ON_ERROR_STOP=1','-At','-c',query,capture=True).strip()
+            assert int(sql('nkw_preview','select count(*) from identity.spring_session'))>0
+            run(*pg,'pg_dump','-U','nkw_preview_migrator','-d','nkw_preview','-Fc','-f','/tmp/preview-drill.dump')
+            sql('nkw_preview','create database nkw_preview_restore')
+            sql('nkw_preview','revoke connect on database nkw_preview_restore from public; revoke connect on database nkw_preview_restore from nkw_preview_runtime')
+            run(*pg,'pg_restore','-U','nkw_preview_migrator','--no-owner','--no-acl','-d','nkw_preview_restore','/tmp/preview-drill.dump')
+            assert int(sql('nkw_preview_restore','select count(*) from identity.spring_session'))>0
+            container=run(*compose,'ps','-q','postgres',capture=True).strip()
+            quarantine=ROOT.parents[2]/'src/main/resources/operations/restore-security-quarantine.sql'
+            run('docker','cp',str(quarantine),container+':/tmp/quarantine.sql')
+            run(*pg,'psql','-X','-U','nkw_preview_migrator','-d','nkw_preview_restore','-v','ON_ERROR_STOP=1',
+                '--set=runtime_role=nkw_preview_runtime','--set=restore_confirmation=invalidate_uncertain_authority',
+                '-f','/tmp/quarantine.sql')
+            assert sql('nkw_preview_restore','select count(*) from identity.spring_session')=='0'
+            assert sql('nkw_preview_restore',"select has_database_privilege('nkw_preview_runtime',current_database(),'CONNECT')")=='f'
+            assert sql('nkw_preview_restore','select count(*) from public.flyway_schema_history where success')=='20'
+            probe_request('session-check')
             print(json.dumps({'nativeArchitecture':run('uname','-m',capture=True).strip(),
                 'image':image,'migrations':20,'coreReadiness':True,'restartReadiness':True,
+                'databaseAndContainerRecreationPersistSession':True,'isolatedLogicalRestoreQuarantine':True,
                 'cookieAndCsrfDenials':True,'untrustedForwardingRejected':True,
                 'providerCalls':0,'realDataUsed':False,'hostedTlsQualified':False}))
         finally:

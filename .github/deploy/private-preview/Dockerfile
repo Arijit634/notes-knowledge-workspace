@@ -19,6 +19,11 @@ FROM eclipse-temurin:25.0.5_8-jre-noble@sha256:a98128a57de944a72bd31fbc79b898edd
 ARG SOURCE_SHA
 LABEL org.opencontainers.image.source="https://github.com/Arijit634/notes-knowledge-workspace" \
       org.opencontainers.image.revision="$SOURCE_SHA"
+# CVE-2026-109518. HTTPS + no retries also protects the bootstrap update itself.
+RUN sed -i 's|http://|https://|g' /etc/apt/sources.list.d/ubuntu.sources \
+    && apt-get -o Acquire::Retries=0 update \
+    && apt-get -o Acquire::Retries=0 install --no-install-recommends --only-upgrade -y apt=2.8.4ubuntu0.1 libapt-pkg6.0t64=2.8.4ubuntu0.1 \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=backend --chown=65533:65533 /application.jar /app/application.jar
 USER 65533:65533

@@ -6,6 +6,23 @@ import java.time.Duration;
 class Probe {
     public static void main(String[] args) throws Exception {
         var client=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
+        if(args.length==2 && args[0].startsWith("session-")) {
+            var request=HttpRequest.newBuilder(URI.create("http://app:8080/api/auth/csrf"))
+                .timeout(Duration.ofSeconds(5)).header("X-Forwarded-Proto","https")
+                .header("X-Forwarded-Host","preview.example.test");
+            var file=java.nio.file.Path.of(args[1]);
+            String[] previous=args[0].equals("session-check") ? java.nio.file.Files.readString(file).split("\n",2) : null;
+            if(previous!=null)request.header("Cookie",previous[0]);
+            var result=client.send(request.GET().build(),HttpResponse.BodyHandlers.ofString());
+            if(result.statusCode()!=200)throw new IllegalStateException("preview_session_probe_failed");
+            if(previous==null) {
+                String cookie=result.headers().firstValue("Set-Cookie").orElseThrow().split(";",2)[0];
+                java.nio.file.Files.writeString(file,cookie+"\n"+result.body());
+            } else if(!result.body().equals(previous[1]))throw new IllegalStateException("preview_session_not_persisted");
+            // No cookie, token, derivative or body is emitted.
+            System.out.println(previous==null?"synthetic_session_created":"synthetic_session_persisted");
+            return;
+        }
         if(args.length!=1)throw new IllegalArgumentException();
         boolean trusted=args[0].equals("trusted");
         String[] paths=trusted ? new String[]{"/login","/api/auth/session","/api/auth/csrf","/api/notes",
