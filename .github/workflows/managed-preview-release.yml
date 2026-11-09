@@ -49,6 +49,7 @@ jobs:
           test "$(uname -m)" = x86_64
           bash -n .github/deploy/managed-preview/start.sh
           python3 -m py_compile .github/deploy/managed-preview/smoke.py
+          python3 -m unittest discover -s .github/deploy/managed-preview -p test_smoke.py
           docker build --build-arg "SOURCE_SHA=$GITHUB_SHA" --iidfile "$RUNNER_TEMP/preview-image" -f .github/deploy/managed-preview/Dockerfile .
       - name: Scan the actual image and retain only safe aggregate counts
         run: |

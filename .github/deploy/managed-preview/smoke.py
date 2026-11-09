@@ -30,6 +30,25 @@ def run(*args,timeout=240):
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self,*args,**kwargs):raise RuntimeError('Unexpected fixture redirect')
 
+def await_readiness(request,timeout=600,now=time.monotonic,pause=time.sleep):
+    deadline=now()+timeout
+    previous=None;samples=0
+    while now()<deadline:
+        try:
+            code,_,body=request('/_preview/ready',authenticated=False)
+            if code==200:
+                if json.loads(body)!={'status':'UP'}:raise ValueError('Readiness disclosed details or was not UP')
+                return
+            # During servlet/management initialization the edge may return a
+            # non-ready status. None is success; only exact UP before the fixed
+            # deadline qualifies. Record bounded status-only diagnostics.
+            if code!=previous and samples<12:
+                print(json.dumps({'readinessPendingStatus':code}),flush=True)
+                previous=code;samples+=1
+        except (urllib.error.URLError,ConnectionError,TimeoutError):pass
+        pause(0.25)
+    raise RuntimeError('Managed preview readiness deadline exceeded')
+
 def main():
     if os.name!='posix' or len(sys.argv)!=2 or not re.fullmatch(r'sha256:[0-9a-f]{64}',sys.argv[1]):
         raise ValueError('Native Linux and immutable local image required')
@@ -166,19 +185,7 @@ def main():
                     if len(body)>1024*1024:raise ValueError('Unbounded fixture response')
                     if authenticated:authenticated_seconds.append(round(time.monotonic()-request_started,3))
                     return response.status,response.headers,body
-            def await_ready():
-                deadline=time.monotonic()+600
-                while time.monotonic()<deadline:
-                    try:
-                        code,_,body=request('/_preview/ready',authenticated=False)
-                        if code==200:
-                            if json.loads(body)!={'status':'UP'}:raise ValueError('Readiness disclosed details')
-                            return
-                        if code not in (502,503):raise ValueError('Unexpected readiness status')
-                    except (urllib.error.URLError,ConnectionError,TimeoutError):pass
-                    time.sleep(0.25)
-                raise RuntimeError('Managed preview readiness deadline exceeded')
-            await_ready();first=round(time.monotonic()-started,2)
+            await_readiness(request);first=round(time.monotonic()-started,2)
             if request('/login',authenticated=False)[0]!=401:raise ValueError('Missing perimeter accepted')
             if request('/login',extra={'Authorization':'Basic '+base64.b64encode(b'preview:incorrect').decode()})[0]!=401:raise ValueError('Wrong perimeter accepted')
             for path,expected in [('/login',200),('/api/auth/session',200),('/api/notes',401),
@@ -224,7 +231,7 @@ def main():
             if shutdown>=30 or metadata['State']['ExitCode']!=0:raise ValueError('Graceful bounded shutdown failed')
             run('docker','rm',app);app=None
             run('docker','stop',pg);run('docker','rm',pg);pg=None
-            pg=start_postgres();started=time.monotonic();app=start_app();await_ready();second=round(time.monotonic()-started,2)
+            pg=start_postgres();started=time.monotonic();app=start_app();await_readiness(request);second=round(time.monotonic()-started,2)
             code,headers,_=request('/api/auth/csrf',cookie=cookie)
             if code!=200 or headers.get('Set-Cookie'):raise ValueError('Session did not survive recreation')
             sql=lambda db,q:run('docker','exec',pg,'psql','-X','-U','nkw_preview_migrator','-d',db,'-At','-v','ON_ERROR_STOP=1','-c',q)

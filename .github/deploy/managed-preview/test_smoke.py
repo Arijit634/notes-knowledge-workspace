@@ -1,0 +1,50 @@
+"""FAST readiness contract regression; fake clock, no Docker or network calls."""
+import contextlib
+import importlib.util
+import io
+import json
+from pathlib import Path
+import unittest
+import urllib.error
+
+spec=importlib.util.spec_from_file_location('managed_smoke',Path(__file__).with_name('smoke.py'))
+smoke=importlib.util.module_from_spec(spec);spec.loader.exec_module(smoke)
+
+class ReadinessTests(unittest.TestCase):
+    def wait(self,responses,timeout=2):
+        clock=[0.0];calls=[];remaining=iter(responses)
+        def request(path,authenticated):
+            self.assertEqual('/_preview/ready',path);self.assertFalse(authenticated)
+            value=next(remaining);calls.append(value)
+            if isinstance(value,Exception):raise value
+            return value,{},json.dumps({'status':'UP'}).encode()
+        def pause(seconds):clock[0]+=seconds
+        with contextlib.redirect_stdout(io.StringIO()):
+            smoke.await_readiness(request,timeout,lambda:clock[0],pause)
+        return calls
+
+    def test_management_startup_statuses_are_not_success_or_immediate_failure(self):
+        self.assertEqual([502,503,504,404,200],self.wait([502,503,504,404,200]))
+
+    def test_transport_failure_can_recover_only_to_exact_up(self):
+        self.assertEqual(2,len(self.wait([urllib.error.URLError('synthetic'),200])))
+
+    def test_permanent_nonready_responses_exhaust_fixed_deadline(self):
+        for code in (401,404,500,502,503,504):
+            with self.subTest(code=code),self.assertRaisesRegex(RuntimeError,'deadline exceeded'):
+                self.wait([code]*8)
+
+    def test_200_down_or_extra_details_never_qualify(self):
+        for body in ({'status':'DOWN'},{'status':'UP','details':{}},{}):
+            with self.subTest(body=body),self.assertRaises(ValueError):
+                smoke.await_readiness(lambda *args,**kwargs:(200,{},json.dumps(body).encode()))
+
+    def test_malformed_200_body_never_qualifies(self):
+        with self.assertRaises(ValueError):
+            smoke.await_readiness(lambda *args,**kwargs:(200,{},b'invalid'))
+
+    def test_redirect_or_runtime_exit_is_not_treated_as_startup(self):
+        def failed(*args,**kwargs):raise RuntimeError('runtime exited')
+        with self.assertRaisesRegex(RuntimeError,'runtime exited'):smoke.await_readiness(failed)
+
+if __name__=='__main__':unittest.main()
