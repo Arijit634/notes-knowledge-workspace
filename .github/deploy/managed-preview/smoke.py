@@ -74,6 +74,17 @@ def main():
             hashed=run('java','-Xmx96m','-cp',str(temp/'crypto.jar'),str(ROOT/'FixtureHash.java'))
             if not re.fullmatch(r'\$2[aby]\$12\$[./A-Za-z0-9]{53}',hashed):raise ValueError('Fixture hashing failed')
             (secret/'preview-password-hash').write_text(hashed)
+            # Validate the public proxy template without mounting ANY credentials.
+            # Diagnostic output here can contain only this synthetic configuration.
+            edge_check=subprocess.run(['docker','run','--rm','--network','none','--read-only',
+                '--tmpfs','/tmp:rw,noexec,nosuid,nodev,size=8m,uid=65533,gid=65533,mode=700',
+                '--entrypoint','bash',image,'-c',
+                'set -e; mkdir -p /tmp/nkw-edge/body /tmp/nkw-edge/proxy; '
+                'sed s/__PREVIEW_HOST__/preview.example.test/g /app/nginx.conf > /tmp/nkw-edge/nginx.conf; '
+                'nginx -e /dev/stderr -t -c /tmp/nkw-edge/nginx.conf'],capture_output=True,text=True)
+            if edge_check.returncode:
+                print(edge_check.stderr[-3000:])
+                raise ValueError('Synthetic proxy configuration invalid')
             network=run('docker','network','create','--internal',prefix)
             volume=run('docker','volume','create','--label','nkw.synthetic='+prefix,prefix+'-pg')
             def start_postgres():
@@ -122,7 +133,18 @@ def main():
             authenticated_seconds=[]
             def request(path,*,authenticated=True,method='GET',cookie=None,csrf=None,extra=None):
                 metadata=json.loads(run('docker','inspect',app))[0]
-                port=metadata['NetworkSettings']['Ports']['10000/tcp'][0]
+                if not metadata['State']['Running']:
+                    logs=run('docker','logs',app)
+                    known=['preview_port_invalid','preview_configuration_unavailable','preview_origin_invalid',
+                        'preview_perimeter_unavailable','preview_edge_configuration_invalid','preview_constituent_stopped',
+                        'Restricted private preview configuration required','APPLICATION FAILED TO START',
+                        'ConfigDataResourceNotFoundException','OutOfMemoryError']
+                    print(json.dumps({'runtimeExited':True,'exitCode':metadata['State']['ExitCode'],
+                        'oomKilled':metadata['State']['OOMKilled'],'observedSafeCodes':[code for code in known if code in logs]}))
+                    raise ValueError('Runtime exited before readiness')
+                ports=metadata['NetworkSettings']['Ports'].get('10000/tcp')
+                if not ports:raise ConnectionError('Fixture port is not bound yet')
+                port=ports[0]
                 if port['HostIp']!='127.0.0.1':raise ValueError('Fixture port exposed')
                 headers={'Host':'preview.example.test'}
                 if authenticated:headers['Authorization']=auth
