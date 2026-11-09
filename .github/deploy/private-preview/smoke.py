@@ -66,7 +66,8 @@ def main():
             run(*compose,'up','-d','--wait','--wait-timeout','120','postgres','redis')
             run(*compose,'run','--rm','migrate')
             started=time.monotonic()
-            run(*compose,'up','-d','--wait','--wait-timeout','600' if small_host else '180','app',timeout=660 if small_host else 360)
+            if small_host:run(*compose,'up','-d','app')
+            else:run(*compose,'up','-d','--wait','--wait-timeout','180','app')
             resources=[]
             def measure_resources():
                 if not small_host:return
@@ -116,7 +117,8 @@ def main():
             run(*compose,'rm','-f','app','postgres')
             run(*compose,'up','-d','--wait','--wait-timeout','120','postgres')
             started=time.monotonic()
-            run(*compose,'up','-d','--wait','--wait-timeout','600' if small_host else '180','app',timeout=660 if small_host else 360)
+            if small_host:run(*compose,'up','-d','app')
+            else:run(*compose,'up','-d','--wait','--wait-timeout','180','app')
             await_private_readiness()
             restart_boot_seconds=round(time.monotonic()-started,2)
             probe_request('session-check')
