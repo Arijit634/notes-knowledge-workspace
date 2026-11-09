@@ -70,7 +70,7 @@ def main():
             with zipfile.ZipFile(temp/'application.jar') as jar:
                 (temp/'crypto.jar').write_bytes(jar.read('BOOT-INF/lib/spring-security-crypto-7.1.1.jar'))
             hashed=run('java','-Xmx96m','-cp',str(temp/'crypto.jar'),str(ROOT/'FixtureHash.java'))
-            if not re.fullmatch(r'\$2[aby]\$04\$[./A-Za-z0-9]{53}',hashed):raise ValueError('Fixture hashing failed')
+            if not re.fullmatch(r'\$2[aby]\$12\$[./A-Za-z0-9]{53}',hashed):raise ValueError('Fixture hashing failed')
             (secret/'preview-password-hash').write_text(hashed)
             network=run('docker','network','create','--internal',prefix)
             volume=run('docker','volume','create','--label','nkw.synthetic='+prefix,prefix+'-pg')
@@ -117,6 +117,7 @@ def main():
             started=time.monotonic();app=start_app()
             opener=urllib.request.build_opener(NoRedirect(),urllib.request.ProxyHandler({}))
             auth='Basic '+base64.b64encode(b'preview:synthetic-preview-perimeter-only').decode()
+            authenticated_seconds=[]
             def request(path,*,authenticated=True,method='GET',cookie=None,csrf=None,extra=None):
                 metadata=json.loads(run('docker','inspect',app))[0]
                 port=metadata['NetworkSettings']['Ports']['10000/tcp'][0]
@@ -127,11 +128,13 @@ def main():
                 if csrf:headers['X-CSRF-TOKEN']=csrf
                 headers.update(extra or {})
                 req=urllib.request.Request('http://127.0.0.1:'+port['HostPort']+path,headers=headers,method=method)
+                request_started=time.monotonic()
                 try:response=opener.open(req,timeout=5)
                 except urllib.error.HTTPError as error:response=error
                 with response:
                     body=response.read(1024*1024+1)
                     if len(body)>1024*1024:raise ValueError('Unbounded fixture response')
+                    if authenticated:authenticated_seconds.append(round(time.monotonic()-request_started,3))
                     return response.status,response.headers,body
             def await_ready():
                 deadline=time.monotonic()+600
@@ -213,6 +216,7 @@ def main():
                 'untrustedForwardingDiscarded':True,'sessionAndCsrfSurviveAppAndPgRecreation':True,
                 'isolatedLogicalRestoreQuarantine':True,'migrations':20,'databaseTlsVerifiedWithIsolatedFixtureCa':True,
                 'untrustedDatabaseCertificateAndHostnameRejected':True,'callbackLogPrivacy':True,
+                'perimeterBcryptCost':12,'authenticatedRequestSeconds':authenticated_seconds,
                 'publicTlsOrProviderQualified':False,'providerCalls':0,'realDataUsed':False,'resources':samples}))
         finally:
             for identifier in reversed(containers):
