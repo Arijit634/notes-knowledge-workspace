@@ -1,0 +1,160 @@
+name: Managed preview image publication
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the same qualified private-preview image
+        type: boolean
+        default: false
+      zero_cost_ghcr_verified:
+        description: Operator reverified no-charge public runner and GHCR entitlement
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: managed-preview-publication
+  cancel-in-progress: false
+jobs:
+  candidate:
+    if: github.repository == 'Arijit634/notes-knowledge-workspace' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      checks: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Enforce the no-cost publication choice
+        env:
+          PUBLISH: ${{ inputs.publish }}
+          FREE_VERIFIED: ${{ inputs.zero_cost_ghcr_verified }}
+        run: test "$PUBLISH" != true || test "$FREE_VERIFIED" = true
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '25.0.5'
+      - name: Verify exact protected green main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/release-guard.py main --repository "$GITHUB_REPOSITORY" --source "$GITHUB_SHA" --output "$RUNNER_TEMP/preview-protected-main.json"
+      - name: Build one immutable preview candidate
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          bash -n .github/deploy/managed-preview/start.sh
+          python3 -m py_compile .github/deploy/managed-preview/smoke.py
+          docker build --build-arg "SOURCE_SHA=$GITHUB_SHA" --iidfile "$RUNNER_TEMP/preview-image" -f .github/deploy/managed-preview/Dockerfile .
+      - name: Scan the actual image and retain only safe aggregate counts
+        run: |
+          set -euo pipefail
+          image="$(cat "$RUNNER_TEMP/preview-image")"
+          set +e
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock:ro -v "$RUNNER_TEMP:/evidence" \
+            ghcr.io/aquasecurity/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa \
+            image --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 1 --format json --output /evidence/preview-raw-scan.json "$image"
+          scan_exit=$?
+          set -e
+          export IMAGE_ID="$image" SCAN_EXIT="$scan_exit"
+          python3 - <<'PY'
+          import json,os,pathlib
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])
+          raw=json.loads((root/'preview-raw-scan.json').read_text())
+          results=raw.get('Results',[])
+          findings=sum(len(r.get('Vulnerabilities',[]))+len(r.get('Secrets',[])) for r in results)
+          receipt=dict(image=os.environ['IMAGE_ID'],source=os.environ['GITHUB_SHA'],scanExit=int(os.environ['SCAN_EXIT']),highCriticalFindings=findings)
+          (root/'preview-security-summary.json').write_text(json.dumps(receipt,indent=2))
+          assert receipt['scanExit']==0 and findings==0
+          PY
+      - name: Qualify that same image without providers
+        run: |
+          set -euo pipefail
+          python3 .github/deploy/managed-preview/smoke.py "$(cat "$RUNNER_TEMP/preview-image")" | tee "$RUNNER_TEMP/preview-smoke.json"
+      - name: Generate the matching CycloneDX SBOM
+        run: |
+          set -euo pipefail
+          image="$(cat "$RUNNER_TEMP/preview-image")"
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock:ro -v "$RUNNER_TEMP:/evidence" \
+            ghcr.io/aquasecurity/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa \
+            image --format cyclonedx --list-all-pkgs --output /evidence/preview.cdx.json "$image"
+          docker run --rm --network none --entrypoint redis-server "$image" --version | grep -F 'v=8.10.2'
+          python3 - <<'PY'
+          import json,os,pathlib
+          path=pathlib.Path(os.environ['RUNNER_TEMP'])/'preview.cdx.json'
+          document=json.loads(path.read_text())
+          document.setdefault('components',[]).append(dict(type='application',name='redis-server',version='8.10.2',properties=[dict(name='nkw:unmodified-source-sha256',value='ae6973de9b6ad8e6cf21b1e764abccab59200689af6aabce10d4cf6bbb2e253f')]))
+          path.write_text(json.dumps(document))
+          PY
+      - name: Publish the same qualified image without rebuilding
+        if: inputs.publish && inputs.zero_cost_ghcr_verified
+        id: publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/release-guard.py main --repository "$GITHUB_REPOSITORY" --source "$GITHUB_SHA" --output "$RUNNER_TEMP/preview-main-before-publication.json"
+          repository="ghcr.io/${GITHUB_REPOSITORY,,}-private-preview"
+          image="$(cat "$RUNNER_TEMP/preview-image")"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin >/dev/null
+          trap 'docker logout ghcr.io >/dev/null 2>&1' EXIT
+          if docker manifest inspect "$repository:sha-$GITHUB_SHA" >/dev/null 2>&1; then exit 1; fi
+          docker tag "$image" "$repository:sha-$GITHUB_SHA"
+          docker push "$repository:sha-$GITHUB_SHA"
+          canonical="$(docker image inspect --format '{{index .RepoDigests 0}}' "$repository:sha-$GITHUB_SHA")"
+          [[ "$canonical" =~ ^ghcr.io/arijit634/notes-knowledge-workspace-private-preview@sha256:[0-9a-f]{64}$ ]]
+          docker pull "$canonical" >/dev/null
+          test "$(docker image inspect --format '{{.Id}}' "$canonical")" = "$image"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$GITHUB_SHA"
+          printf 'name=%s\ndigest=%s\n' "$repository" "${canonical#*@}" >> "$GITHUB_OUTPUT"
+      - name: Attest the exact preview image provenance
+        if: steps.publication.outcome == 'success'
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-name: ${{ steps.publication.outputs.name }}
+          subject-digest: ${{ steps.publication.outputs.digest }}
+          push-to-registry: true
+      - name: Attest the matching preview SBOM
+        if: steps.publication.outcome == 'success'
+        uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3
+        with:
+          subject-name: ${{ steps.publication.outputs.name }}
+          subject-digest: ${{ steps.publication.outputs.digest }}
+          sbom-path: ${{ runner.temp }}/preview.cdx.json
+          push-to-registry: true
+      - name: Verify publication provenance and record restricted eligibility
+        if: steps.publication.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SUBJECT: ${{ steps.publication.outputs.name }}@${{ steps.publication.outputs.digest }}
+        run: |
+          set -euo pipefail
+          workflow="$GITHUB_REPOSITORY/.github/workflows/managed-preview-release.yml"
+          gh attestation verify "oci://$SUBJECT" --repo "$GITHUB_REPOSITORY" --signer-workflow "$workflow" --source-ref refs/heads/main --source-digest "$GITHUB_SHA" --format json > "$RUNNER_TEMP/preview-provenance-verification.json"
+          gh attestation verify "oci://$SUBJECT" --repo "$GITHUB_REPOSITORY" --signer-workflow "$workflow" --source-ref refs/heads/main --source-digest "$GITHUB_SHA" --predicate-type https://cyclonedx.org/bom --format json > "$RUNNER_TEMP/preview-sbom-verification.json"
+          python3 - <<'PY'
+          import json,os,pathlib
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])
+          result=dict(source=os.environ['GITHUB_SHA'],subject=os.environ['SUBJECT'],architecture='amd64',privatePreviewOnly=True,wholeProductRelease=False,publicLaunchAuthorized=False,attestationsVerified=True)
+          (root/'preview-image-publication.json').write_text(json.dumps(result,indent=2))
+          print(json.dumps(result))
+          PY
+      - name: Retain only bounded nonsecret qualification evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: managed-preview-image-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/preview-protected-main.json
+            ${{ runner.temp }}/preview-security-summary.json
+            ${{ runner.temp }}/preview-smoke.json
+            ${{ runner.temp }}/preview.cdx.json
+            ${{ runner.temp }}/preview-provenance-verification.json
+            ${{ runner.temp }}/preview-sbom-verification.json
+            ${{ runner.temp }}/preview-image-publication.json
+          if-no-files-found: warn
+          retention-days: 3
