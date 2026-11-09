@@ -72,7 +72,9 @@ def main():
             (temp/'Caddyfile').write_text('''{
     admin off
     auto_https off
-    log default { level ERROR }
+    log default {
+        level ERROR
+    }
 }
 http://:8088 {
     reverse_proxy app:8080 {
@@ -107,7 +109,10 @@ http://:8088 {
                 slice_path=Path('/sys/fs/cgroup')/slice_unit
             run(*compose,'up','-d','--wait','--wait-timeout','120','postgres','redis')
             run(*compose,'run','--rm','migrate')
-            if bundled:run(*compose,'up','-d','edge')
+            if bundled:
+                run(*compose,'run','--rm','--no-deps','edge','caddy','validate',
+                    '--config','/etc/caddy/Caddyfile','--adapter','caddyfile')
+                run(*compose,'up','-d','edge')
             started=time.monotonic()
             if small_host:run(*compose,'up','-d','app')
             else:run(*compose,'up','-d','--wait','--wait-timeout','180','app')
