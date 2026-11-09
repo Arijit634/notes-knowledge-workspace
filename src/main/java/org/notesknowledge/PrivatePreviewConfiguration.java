@@ -17,28 +17,37 @@ public class PrivatePreviewConfiguration {
     }
     PrivatePreview validate(Environment environment, String os, String architecture) {
         try {
+            boolean managed=Set.of(environment.getActiveProfiles()).contains("managed-preview");
+            var profiles=managed?Set.of("operations","private-preview","managed-preview"):Set.of("operations","private-preview");
             var origin = URI.create(environment.getRequiredProperty("nkw.preview.origin"));
             if (!"Linux".equals(os) || !Set.of("amd64", "x86_64", "aarch64").contains(architecture)
-                    || !Set.of("operations", "private-preview").equals(Set.of(environment.getActiveProfiles()))
+                    || !profiles.equals(Set.of(environment.getActiveProfiles()))
                     || !"https".equals(origin.getScheme()) || origin.getHost() == null
                     || !origin.getHost().matches("[a-z0-9][a-z0-9.-]+\\.[a-z]{2,}")
                     || origin.getHost().equals("localhost") || origin.getPort() != -1
                     || origin.getRawUserInfo() != null || !origin.getRawPath().isEmpty()
                     || origin.getRawQuery() != null || origin.getRawFragment() != null
-                    || !"ip-restricted".equals(environment.getProperty("nkw.preview.access"))
+                    || !(managed?"password-gated":"ip-restricted").equals(environment.getProperty("nkw.preview.access"))
+                    || !(managed?"file:/etc/secrets/runtime.properties":"configtree:/run/secrets/")
+                        .equals(environment.getProperty("spring.config.import"))
                     || !"8080".equals(environment.getProperty("server.port"))
                     || !"".equals(environment.getProperty("server.servlet.context-path", ""))
-                    || !"0.0.0.0".equals(environment.getProperty("server.address"))
+                    || !(managed?"127.0.0.1":"0.0.0.0").equals(environment.getProperty("server.address"))
                     || !"127.0.0.1".equals(environment.getProperty("management.server.address"))
                     || !"8081".equals(environment.getProperty("management.server.port"))
                     || !"native".equals(environment.getProperty("server.forward-headers-strategy"))
-                    || !"10\\.89\\.10\\.2".equals(environment.getProperty("server.tomcat.remoteip.internal-proxies"))
-                    || !"jdbc:postgresql://postgres:5432/nkw_preview".equals(environment.getProperty("spring.datasource.url"))
+                    || !(managed?"127\\.0\\.0\\.1":"10\\.89\\.10\\.2").equals(environment.getProperty("server.tomcat.remoteip.internal-proxies"))
+                    || !(managed?managedDatabaseUrl(environment.getProperty("nkw.preview.database-host")):
+                        "jdbc:postgresql://postgres:5432/nkw_preview").equals(environment.getProperty("spring.datasource.url"))
                     || !"nkw_preview_runtime".equals(environment.getProperty("spring.datasource.username"))
                     || !environment.getProperty("identity.oidc.google.enabled", Boolean.class, false)
                     || !"https://accounts.google.com".equals(environment.getProperty("identity.oidc.google.issuer"))
                     || !(origin + "/api/auth/oidc/google/callback").equals(environment.getProperty("identity.oidc.google.login-redirect-uri"))
                     || !(origin + "/api/auth/oidc/google/link-callback").equals(environment.getProperty("identity.oidc.google.link-redirect-uri"))) {
+                throw new IllegalStateException();
+            }
+            if(managed && (!"127.0.0.1".equals(environment.getProperty("spring.data.redis.host"))
+                    || !"20s".equals(environment.getProperty("spring.lifecycle.timeout-per-shutdown-phase")))) {
                 throw new IllegalStateException();
             }
             for (String property : List.of("spring.flyway.enabled", "identity.delivery.smtp-enabled",
@@ -58,6 +67,13 @@ public class PrivatePreviewConfiguration {
         } catch (RuntimeException invalid) {
             throw new IllegalStateException("Restricted private preview configuration required");
         }
+    }
+
+    static String managedDatabaseUrl(String host) {
+        if(host==null || host.length()>253 || !host.matches("ep-[a-z0-9-]+\\.[a-z0-9.-]+\\.neon\\.tech")
+                || host.contains("-pooler.") || host.contains(".."))throw new IllegalArgumentException();
+        return "jdbc:postgresql://"+host+":5432/nkw_preview?sslmode=verify-full"
+            +"&sslfactory=org.postgresql.ssl.DefaultJavaSSLFactory&connectTimeout=10&socketTimeout=30";
     }
 
     public record PrivatePreview(String host) {}
