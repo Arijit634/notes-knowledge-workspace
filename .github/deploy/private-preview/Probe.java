@@ -60,13 +60,14 @@ class Probe {
             return;
         }
         if(args.length!=1)throw new IllegalArgumentException();
-        boolean trusted=args[0].equals("trusted");
+        boolean edge=args[0].equals("edge");
+        boolean trusted=args[0].equals("trusted")||edge;
         String[] paths=trusted ? new String[]{"/login","/api/auth/session","/api/auth/csrf","/api/notes",
             "/api/auth/logout","/api/knowledge/query","/api/public/explore","/api/auth/login/password"}
             : new String[]{"/api/auth/session"};
         int[] expected=trusted ? new int[]{200,200,200,401,403,503,503,503} : new int[]{400};
         for(int i=0;i<paths.length;i++) {
-            var request=HttpRequest.newBuilder(URI.create("http://app:8080"+paths[i])).timeout(Duration.ofSeconds(5))
+            var request=HttpRequest.newBuilder(URI.create((edge?"http://edge:8088":"http://app:8080")+paths[i])).timeout(Duration.ofSeconds(5))
                 .header("X-Forwarded-Proto","https").header("X-Forwarded-Host","preview.example.test");
             if(paths[i].endsWith("logout"))request.POST(HttpRequest.BodyPublishers.noBody());else request.GET();
             var result=client.send(request.build(),HttpResponse.BodyHandlers.ofString());

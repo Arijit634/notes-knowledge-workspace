@@ -22,8 +22,9 @@ def run(*args, capture=False, timeout=360):
 def main():
     if os.name != 'posix' or len(sys.argv) not in (2, 3):
         raise ValueError('native_linux_and_candidate_image_required')
+    bundled = len(sys.argv) == 3 and sys.argv[2] == '--small-bundle'
     small_host = len(sys.argv) == 3
-    if small_host and sys.argv[2] != '--small-host':
+    if small_host and sys.argv[2] not in ('--small-host', '--small-bundle'):
         raise ValueError('unknown_qualification_mode')
     image = sys.argv[1]
     # Only a locally built immutable image ID; never pull an operator-controlled tag here.
@@ -32,6 +33,9 @@ def main():
     spec=importlib.util.spec_from_file_location('preview_initialize', ROOT/'initialize.py')
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     project='nkw-preview-test-'+uuid.uuid4().hex[:10]
+    slice_unit='nkwqualification'+uuid.uuid4().hex[:12]+'.slice'
+    anchor_unit=project+'-anchor.service'
+    slice_path=None
     with tempfile.TemporaryDirectory(prefix='nkw-preview-test-') as temp:
         temp=Path(temp);os.chmod(temp,0o755)
         shutil.copyfile(ROOT/'compose.yaml',temp/'compose.yaml')
@@ -50,6 +54,36 @@ def main():
     healthcheck:
       disable: true
 '''
+        if bundled:
+            # One aggregate cgroup, including proxy and rate-control Redis. This
+            # measures the combined budget, not single-container packaging or a
+            # hosted provider. PostgreSQL and operator probes remain outside it.
+            offline += f'''    cgroup_parent: {slice_unit}
+  redis:
+    cgroup_parent: {slice_unit}
+    mem_limit: 64m
+    memswap_limit: 64m
+  edge:
+    cgroup_parent: {slice_unit}
+    ports: !reset []
+    mem_limit: 64m
+    memswap_limit: 64m
+'''
+            (temp/'Caddyfile').write_text('''{
+    admin off
+    auto_https off
+    log default { level ERROR }
+}
+http://:8088 {
+    reverse_proxy app:8080 {
+        header_up -Forwarded
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto https
+        header_up X-Forwarded-Host preview.example.test
+        header_up Host preview.example.test
+    }
+}
+''')
         (temp/'offline.yaml').write_text(offline)
         app,owner,runtime,redis=module.configuration('https://preview.example.test','syntheticnamespace',
             'ap-mumbai-1','synthetic-private-bucket','synthetic.apps.googleusercontent.com',
@@ -63,8 +97,17 @@ def main():
         (temp/'runtime.env').write_text(f'APP_IMAGE={image}\nSOURCE_SHA=synthetic-container-smoke\nPREVIEW_HOST=preview.example.test\n')
         compose=['docker','compose','--project-directory',str(temp),'-p',project,'--env-file',str(temp/'runtime.env'),'-f',str(temp/'compose.yaml'),'-f',str(temp/'offline.yaml')]
         try:
+            if bundled:
+                run('sudo','systemd-run','--quiet','--unit',anchor_unit,'--slice',slice_unit,
+                    '--property=RuntimeMaxSec=1800','/usr/bin/sleep','1800')
+                run('sudo','systemctl','set-property','--runtime',slice_unit,
+                    'MemoryMax=469762048','MemorySwapMax=0','CPUQuota=10%','TasksMax=512')
+                group=run('systemctl','show','--property=ControlGroup','--value',slice_unit,capture=True).strip()
+                if group!='/'+slice_unit:raise ValueError('unexpected_qualification_cgroup')
+                slice_path=Path('/sys/fs/cgroup')/slice_unit
             run(*compose,'up','-d','--wait','--wait-timeout','120','postgres','redis')
             run(*compose,'run','--rm','migrate')
+            if bundled:run(*compose,'up','-d','edge')
             started=time.monotonic()
             if small_host:run(*compose,'up','-d','app')
             else:run(*compose,'up','-d','--wait','--wait-timeout','180','app')
@@ -86,6 +129,17 @@ def main():
                 if small_host and (sample['memoryLimitBytes']!=448*1024*1024
                         or sample['swapTotalLimitBytes']!=448*1024*1024 or sample['cpuQuota']!=100_000_000):
                     raise ValueError('small_host_limit_not_enforced')
+                if bundled:
+                    events=dict(line.split() for line in (slice_path/'memory.events').read_text().splitlines())
+                    quota,period=map(int,(slice_path/'cpu.max').read_text().split())
+                    peak=int((slice_path/'memory.peak').read_text())
+                    if (int((slice_path/'memory.max').read_text())!=448*1024*1024
+                            or (slice_path/'memory.swap.max').read_text().strip()!='0'
+                            or quota*10!=period or int(events['oom']) or int(events['oom_kill'])
+                            or peak>448*1024*1024):raise ValueError('combined_resource_budget_failed')
+                    sample['combinedPeakBytes']=peak
+                    sample['combinedMemoryLimitBytes']=448*1024*1024
+                    sample['combinedCpuQuota']=quota/period
                 resources.append(sample)
             probe=str(ROOT/'Probe.java')
             state=temp/'probe-state';state.mkdir(mode=0o700)
@@ -109,6 +163,7 @@ def main():
             first_boot_seconds=round(time.monotonic()-started,2)
             measure_resources()
             probe_request('trusted')
+            if bundled:probe_request('edge','10.89.10.5')
             probe_request('untrusted','10.89.10.4')
             probe_request('session-create')
             # Recreate both containers, retaining ONLY this unique project's volumes.
@@ -149,13 +204,17 @@ def main():
                 'cookieAndCsrfDenials':True,'untrustedForwardingRejected':True,
                 'providerCalls':0,'realDataUsed':False,'hostedTlsQualified':False,
                 'smallHostQualification':small_host,'firstBootSeconds':first_boot_seconds,
+                'combinedProxyAppRedisBudgetQualified':bundled,
                 'reservedHostHeadroomBytes':64*1024*1024 if small_host else 0,
                 'privateReadinessProbeOutsideAppResourceLimit':small_host,
                 'restartBootSeconds':restart_boot_seconds,'resourceSamples':resources,
-                'scope':'application container only; external DB/Redis and hosted platform not qualified'}))
+                'scope':('combined app/proxy/Redis budget only; external DB, single-container packaging and hosted platform not qualified'
+                    if bundled else 'application container only; external DB/Redis and hosted platform not qualified')}))
         finally:
             # Exact unique test project only. No global prune or developer volume deletion.
             run(*compose,'down','--volumes','--remove-orphans')
+            if bundled:
+                run('sudo','systemctl','stop',anchor_unit,slice_unit)
 
 
 if __name__=='__main__':main()
