@@ -8,19 +8,23 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 
 ROOT = Path(__file__).resolve().parent
 JDK = 'eclipse-temurin:25.0.5_8-jdk-noble@sha256:95e350ad1eb738f943e141640f7e3d797e483359a3b33c3864255bfd1ad71f8a'
 
 
-def run(*args, capture=False):
-    return subprocess.run(args, check=True, capture_output=capture, text=True, timeout=360).stdout
+def run(*args, capture=False, timeout=360):
+    return subprocess.run(args, check=True, capture_output=capture, text=True, timeout=timeout).stdout
 
 
 def main():
-    if os.name != 'posix' or len(sys.argv) != 2:
+    if os.name != 'posix' or len(sys.argv) not in (2, 3):
         raise ValueError('native_linux_and_candidate_image_required')
+    small_host = len(sys.argv) == 3
+    if small_host and sys.argv[2] != '--small-host':
+        raise ValueError('unknown_qualification_mode')
     image = sys.argv[1]
     # Only a locally built immutable image ID; never pull an operator-controlled tag here.
     if not image.startswith('sha256:') or len(image) != 71:
@@ -32,7 +36,24 @@ def main():
         temp=Path(temp);os.chmod(temp,0o755)
         shutil.copyfile(ROOT/'compose.yaml',temp/'compose.yaml')
         # Disable all external egress and publish no port, including ACME/TLS.
-        (temp/'offline.yaml').write_text('networks:\n  edge:\n    internal: true\n')
+        offline='networks:\n  edge:\n    internal: true\n'
+        if small_host:
+            # Qualification override only: deployment defaults remain unchanged.
+            # Swap cannot conceal a memory-budget failure. The external DB and
+            # Redis are accounted separately; this is NOT hosted-platform proof.
+            offline += '''services:
+  app:
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 0.1
+    entrypoint: [java, -Xmx192m, -XX:MaxDirectMemorySize=32m, -XX:MaxMetaspaceSize=128m, -XX:ReservedCodeCacheSize=48m, -Xss512k, -XX:ActiveProcessorCount=1, -XX:-HeapDumpOnOutOfMemoryError, -XX:+ExitOnOutOfMemoryError, -Duser.timezone=UTC, -Djava.io.tmpdir=/tmp, -jar, /app/application.jar]
+    healthcheck:
+      start_period: 360s
+      interval: 30s
+      timeout: 30s
+      retries: 5
+'''
+        (temp/'offline.yaml').write_text(offline)
         app,owner,runtime,redis=module.configuration('https://preview.example.test','syntheticnamespace',
             'ap-mumbai-1','synthetic-private-bucket','synthetic.apps.googleusercontent.com',
             'synthetic-client-secret','synthetic-access-key','synthetic-storage-secret')
@@ -47,7 +68,26 @@ def main():
         try:
             run(*compose,'up','-d','--wait','--wait-timeout','120','postgres','redis')
             run(*compose,'run','--rm','migrate')
-            run(*compose,'up','-d','--wait','--wait-timeout','180','app')
+            started=time.monotonic()
+            run(*compose,'up','-d','--wait','--wait-timeout','600' if small_host else '180','app',timeout=660 if small_host else 360)
+            first_boot_seconds=round(time.monotonic()-started,2)
+            resources=[]
+            def measure_resources():
+                if not small_host:return
+                identifier=run(*compose,'ps','-q','app',capture=True).strip()
+                metadata=json.loads(run('docker','inspect',identifier,capture=True))[0]
+                state=metadata['State'];config=metadata['HostConfig']
+                if state['OOMKilled'] or state['ExitCode']!=0 or metadata['RestartCount']!=0:
+                    raise ValueError('preview_resource_failure')
+                sample={'oomKilled':state['OOMKilled'],'restartCount':metadata['RestartCount'],
+                    'memoryLimitBytes':config['Memory'],'swapTotalLimitBytes':config['MemorySwap'],
+                    'cpuQuota':config['NanoCpus'],
+                    'cgroupMemoryPeakBytes':int(run(*compose,'exec','-T','app','cat','/sys/fs/cgroup/memory.peak',capture=True).strip())}
+                if small_host and (sample['memoryLimitBytes']!=512*1024*1024
+                        or sample['swapTotalLimitBytes']!=512*1024*1024 or sample['cpuQuota']!=100_000_000):
+                    raise ValueError('small_host_limit_not_enforced')
+                resources.append(sample)
+            measure_resources()
             probe=str(ROOT/'Probe.java')
             state=temp/'probe-state';state.mkdir(mode=0o700)
             def probe_request(mode,address='10.89.10.2'):
@@ -61,10 +101,13 @@ def main():
             probe_request('untrusted','10.89.10.4')
             probe_request('session-create')
             # Recreate both containers, retaining ONLY this unique project's volumes.
+            measure_resources()
             run(*compose,'stop','app','postgres')
             run(*compose,'rm','-f','app','postgres')
             run(*compose,'up','-d','--wait','--wait-timeout','120','postgres')
-            run(*compose,'up','-d','--wait','--wait-timeout','180','app')
+            started=time.monotonic()
+            run(*compose,'up','-d','--wait','--wait-timeout','600' if small_host else '180','app',timeout=660 if small_host else 360)
+            restart_boot_seconds=round(time.monotonic()-started,2)
             probe_request('session-check')
             pg=compose+['exec','-T','postgres']
             sql=lambda database,query: run(*pg,'psql','-X','-U','nkw_preview_migrator','-d',database,
@@ -86,11 +129,15 @@ def main():
             assert sql('nkw_preview_restore','select count(*) from public.flyway_schema_history where success')=='20'
             probe_request('session-check')
             probe_request('session-finalize')
+            measure_resources()
             print(json.dumps({'nativeArchitecture':run('uname','-m',capture=True).strip(),
                 'image':image,'migrations':20,'coreReadiness':True,'restartReadiness':True,
                 'databaseAndContainerRecreationPersistSession':True,'isolatedLogicalRestoreQuarantine':True,
                 'cookieAndCsrfDenials':True,'untrustedForwardingRejected':True,
-                'providerCalls':0,'realDataUsed':False,'hostedTlsQualified':False}))
+                'providerCalls':0,'realDataUsed':False,'hostedTlsQualified':False,
+                'smallHostQualification':small_host,'firstBootSeconds':first_boot_seconds,
+                'restartBootSeconds':restart_boot_seconds,'resourceSamples':resources,
+                'scope':'application container only; external DB/Redis and hosted platform not qualified'}))
         finally:
             # Exact unique test project only. No global prune or developer volume deletion.
             run(*compose,'down','--volumes','--remove-orphans')
