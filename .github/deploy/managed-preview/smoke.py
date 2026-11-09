@@ -2,6 +2,7 @@
 """Closed-egress native test of the actual rootless, single-container preview."""
 import base64
 import importlib.util
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -122,8 +123,7 @@ def main():
                     '--cap-drop','ALL','--security-opt','no-new-privileges',
                     '--tmpfs','/tmp:rw,noexec,nosuid,nodev,size=32m,uid=65533,gid=65533,mode=700',
                     '-v',str(secret)+':/etc/secrets:ro','-v',str(cert/'truststore')+':/fixture/truststore:ro',
-                    '-e','JAVA_TOOL_OPTIONS='+trust,'-e','APP_VERSION=synthetic-managed-smoke',
-                    '-p','127.0.0.1::10000',image)
+                    '-e','JAVA_TOOL_OPTIONS='+trust,'-e','APP_VERSION=synthetic-managed-smoke',image)
                 containers.append(identifier)
                 run('docker','start',identifier)
                 return identifier
@@ -142,16 +142,22 @@ def main():
                     print(json.dumps({'runtimeExited':True,'exitCode':metadata['State']['ExitCode'],
                         'oomKilled':metadata['State']['OOMKilled'],'observedSafeCodes':[code for code in known if code in logs]}))
                     raise ValueError('Runtime exited before readiness')
-                ports=metadata['NetworkSettings']['Ports'].get('10000/tcp')
-                if not ports:raise ConnectionError('Fixture port is not bound yet')
-                port=ports[0]
-                if port['HostIp']!='127.0.0.1':raise ValueError('Fixture port exposed')
+                # Internal networks intentionally do not publish host ports. The
+                # native Linux runner reaches this isolated bridge directly;
+                # there is no external egress or public/loopback port binding.
+                networks=list(metadata['NetworkSettings']['Networks'].values())
+                if len(networks)!=1 or networks[0]['NetworkID']!=network:
+                    raise ValueError('Unexpected fixture network')
+                address=ipaddress.ip_address(networks[0]['IPAddress'])
+                if address.version!=4 or not address.is_private or address.is_loopback:
+                    raise ValueError('Fixture address outside private bridge')
+                if metadata['HostConfig']['PortBindings']:raise ValueError('Fixture port exposed')
                 headers={'Host':'preview.example.test'}
                 if authenticated:headers['Authorization']=auth
                 if cookie:headers['Cookie']=cookie
                 if csrf:headers['X-CSRF-TOKEN']=csrf
                 headers.update(extra or {})
-                req=urllib.request.Request('http://127.0.0.1:'+port['HostPort']+path,headers=headers,method=method)
+                req=urllib.request.Request('http://'+str(address)+':10000'+path,headers=headers,method=method)
                 request_started=time.monotonic()
                 try:response=opener.open(req,timeout=5)
                 except urllib.error.HTTPError as error:response=error
