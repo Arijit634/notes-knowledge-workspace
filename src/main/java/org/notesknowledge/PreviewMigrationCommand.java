@@ -15,7 +15,12 @@ public final class PreviewMigrationCommand {
             if (arguments.length != 1) throw new IllegalArgumentException();
             var p=new Properties();
             try(var input=Files.newInputStream(Path.of(arguments[0]))) { p.load(input); }
-            if (!"jdbc:postgresql://postgres:5432/nkw_preview".equals(p.getProperty("url"))
+            String expectedUrl=switch(p.getProperty("profile","private-preview")) {
+                case "managed-preview" -> PrivatePreviewConfiguration.managedDatabaseUrl(p.getProperty("databaseHost"));
+                case "private-preview" -> "jdbc:postgresql://postgres:5432/nkw_preview";
+                default -> throw new IllegalArgumentException();
+            };
+            if (!expectedUrl.equals(p.getProperty("url"))
                     || !"nkw_preview_migrator".equals(p.getProperty("user"))
                     || !p.getProperty("runtimePassword", "").matches("[A-Za-z0-9+/]{43}=")) throw new IllegalArgumentException();
             var flyway=Flyway.configure().dataSource(p.getProperty("url"),p.getProperty("user"),p.getProperty("password")).load();
