@@ -48,10 +48,7 @@ def main():
     cpus: 0.1
     entrypoint: [java, -Xmx160m, -XX:MaxDirectMemorySize=16m, -XX:MaxMetaspaceSize=128m, -XX:ReservedCodeCacheSize=32m, -XX:TieredStopAtLevel=1, -XX:+UseSerialGC, -Xss512k, -XX:ActiveProcessorCount=1, -XX:-HeapDumpOnOutOfMemoryError, -XX:+ExitOnOutOfMemoryError, -Duser.timezone=UTC, -Djava.io.tmpdir=/tmp, -jar, /app/application.jar]
     healthcheck:
-      start_period: 360s
-      interval: 30s
-      timeout: 30s
-      retries: 5
+      disable: true
 '''
         (temp/'offline.yaml').write_text(offline)
         app,owner,runtime,redis=module.configuration('https://preview.example.test','syntheticnamespace',
@@ -70,7 +67,6 @@ def main():
             run(*compose,'run','--rm','migrate')
             started=time.monotonic()
             run(*compose,'up','-d','--wait','--wait-timeout','600' if small_host else '180','app',timeout=660 if small_host else 360)
-            first_boot_seconds=round(time.monotonic()-started,2)
             resources=[]
             def measure_resources():
                 if not small_host:return
@@ -90,7 +86,6 @@ def main():
                         or sample['swapTotalLimitBytes']!=448*1024*1024 or sample['cpuQuota']!=100_000_000):
                     raise ValueError('small_host_limit_not_enforced')
                 resources.append(sample)
-            measure_resources()
             probe=str(ROOT/'Probe.java')
             state=temp/'probe-state';state.mkdir(mode=0o700)
             def probe_request(mode,address='10.89.10.2'):
@@ -100,6 +95,18 @@ def main():
                     '--tmpfs','/tmp:rw,noexec,nosuid,nodev,size=32m',
                     '-v',probe+':/probe/Probe.java:ro','-v',str(state)+':/state',JDK,'java','/probe/Probe.java',
                     mode,*(['/state/session'] if mode.startswith('session-') else []))
+            def await_private_readiness():
+                if not small_host:return
+                identifier=run(*compose,'ps','-q','app',capture=True).strip()
+                run('docker','run','--rm','--network','container:'+identifier,
+                    '--user',f'{os.getuid()}:{os.getgid()}',
+                    '--read-only','--cap-drop','ALL','--security-opt','no-new-privileges',
+                    '--tmpfs','/tmp:rw,noexec,nosuid,nodev,size=32m',
+                    '-v',probe+':/probe/Probe.java:ro',JDK,'java','/probe/Probe.java',
+                    'await-private-readiness',timeout=660)
+            await_private_readiness()
+            first_boot_seconds=round(time.monotonic()-started,2)
+            measure_resources()
             probe_request('trusted')
             probe_request('untrusted','10.89.10.4')
             probe_request('session-create')
@@ -110,6 +117,7 @@ def main():
             run(*compose,'up','-d','--wait','--wait-timeout','120','postgres')
             started=time.monotonic()
             run(*compose,'up','-d','--wait','--wait-timeout','600' if small_host else '180','app',timeout=660 if small_host else 360)
+            await_private_readiness()
             restart_boot_seconds=round(time.monotonic()-started,2)
             probe_request('session-check')
             pg=compose+['exec','-T','postgres']
@@ -140,6 +148,7 @@ def main():
                 'providerCalls':0,'realDataUsed':False,'hostedTlsQualified':False,
                 'smallHostQualification':small_host,'firstBootSeconds':first_boot_seconds,
                 'reservedHostHeadroomBytes':64*1024*1024 if small_host else 0,
+                'privateReadinessProbeOutsideAppResourceLimit':small_host,
                 'restartBootSeconds':restart_boot_seconds,'resourceSamples':resources,
                 'scope':'application container only; external DB/Redis and hosted platform not qualified'}))
         finally:

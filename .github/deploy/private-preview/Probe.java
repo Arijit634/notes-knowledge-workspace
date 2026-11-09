@@ -6,6 +6,27 @@ import java.time.Duration;
 class Probe {
     public static void main(String[] args) throws Exception {
         var client=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
+        if(args.length==1 && args[0].equals("await-private-readiness")) {
+            // Infrastructure readiness polling, from an operator probe sharing
+            // only the network namespace. Never spend the app's 0.1 CPU budget
+            // launching an additional JVM for every health check.
+            long deadline=System.nanoTime()+Duration.ofMinutes(10).toNanos();
+            while(System.nanoTime()<deadline) {
+                try {
+                    var request=HttpRequest.newBuilder(URI.create("http://127.0.0.1:8081/actuator/health/readiness"))
+                        .timeout(Duration.ofSeconds(3)).GET().build();
+                    var result=client.send(request,HttpResponse.BodyHandlers.ofString());
+                    if(result.statusCode()==200 && result.body().replaceAll("\\s+","").equals("{\"status\":\"UP\"}")) {
+                        System.out.println("private_preview_readiness_confirmed");return;
+                    }
+                    if(result.statusCode()!=503)throw new IllegalStateException("unexpected_private_readiness_status");
+                }catch(java.io.IOException starting) {
+                    // A listener can be absent while the isolated process starts.
+                }
+                Thread.sleep(200);
+            }
+            throw new IllegalStateException("private_preview_readiness_deadline_exceeded");
+        }
         if(args.length==2 && args[0].startsWith("session-")) {
             var request=HttpRequest.newBuilder(URI.create("http://app:8080/api/auth/csrf"))
                 .timeout(Duration.ofSeconds(5)).header("X-Forwarded-Proto","https")
