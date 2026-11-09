@@ -11,11 +11,13 @@ PREVIEW_ORIGIN=$(cat /etc/secrets/preview-origin)
 PREVIEW_HOST=${PREVIEW_ORIGIN#https://}
 PREVIEW_PASSWORD_HASH=$(cat /etc/secrets/preview-password-hash)
 [[ "$PREVIEW_PASSWORD_HASH" =~ ^\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53}$ ]] || { echo 'preview_perimeter_unavailable' >&2; exit 2; }
-export PREVIEW_HOST PREVIEW_PASSWORD_HASH
 export NKW_PREVIEW_SECRET_IMPORT=file:/etc/secrets/runtime.properties
-export XDG_CONFIG_HOME=/tmp/nkw-caddy/config XDG_DATA_HOME=/tmp/nkw-caddy/data
-mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" /tmp/nkw-redis
-caddy validate --config /app/Caddyfile --adapter caddyfile >/dev/null 2>&1 || { echo 'preview_edge_configuration_invalid' >&2; exit 2; }
+mkdir -p /tmp/nkw-edge/body /tmp/nkw-edge/proxy /tmp/nkw-redis
+printf 'preview:%s\n' "$PREVIEW_PASSWORD_HASH" > /tmp/nkw-edge/htpasswd
+template=$(cat /app/nginx.conf)
+printf '%s\n' "${template//__PREVIEW_HOST__/$PREVIEW_HOST}" > /tmp/nkw-edge/nginx.conf
+unset template PREVIEW_PASSWORD_HASH
+nginx -e /dev/null -t -c /tmp/nkw-edge/nginx.conf >/dev/null 2>&1 || { echo 'preview_edge_configuration_invalid' >&2; exit 2; }
 java_pid='';redis_pid='';edge_pid='';stopping=0
 shutdown() {
     (( stopping == 0 )) || return 0
@@ -40,9 +42,8 @@ shutdown() {
 trap 'shutdown; exit 0' TERM INT
 trap shutdown EXIT
 redis-server /etc/secrets/redis.conf >/dev/null 2>&1 & redis_pid=$!
-GOMEMLIMIT=48MiB caddy run --config /app/Caddyfile --adapter caddyfile & edge_pid=$!
+nginx -e /dev/null -c /tmp/nkw-edge/nginx.conf & edge_pid=$!
 # The perimeter credential is not exposed to application configuration.
-unset PREVIEW_PASSWORD_HASH
 java -Xmx160m -XX:MaxDirectMemorySize=16m -XX:MaxMetaspaceSize=128m \
     -XX:ReservedCodeCacheSize=32m -XX:TieredStopAtLevel=1 -XX:+UseSerialGC -Xss512k \
     -XX:ActiveProcessorCount=1 -XX:-HeapDumpOnOutOfMemoryError -XX:+ExitOnOutOfMemoryError \

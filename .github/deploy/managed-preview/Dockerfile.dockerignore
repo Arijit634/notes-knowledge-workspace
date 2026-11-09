@@ -11,7 +11,7 @@
 !.github/deploy/
 !.github/deploy/managed-preview/
 !.github/deploy/managed-preview/start.sh
-!.github/deploy/managed-preview/Caddyfile
+!.github/deploy/managed-preview/nginx.conf
 **/node_modules/
 **/target/
 **/dist/

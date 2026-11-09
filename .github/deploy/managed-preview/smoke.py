@@ -19,6 +19,7 @@ ROOT=Path(__file__).resolve().parent
 REPO=ROOT.parents[2]
 PG='pgvector/pgvector:0.8.6-pg18-trixie@sha256:78bf48b801e792f99e3ac62b5036fd3876e9be48afda16c1e331af1c75ceb2ff'
 HOST='ep-fixture.ap-southeast-1.aws.neon.tech'
+OTHER_HOST='ep-other.ap-southeast-1.aws.neon.tech'
 
 def run(*args,timeout=240):
     return subprocess.check_output(args,stderr=subprocess.STDOUT,text=True,timeout=timeout).strip()
@@ -49,6 +50,7 @@ def main():
         (cert/'owner').write_text(owner)
         url='jdbc:postgresql://'+HOST+':5432/nkw_preview?sslmode=verify-full&sslfactory=org.postgresql.ssl.DefaultJavaSSLFactory&connectTimeout=10&socketTimeout=30'
         (cert/'migration.properties').write_text(f'profile=managed-preview\ndatabaseHost={HOST}\nurl={url}\nuser=nkw_preview_migrator\npassword={owner}\nruntimePassword={runtime}\n')
+        (cert/'migration-wrong-host.properties').write_text((cert/'migration.properties').read_text().replace(HOST,OTHER_HOST))
         run('openssl','req','-x509','-newkey','rsa:2048','-nodes','-days','1','-subj','/CN=NKW synthetic fixture CA',
             '-keyout',str(cert/'ca.key'),'-out',str(cert/'ca.crt'))
         run('openssl','req','-newkey','rsa:2048','-nodes','-subj','/CN='+HOST,
@@ -73,7 +75,7 @@ def main():
             network=run('docker','network','create','--internal',prefix)
             volume=run('docker','volume','create','--label','nkw.synthetic='+prefix,prefix+'-pg')
             def start_postgres():
-                identifier=run('docker','create','--network',network,'--network-alias',HOST,
+                identifier=run('docker','create','--network',network,'--network-alias',HOST,'--network-alias',OTHER_HOST,
                     '--mount','type=volume,source='+volume+',target=/var/lib/postgresql',
                     '-v',str(cert)+':/fixture:ro','-e','POSTGRES_USER=nkw_preview_migrator',
                     '-e','POSTGRES_DB=nkw_preview','-e','POSTGRES_PASSWORD_FILE=/fixture/owner',
@@ -88,12 +90,19 @@ def main():
                     time.sleep(0.25)
                 raise RuntimeError('Fixture PostgreSQL unavailable')
             pg=start_postgres()
-            run('docker','run','--rm','--network',network,'--entrypoint','java',
+            migration=['docker','run','--rm','--network',network,'--entrypoint','java',
                 '--read-only','--cap-drop','ALL','--security-opt','no-new-privileges',
                 '--tmpfs','/tmp:rw,noexec,nosuid,nodev,size=32m,uid=65533,gid=65533,mode=700',
-                '-v',str(cert)+':/fixture:ro','-e','JAVA_TOOL_OPTIONS='+trust,image,
+                '-v',str(cert)+':/fixture:ro']
+            command=[image,
                 '-Xmx256m','-XX:-HeapDumpOnOutOfMemoryError','-Dloader.main=org.notesknowledge.PreviewMigrationCommand',
-                '-cp','/app/application.jar','org.springframework.boot.loader.launch.PropertiesLauncher','/fixture/migration.properties')
+                '-cp','/app/application.jar','org.springframework.boot.loader.launch.PropertiesLauncher']
+            # Distinct negative TLS cases must fail before the positive migration.
+            for additional,configuration in [([], '/fixture/migration.properties'),
+                    (['-e','JAVA_TOOL_OPTIONS='+trust],'/fixture/migration-wrong-host.properties')]:
+                rejected=subprocess.run(migration+additional+command+[configuration],capture_output=True,timeout=60)
+                if rejected.returncode!=2:raise ValueError('Untrusted certificate or wrong hostname accepted')
+            run(*migration,'-e','JAVA_TOOL_OPTIONS='+trust,*command,'/fixture/migration.properties')
             def start_app():
                 identifier=run('docker','create','--network',network,'--read-only',
                     '--memory','448m','--memory-swap','448m','--cpus','0.1','--pids-limit','512',
@@ -145,6 +154,14 @@ def main():
                 if request(path)[0]!=expected:raise ValueError('Managed boundary status failed')
             if request('/login',extra={'Forwarded':'host=evil.invalid;proto=http','X-Forwarded-Host':'evil.invalid',
                     'X-Forwarded-Proto':'http','X-Forwarded-For':'198.51.100.22'})[0]!=200:raise ValueError('Caller forwarding became authority')
+            if request('/login',extra={'Host':'evil.invalid'})[0]!=400:raise ValueError('Unowned host accepted')
+            if request('/_preview/ready',authenticated=False,method='POST')[0]!=405:raise ValueError('Readiness method widened')
+            code,_,body=request('/api/auth/oidc/google/callback?state=synthetic-state-marker&code=synthetic-code-marker',
+                extra={'Cookie':'QUALIFICATION=synthetic-cookie-marker'})
+            markers=['synthetic-state-marker','synthetic-code-marker','synthetic-cookie-marker',auth]
+            if code!=401 or any(marker.encode() in body for marker in markers):raise ValueError('Invalid callback boundary failed')
+            logs=run('docker','logs',app)
+            if any(marker in logs for marker in markers):raise ValueError('Edge or application logs disclosed request material')
             code,headers,body=request('/api/auth/csrf')
             cookie=headers['Set-Cookie'];csrf=json.loads(body)['csrfToken']
             if code!=200 or not all(s in cookie for s in ['__Host-NKW_PREVIEW=','Secure','HttpOnly','SameSite=Lax','Path=/']):raise ValueError('Unsafe cookie')
@@ -154,6 +171,8 @@ def main():
             samples=[]
             def resources():
                 metadata=json.loads(run('docker','inspect',app))[0]
+                if metadata['Config']['User']!='65533:65533' or not metadata['HostConfig']['ReadonlyRootfs']:
+                    raise ValueError('Runtime confinement changed')
                 events=dict(line.split() for line in run('docker','exec',app,'cat','/sys/fs/cgroup/memory.events').splitlines())
                 if metadata['State']['OOMKilled'] or metadata['RestartCount'] or int(events['oom']) or int(events['oom_kill']):raise ValueError('Resource failure')
                 peak=int(run('docker','exec',app,'cat','/sys/fs/cgroup/memory.peak'))
@@ -193,6 +212,7 @@ def main():
                 'gracefulShutdownSeconds':shutdown,'privateListenersLoopbackOnly':True,'perimeterAndCsrfDenials':True,
                 'untrustedForwardingDiscarded':True,'sessionAndCsrfSurviveAppAndPgRecreation':True,
                 'isolatedLogicalRestoreQuarantine':True,'migrations':20,'databaseTlsVerifiedWithIsolatedFixtureCa':True,
+                'untrustedDatabaseCertificateAndHostnameRejected':True,'callbackLogPrivacy':True,
                 'publicTlsOrProviderQualified':False,'providerCalls':0,'realDataUsed':False,'resources':samples}))
         finally:
             for identifier in reversed(containers):
