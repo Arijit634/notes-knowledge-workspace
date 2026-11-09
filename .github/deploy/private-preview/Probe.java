@@ -6,6 +6,9 @@ import java.time.Duration;
 class Probe {
     public static void main(String[] args) throws Exception {
         var client=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
+        boolean edgeSession=args.length==2 && args[0].startsWith("edge-session-");
+        if(edgeSession)args[0]=args[0].substring(5);
+        String sessionOrigin=edgeSession?"http://edge:8088":"http://app:8080";
         if(args.length==1 && args[0].equals("await-private-readiness")) {
             // Infrastructure readiness polling, from an operator probe sharing
             // only the network namespace. Never spend the app's 0.1 CPU budget
@@ -28,7 +31,7 @@ class Probe {
             throw new IllegalStateException("private_preview_readiness_deadline_exceeded");
         }
         if(args.length==2 && args[0].startsWith("session-")) {
-            var request=HttpRequest.newBuilder(URI.create("http://app:8080/api/auth/csrf"))
+            var request=HttpRequest.newBuilder(URI.create(sessionOrigin+"/api/auth/csrf"))
                 .timeout(Duration.ofSeconds(5)).header("X-Forwarded-Proto","https")
                 .header("X-Forwarded-Host","preview.example.test");
             var file=java.nio.file.Path.of(args[1]);
@@ -47,7 +50,7 @@ class Probe {
                 if(args[0].equals("session-finalize")) {
                     var token=java.util.regex.Pattern.compile("\\\"csrfToken\\\"\\s*:\\s*\\\"([A-Za-z0-9_+=/-]+)\\\"").matcher(previous[1]);
                     if(!token.find())throw new IllegalStateException("preview_csrf_fixture_invalid");
-                    var logout=HttpRequest.newBuilder(URI.create("http://app:8080/api/auth/logout"))
+                    var logout=HttpRequest.newBuilder(URI.create(sessionOrigin+"/api/auth/logout"))
                         .timeout(Duration.ofSeconds(5)).header("X-Forwarded-Proto","https")
                         .header("X-Forwarded-Host","preview.example.test").header("Cookie",previous[0])
                         .header("X-CSRF-TOKEN",token.group(1)).POST(HttpRequest.BodyPublishers.noBody()).build();

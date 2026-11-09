@@ -149,12 +149,17 @@ http://:8088 {
             probe=str(ROOT/'Probe.java')
             state=temp/'probe-state';state.mkdir(mode=0o700)
             def probe_request(mode,address='10.89.10.2'):
+                if bundled and mode.startswith('session-'):
+                    mode='edge-'+mode
+                    address='10.89.10.5'
+                if bundled and address=='10.89.10.2':
+                    raise ValueError('test_client_cannot_claim_running_proxy_address')
                 run('docker','run','--rm','--network',project+'_edge','--ip',address,
                     '--user',f'{os.getuid()}:{os.getgid()}',
                     '--read-only','--cap-drop','ALL','--security-opt','no-new-privileges',
                     '--tmpfs','/tmp:rw,noexec,nosuid,nodev,size=32m',
                     '-v',probe+':/probe/Probe.java:ro','-v',str(state)+':/state',JDK,'java','/probe/Probe.java',
-                    mode,*(['/state/session'] if mode.startswith('session-') else []))
+                    mode,*(['/state/session'] if mode.startswith(('session-','edge-session-')) else []))
             def await_private_readiness():
                 if not small_host:return
                 identifier=run(*compose,'ps','-q','app',capture=True).strip()
@@ -167,8 +172,8 @@ http://:8088 {
             await_private_readiness()
             first_boot_seconds=round(time.monotonic()-started,2)
             measure_resources()
-            probe_request('trusted')
             if bundled:probe_request('edge','10.89.10.5')
+            else:probe_request('trusted')
             probe_request('untrusted','10.89.10.4')
             probe_request('session-create')
             # Recreate both containers, retaining ONLY this unique project's volumes.
