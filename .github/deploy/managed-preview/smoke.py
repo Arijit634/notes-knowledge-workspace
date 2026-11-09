@@ -22,7 +22,9 @@ HOST='ep-fixture.ap-southeast-1.aws.neon.tech'
 OTHER_HOST='ep-other.ap-southeast-1.aws.neon.tech'
 
 def run(*args,timeout=240):
-    return subprocess.check_output(args,stderr=subprocess.STDOUT,text=True,timeout=timeout).strip()
+    # Docker can write image-pull progress to stderr during create. An identifier
+    # or JSON response must never be parsed from a merged diagnostic stream.
+    return subprocess.run(args,capture_output=True,text=True,check=True,timeout=timeout).stdout.strip()
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self,*args,**kwargs):raise RuntimeError('Unexpected fixture redirect')
