@@ -8,6 +8,15 @@ on:
       - 'frontend/**'
       - 'pom.xml'
   workflow_dispatch:
+    inputs:
+      qualify_small_host:
+        description: Measure a 448 MiB app with 64 MiB host headroom and 0.1 CPU on native x86_64
+        type: boolean
+        default: false
+      qualify_small_bundle:
+        description: Measure app, proxy and Redis in one 448 MiB / 0.1 CPU aggregate budget
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -16,8 +25,33 @@ concurrency:
 env:
   SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 jobs:
+  small-host:
+    name: Preview / constrained x86_64 feasibility
+    if: github.event_name == 'workflow_dispatch' && (inputs.qualify_small_host || inputs.qualify_small_bundle)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - name: Verify native platform and immutable input
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          printf '%s' "$SOURCE_SHA" | grep -Eq '^[0-9a-f]{40}$'
+      - name: Build the unchanged preview runtime
+        run: docker build --build-arg "SOURCE_SHA=$SOURCE_SHA" --iidfile "$RUNNER_TEMP/preview-image" -f .github/deploy/private-preview/Dockerfile .
+      - name: Measure bounded startup and session persistence without providers
+        env:
+          BUNDLE: ${{ inputs.qualify_small_bundle }}
+        run: |
+          mode=--small-host
+          if [ "$BUNDLE" = true ]; then mode=--small-bundle; fi
+          python3 .github/deploy/private-preview/smoke.py "$(cat "$RUNNER_TEMP/preview-image")" "$mode"
   native-preview:
     name: Preview / native ARM and deployment controls
+    if: github.event_name != 'workflow_dispatch' || (!inputs.qualify_small_host && !inputs.qualify_small_bundle)
     # Standard ARM runner is free for this public repository; never a larger runner.
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45

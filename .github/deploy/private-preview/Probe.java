@@ -6,8 +6,32 @@ import java.time.Duration;
 class Probe {
     public static void main(String[] args) throws Exception {
         var client=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
+        boolean edgeSession=args.length==2 && args[0].startsWith("edge-session-");
+        if(edgeSession)args[0]=args[0].substring(5);
+        String sessionOrigin=edgeSession?"http://edge:8088":"http://app:8080";
+        if(args.length==1 && args[0].equals("await-private-readiness")) {
+            // Infrastructure readiness polling, from an operator probe sharing
+            // only the network namespace. Never spend the app's 0.1 CPU budget
+            // launching an additional JVM for every health check.
+            long deadline=System.nanoTime()+Duration.ofMinutes(10).toNanos();
+            while(System.nanoTime()<deadline) {
+                try {
+                    var request=HttpRequest.newBuilder(URI.create("http://127.0.0.1:8081/actuator/health/readiness"))
+                        .timeout(Duration.ofSeconds(3)).GET().build();
+                    var result=client.send(request,HttpResponse.BodyHandlers.ofString());
+                    if(result.statusCode()==200 && result.body().replaceAll("\\s+","").equals("{\"status\":\"UP\"}")) {
+                        System.out.println("private_preview_readiness_confirmed");return;
+                    }
+                    if(result.statusCode()!=503)throw new IllegalStateException("unexpected_private_readiness_status");
+                }catch(java.io.IOException starting) {
+                    // A listener can be absent while the isolated process starts.
+                }
+                Thread.sleep(200);
+            }
+            throw new IllegalStateException("private_preview_readiness_deadline_exceeded");
+        }
         if(args.length==2 && args[0].startsWith("session-")) {
-            var request=HttpRequest.newBuilder(URI.create("http://app:8080/api/auth/csrf"))
+            var request=HttpRequest.newBuilder(URI.create(sessionOrigin+"/api/auth/csrf"))
                 .timeout(Duration.ofSeconds(5)).header("X-Forwarded-Proto","https")
                 .header("X-Forwarded-Host","preview.example.test");
             var file=java.nio.file.Path.of(args[1]);
@@ -26,7 +50,7 @@ class Probe {
                 if(args[0].equals("session-finalize")) {
                     var token=java.util.regex.Pattern.compile("\\\"csrfToken\\\"\\s*:\\s*\\\"([A-Za-z0-9_+=/-]+)\\\"").matcher(previous[1]);
                     if(!token.find())throw new IllegalStateException("preview_csrf_fixture_invalid");
-                    var logout=HttpRequest.newBuilder(URI.create("http://app:8080/api/auth/logout"))
+                    var logout=HttpRequest.newBuilder(URI.create(sessionOrigin+"/api/auth/logout"))
                         .timeout(Duration.ofSeconds(5)).header("X-Forwarded-Proto","https")
                         .header("X-Forwarded-Host","preview.example.test").header("Cookie",previous[0])
                         .header("X-CSRF-TOKEN",token.group(1)).POST(HttpRequest.BodyPublishers.noBody()).build();
@@ -39,13 +63,14 @@ class Probe {
             return;
         }
         if(args.length!=1)throw new IllegalArgumentException();
-        boolean trusted=args[0].equals("trusted");
+        boolean edge=args[0].equals("edge");
+        boolean trusted=args[0].equals("trusted")||edge;
         String[] paths=trusted ? new String[]{"/login","/api/auth/session","/api/auth/csrf","/api/notes",
             "/api/auth/logout","/api/knowledge/query","/api/public/explore","/api/auth/login/password"}
             : new String[]{"/api/auth/session"};
         int[] expected=trusted ? new int[]{200,200,200,401,403,503,503,503} : new int[]{400};
         for(int i=0;i<paths.length;i++) {
-            var request=HttpRequest.newBuilder(URI.create("http://app:8080"+paths[i])).timeout(Duration.ofSeconds(5))
+            var request=HttpRequest.newBuilder(URI.create((edge?"http://edge:8088":"http://app:8080")+paths[i])).timeout(Duration.ofSeconds(5))
                 .header("X-Forwarded-Proto","https").header("X-Forwarded-Host","preview.example.test");
             if(paths[i].endsWith("logout"))request.POST(HttpRequest.BodyPublishers.noBody());else request.GET();
             var result=client.send(request.build(),HttpResponse.BodyHandlers.ofString());
