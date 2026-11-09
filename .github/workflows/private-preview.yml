@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       qualify_small_host:
-        description: Measure the isolated preview on native x86_64 with 512 MiB and 0.1 CPU
+        description: Measure a 448 MiB app with 64 MiB host headroom and 0.1 CPU on native x86_64
         type: boolean
         default: false
 permissions:

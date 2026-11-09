@@ -43,10 +43,10 @@ def main():
             # Redis are accounted separately; this is NOT hosted-platform proof.
             offline += '''services:
   app:
-    mem_limit: 512m
-    memswap_limit: 512m
+    mem_limit: 448m
+    memswap_limit: 448m
     cpus: 0.1
-    entrypoint: [java, -Xmx192m, -XX:MaxDirectMemorySize=32m, -XX:MaxMetaspaceSize=128m, -XX:ReservedCodeCacheSize=48m, -Xss512k, -XX:ActiveProcessorCount=1, -XX:-HeapDumpOnOutOfMemoryError, -XX:+ExitOnOutOfMemoryError, -Duser.timezone=UTC, -Djava.io.tmpdir=/tmp, -jar, /app/application.jar]
+    entrypoint: [java, -Xmx160m, -XX:MaxDirectMemorySize=16m, -XX:MaxMetaspaceSize=128m, -XX:ReservedCodeCacheSize=32m, -XX:TieredStopAtLevel=1, -XX:+UseSerialGC, -Xss512k, -XX:ActiveProcessorCount=1, -XX:-HeapDumpOnOutOfMemoryError, -XX:+ExitOnOutOfMemoryError, -Duser.timezone=UTC, -Djava.io.tmpdir=/tmp, -jar, /app/application.jar]
     healthcheck:
       start_period: 360s
       interval: 30s
@@ -77,14 +77,17 @@ def main():
                 identifier=run(*compose,'ps','-q','app',capture=True).strip()
                 metadata=json.loads(run('docker','inspect',identifier,capture=True))[0]
                 state=metadata['State'];config=metadata['HostConfig']
-                if state['OOMKilled'] or state['ExitCode']!=0 or metadata['RestartCount']!=0:
+                events=dict(line.split() for line in run(*compose,'exec','-T','app','cat','/sys/fs/cgroup/memory.events',capture=True).splitlines())
+                if (state['OOMKilled'] or state['ExitCode']!=0 or metadata['RestartCount']!=0
+                        or int(events.get('oom','0')) or int(events.get('oom_kill','0'))):
                     raise ValueError('preview_resource_failure')
                 sample={'oomKilled':state['OOMKilled'],'restartCount':metadata['RestartCount'],
+                    'cgroupOomEvents':int(events.get('oom','0')),'cgroupOomKills':int(events.get('oom_kill','0')),
                     'memoryLimitBytes':config['Memory'],'swapTotalLimitBytes':config['MemorySwap'],
                     'cpuQuota':config['NanoCpus'],
                     'cgroupMemoryPeakBytes':int(run(*compose,'exec','-T','app','cat','/sys/fs/cgroup/memory.peak',capture=True).strip())}
-                if small_host and (sample['memoryLimitBytes']!=512*1024*1024
-                        or sample['swapTotalLimitBytes']!=512*1024*1024 or sample['cpuQuota']!=100_000_000):
+                if small_host and (sample['memoryLimitBytes']!=448*1024*1024
+                        or sample['swapTotalLimitBytes']!=448*1024*1024 or sample['cpuQuota']!=100_000_000):
                     raise ValueError('small_host_limit_not_enforced')
                 resources.append(sample)
             measure_resources()
@@ -136,6 +139,7 @@ def main():
                 'cookieAndCsrfDenials':True,'untrustedForwardingRejected':True,
                 'providerCalls':0,'realDataUsed':False,'hostedTlsQualified':False,
                 'smallHostQualification':small_host,'firstBootSeconds':first_boot_seconds,
+                'reservedHostHeadroomBytes':64*1024*1024 if small_host else 0,
                 'restartBootSeconds':restart_boot_seconds,'resourceSamples':resources,
                 'scope':'application container only; external DB/Redis and hosted platform not qualified'}))
         finally:
