@@ -290,8 +290,16 @@ def main():
                 if code!=201:raise ValueError('Authenticated synthetic upload failed')
                 attachment_path=note_path+'/attachments/'+json.loads(body)['id']
                 code,_,received=request(attachment_path+'/content',cookie=owner_cookie)
-                if code!=200 or received!=payload:raise ValueError('Private byte delivery failed')
-                attachments.append((attachment_path,payload))
+                if code!=200:raise ValueError('Private byte delivery failed; status='+str(code))
+                if media=='image/png':
+                    # Safe image admission rewrites the raster and strips metadata.
+                    # Check every decoded pixel, then preserve exact accepted bytes
+                    # for the later recreation/readback assertion.
+                    check=temp/'accepted-fixture.png';check.write_bytes(received)
+                    if run('java','-Xmx64m',str(ROOT/'FixtureImage.java'),str(check))!='synthetic-raster-verified':
+                        raise ValueError('Canonical PNG changed synthetic pixels')
+                elif received!=payload:raise ValueError('PCM WAV bytes changed')
+                attachments.append((attachment_path,received))
             print(json.dumps({'authenticatedPngAndWav':True}),flush=True)
             other_cookie,_=login('other')
             if request(note_path,cookie=other_cookie)[0]!=404 or request(attachments[0][0]+'/content',cookie=other_cookie)[0]!=404:
@@ -345,7 +353,7 @@ def main():
             if request('/api/auth/logout',method='POST',cookie=cookie,csrf=csrf)[0]!=204:raise ValueError('Persisted CSRF proof rejected')
             resources()
             controlled=provider_control('/counts')
-            if controlled['token']!=3 or controlled['objectPut']!=2 or controlled['objectGet']<4:raise ValueError('Controlled workload incomplete')
+            if controlled['token']!=3 or controlled['objectPut']!=3 or controlled['objectGet']<4:raise ValueError('Controlled workload incomplete')
             if any(marker in run('docker','logs',app) for marker in markers):raise ValueError('Authenticated logs disclosed request material')
             print(json.dumps({'image':image,'nativeArchitecture':run('uname','-m'),'rootlessSingleContainer':True,
                 'appProxyRedisCombinedBudget':True,'firstBootSeconds':first,'recreatedBootSeconds':second,
