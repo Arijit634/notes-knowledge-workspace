@@ -54,7 +54,7 @@ class KnowledgeQueryGate {
     }
     @Transactional(timeout=3)
     QueryPermit query(UUID owner){var policy=policies.policyPrerequisite(owner).orElseThrow(()->new DerivationFailure(KnowledgeWork.Failure.POLICY_BLOCKED));
-        if(!configuration.configured()||!configuration.approvedPolicyFingerprint().equals(policy.fingerprint())||!("synthetic".equals(configuration.provider())&&"synthetic".equals(configuration.tier())||"gemini".equals(configuration.provider())&&"unpaid".equals(configuration.tier())&&"global".equals(configuration.region())&&"unpaid-synthetic-demo".equals(dispatchProperties.dispatchPolicy())))throw new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE);
+        if(!configuration.configured()||!configuration.approvedPolicyFingerprint().equals(policy.fingerprint())||!("synthetic".equals(configuration.provider())&&"synthetic".equals(configuration.tier())||"gemini".equals(configuration.provider())&&"unpaid".equals(configuration.tier())&&"global".equals(configuration.region())&&ProviderDispatchPolicy.approvedPolicy(dispatchProperties.dispatchPolicy())))throw new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE);
         return new QueryPermit(owner,policy,null);
     }
     @Transactional(timeout=3)

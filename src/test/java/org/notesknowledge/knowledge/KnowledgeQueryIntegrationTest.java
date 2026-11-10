@@ -912,12 +912,15 @@ class KnowledgeQueryIntegrationTest {
         assertThat(poll(handle).get("status").asText()).isEqualTo("obsolete");
         verify(sources,never()).currentMarkdown(any());verify(provider,never()).generate(any(),any(),any(),any());
     }
-    @Test void isolatedWorkspaceAcceptsNewAndEditedNotesWithoutFingerprintingButStillRejectsStaleAiOffAndForeignSources() throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"unpaid-synthetic-demo","unpaid-nonsensitive-consent"})
+    void consentedModesAcceptNewAndEditedNotesButStillRejectStaleAiOffAndForeignSources(String mode) throws Exception {
         when(configuration.provider()).thenReturn("gemini");when(configuration.tier()).thenReturn("unpaid");when(configuration.region()).thenReturn("global");
         String code="synthetic-workspace-"+UUID.randomUUID();when(policyConfiguration.code()).thenReturn(code);
         policy=disclosureFixtures.insert(jdbc,code,1,true);ack(owner);
-        var properties=new ProviderDispatchProperties("unpaid-synthetic-demo",List.of(),List.of(),List.of(),owner);
-        var gate=new KnowledgeQueryGate(workspaceProcessingPolicies,configuration,new ProviderDispatchPolicy(properties,true),properties,sources);
+        boolean workspace=!ProviderDispatchPolicy.HOSTED_CONSENT.equals(mode);
+        var properties=new ProviderDispatchProperties(mode,List.of(),List.of(),List.of(),workspace?owner:null);
+        var gate=new KnowledgeQueryGate(workspaceProcessingPolicies,configuration,new ProviderDispatchPolicy(properties,workspace),properties,sources);
         UUID fresh=note(owner,true,"New fictional reminder","Bring the fictional silver compass.");
         var original=sources.note(owner,fresh);String question="What did I just write about the fictional compass?";
         try(var handle=coordination.dispatch(owner,fresh)) {

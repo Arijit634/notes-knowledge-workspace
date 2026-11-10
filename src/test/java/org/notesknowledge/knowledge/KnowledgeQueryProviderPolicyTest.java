@@ -38,6 +38,23 @@ class KnowledgeQueryProviderPolicyTest {
     private void generate(KnowledgeQueryGate gate,String value){var permit=gate.evidence(owner,value,List.of(source()),handle);permit.requireGoogle(value);generations.incrementAndGet();}
     private List<String> queries(){return List.of(ProviderDispatchPolicy.queryFingerprint(query));}
     private List<String> sourceApproval(){return List.of(ProviderDispatchPolicy.fingerprint(expected));}
+    @Test void hostedConsentStillRequiresCurrentAcknowledgementConfigurationSourceAuthorityAndBoundQuestion() {
+        gate(List.of(),List.of());
+        var p=new ProviderDispatchProperties(ProviderDispatchPolicy.HOSTED_CONSENT,List.of());
+        var g=new KnowledgeQueryGate(policies,config,new ProviderDispatchPolicy(p),p,sources);
+        var permit=g.evidence(owner,query,List.of(source()),handle);permit.requireGoogle(query);
+        assertThatThrownBy(()->permit.requireGoogle(query+"!")).isInstanceOf(DerivationFailure.class);
+        assertThatThrownBy(()->g.query(new UUID(0,99),query)).isInstanceOf(DerivationFailure.class);
+        var foreign=new PrivateQuerySource.Source(new Expected(new UUID(0,99),note,null,1,1,null),"active",true,"note",Instant.EPOCH,"");
+        assertThatThrownBy(()->g.evidence(owner,query,List.of(foreign),handle)).isInstanceOf(DerivationFailure.class);
+        when(sources.matches(any(),eq(true))).thenReturn(false);
+        assertThatThrownBy(()->g.evidence(owner,query,List.of(source()),handle)).isInstanceOf(DerivationFailure.class);
+        when(policies.policyPrerequisite(owner)).thenReturn(Optional.empty());
+        assertThatThrownBy(()->g.query(owner,query)).isInstanceOf(DerivationFailure.class);
+        when(policies.policyPrerequisite(owner)).thenReturn(Optional.of(new ProcessingPolicyService.AcknowledgedProcessingPolicy(new UUID(0,3),2,"b".repeat(64))));
+        assertThatThrownBy(()->g.query(owner,query)).isInstanceOf(DerivationFailure.class);
+        verify(sources,times(2)).matches(source(),true);
+    }
     @Test void defaultDenyPreventsQueryOnlyEmbeddingCapture(){var g=gate(List.of(),List.of());assertThatThrownBy(()->embed(g,query)).isInstanceOf(DerivationFailure.class);assertThat(embeddings).hasValue(0);}
     @Test void largerExtractionPermitRevalidatesEverySourceAndKeepsFocusedAndHardLimits(){
         gate(List.of(),List.of());var p=new ProviderDispatchProperties("unpaid-synthetic-demo",List.of(),List.of(),List.of(),owner);
