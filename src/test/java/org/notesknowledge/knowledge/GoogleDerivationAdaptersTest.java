@@ -119,12 +119,26 @@ class GoogleDerivationAdaptersTest {
         return gate(config("gemini-embedding-2"),workspace);
     }
     private KnowledgeQueryGate gate(AiDerivationProperties selected,boolean workspace) {
+        var properties=workspace?new ProviderDispatchProperties("unpaid-synthetic-demo",List.of(),List.of(),List.of(),owner)
+            :new ProviderDispatchProperties("unpaid-synthetic-demo",List.of(ProviderDispatchPolicy.fingerprint(expected)),List.of(ProviderDispatchPolicy.queryFingerprint(query)));
+        return gate(selected,workspace,properties);
+    }
+    private KnowledgeQueryGate gate(AiDerivationProperties selected,boolean workspace,ProviderDispatchProperties properties) {
         var policies=mock(ProcessingPolicyService.class);var sources=mock(PrivateQuerySource.class);
         when(policies.policyPrerequisite(owner)).thenReturn(Optional.of(new ProcessingPolicyService.AcknowledgedProcessingPolicy(new UUID(0,3),1,"a".repeat(64))));
         when(sources.matches(any(),eq(true))).thenReturn(true);
-        var properties=workspace?new ProviderDispatchProperties("unpaid-synthetic-demo",List.of(),List.of(),List.of(),owner)
-            :new ProviderDispatchProperties("unpaid-synthetic-demo",List.of(ProviderDispatchPolicy.fingerprint(expected)),List.of(ProviderDispatchPolicy.queryFingerprint(query)));
         return new KnowledgeQueryGate(policies,selected,new ProviderDispatchPolicy(properties,workspace),properties,sources);
+    }
+    @Test void realSdkHostedConsentUsesTheBoundNewQuestionWithoutGrantingQuerySubstitution() {
+        var selected=config("gemini-embedding-2");
+        var g=gate(selected,false,new ProviderDispatchProperties(ProviderDispatchPolicy.HOSTED_CONSENT,List.of()));
+        String fresh="Where did I save the fictional green telescope?";
+        var permit=g.evidence(owner,fresh,List.of(new PrivateQuerySource.Source(expected,"active",true,"note",Instant.EPOCH,"")),mock(DispatchCoordinator.Handle.class));
+        generated("{\"claims\":[{\"text\":\"Fictional green telescope\",\"evidenceIds\":[\"e0\"]}],\"conflicting\":false}");
+        var adapter=adapters.googleStructuredKnowledgePort(selected,clients,json);
+        assertThat(adapter.generate(permit,fresh,"answer",List.of(new StructuredKnowledgePort.Evidence("e0","Fictional green telescope","note"))).claims()).hasSize(1);
+        assertThatThrownBy(()->adapter.generate(permit,fresh+"!","answer",List.of(new StructuredKnowledgePort.Evidence("e0","Fictional green telescope","note")))).isInstanceOf(DerivationFailure.class);
+        assertThat(requests).hasSize(1);assertThat(requests.getFirst()).contains(fresh);
     }
     @Test void actualSdkAcceptsFreshWorkspaceQuestionButCannotSubstituteTheBoundQuestion() {
         String fresh="What fictional reminder did I just add?";var g=gate(true);

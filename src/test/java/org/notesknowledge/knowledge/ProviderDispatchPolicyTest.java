@@ -19,6 +19,26 @@ import org.springframework.mock.env.MockEnvironment;
 class ProviderDispatchPolicyTest {
     private final UUID owner=new UUID(0,1),note=new UUID(0,2),attachment=new UUID(0,3);
     private final Expected source=new Expected(owner,note,null,1,1,null);
+    @Test void hostedConsentIsExplicitUnpaidOnlyAndDoesNotRepurposeSyntheticWorkspaceApprovals() {
+        var properties=new ProviderDispatchProperties(ProviderDispatchPolicy.HOSTED_CONSENT,List.of());
+        var policy=new ProviderDispatchPolicy(properties);var selected=config("gemini","unpaid","global");
+        assertThat(policy.permitsUnpaidGeminiQuery(selected,owner,"A newly typed synthetic question?")).isTrue();
+        assertThat(policy.permitsUnpaidGeminiQuery(selected,"A newly typed synthetic question?")).isFalse();
+        assertThat(policy.permits(selected,source,"note")).isTrue();
+        assertThat(policy.permitsUnpaidGemini(selected,null)).isFalse();
+        for(String task:List.of("query","url","unknown"))assertThat(policy.permits(selected,source,task)).isFalse();
+        for(var wrong:List.of(config("gemini","paid","global"),config("other","unpaid","global"),config("gemini","unpaid","other"))) {
+            assertThat(policy.permitsUnpaidGeminiQuery(wrong,owner,"Synthetic question")).isFalse();
+            assertThat(policy.permitsUnpaidGemini(wrong,source)).isFalse();
+        }
+        assertThatThrownBy(()->new ProviderDispatchPolicy(properties,true)).hasMessage("Separate hosted provider configuration required");
+        for(var ambiguous:List.of(
+                new ProviderDispatchProperties(ProviderDispatchPolicy.HOSTED_CONSENT,List.of(),List.of(),List.of(),owner),
+                new ProviderDispatchProperties(ProviderDispatchPolicy.HOSTED_CONSENT,List.of("a".repeat(64))),
+                new ProviderDispatchProperties(ProviderDispatchPolicy.HOSTED_CONSENT,List.of(),List.of("a".repeat(64))),
+                new ProviderDispatchProperties(ProviderDispatchPolicy.HOSTED_CONSENT,List.of(),List.of(),List.of("a".repeat(64)))))
+            assertThatThrownBy(()->new ProviderDispatchPolicy(ambiguous)).hasMessage("Invalid provider dispatch policy configuration");
+    }
     @Test void canonicalFingerprintHasVersionedUnambiguousFieldsAndChangesWithEveryAuthorityField() throws Exception {
         String canonical="nkw-private-source-v1\n00000000-0000-0000-0000-000000000001\n00000000-0000-0000-0000-000000000002\n-\n1\n1\n-";
         assertThat(ProviderDispatchPolicy.fingerprint(source)).isEqualTo(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8))));

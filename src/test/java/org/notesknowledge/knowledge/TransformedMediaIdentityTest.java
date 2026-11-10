@@ -20,6 +20,18 @@ class TransformedMediaIdentityTest {
     private TransformedMediaIdentity child(){return identity("video-v1",new TransformedMediaIdentity.Scope("video_samples",0,20,1000,0,1000),new byte[]{1,2});}
     private AiDerivationProperties config(){return new AiDerivationProperties(true,false,"gemini","gemini-embedding-2","gemini-3.8-flash",
         "test-v1","global","unpaid","test-v1","test-v1",768,"cosine","none",HASH);}
+    @Test void hostedConsentRetainsTheExactChildProviderModelPolicyAndByteBinding() {
+        var policy=new ProviderDispatchPolicy(new ProviderDispatchProperties(ProviderDispatchPolicy.HOSTED_CONSENT,List.of()));
+        assertThat(policy.permitsUnpaidGeminiChild(config(),child())).isTrue();
+        var c=child();
+        for(int field=0;field<3;field++) {
+            var changed=new TransformedMediaIdentity(source,c.originalSha256(),c.originalBytes(),c.originalType(),c.profile(),
+                c.implementationVersion(),c.binarySha256(),c.configurationSha256(),c.childSha256(),c.childBytes(),c.childType(),
+                c.scope(),c.lineage(),field==0?"other":c.provider(),field==1?"other":c.model(),c.task(),field==2?"b".repeat(64):c.policySha256());
+            assertThat(policy.permitsUnpaidGeminiChild(config(),changed)).isFalse();
+        }
+        assertThatThrownBy(()->child().requireBytes(new byte[]{1,3})).isInstanceOf(DerivationFailure.class);
+    }
     @Test void exactChildIdentityIsDeterministicAndDomainSeparatedFromSourceApproval() {
         assertThat(child().approvalFingerprint()).isEqualTo(child().approvalFingerprint()).matches("[0-9a-f]{64}")
             .isNotEqualTo(ProviderDispatchPolicy.fingerprint(source));
