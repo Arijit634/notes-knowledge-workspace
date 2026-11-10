@@ -43,5 +43,14 @@ jobs:
         run: |
           image="$(cat "$RUNNER_TEMP/managed-preview-image")"
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock:ro ghcr.io/aquasecurity/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 "$image"
+      - name: Verify scanner-owned SBOM completion
+        run: |
+          set -euo pipefail
+          image="$(cat "$RUNNER_TEMP/managed-preview-image")"
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock:ro -v "$RUNNER_TEMP:/evidence" \
+            ghcr.io/aquasecurity/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa \
+            image --format cyclonedx --output /evidence/preview-raw.cdx.json "$image"
+          docker run --rm --network none --entrypoint redis-server "$image" --version | grep -F 'v=8.10.2'
+          python3 .github/deploy/managed-preview/complete_sbom.py
       - name: Verify single-container budget, TLS, perimeter, sessions and recovery without providers
         run: python3 .github/deploy/managed-preview/smoke.py "$(cat "$RUNNER_TEMP/managed-preview-image")"
