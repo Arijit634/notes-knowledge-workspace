@@ -24,6 +24,8 @@ class GrantTests(unittest.TestCase):
         claims=json.loads(base64.urlsafe_b64decode(payload+'='*(-len(payload)%4)))
         self.assertEqual(self.nonce,claims['nonce']);self.assertEqual(fixture.CLIENT,claims['aud'])
         self.assertEqual('fixture-owner',claims['sub'])
+        self.assertEqual('fixture.example.test',claims['hd'])
+        self.assertEqual('owner@fixture.example.test',claims['email'])
         with self.assertRaises(ValueError):self.state.exchange(self.client,self.form)
 
     def test_wrong_client_cannot_exchange(self):

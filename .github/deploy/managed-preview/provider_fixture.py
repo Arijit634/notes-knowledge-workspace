@@ -57,7 +57,9 @@ class Fixture:
         if form.get('redirect_uri') != ['https://preview.example.test/api/auth/oidc/google/callback']:
             raise ValueError('Invalid synthetic redirect')
         now = int(time.time())
-        claims = dict(iss=ISSUER, sub='fixture-' + identity, aud=CLIENT, nonce=nonce,
+        # Reserved Workspace identity: Google's authority policy intentionally
+        # rejects a verified third-party email without a hosted-domain claim.
+        claims = dict(iss=ISSUER, sub='fixture-' + identity, aud=CLIENT, nonce=nonce, hd='fixture.example.test',
             email=identity + '@fixture.example.test', email_verified=True, iat=now, exp=now + 300, auth_time=now)
         header = encoded(json.dumps(dict(alg='RS256', kid='fixture-key', typ='JWT')).encode())
         payload = encoded(json.dumps(claims).encode())
