@@ -28,7 +28,7 @@ image="$(docker image inspect --format '{{.Id}}' nkw-multimedia-search)"
 report="$RUNNER_TEMP/multimedia-search-report"
 mkdir "$report"
 docker run --rm --network none --user 0:0 --cap-drop ALL --cap-add CHOWN --read-only \
-  -v "$report:/report" --entrypoint /bin/chown "$image" 65533:65533 /report
+  -v "$report:/report" --entrypoint /qualification/bin/chown "$image" 65533:65533 /report
 group="$(stat -c '%g' /var/run/docker.sock)"
 [[ "$group" =~ ^[0-9]+$ ]]
 # Testcontainers' approved JNA transport needs to map its trusted JAR library.

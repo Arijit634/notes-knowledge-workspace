@@ -120,5 +120,7 @@ COPY --from=build /qualification /qualification
 COPY --from=build /fixtures /fixtures
 COPY --from=build /native-diagnostics/pdf-diagnostic-helper /qualification/pdf-diagnostic-helper
 COPY --from=build /native-diagnostics/media-library-versions /qualification/media-library-versions
+# Fixture ownership changes are a qualification-only capability, not a runtime tool.
+COPY --from=build /usr/bin/chown /qualification/bin/chown
 USER 65533:65533
 ENTRYPOINT ["/jdk/bin/java"]

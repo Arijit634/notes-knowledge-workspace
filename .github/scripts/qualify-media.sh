@@ -53,6 +53,9 @@ docker run --rm --network none --user 65533:65533 --cap-drop ALL --security-opt 
   --entrypoint /bin/sh "$deployment" -c 'test ! -e /qualification && test ! -e /fixtures && test ! -e /codec && test ! -e /native && test ! -e /jdk/bin/javac && test ! -e /jdk/bin/jlink && ! command -v gcc && test -z "$(find /usr /opt /jdk -xdev -type f -perm /6000 -print -quit)" && dpkg-query -W' \
   > "$RUNNER_TEMP/media-deployment-packages.txt"
 docker run --rm --network none --user 65533:65533 --cap-drop ALL --security-opt no-new-privileges --read-only \
+  --entrypoint /bin/sh "$deployment" -c \
+  'test ! -e /usr/bin/chown && test ! -e /usr/bin/perl && test ! -e /usr/bin/tar && test ! -e /usr/bin/apt-get'
+docker run --rm --network none --user 65533:65533 --cap-drop ALL --security-opt no-new-privileges --read-only \
   --entrypoint sha256sum "$deployment" /provenance/runtime-files.sha256 > "$RUNNER_TEMP/media-runtime-manifest.sha256"
 provenance="$RUNNER_TEMP/media-runtime-provenance"
 mkdir "$provenance"
@@ -140,7 +143,7 @@ chmod -R a+rwX "$testspace"
 # Production roots stay administrator-owned/read-only; the application and
 # native workers still start non-root with ALL capabilities dropped.
 docker run --rm --network none --user 0:0 --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges --read-only \
-  -v "$testspace:/harness" --entrypoint /bin/chown "$image" --no-dereference --recursive 65533:65533 /harness
+  -v "$testspace:/harness" --entrypoint /qualification/bin/chown "$image" --no-dereference --recursive 65533:65533 /harness
 result=0
 docker_group="$(stat -c '%g' /var/run/docker.sock)"
 [[ "$docker_group" =~ ^[0-9]+$ ]]
