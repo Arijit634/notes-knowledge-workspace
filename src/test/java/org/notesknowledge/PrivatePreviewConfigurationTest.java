@@ -72,4 +72,47 @@ class PrivatePreviewConfigurationTest {
         }
         assertThatThrownBy(()->PrivatePreviewConfiguration.managedDatabaseUrl(null)).isInstanceOf(IllegalArgumentException.class);
     }
+    private MockEnvironment full() throws Exception {
+        var e=managed();var properties=new Properties();
+        try(var input=getClass().getResourceAsStream("/application-full-hosted.properties")){properties.load(input);}
+        e.getPropertySources().addBefore("managed",new PropertiesPropertySource("full",properties));
+        e.setActiveProfiles("operations","private-preview","managed-preview","full-hosted");return e;
+    }
+    @Test void completeApplicationRequiresSeparateExplicitHostedSelection() throws Exception {
+        assertThat(new PrivatePreviewConfiguration().validate(managed(),"Linux","amd64").fullApplication()).isFalse();
+        assertThat(new PrivatePreviewConfiguration().validate(full(),"Linux","amd64").fullApplication()).isTrue();
+        assertThat(new PrivatePreviewConfiguration().validate(full(),"Linux","aarch64").fullApplication()).isTrue();
+        var wrong=full();wrong.setActiveProfiles("operations","full-hosted");
+        assertThatThrownBy(()->new PrivatePreviewConfiguration().validate(wrong,"Linux","amd64"))
+            .hasMessage("Restricted private preview configuration required").hasNoCause();
+    }
+    @Test void fullHostedSelectionCannotWeakenPerimeterOrUseAnotherProviderPosture() throws Exception {
+        for(var entry:java.util.Map.ofEntries(java.util.Map.entry("nkw.preview.access","public"),
+                java.util.Map.entry("server.address","0.0.0.0"),java.util.Map.entry("management.server.address","0.0.0.0"),
+                java.util.Map.entry("server.tomcat.remoteip.internal-proxies",".*"),
+                java.util.Map.entry("knowledge.derivation.tier","paid"),java.util.Map.entry("knowledge.derivation.provider","synthetic"),
+                java.util.Map.entry("knowledge.derivation.region","other"),java.util.Map.entry("knowledge.derivation.dispatch-policy","unpaid-synthetic-demo"),
+                java.util.Map.entry("spring.mail.properties.mail.smtp.starttls.required","false"),
+                java.util.Map.entry("spring.mail.properties.mail.smtp.ssl.checkserveridentity","false"),
+                java.util.Map.entry("spring.flyway.enabled","true"),java.util.Map.entry("nkw.localhost.synthetic-ai","true")).entrySet()) {
+            var e=full().withProperty(entry.getKey(),entry.getValue());
+            assertThatThrownBy(()->new PrivatePreviewConfiguration().validate(e,"Linux","amd64"))
+                .hasMessage("Restricted private preview configuration required").hasNoCause();
+        }
+    }
+    @Test void fullHostedSelectionCannotSilentlyDisableRequiredFeatureWorkers() throws Exception {
+        for(String key:java.util.List.of("identity.delivery.smtp-enabled","identity.delivery.polling-enabled",
+                "knowledge.derivation.enabled","knowledge.derivation.scheduling-enabled","knowledge.public.scheduling-enabled",
+                "knowledge.operations.scheduling-enabled","notes.media-runtime.pdf.enabled","notes.media-runtime.video.enabled")) {
+            var e=full().withProperty(key,"false");
+            assertThatThrownBy(()->new PrivatePreviewConfiguration().validate(e,"Linux","amd64"))
+                .hasMessage("Restricted private preview configuration required").hasNoCause();
+        }
+    }
+    @Test void fullProfileAloneCannotAvoidThePerimeterValidator() {
+        new org.springframework.boot.test.context.runner.ApplicationContextRunner()
+            .withUserConfiguration(PrivatePreviewConfiguration.class)
+            .withInitializer(context->context.getEnvironment().setActiveProfiles("full-hosted"))
+            .run(app->assertThat(app).hasFailed());
+    }
 }

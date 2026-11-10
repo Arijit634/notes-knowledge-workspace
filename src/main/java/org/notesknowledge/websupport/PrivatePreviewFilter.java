@@ -37,7 +37,7 @@ final class PrivatePreviewFilter extends OncePerRequestFilter {
         if (path.indexOf('%') >= 0 || path.indexOf('\\') >= 0 || path.contains("//")) {
             problems.writeMalformedRequest(request, response); return;
         }
-        if (path.startsWith("/api/") && unavailable(path)) {
+        if (!preview.fullApplication() && path.startsWith("/api/") && unavailable(path)) {
             problems.writeServiceUnavailable(request, response); return;
         }
         chain.doFilter(request, response);
