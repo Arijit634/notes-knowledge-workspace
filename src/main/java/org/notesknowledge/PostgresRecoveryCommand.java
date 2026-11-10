@@ -82,10 +82,16 @@ public final class PostgresRecoveryCommand {
             }finally{terminate(restore);}
             String tables=scalar(service,"select count(*) from information_schema.tables where table_type='BASE TABLE' and table_schema in ('identity','profile','notes','knowledge','publishing','discovery','moderation')");
             String migrations=scalar(service,"select count(*) from public.flyway_schema_history where success and version is not null");
-            if(!tables.equals("38")||!migrations.equals("19"))throw new IllegalStateException();
+            String version=scalar(service,"select max(version::integer) from public.flyway_schema_history where success and version is not null");
+            requireCurrentSchema(tables,migrations,version);
             // CONNECT remains denied, even on success. Schema/Flyway checks alone cannot
             // prove restored session/capability/job/public authority is current.
         }
+    }
+    static void requireCurrentSchema(String tables,String migrations,String version) {
+        // This artifact restores only its current approved schema, never a merely
+        // nonempty or similarly sized database. CONNECT stays quarantined.
+        if(!"39".equals(tables)||!"20".equals(migrations)||!"20".equals(version))throw new IllegalStateException();
     }
     static void seal(InputStream input,OutputStream output,byte[] key,long maximum)throws Exception{
         byte[] nonce=new byte[12];new java.security.SecureRandom().nextBytes(nonce);
