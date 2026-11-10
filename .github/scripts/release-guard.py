@@ -72,9 +72,10 @@ def candidate(source, image, security, sbom, smoke):
     require(sbom['image'] == image and sbom['format'] == 'CycloneDX' and sbom['explicitShippedArtifacts'] == 6, 'exact_sbom_missing')
     require(smoke['passed'] is True and smoke['deploymentImage'] == image and smoke['productionJar'] is True, 'production_smoke_missing')
     require(any(row['step'] == 'encrypted_backup_restore' and row['runtimeQuarantined'] and row['tamperRefused'] for row in smoke['events']), 'recovery_rehearsal_missing')
+    require((smoke.get('schemaVersion'),smoke.get('relations'),smoke.get('migrations')) == (20,39,20), 'current_schema_evidence_missing')
     require(command('docker', 'image', 'inspect', '--format', '{{.Architecture}}', image) == 'arm64', 'native_arm64_required')
     require(command('docker', 'image', 'inspect', '--format', '{{index .Config.Labels "org.opencontainers.image.revision"}}', image) == source, 'image_source_binding_missing')
-    return dict(source=source, candidateImage=image, architecture='arm64', schemaVersion=19, relations=38,
+    return dict(source=source, candidateImage=image, architecture='arm64', schemaVersion=smoke['schemaVersion'], relations=smoke['relations'],
                 sbomSha256=sbom['sha256'], securityGatePassed=True, smokePassed=True,
                 containerProfileSha256=smoke['containerProfileSha256'],
                 registryPublished=False, attestationVerified=False, releaseEligible=False, productionAuthorized=False)

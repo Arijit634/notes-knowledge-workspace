@@ -1,6 +1,13 @@
 name: Native media qualification
 
 on:
+  pull_request:
+    paths:
+      - '.github/workflows/backend-release.yml'
+      - '.github/workflows/media-native-qualification.yml'
+      - '.github/scripts/deployment-smoke.py'
+      - '.github/scripts/release-guard.py'
+      - '.github/scripts/package-application.mjs'
   push:
     branches: [knowledge/multimodal-ingestion, backend/completion-and-qualification, backend/provider-and-release-qualification, backend/runtime-release-hardening, backend/final-feature-closure]
     paths:
@@ -39,17 +46,37 @@ jobs:
         run: bash .github/scripts/media-jdk.sh
       - name: Verify offline observability and release contracts
         run: python3 .github/scripts/test-operations.py
+      - name: Set up exact Node.js
+        if: github.event_name == 'pull_request'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+      - name: Build accepted frontend for the complete application artifact
+        if: github.event_name == 'pull_request'
+        working-directory: frontend
+        run: |
+          test "$(node --version)" = v24.21.0
+          test "$(npm --version)" = 11.19.0
+          npm ci
+          npm run build
       - name: Compile qualification controllers and package backend
         id: package
         shell: bash
-        run: ./mvnw --batch-mode --no-transfer-progress -Dtest=MediaRuntimeConfigurationTest,Argon2CompatibilityTest,Argon2VerificationQualificationTest,CoreReadinessDatabaseTest,DependencyUnavailableFilterTest package
+        run: |
+          options=()
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then options=(-Pwith-frontend); fi
+          ./mvnw --batch-mode --no-transfer-progress "${options[@]}" -Dtest=MediaRuntimeConfigurationTest,Argon2CompatibilityTest,Argon2VerificationQualificationTest,CoreReadinessDatabaseTest,DependencyUnavailableFilterTest package
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            "$JAVA_HOME/bin/jar" tf target/notes-knowledge-workspace-0.0.1-SNAPSHOT.jar | grep -Fx 'BOOT-INF/classes/static/index.html'
+          fi
       - name: Resolve opt-in qualification command classpath
         shell: bash
         run: ./mvnw --batch-mode --no-transfer-progress dependency:build-classpath -DincludeScope=test -Dmdep.outputFile=target/qualification-classpath.txt -q
       - name: Qualify packaged native runtimes
         shell: bash
         env:
-          NKW_CANDIDATE_ONLY: ${{ github.ref_name == 'backend/final-feature-closure' && 'true' || 'false' }}
+          NKW_CANDIDATE_ONLY: ${{ (github.event_name == 'pull_request' || github.ref_name == 'backend/final-feature-closure') && 'true' || 'false' }}
         run: bash .github/scripts/qualify-media.sh
       - name: Retain sanitized deployment scan and SBOM evidence
         if: always()
@@ -72,7 +99,7 @@ jobs:
           include-hidden-files: false
       - name: Verify complete backend on final native-qualified source
         id: full-backend
-        if: always() && matrix.runner == 'ubuntu-24.04' && steps.package.outcome == 'success' && github.ref_name != 'backend/final-feature-closure'
+        if: always() && matrix.runner == 'ubuntu-24.04' && steps.package.outcome == 'success' && github.ref_name != 'backend/final-feature-closure' && github.event_name != 'pull_request'
         shell: bash
         run: ./mvnw --batch-mode --no-transfer-progress clean verify -q
       - name: Summarize complete backend evidence
@@ -92,7 +119,7 @@ jobs:
           print(json.dumps(dict(fullBackendExecuted=outcome in ('success','failure'),commandOutcome=outcome,classes=len(files),**totals)))
           PY
   windows:
-    if: github.ref_name != 'backend/final-feature-closure'
+    if: github.event_name != 'pull_request' && github.ref_name != 'backend/final-feature-closure'
     name: Native media / Windows development
     runs-on: windows-2025
     timeout-minutes: 25

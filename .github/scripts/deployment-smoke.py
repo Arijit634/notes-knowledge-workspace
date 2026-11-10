@@ -550,7 +550,14 @@ def main(deployment, qualification, evidence):
         require(scalar('recovery_smoke', 'select count(*) from identity.spring_session') == '0', 'restore_session_invalidation_failed')
         require(scalar('recovery_smoke', "select count(*) from identity.identity_capability where consumed_at is null and superseded_at is null and revoked_at is null") == '0', 'restore_capability_invalidation_failed')
         require(scalar('recovery_smoke', "select count(*) from identity.security_email_delivery where state in ('queued','claimed','retry_wait')") == '0', 'restore_stale_delivery_not_obsolete')
-        event('encrypted_backup_restore', postgresMajor=18, relations=38, migrations=19, authenticated=True,
+        relation_query="select count(*) from information_schema.tables where table_schema in ('identity','profile','notes','knowledge','publishing','discovery','moderation') and table_type='BASE TABLE'"
+        relations=int(scalar('deployment_smoke',relation_query))
+        migrations=int(scalar('deployment_smoke','select count(*) from public.flyway_schema_history where success'))
+        schema_version=int(scalar('deployment_smoke','select max(version::integer) from public.flyway_schema_history where success'))
+        require((relations,migrations,schema_version)==(39,20,20),'current_schema_ledger_mismatch')
+        require(int(scalar('recovery_smoke',relation_query))==relations,'restored_relation_ledger_mismatch')
+        require(int(scalar('recovery_smoke','select max(version::integer) from public.flyway_schema_history where success'))==schema_version,'restored_schema_version_mismatch')
+        event('encrypted_backup_restore', postgresMajor=18, relations=relations, migrations=migrations, schemaVersion=schema_version, authenticated=True,
               emptyTargetRequired=True, tamperRefused=True, runtimeQuarantined=True, restoredSessionsInvalidated=True,
               plaintextDumpOnDisk=False, productionTrafficAuthorized=False)
         # Independently verified synthetic-only reopening. The production restore
@@ -601,7 +608,7 @@ def main(deployment, qualification, evidence):
         require(not contract_failures, 'deployment_dependency_contract_failed')
         receipt = dict(deploymentSmoke=True, passed=True, deploymentImage=deployment,
                        qualificationImage=qualification, productionJar=True, testApplicationBeans=False,
-                       liveProviderCalls=0, actualOci=False, relations=38, memoryBytes=2147483648,
+                       liveProviderCalls=0, actualOci=False, relations=relations, schemaVersion=schema_version, migrations=migrations, memoryBytes=2147483648,
                        cpus=2, pidsLimit=512, privateScratchBytes=209715200, events=events,
                        resourceMeasurements=measurements,
                        containerProfileSha256=hashlib.sha256(profile_file.read_bytes()).hexdigest(),
