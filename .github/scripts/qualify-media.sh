@@ -170,6 +170,7 @@ if [ "${NKW_CANDIDATE_ONLY:-false}" != true ]; then
 bash .github/scripts/scan-deployment.sh "$before" "$RUNNER_TEMP/media-before-security" "$RUNNER_TEMP/media-security-cache"
 fi
 bash .github/scripts/scan-deployment.sh "$deployment" "$RUNNER_TEMP/media-security-readiness" "$RUNNER_TEMP/media-security-cache"
+python3 .github/scripts/native-image-facts.py "$deployment" "$image" "$source_sha" "$RUNNER_TEMP/media-security-readiness/native-artifact-facts.json"
 if [ "${NKW_CANDIDATE_ONLY:-false}" != true ]; then
 python3 .github/scripts/compare-deployment.py "$before" "$deployment" "$RUNNER_TEMP"
 fi

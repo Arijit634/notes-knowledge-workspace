@@ -93,12 +93,12 @@ if root_dependency is None:
     root_dependency=dict(ref=root_ref,dependsOn=[]);dependencies.append(root_dependency)
 root_dependency.setdefault('dependsOn',[]).extend(explicit_refs)
 for suffix,name,version in [('/libfreetype.so.6','freetype','2.15.0'),('/libexpat.so.1','expat','2.10.0')]:
-    paths=[path for path in shipped if path.endswith(suffix)]
+    paths=[artifact_path for artifact_path in shipped if artifact_path.endswith(suffix)]
     assert len(paths)==1, 'Updated media library hash missing'
-    path=paths[0];ref='urn:nkw:artifact:'+name+':'+shipped[path]
+    library_path=paths[0];ref='urn:nkw:artifact:'+name+':'+shipped[library_path]
     data['components'].append(dict(type='library',name=name,version=version,**{'bom-ref':ref},
-        hashes=[dict(alg='SHA-256',content=shipped[path])],properties=[
-            dict(name='nkw:shipped:path',value=path),
+        hashes=[dict(alg='SHA-256',content=shipped[library_path])],properties=[
+            dict(name='nkw:shipped:path',value=library_path),
             dict(name='nkw:inventory:origin',value='controlled-upstream-security-build'),
             dict(name='nkw:scanner:coverage',value='explicit-binary-and-source-provenance; not invented scanner coverage')]))
     root_dependency['dependsOn'].append(ref)

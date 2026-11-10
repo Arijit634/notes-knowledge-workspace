@@ -5,6 +5,8 @@ import datetime
 import importlib.util
 import json
 import pathlib
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -20,6 +22,63 @@ def load(name, file):
 ops = load('operations_plan', 'operations-plan.py')
 release = load('release_guard', 'release-guard.py')
 smoke = load('deployment_smoke', 'deployment-smoke.py')
+facts = load('native_image_facts', 'native-image-facts.py')
+
+
+class NativeArtifactFactContracts(unittest.TestCase):
+    def test_image_evidence_must_match_architecture_user_and_source(self):
+        source='a'*40
+        image=dict(Architecture='arm64',Config=dict(User='65533:65533',
+            Labels={'org.opencontainers.image.revision':source}))
+        self.assertEqual('arm64',facts.validate_images([image,copy.deepcopy(image)],source))
+        for key,value in (('Architecture','amd64'),('User','0:0'),('revision','b'*40)):
+            changed=copy.deepcopy(image)
+            if key=='Architecture': changed[key]=value
+            elif key=='User': changed['Config'][key]=value
+            else: changed['Config']['Labels']['org.opencontainers.image.revision']=value
+            with self.subTest(field=key),self.assertRaisesRegex(ValueError,'artifact_binding_failed'):
+                facts.validate_images([image,changed],source)
+        with self.assertRaises(ValueError): facts.validate_images([image],source)
+
+    def test_version_facts_reject_old_or_ambiguous_security_libraries(self):
+        packages='libfreetype6:arm64\t2.15.0-0nkw1\tlibfreetype6\nlibexpat1:arm64\t2.10.0-0nkw1\tlibexpat1\n'
+        self.assertEqual(2,len(facts.package_inventory(packages)))
+        for invalid in (packages.replace('2.10.0-0nkw1','2.7.1-1'),
+                        packages.splitlines()[0],packages+packages.splitlines()[0]+'\n'):
+            with self.subTest(invalid=invalid),self.assertRaises(ValueError): facts.package_inventory(invalid)
+
+
+class ShippedSbomContracts(unittest.TestCase):
+    def test_library_inventory_cannot_redirect_the_sbom_output(self):
+        # Execute the actual embedded augmentation, including its final atomic
+        # replacement. This catches output-path shadowing by library inventory.
+        script = pathlib.Path(__file__).with_name('scan-deployment.sh').read_text()
+        augmentation = script.split('python3 - "$security" "$deployment" <<\'PY\'\n', 1)[1].split('\nPY\n', 1)[0]
+        for triplet in ('x86_64-linux-gnu', 'aarch64-linux-gnu'):
+            with self.subTest(triplet=triplet), tempfile.TemporaryDirectory() as temporary:
+                root = pathlib.Path(temporary)
+                sbom = root / 'deployment.cdx.json'
+                components = [dict(type='library', name=f'dependency-{n}',
+                    purl=f'pkg:maven/synthetic/library-{n}@1', **{'bom-ref':f'maven-{n}'}) for n in range(200)]
+                sbom.write_text(json.dumps(dict(bomFormat='CycloneDX', specVersion='1.6', version=1,
+                    metadata=dict(component={'bom-ref':'image'}), components=components)))
+                paths = ['/opt/video/tools/bin/ffmpeg','/opt/video/tools/bin/ffprobe',
+                    '/opt/pdf/helper','/opt/video/helper','/opt/operations/health-probe',
+                    '/jdk/lib/modules','/application.jar',
+                    f'/usr/lib/{triplet}/libfreetype.so.6',f'/usr/lib/{triplet}/libexpat.so.1']
+                (root / 'shipped-artifacts.sha256').write_text(''.join(f'{n:064x}  {path}\n' for n,path in enumerate(paths,1)))
+                result = subprocess.run([sys.executable,'-',str(root),'sha256:'+'a'*64],
+                    input=augmentation, text=True, capture_output=True, timeout=10)
+                self.assertEqual(0,result.returncode,result.stderr)
+                data = json.loads(sbom.read_text())
+                self.assertEqual(2,data['version'])
+                self.assertEqual(209,len(data['components']))
+                self.assertEqual(9,len(data['dependencies'][0]['dependsOn']))
+                receipt = json.loads((root / 'sbom-receipt.json').read_text())
+                self.assertEqual(9,receipt['explicitShippedArtifacts'])
+                self.assertFalse(receipt['manualNativeVulnerabilityCoverageClaimed'])
+                self.assertFalse((root / 'deployment-augmented.cdx.json').exists())
+                self.assertFalse((root / 'shipped-artifacts.sha256').exists())
 
 
 class ResourceProbeContracts(unittest.TestCase):
