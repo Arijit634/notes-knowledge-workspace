@@ -48,7 +48,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 .github/scripts/release-guard.py main --repository "$GITHUB_REPOSITORY" --source "$GITHUB_SHA" --output "$RUNNER_TEMP/protected-main.json"
       - name: Verify operational and release contracts offline
-        run: python3 .github/scripts/test-operations.py
+        run: |
+          python3 .github/scripts/test-operations.py
+          python3 -m unittest discover -s .github/deploy/managed-preview -p 'test_publication_auth.py'
       - name: Scan public source with pinned Gitleaks
         run: |
           docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
@@ -56,9 +58,14 @@ jobs:
             git --config=/repo/.gitleaks.toml --log-opts=HEAD --redact --no-banner --exit-code=1 /repo
       - name: Install checksum-pinned native Java
         run: bash .github/scripts/media-jdk.sh
-      - name: Verify complete backend and package one candidate JAR
+      - name: Set up exact Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+      - name: Verify frontend and backend and package one application JAR
         run: |
-          ./mvnw --batch-mode --no-transfer-progress clean verify -q
+          node .github/scripts/package-application.mjs
           ./mvnw --batch-mode --no-transfer-progress dependency:build-classpath -DincludeScope=test -Dmdep.outputFile=target/qualification-classpath.txt -q
       - name: Build and qualify the exact native deployment image
         env:
@@ -76,8 +83,7 @@ jobs:
         run: |
           test "$ZERO_COST" = true && test "$REDISTRIBUTION" = true && test "$WHOLE_PRODUCT" = true
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          # Publication remains blocked until the separately accepted frontend
-          # is packaged. This workflow never installs or builds the frontend.
+          # A complete same-origin artifact must contain the accepted frontend.
           "$JAVA_HOME/bin/jar" tf target/notes-knowledge-workspace-0.0.1-SNAPSHOT.jar | grep -Fx 'BOOT-INF/classes/static/index.html'
           python3 .github/scripts/release-guard.py main --repository "$GITHUB_REPOSITORY" --source "$GITHUB_SHA" --output "$RUNNER_TEMP/main-before-publication.json"
           image="$(tail -n 1 "$RUNNER_TEMP/media-deployment-image")"
@@ -96,7 +102,6 @@ jobs:
           repository="ghcr.io/${GITHUB_REPOSITORY,,}"
           image="$(tail -n 1 "$RUNNER_TEMP/media-deployment-image")"
           printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin >/dev/null
-          trap 'docker logout ghcr.io >/dev/null 2>&1' EXIT
           # Reject reuse of either convenience tag; no latest, force or overwrite.
           if docker manifest inspect "$repository:sha-$GITHUB_SHA" >/dev/null 2>&1; then exit 1; fi
           if docker manifest inspect "$repository:v$VERSION" >/dev/null 2>&1; then exit 1; fi
@@ -143,6 +148,9 @@ jobs:
               attestationVerified=True,releaseEligible=True,productionAuthorized=False,workflow='backend-release.yml')
           (root/'release-manifest.json').write_text(json.dumps(result,indent=2)+'\n')
           PY
+      - name: Clear ephemeral registry credentials
+        if: always()
+        run: docker logout ghcr.io >/dev/null 2>&1
       - name: Retain bounded nonsecret qualification evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

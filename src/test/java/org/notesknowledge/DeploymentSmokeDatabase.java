@@ -45,7 +45,7 @@ public final class DeploymentSmokeDatabase {
                     if(!rows.next()||rows.getInt(1)!=39)throw new IllegalStateException();
                 }
             }
-            System.out.println("deployment_smoke_database_ready_relations_38");
+            System.out.println("deployment_smoke_database_ready_relations_39");
         }catch(Exception failure){throw new IllegalStateException("Synthetic migration/role preparation failed");}
     }
 }

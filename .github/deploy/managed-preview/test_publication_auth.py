@@ -8,15 +8,21 @@ import textwrap
 import unittest
 
 WORKFLOW = Path(__file__).resolve().parents[2] / 'workflows' / 'managed-preview-release.yml'
+BACKEND = WORKFLOW.with_name('backend-release.yml')
+TARGETS = (
+    (WORKFLOW, 'Publish the same qualified image without rebuilding', 'Verify publication provenance', '-private-preview'),
+    (BACKEND, 'Publish the same image without rebuilding', 'Verify source digest workflow', ''),
+)
 
 
-def step(name):
-    body = WORKFLOW.read_text().split('      - name: ' + name + '\n', 1)[1]
+def step(name, workflow=WORKFLOW):
+    body = workflow.read_text().split('      - name: ' + name + '\n', 1)[1]
     return body.split('      - name: ', 1)[0]
 
 
 class PublicationAuthTests(unittest.TestCase):
-    def run_transport(self, push_exit):
+    def run_transport(self, push_exit, target):
+        workflow, publish_name, _, suffix = target
         bash = os.environ.get('BASH_FOR_TESTS') or shutil.which('bash')
         self.assertIsNotNone(bash, 'Bash is required for the publication shell regression')
         with tempfile.TemporaryDirectory() as temporary:
@@ -24,6 +30,7 @@ class PublicationAuthTests(unittest.TestCase):
             auth = root / 'synthetic-registry-auth'
             image = 'sha256:' + 'a' * 64
             (root / 'preview-image').write_text(image)
+            (root / 'media-deployment-image').write_text(image)
             fake = root / 'bin'
             fake.mkdir()
             (fake / 'python3').write_text('#!/bin/bash\nexit 0\n')
@@ -38,7 +45,7 @@ class PublicationAuthTests(unittest.TestCase):
                   push) test -f "$FAKE_AUTH"; exit "$FAKE_PUSH_EXIT" ;;
                   image)
                     case "$*" in
-                      *RepoDigests*) printf 'ghcr.io/arijit634/notes-knowledge-workspace-private-preview@sha256:%s\\n' "$FAKE_DIGEST" ;;
+                      *RepoDigests*) printf '%s@sha256:%s\\n' "$FAKE_REPOSITORY" "$FAKE_DIGEST" ;;
                       *revision*) printf '%s\\n' "$GITHUB_SHA" ;;
                       *) printf '%s\\n' "$FAKE_IMAGE" ;;
                     esac ;;
@@ -55,14 +62,15 @@ class PublicationAuthTests(unittest.TestCase):
                 EXPECTED_DOCKER=(fake / 'docker').as_posix(), EXPECTED_PYTHON=(fake / 'python3').as_posix(),
                 GH_TOKEN='synthetic-test-input-with-no-authority', GITHUB_ACTOR='synthetic',
                 GITHUB_REPOSITORY='Arijit634/notes-knowledge-workspace', GITHUB_SHA='c' * 40,
+                VERSION='1.0.0', FAKE_REPOSITORY='ghcr.io/arijit634/notes-knowledge-workspace'+suffix,
                 GITHUB_OUTPUT=(root / 'output').as_posix())
-            publish = step('Publish the same qualified image without rebuilding').split('        run: |\n', 1)[1]
+            publish = step(publish_name, workflow).split('        run: |\n', 1)[1]
             guard = 'set -euo pipefail\ntest "$(command -v docker)" -ef "$EXPECTED_DOCKER"\ntest "$(command -v python3)" -ef "$EXPECTED_PYTHON"\n'
             result = subprocess.run([bash, '--noprofile', '--norc', '-c', guard + textwrap.dedent(publish)],
                 cwd=root, env=env, capture_output=True, timeout=15)
             self.assertEqual(push_exit, result.returncode, 'Controlled publication exited unexpectedly')
             self.assertTrue(auth.exists(), 'Registry credentials must remain for the attestation/verification steps')
-            cleanup = step('Clear ephemeral registry credentials')
+            cleanup = step('Clear ephemeral registry credentials', workflow)
             self.assertIn('        if: always()\n', cleanup)
             command = cleanup.split('        run: ', 1)[1].strip()
             result = subprocess.run([bash, '--noprofile', '--norc', '-c', guard + command],
@@ -71,13 +79,16 @@ class PublicationAuthTests(unittest.TestCase):
             self.assertFalse(auth.exists(), 'Final cleanup must clear registry credentials')
 
     def test_success_keeps_credentials_until_attestations_then_cleans_up(self):
-        self.run_transport(0)
-        workflow = WORKFLOW.read_text()
-        self.assertLess(workflow.index('      - name: Verify publication provenance'),
-            workflow.index('      - name: Clear ephemeral registry credentials'))
+        for target in TARGETS:
+            with self.subTest(workflow=target[0].name):
+                self.run_transport(0,target)
+                workflow=target[0].read_text()
+                self.assertLess(workflow.index('      - name: '+target[2]),
+                    workflow.index('      - name: Clear ephemeral registry credentials'))
 
     def test_failed_publication_still_has_unconditional_final_cleanup(self):
-        self.run_transport(17)
+        for target in TARGETS:
+            with self.subTest(workflow=target[0].name):self.run_transport(17,target)
 
 
 if __name__ == '__main__':

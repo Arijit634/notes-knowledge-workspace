@@ -89,6 +89,21 @@ class OperationsContracts(unittest.TestCase):
 
 
 class ReleaseContracts(unittest.TestCase):
+    def test_candidate_requires_current_measured_schema_and_relation_evidence(self):
+        source='a'*40;image='sha256:'+'b'*64
+        security=dict(image=image,scanExit=0,secretFindingCount=0,releaseGatePassed=True)
+        sbom=dict(image=image,format='CycloneDX',explicitShippedArtifacts=6,sha256='c'*64)
+        smoke=dict(passed=True,deploymentImage=image,productionJar=True,schemaVersion=20,relations=39,migrations=20,
+            containerProfileSha256='d'*64,events=[dict(step='encrypted_backup_restore',runtimeQuarantined=True,tamperRefused=True)])
+        def docker(*args):return 'arm64' if args[-2]=='{{.Architecture}}' else source
+        with patch.object(release,'command',side_effect=docker):
+            result=release.candidate(source,image,security,sbom,smoke)
+            self.assertEqual((20,39),(result['schemaVersion'],result['relations']))
+            for field,old in [('schemaVersion',19),('relations',38),('migrations',19)]:
+                stale=dict(smoke);stale[field]=old
+                with self.subTest(field=field),self.assertRaisesRegex(ValueError,'current_schema_evidence_missing'):
+                    release.candidate(source,image,security,sbom,stale)
+
     def test_protected_main_gate_cannot_inherit_old_or_wrong_source_success(self):
         source='a'*40
         checks=[dict(id=n,name=name,head_sha=source,status='completed',conclusion='success',app=dict(id=15368))
