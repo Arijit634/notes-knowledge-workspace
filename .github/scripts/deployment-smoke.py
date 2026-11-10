@@ -50,6 +50,23 @@ def resource_plan(probe=None):
         '-XX:ActiveProcessorCount=1', '-XX:-HeapDumpOnOutOfMemoryError', '-XX:+ExitOnOutOfMemoryError']
 
 
+def readiness_observer_timeout(probe=None):
+    # Render cancels a new deployment after 15 minutes without readiness.
+    # This observer is not a native worker, request or provider deadline.
+    # https://render.com/docs/health-checks
+    return 900 if probe == 'render-startup' else 75
+
+
+def startup_signals(text):
+    """Fixed booleans only: no log text, identifiers or arbitrary values escape."""
+    return {name: marker in text for name, marker in (
+        ('bootBanner', ':: Spring Boot ::'),
+        ('tomcatInitialized', 'Tomcat initialized with port'),
+        ('webContextInitialized', 'Root WebApplicationContext: initialization completed'),
+        ('entityManagerInitialized', 'Initialized JPA EntityManagerFactory'),
+        ('applicationStarted', 'Started Application in '))}
+
+
 def require(value, code):
     if not value:
         raise RuntimeError(code)
@@ -230,6 +247,26 @@ def main(deployment, qualification, evidence, probe=None):
     def state(name):
         return json.loads(docker('inspect', '--format', '{{json .State}}', name).stdout)
 
+    def resource_snapshot(name):
+        result = docker('exec', name, '/bin/sh', '-c',
+            'cat /sys/fs/cgroup/memory.current /sys/fs/cgroup/memory.peak '
+            '/sys/fs/cgroup/pids.current /sys/fs/cgroup/pids.peak; '
+            'cat /sys/fs/cgroup/memory.events /sys/fs/cgroup/cpu.stat', check=False)
+        if result.returncode:
+            return dict(available=False)
+        lines = result.stdout.splitlines()
+        if len(lines) < 4 or not all(line.isdecimal() for line in lines[:4]):
+            return dict(available=False)
+        allowed = {'low', 'high', 'max', 'oom', 'oom_kill', 'oom_group_kill',
+            'usage_usec', 'user_usec', 'system_usec', 'nr_periods', 'nr_throttled', 'throttled_usec'}
+        counters = {}
+        for line in lines[4:]:
+            parts = line.split()
+            if len(parts) == 2 and parts[0] in allowed and parts[1].isdecimal():
+                counters[parts[0]] = int(parts[1])
+        return dict(available=True, memoryCurrentBytes=int(lines[0]), memoryPeakBytes=int(lines[1]),
+            processCurrent=int(lines[2]), processPeak=int(lines[3]), kernelCounters=counters)
+
     def measure(name):
         # cgroup peaks are kernel-accounted for the whole application process
         # tree, not just the parent JVM. Scratch is explicitly a point sample.
@@ -397,7 +434,7 @@ def main(deployment, qualification, evidence, probe=None):
         resources.append(endpoint)
         docker('start', endpoint)
         app, owner = start_app('service')
-        await_health(owner, 200, timeout=360 if probe else 75)
+        await_health(owner, 200, timeout=readiness_observer_timeout(probe))
         measure(app)
         require(management_probe(owner,'liveness')['httpStatus'] == 200, 'liveness_failed')
         if probe:
@@ -675,6 +712,8 @@ def main(deployment, qualification, evidence, probe=None):
                                  'ClassNotFoundException', 'NoClassDefFoundError', 'BeanDefinitionOverrideException',
                                  'ConflictingBeanDefinitionException')
                 states.append(dict(running=info['Running'], exitCode=info['ExitCode'], oomKilled=info['OOMKilled'],
+                    resources=resource_snapshot(name) if info['Running'] else dict(available=False),
+                    startupSignals=startup_signals(text),
                     databasePrivilegeDenied='permission denied' in text.lower(),
                     nativePreflightDenied='Media runtime preflight unavailable' in text,
                     configurationDenied='configuration unavailable' in text.lower(),

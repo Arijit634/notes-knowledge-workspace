@@ -36,6 +36,18 @@ class ResourceProbeContracts(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'unknown_resource_probe'):
             smoke.resource_plan('unbounded')
 
+    def test_observer_matches_host_window_without_changing_worker_limits(self):
+        self.assertEqual(75, smoke.readiness_observer_timeout())
+        self.assertEqual(900, smoke.readiness_observer_timeout('render-startup'))
+        self.assertEqual(75, smoke.readiness_observer_timeout('unknown'))
+
+    def test_startup_diagnostics_only_expose_fixed_booleans(self):
+        signals = smoke.startup_signals('private-value Started Application in 2 seconds')
+        self.assertTrue(signals['applicationStarted'])
+        self.assertFalse(signals['tomcatInitialized'])
+        self.assertTrue(all(isinstance(value, bool) for value in signals.values()))
+        self.assertNotIn('private-value', json.dumps(signals))
+
 
 class OperationsContracts(unittest.TestCase):
     def setUp(self):
