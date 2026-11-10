@@ -7,7 +7,8 @@ USER root
 RUN sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources \
     && apt-get update && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
-    build-essential pkg-config nasm xz-utils patch perl-base=5.40.1-6+deb13u1 \
+    build-essential pkg-config nasm xz-utils patch curl ca-certificates \
+    libbrotli-dev libbz2-dev libpng-dev zlib1g-dev perl-base=5.40.1-6+deb13u1 \
     libopenh264-dev=2.6.0+dfsg-2 \
     libfreetype6=2.13.3+dfsg-1+deb13u1 libfontconfig1=2.15.0-2.3 fonts-dejavu-core=2.37-8 \
     && mkdir -p /provenance/openh264-source \
@@ -16,6 +17,7 @@ RUN sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.s
 COPY jdk/ /jdk/
 COPY ffmpeg-9.0.2.tar.xz /source.tar.xz
 COPY native/ /native/
+RUN /bin/sh /native/build-media-libraries.sh
 RUN echo '8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e  /source.tar.xz' | sha256sum -c - \
     && mkdir /codec && tar -xJf /source.tar.xz -C /codec --strip-components=1 \
     && cd /codec && patch --fuzz=0 -p1 < /native/empty-metadata.patch \
@@ -96,6 +98,9 @@ COPY --from=build /provenance /provenance
 COPY --from=build /source.tar.xz /provenance/ffmpeg-9.0.2.tar.xz
 COPY --from=build /native/empty-metadata.patch /provenance/empty-metadata.patch
 COPY --from=build /application.jar /application.jar
+COPY --from=build /media-library-packages /tmp/controlled-media-libraries
+RUN dpkg -i /tmp/controlled-media-libraries/libexpat1.deb /tmp/controlled-media-libraries/libfreetype6.deb \
+    && ldconfig && rm -rf /tmp/controlled-media-libraries
 # The service never needs setuid/setgid utilities. Remove their privilege bits
 # as image-level defense in depth, independently of runtime no-new-privileges.
 RUN find /usr /opt /jdk -xdev -type f -perm /6000 -exec chmod a-s {} +
@@ -109,5 +114,6 @@ COPY --from=build /jdk /jdk
 COPY --from=build /qualification /qualification
 COPY --from=build /fixtures /fixtures
 COPY --from=build /native-diagnostics/pdf-diagnostic-helper /qualification/pdf-diagnostic-helper
+COPY --from=build /native-diagnostics/media-library-versions /qualification/media-library-versions
 USER 65533:65533
 ENTRYPOINT ["/jdk/bin/java"]

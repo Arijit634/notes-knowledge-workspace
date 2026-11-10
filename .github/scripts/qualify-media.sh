@@ -7,6 +7,7 @@ test ! -e "$context"
 mkdir -p "$context/artifacts/classes" "$context/artifacts/libraries" "$context/controller" "$context/native"
 cp -a "$JAVA_HOME" "$context/jdk"
 cp src/main/native/*.c src/main/native/empty-metadata.patch "$context/native/"
+cp src/main/native/build-media-libraries.sh "$context/native/"
 # Frozen synthetic AAC fixture, also exercised by the upload/decoder regressions.
 cp src/test/resources/attachments/synthetic-aac-video.mp4 "$context/native/audio-preflight.mp4"
 cp target/notes-knowledge-workspace-0.0.1-SNAPSHOT.jar "$context/application.jar"
@@ -76,6 +77,8 @@ package_versions={p['name'].split(':')[0]:p['version'] for p in os_packages}
 assert package_versions['perl-base']=='5.40.1-6+deb13u1'
 assert package_versions['libpcre2-8-0']=='10.46-1~deb13u3'
 assert package_versions['libopenh264-8']=='2.6.0+dfsg-2'
+assert package_versions['libfreetype6']=='2.15.0-0nkw1'
+assert package_versions['libexpat1']=='2.10.0-0nkw1'
 assert not any(p.startswith(('nodejs','npm')) for p in package_versions)
 # Preserve the raw scanner finding. This independently inspects the shipped
 # binary for the specific contrib/minizip entry point described by Debian.
@@ -97,6 +100,7 @@ print(json.dumps(dict(releaseInventory=True,deploymentImage=image,user='65533:65
     codecLegalClearance=False)))
 PY
 common=(run --rm --init --network none --user 65533:65533 --cap-drop ALL --security-opt no-new-privileges --read-only --memory=1g --cpus=2 --pids-limit=300 --tmpfs /tmp:rw,noexec,nosuid,nodev,size=192m)
+docker "${common[@]}" --entrypoint /qualification/media-library-versions "$image"
 cp='/qualification:/opt/pdf/artifacts/classes:/qualification/libraries/*'
 docker "${common[@]}" "$image" -Xmx192m -cp "$cp" org.notesknowledge.notes.NativePdfStartupDiagnostic /opt/pdf
 helper_hash="$(docker "${common[@]}" --entrypoint sha256sum "$image" /opt/pdf/helper | cut -d ' ' -f 1)"
