@@ -28,10 +28,11 @@ RUN echo '8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e  /sou
        --enable-parser=h264,aac --enable-encoder=libopenh264,pcm_s16le --enable-bsf=h264_mp4toannexb \
        --enable-filter=format,null,scale,setsar,setpts,trim,testsrc,color,aresample,apad,atrim,asetpts,aformat --enable-indev=lavfi \
     && make -j2 && make install
-RUN mkdir -p /opt/pdf /opt/video /fixtures /provenance /native-diagnostics \
+RUN mkdir -p /opt/pdf /opt/video /opt/operations /fixtures /provenance /native-diagnostics \
     && gcc -std=c11 -O2 -Wall -Wextra -Werror=implicit-function-declaration -o /opt/pdf/helper /native/pdf-sandbox.c \
     && gcc -std=c11 -O2 -Wall -Wextra -Werror=implicit-function-declaration -o /opt/video/helper /native/video-sandbox.c \
     && gcc -std=c11 -O2 -Wall -Wextra -DPDF_SANDBOX_DIAGNOSTIC -o /native-diagnostics/pdf-diagnostic-helper /native/pdf-sandbox.c \
+    && gcc -std=c11 -O2 -Wall -Wextra -Werror -o /opt/operations/health-probe /native/health-probe.c \
     && /jdk/bin/jlink --add-modules java.base,java.desktop,java.logging,java.xml \
        --strip-debug --no-header-files --no-man-pages --compress=zip-6 --output /tmp/pdf-linked-runtime \
     && cp -rL /tmp/pdf-linked-runtime /opt/pdf/runtime \
@@ -75,9 +76,9 @@ RUN /jdk/bin/jdeps -J-Xmx256m --multi-release 25 --ignore-missing-deps --recursi
     && /service-runtime/bin/java --list-modules > /provenance/service-modules.txt \
     && for module in $(tr ',' ' ' < /provenance/service-required-modules.txt); do \
          grep -q "^${module}@" /provenance/service-modules.txt || exit 1; done
-RUN chown -R 0:0 /opt/pdf /opt/video /qualification /fixtures /provenance \
-    && chmod -R go-w /opt/pdf /opt/video /qualification /fixtures /provenance \
-    && find /opt/pdf /opt/video -type f -exec sha256sum {} \; > /provenance/runtime-files.sha256
+RUN chown -R 0:0 /opt/pdf /opt/video /opt/operations /qualification /fixtures /provenance \
+    && chmod -R go-w /opt/pdf /opt/video /opt/operations /qualification /fixtures /provenance \
+    && find /opt/pdf /opt/video /opt/operations -type f -exec sha256sum {} \; > /provenance/runtime-files.sha256
 RUN /jdk/bin/java -cp '/qualification:/opt/pdf/artifacts/classes:/opt/pdf/artifacts/libraries/*' \
     org.notesknowledge.notes.MediaRuntimeImageDescriptor /provenance/runtime-selection.properties
 # A separate runtime image omits the compiler/build tree. Qualification adds
@@ -94,6 +95,7 @@ RUN apt-get update && apt-get upgrade -y --no-install-recommends && apt-get inst
 COPY --from=build /service-runtime /jdk
 COPY --from=build /opt/pdf /opt/pdf
 COPY --from=build /opt/video /opt/video
+COPY --from=build /opt/operations /opt/operations
 COPY --from=build /provenance /provenance
 COPY --from=build /source.tar.xz /provenance/ffmpeg-9.0.2.tar.xz
 COPY --from=build /native/empty-metadata.patch /provenance/empty-metadata.patch
@@ -101,10 +103,13 @@ COPY --from=build /application.jar /application.jar
 COPY --from=build /media-library-packages /tmp/controlled-media-libraries
 RUN dpkg -i /tmp/controlled-media-libraries/libexpat1.deb /tmp/controlled-media-libraries/libfreetype6.deb \
     && ldconfig && rm -rf /tmp/controlled-media-libraries
+COPY --from=build /native/minimize-runtime-tools.sh /tmp/minimize-runtime-tools.sh
 # The service never needs setuid/setgid utilities. Remove their privilege bits
 # as image-level defense in depth, independently of runtime no-new-privileges.
 RUN find /usr /opt /jdk -xdev -type f -perm /6000 -exec chmod a-s {} +
+RUN /bin/sh /tmp/minimize-runtime-tools.sh && rm /tmp/minimize-runtime-tools.sh
 USER 65533:65533
+HEALTHCHECK --interval=30s --start-period=15m --start-interval=30s --timeout=4s --retries=3 CMD ["/opt/operations/health-probe"]
 ENTRYPOINT ["/jdk/bin/java", "-jar", "/application.jar"]
 # No registry publication is performed. A release must separately reconcile
 # redistribution, source availability/notice obligations AND codec patent rights.

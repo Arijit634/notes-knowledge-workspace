@@ -120,7 +120,7 @@ class ReleaseContracts(unittest.TestCase):
     def test_candidate_requires_current_measured_schema_and_relation_evidence(self):
         source='a'*40;image='sha256:'+'b'*64
         security=dict(image=image,scanExit=0,secretFindingCount=0,releaseGatePassed=True)
-        sbom=dict(image=image,format='CycloneDX',explicitShippedArtifacts=8,sha256='c'*64)
+        sbom=dict(image=image,format='CycloneDX',explicitShippedArtifacts=9,sha256='c'*64)
         smoke=dict(passed=True,deploymentImage=image,productionJar=True,schemaVersion=20,relations=39,migrations=20,
             containerProfileSha256='d'*64,events=[dict(step='encrypted_backup_restore',runtimeQuarantined=True,tamperRefused=True)])
         def docker(*args):return 'arm64' if args[-2]=='{{.Architecture}}' else source
@@ -129,6 +129,8 @@ class ReleaseContracts(unittest.TestCase):
             self.assertEqual((20,39),(result['schemaVersion'],result['relations']))
             with self.assertRaisesRegex(ValueError, 'exact_sbom_missing'):
                 release.candidate(source,image,security,dict(sbom,explicitShippedArtifacts=6),smoke)
+            with self.assertRaisesRegex(ValueError, 'exact_sbom_missing'):
+                release.candidate(source,image,security,dict(sbom,explicitShippedArtifacts=8),smoke)
             with self.assertRaisesRegex(ValueError, 'resource_probe_is_not_release_qualification'):
                 release.candidate(source,image,security,sbom,dict(smoke,feasibilityOnly=True))
             for field,old in [('schemaVersion',19),('relations',38),('migrations',19)]:

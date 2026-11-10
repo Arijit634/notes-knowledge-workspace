@@ -9,6 +9,7 @@ mkdir -p "$context/artifacts/classes" "$context/artifacts/libraries" "$context/c
 cp -a "$JAVA_HOME" "$context/jdk"
 cp src/main/native/*.c src/main/native/empty-metadata.patch "$context/native/"
 cp src/main/native/build-media-libraries.sh "$context/native/"
+cp src/main/native/minimize-runtime-tools.sh "$context/native/"
 cp src/test/resources/attachments/synthetic-aac-video.mp4 "$context/native/audio-preflight.mp4"
 cp target/notes-knowledge-workspace-0.0.1-SNAPSHOT.jar "$context/application.jar"
 (cd "$context" && "$JAVA_HOME/bin/jar" xf application.jar BOOT-INF)

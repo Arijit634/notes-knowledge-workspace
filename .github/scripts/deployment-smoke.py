@@ -310,6 +310,8 @@ def main(deployment, qualification, evidence, probe=None):
                 result = management_probe(browser, 'readiness')
                 observed = None if result is None else result['httpStatus']
                 if observed == expected:
+                    probe_result = docker('exec', browser.container, '/opt/operations/health-probe', check=False)
+                    require(probe_result.returncode == (0 if expected == 200 else 1), 'native_health_probe_disagrees')
                     return
             except (OSError, urllib.error.URLError):
                 pass
@@ -444,7 +446,7 @@ def main(deployment, qualification, evidence, probe=None):
                 smtpEnabled=False, deploymentImage=deployment, productionJar=True, testApplicationBeans=False,
                 memoryBytes=container_profile['memoryBytes'], nanoCpus=container_profile['nanoCpus'],
                 jvmArguments=jvm_arguments, resourceMeasurements=measurements, liveProviderCalls=0,
-                nativeWorkerLimitsUnchanged=True, rawApplicationLogsExcluded=True)
+                nativeWorkerLimitsUnchanged=True, nativeHealthProbePassed=True, rawApplicationLogsExcluded=True)
             (output / 'native-budget-feasibility.json').write_text(json.dumps(receipt, indent=2) + '\n')
             event('resource_probe_complete', startupPassed=True, feasibilityOnly=True, releaseEligible=False)
             return

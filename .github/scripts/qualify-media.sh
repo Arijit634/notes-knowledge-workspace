@@ -2,12 +2,14 @@
 set -euo pipefail
 test "$(id -u)" != 0
 case "$(uname -m)" in x86_64|aarch64) ;; *) exit 1 ;; esac
+python3 .github/scripts/test-health-probe.py
 context="$RUNNER_TEMP/media-context"
 test ! -e "$context"
 mkdir -p "$context/artifacts/classes" "$context/artifacts/libraries" "$context/controller" "$context/native"
 cp -a "$JAVA_HOME" "$context/jdk"
 cp src/main/native/*.c src/main/native/empty-metadata.patch "$context/native/"
 cp src/main/native/build-media-libraries.sh "$context/native/"
+cp src/main/native/minimize-runtime-tools.sh "$context/native/"
 # Frozen synthetic AAC fixture, also exercised by the upload/decoder regressions.
 cp src/test/resources/attachments/synthetic-aac-video.mp4 "$context/native/audio-preflight.mp4"
 cp target/notes-knowledge-workspace-0.0.1-SNAPSHOT.jar "$context/application.jar"

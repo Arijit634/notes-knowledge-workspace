@@ -58,7 +58,7 @@ docker run --rm --memory=2g --cpus=2 -v /var/run/docker.sock:/var/run/docker.soc
   "${database_flags[@]}" --timeout 5m --format cyclonedx --output /evidence/deployment.cdx.json "$deployment"
 docker run --rm --network none --user 65533:65533 --cap-drop ALL --security-opt no-new-privileges --read-only \
   --entrypoint sha256sum "$deployment" /opt/video/tools/bin/ffmpeg /opt/video/tools/bin/ffprobe \
-  /opt/pdf/helper /opt/video/helper /jdk/lib/modules /application.jar > "$security/shipped-artifacts.sha256"
+  /opt/pdf/helper /opt/video/helper /opt/operations/health-probe /jdk/lib/modules /application.jar > "$security/shipped-artifacts.sha256"
 docker run --rm --network none --user 65533:65533 --cap-drop ALL --security-opt no-new-privileges --read-only \
   --entrypoint /bin/sh "$deployment" -c \
   'case "$(uname -m)" in x86_64) triplet=x86_64-linux-gnu ;; aarch64) triplet=aarch64-linux-gnu ;; *) exit 1 ;; esac; sha256sum /usr/lib/$triplet/libfreetype.so.6 /usr/lib/$triplet/libexpat.so.1' >> "$security/shipped-artifacts.sha256"
@@ -75,6 +75,7 @@ for file,name,version in [('/opt/video/tools/bin/ffmpeg','ffmpeg','9.0.2'),
                           ('/opt/video/tools/bin/ffprobe','ffprobe','9.0.2'),
                           ('/opt/pdf/helper','pdf-sandbox-helper',None),
                           ('/opt/video/helper','video-sandbox-helper',None),
+                          ('/opt/operations/health-probe','fixed-loopback-health-probe',None),
                           ('/jdk/lib/modules','microsoft-jdk-runtime-modules','25.0.4.1'),
                           ('/application.jar','notes-knowledge-application-jar',None)]:
     component=dict(type='file',name=name,**{'bom-ref':'urn:nkw:artifact:'+name+':'+shipped[file]},
@@ -101,7 +102,7 @@ for suffix,name,version in [('/libfreetype.so.6','freetype','2.15.0'),('/libexpa
             dict(name='nkw:inventory:origin',value='controlled-upstream-security-build'),
             dict(name='nkw:scanner:coverage',value='explicit-binary-and-source-provenance; not invented scanner coverage')]))
     root_dependency['dependsOn'].append(ref)
-assert len(shipped)==8 and len({c['bom-ref'] for c in data['components']})==len(data['components'])
+assert len(shipped)==9 and len({c['bom-ref'] for c in data['components']})==len(data['components'])
 data['version']=data.get('version',1)+1
 data['metadata'].setdefault('properties',[]).append(dict(name='nkw:sbom:augmentation',
     value='Explicit shipped JAR/JRE/native binary hashes; not additional scanner vulnerability coverage'))
@@ -113,7 +114,7 @@ with augmented.open('x') as output: output.write(json.dumps(data,indent=2)+'\n')
 augmented.replace(path)
 (root/'shipped-artifacts.sha256').unlink()
 receipt=dict(releaseSbom=True,image=sys.argv[2],format='CycloneDX',specVersion=data['specVersion'],
-    components=len(data['components']),explicitShippedArtifacts=8,manualNativeVulnerabilityCoverageClaimed=False,
+    components=len(data['components']),explicitShippedArtifacts=9,manualNativeVulnerabilityCoverageClaimed=False,
     sha256=hashlib.sha256(path.read_bytes()).hexdigest(),registryPublished=False,signedAttestation=False)
 (root/'sbom-receipt.json').write_text(json.dumps(receipt,indent=2)+'\n');print(json.dumps(receipt))
 PY

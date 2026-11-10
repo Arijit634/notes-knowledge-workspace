@@ -141,6 +141,7 @@ jobs:
           test "$SMALL_HOST" = false && test "$SMALL_BUNDLE" = false
           test "$(uname -m)" = x86_64
           python3 .github/scripts/test-operations.py
+          python3 .github/scripts/test-health-probe.py
       - name: Install checksum-pinned native JDK
         run: bash .github/scripts/media-jdk.sh
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
