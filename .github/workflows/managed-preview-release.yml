@@ -49,7 +49,7 @@ jobs:
           test "$(uname -m)" = x86_64
           bash -n .github/deploy/managed-preview/start.sh
           python3 -m py_compile .github/deploy/managed-preview/smoke.py
-          python3 -m unittest discover -s .github/deploy/managed-preview -p test_smoke.py
+          python3 -m unittest discover -s .github/deploy/managed-preview -p 'test_*.py'
           docker build --build-arg "SOURCE_SHA=$GITHUB_SHA" --iidfile "$RUNNER_TEMP/preview-image" -f .github/deploy/managed-preview/Dockerfile .
       - name: Scan the actual image and retain only safe aggregate counts
         run: |
@@ -82,15 +82,9 @@ jobs:
           image="$(cat "$RUNNER_TEMP/preview-image")"
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock:ro -v "$RUNNER_TEMP:/evidence" \
             ghcr.io/aquasecurity/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa \
-            image --format cyclonedx --list-all-pkgs --output /evidence/preview.cdx.json "$image"
+            image --format cyclonedx --output /evidence/preview-raw.cdx.json "$image"
           docker run --rm --network none --entrypoint redis-server "$image" --version | grep -F 'v=8.10.2'
-          python3 - <<'PY'
-          import json,os,pathlib
-          path=pathlib.Path(os.environ['RUNNER_TEMP'])/'preview.cdx.json'
-          document=json.loads(path.read_text())
-          document.setdefault('components',[]).append(dict(type='application',name='redis-server',version='8.10.2',properties=[dict(name='nkw:unmodified-source-sha256',value='ae6973de9b6ad8e6cf21b1e764abccab59200689af6aabce10d4cf6bbb2e253f')]))
-          path.write_text(json.dumps(document))
-          PY
+          python3 .github/deploy/managed-preview/complete_sbom.py
       - name: Publish the same qualified image without rebuilding
         if: inputs.publish && inputs.zero_cost_ghcr_verified
         id: publication
