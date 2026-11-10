@@ -19,6 +19,34 @@ def load(name, file):
 
 ops = load('operations_plan', 'operations-plan.py')
 release = load('release_guard', 'release-guard.py')
+smoke = load('deployment_smoke', 'deployment-smoke.py')
+
+
+class ResourceProbeContracts(unittest.TestCase):
+    def test_explicit_startup_probe_does_not_mutate_the_approved_release_profile(self):
+        normal, default_jvm = smoke.resource_plan()
+        limited, limited_jvm = smoke.resource_plan('render-startup')
+        self.assertEqual((2147483648, 2000000000), (normal['memoryBytes'], normal['nanoCpus']))
+        self.assertEqual(['-Xmx512m'], default_jvm)
+        self.assertEqual((536870912, 100000000), (limited['memoryBytes'], limited['nanoCpus']))
+        for field in ('user','readOnly','pidsLimit','capDrop','securityOpt','tmpfs','stopTimeoutSeconds'):
+            self.assertEqual(normal[field], limited[field])
+        self.assertIn('-XX:+ExitOnOutOfMemoryError', limited_jvm)
+        self.assertEqual((normal, default_jvm), smoke.resource_plan())
+        with self.assertRaisesRegex(RuntimeError, 'unknown_resource_probe'):
+            smoke.resource_plan('unbounded')
+
+    def test_observer_matches_host_window_without_changing_worker_limits(self):
+        self.assertEqual(75, smoke.readiness_observer_timeout())
+        self.assertEqual(900, smoke.readiness_observer_timeout('render-startup'))
+        self.assertEqual(75, smoke.readiness_observer_timeout('unknown'))
+
+    def test_startup_diagnostics_only_expose_fixed_booleans(self):
+        signals = smoke.startup_signals('private-value Started Application in 2 seconds')
+        self.assertTrue(signals['applicationStarted'])
+        self.assertFalse(signals['tomcatInitialized'])
+        self.assertTrue(all(isinstance(value, bool) for value in signals.values()))
+        self.assertNotIn('private-value', json.dumps(signals))
 
 
 class OperationsContracts(unittest.TestCase):
@@ -99,6 +127,8 @@ class ReleaseContracts(unittest.TestCase):
         with patch.object(release,'command',side_effect=docker):
             result=release.candidate(source,image,security,sbom,smoke)
             self.assertEqual((20,39),(result['schemaVersion'],result['relations']))
+            with self.assertRaisesRegex(ValueError, 'resource_probe_is_not_release_qualification'):
+                release.candidate(source,image,security,sbom,dict(smoke,feasibilityOnly=True))
             for field,old in [('schemaVersion',19),('relations',38),('migrations',19)]:
                 stale=dict(smoke);stale[field]=old
                 with self.subTest(field=field),self.assertRaisesRegex(ValueError,'current_schema_evidence_missing'):

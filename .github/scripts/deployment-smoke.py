@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Disposable Linux smoke of the actual deployment JAR/factories, not a Spring test context.
 
-Usage: deployment-smoke.py DEPLOYMENT_IMAGE QUALIFICATION_IMAGE NEW_EVIDENCE_DIRECTORY
+Usage: deployment-smoke.py DEPLOYMENT_IMAGE QUALIFICATION_IMAGE NEW_EVIDENCE_DIRECTORY [render-startup]
 Only the endpoint/migration fixture process uses the qualification image. The service
 gets no test classes, Docker socket, host credentials, external providers or network egress.
 """
@@ -32,6 +32,39 @@ import zlib
 HOST = 'syntheticnamespace.compat.objectstorage.ap-mumbai-1.oci.customer-oci.com'
 PASSWORD = 'Synthetic-smoke-password-731!'
 STORAGES = ('notes.private-storage', 'profile.avatar-storage', 'profile.public-avatar-storage', 'publishing.media-storage')
+
+
+def resource_plan(probe=None):
+    """An explicit diagnostic profile never changes the normal release profile."""
+    path = pathlib.Path(__file__).resolve().parents[2] / 'src/main/resources/operations/container-profile.json'
+    profile = json.loads(path.read_text())
+    require(profile['memoryBytes'] == 2 * 1024 ** 3 and profile['nanoCpus'] == 2 * 10 ** 9
+            and profile['pidsLimit'] == 512, 'approved_container_profile_required')
+    if probe is None:
+        return profile, ['-Xmx512m']
+    require(probe == 'render-startup', 'unknown_resource_probe')
+    profile['memoryBytes'] = 512 * 1024 ** 2
+    profile['nanoCpus'] = 100_000_000
+    return profile, ['-Xmx160m', '-XX:MaxDirectMemorySize=16m', '-XX:MaxMetaspaceSize=192m',
+        '-XX:ReservedCodeCacheSize=32m', '-XX:TieredStopAtLevel=1', '-XX:+UseSerialGC', '-Xss512k',
+        '-XX:ActiveProcessorCount=1', '-XX:-HeapDumpOnOutOfMemoryError', '-XX:+ExitOnOutOfMemoryError']
+
+
+def readiness_observer_timeout(probe=None):
+    # Render cancels a new deployment after 15 minutes without readiness.
+    # This observer is not a native worker, request or provider deadline.
+    # https://render.com/docs/health-checks
+    return 900 if probe == 'render-startup' else 75
+
+
+def startup_signals(text):
+    """Fixed booleans only: no log text, identifiers or arbitrary values escape."""
+    return {name: marker in text for name, marker in (
+        ('bootBanner', ':: Spring Boot ::'),
+        ('tomcatInitialized', 'Tomcat initialized with port'),
+        ('webContextInitialized', 'Root WebApplicationContext: initialization completed'),
+        ('entityManagerInitialized', 'Initialized JPA EntityManagerFactory'),
+        ('applicationStarted', 'Started Application in '))}
 
 
 def require(value, code):
@@ -122,13 +155,13 @@ def synthetic_png():
             + chunk(b'IDAT', zlib.compress((b'\x00' + b'\x00\x00\xff' * 16) * 16)) + chunk(b'IEND', b''))
 
 
-def main(deployment, qualification, evidence):
+def main(deployment, qualification, evidence, probe=None):
     require(platform.system() == 'Linux', 'native_linux_required')
     require(deployment.startswith('sha256:') and qualification.startswith('sha256:'), 'exact_images_required')
     output = pathlib.Path(evidence).resolve()
     output.mkdir(exist_ok=False, parents=True)
     profile_file = pathlib.Path(__file__).resolve().parents[2] / 'src/main/resources/operations/container-profile.json'
-    container_profile = json.loads(profile_file.read_text())
+    container_profile, jvm_arguments = resource_plan(probe)
     temporary = pathlib.Path(tempfile.mkdtemp(prefix='backend-smoke-', dir=os.environ['RUNNER_TEMP'])).resolve()
     service_config = temporary / 'service-config'
     service_config.mkdir(mode=0o755)
@@ -187,7 +220,7 @@ def main(deployment, qualification, evidence):
             args += ['--log-opt', key + '=' + value]
         for directory, options in container_profile['tmpfs'].items():
             args += ['--tmpfs', directory + ':' + options]
-        args += ['--entrypoint', '/jdk/bin/java', deployment, '-Xmx512m',
+        args += ['--entrypoint', '/jdk/bin/java', deployment, *jvm_arguments,
                  '-Djavax.net.ssl.trustStore=/config/trust.p12', '-Djavax.net.ssl.trustStorePassword=synthetic-keystore-password',
                  '-jar', '/application.jar', '--spring.config.additional-location=file:/config/' + label + '.properties']
         docker(*args)
@@ -195,7 +228,7 @@ def main(deployment, qualification, evidence):
         profile = json.loads(docker('inspect', name).stdout)[0]
         limits = profile['HostConfig']
         require(profile['Config']['User'] == '65533:65533' and limits['ReadonlyRootfs']
-                and limits['Memory'] == 2 * 1024 ** 3 and limits['NanoCpus'] == 2 * 10 ** 9
+                and limits['Memory'] == container_profile['memoryBytes'] and limits['NanoCpus'] == container_profile['nanoCpus']
                 and limits['PidsLimit'] == 512 and limits['CapDrop'] == ['ALL']
                 and any(value.startswith('no-new-privileges') for value in limits['SecurityOpt'])
                 and not limits.get('PortBindings')
@@ -214,6 +247,26 @@ def main(deployment, qualification, evidence):
     def state(name):
         return json.loads(docker('inspect', '--format', '{{json .State}}', name).stdout)
 
+    def resource_snapshot(name):
+        result = docker('exec', name, '/bin/sh', '-c',
+            'cat /sys/fs/cgroup/memory.current /sys/fs/cgroup/memory.peak '
+            '/sys/fs/cgroup/pids.current /sys/fs/cgroup/pids.peak; '
+            'cat /sys/fs/cgroup/memory.events /sys/fs/cgroup/cpu.stat', check=False)
+        if result.returncode:
+            return dict(available=False)
+        lines = result.stdout.splitlines()
+        if len(lines) < 4 or not all(line.isdecimal() for line in lines[:4]):
+            return dict(available=False)
+        allowed = {'low', 'high', 'max', 'oom', 'oom_kill', 'oom_group_kill',
+            'usage_usec', 'user_usec', 'system_usec', 'nr_periods', 'nr_throttled', 'throttled_usec'}
+        counters = {}
+        for line in lines[4:]:
+            parts = line.split()
+            if len(parts) == 2 and parts[0] in allowed and parts[1].isdecimal():
+                counters[parts[0]] = int(parts[1])
+        return dict(available=True, memoryCurrentBytes=int(lines[0]), memoryPeakBytes=int(lines[1]),
+            processCurrent=int(lines[2]), processPeak=int(lines[3]), kernelCounters=counters)
+
     def measure(name):
         # cgroup peaks are kernel-accounted for the whole application process
         # tree, not just the parent JVM. Scratch is explicitly a point sample.
@@ -225,7 +278,7 @@ def main(deployment, qualification, evidence):
         memory, pids = int(lines[0]), int(lines[1])
         cpu = {key: int(value) for key, value in (line.split() for line in lines[2:-3])}
         scratch = [int(line.split()[0]) * 1024 for line in lines[-3:]]
-        require(0 < memory <= 2 * 1024 ** 3 and 0 < pids <= 512
+        require(0 < memory <= container_profile['memoryBytes'] and 0 < pids <= 512
                 and all(value <= limit for value, limit in zip(scratch, [4 * 1024 ** 2, 4 * 1024 ** 2, 192 * 1024 ** 2])),
                 'observed_resource_budget_exceeded')
         # Trixie's OS utilities add a SQLite library. Do not infer absence of
@@ -353,6 +406,11 @@ def main(deployment, qualification, evidence):
                            'notes.media-runtime.video.enabled': 'true', 'notes.media-runtime.pdf.recovery-directory': '/private/pdf-recovery',
                            'notes.media-runtime.video.recovery-directory': '/private/video-recovery',
                            'notes.media-runtime.video.scratch-directory': '/private/video-scratch'})
+        if probe:
+            # Match an HTTPS edge terminating outside the backend, without
+            # changing native worker limits or introducing a public listener.
+            properties.update({'server.address': '127.0.0.1', 'server.port': '8080',
+                               'server.ssl.enabled': 'false', 'spring.datasource.hikari.maximum-pool-size': '2'})
         for key in ['notes.cursor.active.key-base64', 'identity.rate.key-base64', 'identity.delivery.key-base64',
                     'identity.mfa.key-base64', 'identity.mfa.handle-key-base64', 'identity.session-handle.key-base64', 'publishing.preview.key-base64']:
             value = base64.b64encode(secrets.token_bytes(32)).decode()
@@ -376,9 +434,20 @@ def main(deployment, qualification, evidence):
         resources.append(endpoint)
         docker('start', endpoint)
         app, owner = start_app('service')
-        await_health(owner, 200)
+        await_health(owner, 200, timeout=readiness_observer_timeout(probe))
         measure(app)
         require(management_probe(owner,'liveness')['httpStatus'] == 200, 'liveness_failed')
+        if probe:
+            stop_app(app)
+            receipt = dict(feasibilityOnly=True, probe=probe, startupPassed=True, releaseEligible=False,
+                allFeaturesQualified=False, combinedAppProxyRedisQualified=False, aiProviderEnabled=False,
+                smtpEnabled=False, deploymentImage=deployment, productionJar=True, testApplicationBeans=False,
+                memoryBytes=container_profile['memoryBytes'], nanoCpus=container_profile['nanoCpus'],
+                jvmArguments=jvm_arguments, resourceMeasurements=measurements, liveProviderCalls=0,
+                nativeWorkerLimitsUnchanged=True, rawApplicationLogsExcluded=True)
+            (output / 'native-budget-feasibility.json').write_text(json.dumps(receipt, indent=2) + '\n')
+            event('resource_probe_complete', startupPassed=True, feasibilityOnly=True, releaseEligible=False)
+            return
         require(owner.request('GET', '/actuator/env')[0] in (401, 403, 404), 'operational_details_exposed')
         event('production_startup', nativePreflight=True, testApplicationBeans=False, liveProviders=False)
         for browser, email in [(owner, 'synthetic-owner@example.test'), (Browser(owner.origin, str(temporary / 'certificate.pem'), owner.peer), 'synthetic-other@example.test')]:
@@ -643,6 +712,8 @@ def main(deployment, qualification, evidence):
                                  'ClassNotFoundException', 'NoClassDefFoundError', 'BeanDefinitionOverrideException',
                                  'ConflictingBeanDefinitionException')
                 states.append(dict(running=info['Running'], exitCode=info['ExitCode'], oomKilled=info['OOMKilled'],
+                    resources=resource_snapshot(name) if info['Running'] else dict(available=False),
+                    startupSignals=startup_signals(text),
                     databasePrivilegeDenied='permission denied' in text.lower(),
                     nativePreflightDenied='Media runtime preflight unavailable' in text,
                     configurationDenied='configuration unavailable' in text.lower(),
@@ -654,7 +725,8 @@ def main(deployment, qualification, evidence):
             if pathlib.Path(frame.tb_frame.f_code.co_filename).resolve() == pathlib.Path(__file__).resolve():
                 locations.append(dict(function=frame.tb_frame.f_code.co_name, line=frame.tb_lineno))
             frame = frame.tb_next
-        (output / 'deployment-smoke-failure.json').write_text(json.dumps(dict(passed=False, code=code,
+        (output / 'deployment-smoke-failure.json').write_text(json.dumps(dict(passed=False, code=code, feasibilityOnly=probe is not None,
+            requestedMemoryBytes=container_profile['memoryBytes'], requestedNanoCpus=container_profile['nanoCpus'],
             exceptionType=type(failure).__name__, locations=locations, contractFailures=contract_failures, events=events, states=states)) + '\n')
         print(json.dumps(dict(deploymentSmoke=True, passed=False, code=code)), flush=True)
         raise RuntimeError(code) from None
@@ -686,8 +758,8 @@ def main(deployment, qualification, evidence):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) != 4:
-        raise SystemExit('Three explicit qualification arguments required')
+    if len(sys.argv) not in (4, 5):
+        raise SystemExit('Three qualification arguments and optional explicit resource probe required')
     try:
         main(*sys.argv[1:])
     except (RuntimeError, OSError, subprocess.SubprocessError):
