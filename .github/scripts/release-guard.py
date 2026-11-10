@@ -71,6 +71,7 @@ def candidate(source, image, security, sbom, smoke):
     require(security['releaseGatePassed'] is True, 'image_security_gate_failed')
     require(sbom['image'] == image and sbom['format'] == 'CycloneDX' and sbom['explicitShippedArtifacts'] == 6, 'exact_sbom_missing')
     require(smoke['passed'] is True and smoke['deploymentImage'] == image and smoke['productionJar'] is True, 'production_smoke_missing')
+    require(not smoke.get('feasibilityOnly', False), 'resource_probe_is_not_release_qualification')
     require(any(row['step'] == 'encrypted_backup_restore' and row['runtimeQuarantined'] and row['tamperRefused'] for row in smoke['events']), 'recovery_rehearsal_missing')
     require((smoke.get('schemaVersion'),smoke.get('relations'),smoke.get('migrations')) == (20,39,20), 'current_schema_evidence_missing')
     require(command('docker', 'image', 'inspect', '--format', '{{.Architecture}}', image) == 'arm64', 'native_arm64_required')
