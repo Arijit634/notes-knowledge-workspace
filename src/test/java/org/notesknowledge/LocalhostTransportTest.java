@@ -89,6 +89,13 @@ class LocalhostTransportTest {
         assertThatThrownBy(()->new LocalhostMode(e.withProperty("server.address","0.0.0.0"))).hasMessage("Protected loopback localhost configuration required");
         assertThatThrownBy(()->new LocalhostMode(syntheticAi().withProperty("knowledge.derivation.synthetic-workspace-owner","not-an-id"))).hasMessage("Protected loopback localhost configuration required");
     }
+    @Test void hostedConsentCannotReplaceTheProtectedLocalhostSyntheticPolicy() throws Exception {
+        var environment=syntheticAi().withProperty("knowledge.derivation.dispatch-policy","unpaid-nonsensitive-consent")
+                .withProperty("knowledge.derivation.approved-query-fingerprints","")
+                .withProperty("knowledge.derivation.approved-source-fingerprints","");
+        assertThatThrownBy(()->new LocalhostMode(environment))
+                .hasMessage("Protected loopback localhost configuration required").hasNoCause();
+    }
     @Test void syntheticAiCannotLoadAnUnownedBundleOrUnboundedApprovalList() throws Exception {
         var environment=syntheticAi();var outside=root.resolve("unapproved.json");Files.writeString(outside,"not an approved bundle");
         assertThatThrownBy(()->new LocalhostMode(environment.withProperty("knowledge.processing-disclosure.path",outside.toString())))
