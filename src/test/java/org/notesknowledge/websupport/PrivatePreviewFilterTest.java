@@ -43,6 +43,26 @@ class PrivatePreviewFilterTest {
             verify(chain).doFilter(request,response);verifyNoInteractions(problems);
         }
     }
+    @Test void fullHostedRequestsTraverseExistingProductSecurityRatherThanPreviewUnavailability() throws Exception {
+        for(String path:List.of("/api/knowledge/query","/api/public/explore","/api/moderation/reports",
+                "/api/auth/registrations","/api/me/security/mfa","/api/me/publications")) {
+            var problems=mock(ApiProblemWriter.class);var request=request(path);var response=new MockHttpServletResponse();
+            var chain=mock(jakarta.servlet.FilterChain.class);
+            new PrivatePreviewFilter(new PrivatePreview("preview.example.test",true),problems).doFilter(request,response,chain);
+            verify(chain).doFilter(request,response);verifyNoInteractions(problems);
+        }
+    }
+    @Test void fullHostedSelectionPreservesHostTlsAndPathDenial() throws Exception {
+        for(String mode:List.of("host","transport","encoding")) {
+            var problems=mock(ApiProblemWriter.class);var request=request("/api/public/explore");
+            if(mode.equals("host"))request.setServerName("untrusted.example.test");
+            if(mode.equals("transport"))request.setSecure(false);
+            if(mode.equals("encoding"))request.setRequestURI("/api/%70ublic/explore");
+            var response=new MockHttpServletResponse();var chain=mock(jakarta.servlet.FilterChain.class);
+            new PrivatePreviewFilter(new PrivatePreview("preview.example.test",true),problems).doFilter(request,response,chain);
+            verify(problems).writeMalformedRequest(request,response);verifyNoInteractions(chain);
+        }
+    }
     private MockHttpServletRequest request(String path) {
         var r=new MockHttpServletRequest("GET",path);r.setLocalPort(8080);r.setServerName("preview.example.test");r.setSecure(true);return r;
     }
