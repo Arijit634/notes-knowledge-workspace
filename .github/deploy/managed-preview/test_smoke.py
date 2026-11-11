@@ -11,6 +11,12 @@ spec=importlib.util.spec_from_file_location('managed_smoke',Path(__file__).with_
 smoke=importlib.util.module_from_spec(spec);spec.loader.exec_module(smoke)
 
 class ReadinessTests(unittest.TestCase):
+    def test_container_exit_diagnostic_excludes_configuration_and_raw_error(self):
+        data={'State':{'Running':False,'OOMKilled':True,'ExitCode':137,'Error':'synthetic-private-marker'},
+              'RestartCount':0,'Config':{'Env':['synthetic-private-marker']}}
+        self.assertEqual({'running':False,'oomKilled':True,'exitCode':137,'restarts':0},smoke.safe_container_state(data))
+        self.assertNotIn('synthetic-private-marker',json.dumps(smoke.safe_container_state(data)))
+
     def test_full_client_observes_edge_deadline_without_changing_legacy_observer(self):
         self.assertEqual(45,smoke.request_observer_timeout(False))
         self.assertEqual(130,smoke.request_observer_timeout(True))

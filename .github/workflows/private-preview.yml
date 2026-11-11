@@ -162,7 +162,7 @@ jobs:
       - name: Package production JAR and compile isolated controllers
         run: >-
           ./mvnw --batch-mode --no-transfer-progress -Pwith-frontend
-          -Dtest=MediaRuntimePropertiesTest,MediaRuntimeConfigurationTest,PostgresRecoveryCommandTest,OciPrivateAttachmentObjectStoreTest
+          -Dtest=MediaRuntimePropertiesTest,MediaRuntimeConfigurationTest,PostgresRecoveryCommandTest,OciPrivateAttachmentObjectStoreTest,CompactAttachmentParserTest
           package -q
       - name: Measure actual native startup at the Free host ceilings
         run: bash .github/scripts/probe-native-budget.sh

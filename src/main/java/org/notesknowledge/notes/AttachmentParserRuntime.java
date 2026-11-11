@@ -43,6 +43,9 @@ final class AttachmentParserRuntime implements AutoCloseable {
         this(false);
     }
     AttachmentParserRuntime(boolean extractPdfText) {
+        this(extractPdfText,System.getProperty("nkw.attachment-parser.profile","standard"));
+    }
+    AttachmentParserRuntime(boolean extractPdfText,String memoryProfile) {
         Path created = null;
         PipesForkParser started = null;
         try {
@@ -50,8 +53,8 @@ final class AttachmentParserRuntime implements AutoCloseable {
             Path json = resource(created, extractPdfText?"pdf-derivation-parser.json":"parser.json");
             Path logback = resource(created, "logback.xml");
             Path log4j = resource(created, "log4j2.xml");
-            var arguments = new ArrayList<>(List.of("-Xmx256m", "-XX:MaxDirectMemorySize=64m",
-                    "-XX:ActiveProcessorCount=2", "-Djava.awt.headless=true",
+            var arguments = new ArrayList<>(memoryArguments(memoryProfile));
+            arguments.addAll(List.of("-Djava.awt.headless=true",
                     "-Djava.io.tmpdir=" + created,
                     "-Dlogback.configurationFile=" + logback, "-Dlog4j.configurationFile=" + log4j,
                     "-cp", compactClasspath(created, childClasspath(created))));
@@ -72,6 +75,18 @@ final class AttachmentParserRuntime implements AutoCloseable {
             if (created != null) removeDirectory(created);
             throw unavailable(); // Never attach parser-controlled diagnostics as a cause.
         }
+    }
+
+    /** Fixed operator profiles only; no request supplies JVM flags. The compact
+     * profile bounds the extra parser process alongside the application. */
+    static List<String> memoryArguments(String profile) {
+        if ("standard".equals(profile)) return List.of("-Xmx256m", "-XX:MaxDirectMemorySize=64m",
+                "-XX:ActiveProcessorCount=2");
+        if ("compact-v1".equals(profile)) return List.of("-Xmx96m", "-XX:MaxDirectMemorySize=16m",
+                "-XX:MaxMetaspaceSize=96m", "-XX:ReservedCodeCacheSize=24m", "-Xss512k",
+                "-XX:ActiveProcessorCount=1", "-XX:+UseSerialGC", "-XX:TieredStopAtLevel=1",
+                "-XX:-HeapDumpOnOutOfMemoryError", "-XX:+ExitOnOutOfMemoryError");
+        throw unavailable();
     }
 
     record PdfExtraction(String xhtml,String emptyPages) { }

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Closed-egress native test of the actual rootless, single-container preview."""
 import base64
+import datetime
 import importlib.util
 import ipaddress
 import io
@@ -58,6 +59,11 @@ def safe_resource_observation(text):
         if len(fields)==2 and fields[0] in allowed and fields[1].isdecimal():counters[fields[0]]=int(fields[1])
     if not {'oom','oom_kill','usage_usec'}.issubset(counters):return dict(available=False)
     return dict(available=True,memoryCurrentBytes=int(lines[0]),memoryPeakBytes=int(lines[1]),counters=counters)
+
+def safe_container_state(metadata):
+    state=metadata['State']
+    return dict(running=state['Running'] is True,oomKilled=state['OOMKilled'] is True,
+        exitCode=int(state['ExitCode']),restarts=int(metadata['RestartCount']))
 
 def synthetic_pdf():
     """One fictional text page, with byte-accurate xref offsets for real validation."""
@@ -405,6 +411,8 @@ def main():
                     extra={'Content-Type':'multipart/form-data; boundary='+boundary},data=upload,stage='synthetic-upload-'+media)
                 if code!=201:
                     # Only fixed protocol facts, never the response body or upload.
+                    metadata=json.loads(run('docker','inspect',app))[0]
+                    container_state=safe_container_state(metadata)
                     snapshot=subprocess.run(['docker','exec',app,'/bin/sh','-c',
                         'cat /sys/fs/cgroup/memory.current /sys/fs/cgroup/memory.peak; '
                         'cat /sys/fs/cgroup/memory.events /sys/fs/cgroup/memory.stat /sys/fs/cgroup/cpu.stat'],
@@ -416,8 +424,17 @@ def main():
                     safe_code=problem.get('code')
                     if safe_code not in ('invalid_input','invalid_media','service_unavailable','request_too_large','rate_limited'):
                         safe_code='unclassified'
+                    events=subprocess.run(['docker','events','--since',metadata['Created'],
+                        '--until',datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                        '--filter','type=container','--filter','container='+app,'--filter','event=oom',
+                        '--format','{{.Action}}'],capture_output=True,text=True,timeout=10)
+                    logs=subprocess.run(['docker','logs','--tail','200',app],capture_output=True,text=True,timeout=10)
                     print(json.dumps(dict(syntheticUploadRejected=media,status=code,
                         problemCode=safe_code,resources=observation,
+                        containerState=container_state,
+                        containerOomEvents=sum(line.strip()=='oom' for line in events.stdout.splitlines())
+                            if events.returncode==0 else None,
+                        safeDiagnostics=safe_startup_diagnostics(logs.stdout+logs.stderr),
                         controlledTransportCounts=provider_control('/counts'))),flush=True)
                     raise ValueError('Authenticated synthetic upload failed')
                 if full:print(json.dumps(dict(syntheticUploadAccepted=media,seconds=authenticated_seconds[-1])),flush=True)

@@ -86,6 +86,8 @@ class FullBundleSupervisorTests(unittest.TestCase):
         self.assertEqual(1, result.returncode)
         self.assertIn('preview_constituent_stopped', result.stderr)
         self.assertIn('--spring.profiles.active=operations,private-preview,managed-preview,full-hosted\n', args)
+        self.assertIn('-Xmx128m\n', args)
+        self.assertIn('-Dnkw.attachment-parser.profile=compact-v1\n', args)
         self.assertIn('--knowledge.processing-disclosure.path=', args)
         self.assertIn('processing-disclosure.json\n', args)
         self.assertNotIn('preview-password', args)
