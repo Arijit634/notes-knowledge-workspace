@@ -114,7 +114,7 @@ jobs:
         run: |
           set -euo pipefail
           (cd frontend && npm ci && npm run build)
-          ./mvnw --batch-mode --no-transfer-progress -Pwith-frontend -Dtest=MediaRuntimePropertiesTest,MediaRuntimeConfigurationTest,PostgresRecoveryCommandTest package -q
+          ./mvnw --batch-mode --no-transfer-progress -Pwith-frontend -Dtest=MediaRuntimePropertiesTest,MediaRuntimeConfigurationTest,PostgresRecoveryCommandTest,OciPrivateAttachmentObjectStoreTest package -q
           bash .github/scripts/qualify-full-hosted.sh
           python3 .github/scripts/reconcile-image-security.py \
             "$RUNNER_TEMP/full-hosted-candidate/security/security-readiness.json" \

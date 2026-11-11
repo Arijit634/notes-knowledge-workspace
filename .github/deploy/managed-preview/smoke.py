@@ -417,7 +417,8 @@ def main():
                     if safe_code not in ('invalid_input','invalid_media','service_unavailable','request_too_large','rate_limited'):
                         safe_code='unclassified'
                     print(json.dumps(dict(syntheticUploadRejected=media,status=code,
-                        problemCode=safe_code,resources=observation)),flush=True)
+                        problemCode=safe_code,resources=observation,
+                        controlledTransportCounts=provider_control('/counts'))),flush=True)
                     raise ValueError('Authenticated synthetic upload failed')
                 if full:print(json.dumps(dict(syntheticUploadAccepted=media,seconds=authenticated_seconds[-1])),flush=True)
                 attachment_path=note_path+'/attachments/'+json.loads(body)['id']
