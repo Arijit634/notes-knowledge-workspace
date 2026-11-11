@@ -146,6 +146,9 @@ def main():
         fontConfigurationRootOwnedAndNotWritable=not fonts,defaultLocaleInputsRestricted=locale_safe,
         fontConfigurationLargestBytes=max(font_sizes),fontConfigurationTotalBytes=sum(font_sizes),
         ffmpegIconvDisabled='!CONFIG_ICONV=yes' in codec_config.splitlines(),
+        ffmpegOpenSslDisabled='!CONFIG_OPENSSL=yes' in codec_config.splitlines()
+            and '!CONFIG_TLS_PROTOCOL=yes' in codec_config.splitlines(),
+        nativeLinkageMentionsOpenSsl='libssl.so' in linkage or 'libcrypto.so' in linkage,
         resolverSearchDomainsBounded=resolver_bounded,
         nativeLinkageMentionsSqlite='sqlite' in linkage.casefold(),sqliteApplicationDependencyPresent=sqlite,
         applicationJarSha256=jar_sha,packagedJavaDependencies=len(dependencies),

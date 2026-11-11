@@ -114,6 +114,15 @@ class ImageReconciliationContracts(unittest.TestCase):
         self.scan['database']['DownloadedAt']='2026-11-12T00:00:00Z'
         with self.assertRaisesRegex(ValueError,'fresh_vulnerability_database_required'):self.run_policy()
 
+    def test_crypto_absence_requires_linkage_and_actual_workload_observation(self):
+        self.rule['requiredControls']=['opensslNotLinkedInMedia','opensslNotLoadedInWorkload']
+        self.facts.update(ffmpegOpenSslDisabled=True,nativeLinkageMentionsOpenSsl=False)
+        with self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
+        self.smoke['resourceMeasurements'][0]['opensslLoaded']=False
+        self.assertTrue(self.run_policy()['releaseSecurityReconciled'])
+        self.smoke['resourceMeasurements'][0]['opensslLoaded']=True
+        with self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
+
 
 class NativeArtifactFactContracts(unittest.TestCase):
     def test_image_evidence_must_match_architecture_user_and_source(self):

@@ -285,17 +285,18 @@ def main(deployment, qualification, evidence, probe=None):
         # application exposure merely from fewer scanner findings. Retain only
         # numeric/boolean facts, never process maps, addresses or file paths.
         libraries = docker('exec', name, '/bin/sh', '-c',
-                           'checked=0; loaded=0; for p in /proc/[0-9]*; do '
+                           'checked=0; loaded=0; openssl=0; for p in /proc/[0-9]*; do '
                            'read comm < "$p/comm" 2>/dev/null || continue; '
                            'if [ "$comm" = java ]; then test -r "$p/maps" || exit 1; '
-                           'checked=$((checked+1)); if grep -q libsqlite3 "$p/maps"; then loaded=1; fi; fi; '
-                           'done; printf "%s %s" "$checked" "$loaded"')
-        checked, sqlite_loaded = map(int, libraries.stdout.split())
+                           'checked=$((checked+1)); if grep -q libsqlite3 "$p/maps"; then loaded=1; fi; '
+                           'if grep -Eq "lib(ssl|crypto)\\.so" "$p/maps"; then openssl=1; fi; fi; '
+                           'done; printf "%s %s %s" "$checked" "$loaded" "$openssl"')
+        checked, sqlite_loaded, openssl_loaded = map(int, libraries.stdout.split())
         require(checked > 0 and sqlite_loaded == 0, 'unexpected_sqlite_runtime_dependency')
         measurements.append(dict(memoryPeakBytes=memory, processPeak=pids,
                                  cpuUsageMicroseconds=cpu['usage_usec'],
                                  scratchSampleBytes=sum(scratch), scratchIsPeak=False,
-                                 javaProcessesInspected=checked, sqliteLoaded=False))
+                                 javaProcessesInspected=checked, sqliteLoaded=False,opensslLoaded=openssl_loaded!=0))
 
     def await_health(browser, expected, timeout=75):
         # Production management binds only loopback in the service namespace.

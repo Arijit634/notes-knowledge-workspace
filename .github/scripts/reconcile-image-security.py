@@ -32,6 +32,10 @@ def controls(facts, smoke):
             and 0<facts.get('fontConfigurationTotalBytes',0)<=1048576,
         'ffmpegIconvDisabled':facts.get('ffmpegIconvDisabled') is True,
         'resolverSearchDomainsBounded':facts.get('resolverSearchDomainsBounded') is True,
+        'opensslNotLinkedInMedia':facts.get('ffmpegOpenSslDisabled') is True
+            and facts.get('nativeLinkageMentionsOpenSsl') is False,
+        'opensslNotLoadedInWorkload':bool(smoke['resourceMeasurements']) and all(
+            row['javaProcessesInspected']>0 and row.get('opensslLoaded') is False for row in smoke['resourceMeasurements']),
         'restrictedLocaleInputs':facts['defaultLocaleInputsRestricted'] is True,
         'alignedAllocationOverflowRejected':facts.get('alignedAllocationCheck')==dict(alignedAllocationOverflowRejected=True,cases=30),
         'freetype215Verified':facts.get('mediaLibraryAbi',{}).get('abiProbePassed') is True
@@ -94,7 +98,7 @@ def reconcile(scan,facts,smoke,policy,today=None):
             'unsupported_disposition')
         require(all(isinstance(row.get(field),str) and len(row[field])>=12
             for field in ('rationale','compensatingControls','owner','remediationTarget')),'incomplete_disposition')
-        require(row['references'] and all(re.fullmatch(r'https://(?:security-tracker\.debian\.org|github\.com|freetype\.org)/[^\s]+',url)
+        require(row['references'] and all(re.fullmatch(r'https://(?:security-tracker\.debian\.org|github\.com|freetype\.org|openssl-library\.org)/[^\s]+',url)
             for url in row['references']),'primary_evidence_required')
         require(row['requiredControls'] and all(active.get(name) is True for name in row['requiredControls']),
             'required_control_missing')
