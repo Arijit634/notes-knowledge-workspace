@@ -210,6 +210,8 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.1
         with:
           name: full-hosted-candidate
-          path: ${{ runner.temp }}/full-hosted-candidate/*.json
+          path: |
+            ${{ runner.temp }}/full-hosted-candidate/*.json
+            ${{ runner.temp }}/full-hosted-candidate/*.jsonl
           if-no-files-found: warn
           retention-days: 3

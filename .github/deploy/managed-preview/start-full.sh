@@ -12,7 +12,8 @@ PREVIEW_HOST=${PREVIEW_ORIGIN#https://}
 PREVIEW_PASSWORD_HASH=$(cat /etc/secrets/preview-password-hash)
 [[ "$PREVIEW_PASSWORD_HASH" =~ ^\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53}$ ]] || { echo 'preview_perimeter_unavailable' >&2; exit 2; }
 export NKW_PREVIEW_SECRET_IMPORT=file:/etc/secrets/runtime.properties
-mkdir -p /tmp/nkw-edge/body /tmp/nkw-edge/proxy /tmp/nkw-redis
+mkdir -p /tmp/nkw-edge/body /tmp/nkw-edge/proxy /tmp/nkw-redis \
+    /tmp/nkw-pdf-recovery /tmp/nkw-video-recovery /tmp/nkw-video-scratch
 printf 'preview:%s\n' "$PREVIEW_PASSWORD_HASH" > /tmp/nkw-edge/htpasswd
 template=$(cat /app/nginx.conf)
 printf '%s\n' "${template//__PREVIEW_HOST__/$PREVIEW_HOST}" > /tmp/nkw-edge/nginx.conf
@@ -49,6 +50,10 @@ nginx -e /dev/null -c /tmp/nkw-edge/nginx.conf & edge_pid=$!
     -XX:ActiveProcessorCount=1 -XX:-HeapDumpOnOutOfMemoryError -XX:+ExitOnOutOfMemoryError \
     -Duser.timezone=UTC -Djava.io.tmpdir=/tmp -jar /app/application.jar \
     --spring.profiles.active=operations,private-preview,managed-preview,full-hosted \
+    --spring.config.additional-location=file:/provenance/runtime-selection.properties \
+    --notes.media-runtime.pdf.recovery-directory=/tmp/nkw-pdf-recovery \
+    --notes.media-runtime.video.recovery-directory=/tmp/nkw-video-recovery \
+    --notes.media-runtime.video.scratch-directory=/tmp/nkw-video-scratch \
     --knowledge.processing-disclosure.path=/etc/secrets/processing-disclosure.json & java_pid=$!
 unset PREVIEW_HOST PREVIEW_ORIGIN
 # Any unexpected constituent exit invalidates the entire instance. The hosting

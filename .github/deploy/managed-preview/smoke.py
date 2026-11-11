@@ -27,6 +27,24 @@ PG='pgvector/pgvector:0.8.6-pg18-trixie@sha256:78bf48b801e792f99e3ac62b5036fd387
 HOST='ep-fixture.ap-southeast-1.aws.neon.tech'
 OTHER_HOST='ep-other.ap-southeast-1.aws.neon.tech'
 
+def synthetic_pdf():
+    """One fictional text page, with byte-accurate xref offsets for real validation."""
+    stream=b'BT /F1 12 Tf 10 60 Td (Synthetic full runtime fixture) Tj ET\n'
+    objects=[b'<< /Type /Catalog /Pages 2 0 R >>',
+        b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+        b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+        b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+        b'<< /Length '+str(len(stream)).encode()+b' >>\nstream\n'+stream+b'endstream']
+    document=bytearray(b'%PDF-1.4\n');offsets=[]
+    for number,body in enumerate(objects,1):
+        offsets.append(len(document))
+        document.extend(str(number).encode()+b' 0 obj\n'+body+b'\nendobj\n')
+    xref=len(document)
+    document.extend(b'xref\n0 6\n0000000000 65535 f \n')
+    for offset in offsets:document.extend(f'{offset:010d} 00000 n \n'.encode())
+    document.extend(b'trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n'+str(xref).encode()+b'\n%%EOF\n')
+    return bytes(document)
+
 def run(*args,timeout=240):
     # Docker can write image-pull progress to stderr during create. An identifier
     # or JSON response must never be parsed from a merged diagnostic stream.
@@ -55,7 +73,8 @@ def await_readiness(request,timeout=600,now=time.monotonic,pause=time.sleep):
     raise RuntimeError('Managed preview readiness deadline exceeded')
 
 def main():
-    if os.name!='posix' or len(sys.argv)!=2 or not re.fullmatch(r'sha256:[0-9a-f]{64}',sys.argv[1]):
+    full=len(sys.argv)==3 and sys.argv[2]=='--full-hosted'
+    if os.name!='posix' or not (len(sys.argv)==2 or full) or not re.fullmatch(r'sha256:[0-9a-f]{64}',sys.argv[1]):
         raise ValueError('Native Linux and immutable local image required')
     image=sys.argv[1];prefix='nkw-managed-'+uuid.uuid4().hex[:12]
     network=None;volume=None;pg=None;app=None;holder=None;provider=None;containers=[]
@@ -69,6 +88,11 @@ def main():
             'synthetic-private-bucket','synthetic.apps.googleusercontent.com','synthetic-client-secret',
             'synthetic-access-key','synthetic-storage-secret')
         values['nkw.preview.database-host']=HOST
+        if full:
+            # Negative provider boundary: no current disclosure/acknowledgement
+            # exists, all Notes below are AI-OFF, and this network has no egress.
+            # Native/core workload evidence must never imply live AI qualification.
+            (secret/'processing-disclosure.json').write_text('{}\n')
         for value in values.values():
             if '\n' in value or '\r' in value or '\\' in value:raise ValueError('Unframed fixture value')
         (secret/'runtime.properties').write_text('\n'.join(k+'='+v for k,v in values.items())+'\n')
@@ -150,7 +174,7 @@ def main():
                     time.sleep(0.25)
                 raise RuntimeError('Fixture PostgreSQL unavailable')
             pg=start_postgres()
-            migration=['docker','run','--rm','--network',network,'--entrypoint','java',
+            migration=['docker','run','--rm','--network',network,'--entrypoint','/jdk/bin/java' if full else 'java',
                 '--read-only','--cap-drop','ALL','--security-opt','no-new-privileges',
                 '--tmpfs','/tmp:rw,noexec,nosuid,nodev,size=32m,uid=65533,gid=65533,mode=700',
                 '-v',str(cert)+':/fixture:ro']
@@ -165,9 +189,9 @@ def main():
             run(*migration,'-e','JAVA_TOOL_OPTIONS='+trust,*command,'/fixture/migration.properties')
             def start_app():
                 identifier=run('docker','create','--network',network,'--read-only',
-                    '--memory','448m','--memory-swap','448m','--cpus','0.1','--pids-limit','512',
+                    '--memory','512m' if full else '448m','--memory-swap','512m' if full else '448m','--cpus','0.1','--pids-limit','512',
                     '--cap-drop','ALL','--security-opt','no-new-privileges',
-                    '--tmpfs','/tmp:rw,noexec,nosuid,nodev,size=32m,uid=65533,gid=65533,mode=700',
+                    '--tmpfs',f'/tmp:rw,noexec,nosuid,nodev,size={256 if full else 32}m,uid=65533,gid=65533,mode=700',
                     '-v',str(secret)+':/etc/secrets:ro','-v',str(cert/'truststore')+':/fixture/truststore:ro',
                     '--add-host','accounts.google.com:'+gateway,'--add-host',storage_host+':'+gateway,
                     '-e','JAVA_TOOL_OPTIONS='+trust,'-e','APP_VERSION=synthetic-managed-smoke',image)
@@ -214,12 +238,12 @@ def main():
                     if 300<=response.status<400 and not expected_redirect:raise ValueError('Unexpected fixture redirect')
                     if authenticated:authenticated_seconds.append(round(time.monotonic()-request_started,3))
                     return response.status,response.headers,body
-            await_readiness(request);first=round(time.monotonic()-started,2)
+            await_readiness(request,timeout=900 if full else 600);first=round(time.monotonic()-started,2)
             if request('/login',authenticated=False)[0]!=401:raise ValueError('Missing perimeter accepted')
             if request('/login',extra={'Authorization':'Basic '+base64.b64encode(b'preview:incorrect').decode()})[0]!=401:raise ValueError('Wrong perimeter accepted')
-            for path,expected in [('/login',200),('/api/auth/session',200),('/api/notes',401),
-                    ('/api/knowledge/query',503),('/api/public/explore',503),('/actuator/health',404),
-                    ('/api/auth/login/password',503)]:
+            boundaries=[('/login',200),('/api/auth/session',200),('/api/notes',401),('/actuator/health',404)]
+            if not full:boundaries += [('/api/knowledge/query',503),('/api/public/explore',503),('/api/auth/login/password',503)]
+            for path,expected in boundaries:
                 if request(path)[0]!=expected:raise ValueError('Managed boundary status failed')
             if request('/login',extra={'Forwarded':'host=evil.invalid;proto=http','X-Forwarded-Host':'evil.invalid',
                     'X-Forwarded-Proto':'http','X-Forwarded-For':'198.51.100.22'})[0]!=200:raise ValueError('Caller forwarding became authority')
@@ -282,7 +306,15 @@ def main():
             buffer=io.BytesIO()
             with wave.open(buffer,'wb') as audio:audio.setnchannels(1);audio.setsampwidth(2);audio.setframerate(8000);audio.writeframes(b'\0\0'*3200)
             attachments=[]
-            for name,media,payload in [('probe.png','image/png',png),('probe.wav','audio/wav',buffer.getvalue())]:
+            uploads=[('probe.png','image/png',png),('probe.wav','audio/wav',buffer.getvalue())]
+            if full:
+                # Real supervised video admission on the same aggregate cgroup.
+                payload=subprocess.run(['docker','run','--rm','--network','none','--read-only',
+                    '--cap-drop','ALL','--security-opt','no-new-privileges','--entrypoint','cat',image,
+                    '/opt/video/tools/preflight.mp4'],capture_output=True,check=True,timeout=30).stdout
+                uploads.append(('probe.mp4','video/mp4',payload))
+                uploads.append(('probe.pdf','application/pdf',synthetic_pdf()))
+            for name,media,payload in uploads:
                 boundary='nkw-controlled-upload'
                 upload=(f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{name}"\r\nContent-Type: {media}\r\n\r\n').encode()+payload+f'\r\n--{boundary}--\r\n'.encode()
                 code,_,body=request(note_path+'/attachments',method='POST',cookie=owner_cookie,csrf=owner_csrf,
@@ -298,7 +330,8 @@ def main():
                     check=temp/'accepted-fixture.png';check.write_bytes(received)
                     if run('java','-Xmx64m',str(ROOT/'FixtureImage.java'),str(check))!='synthetic-raster-verified':
                         raise ValueError('Canonical PNG changed synthetic pixels')
-                elif received!=payload:raise ValueError('PCM WAV bytes changed')
+                elif media=='audio/wav' and received!=payload:raise ValueError('PCM WAV bytes changed')
+                elif media=='video/mp4' and not received:raise ValueError('Accepted video bytes unavailable')
                 attachments.append((attachment_path,received))
             print(json.dumps({'authenticatedPngAndWav':True}),flush=True)
             other_cookie,_=login('other')
@@ -312,7 +345,7 @@ def main():
                 events=dict(line.split() for line in run('docker','exec',app,'cat','/sys/fs/cgroup/memory.events').splitlines())
                 if metadata['State']['OOMKilled'] or metadata['RestartCount'] or int(events['oom']) or int(events['oom_kill']):raise ValueError('Resource failure')
                 peak=int(run('docker','exec',app,'cat','/sys/fs/cgroup/memory.peak'))
-                if peak>448*1024*1024:raise ValueError('Budget exceeded')
+                if peak>(512 if full else 448)*1024*1024:raise ValueError('Budget exceeded')
                 sockets=run('docker','exec',app,'cat','/proc/net/tcp','/proc/net/tcp6').splitlines()
                 for port in (8080,8081,6379):
                     listeners=[line.split()[1].split(':')[0].upper() for line in sockets
@@ -327,7 +360,7 @@ def main():
             if shutdown>=30 or metadata['State']['ExitCode']!=0:raise ValueError('Graceful bounded shutdown failed')
             run('docker','rm',app);app=None
             run('docker','stop',pg);run('docker','rm',pg);pg=None
-            pg=start_postgres();started=time.monotonic();app=start_app();await_readiness(request);second=round(time.monotonic()-started,2)
+            pg=start_postgres();started=time.monotonic();app=start_app();await_readiness(request,timeout=900 if full else 600);second=round(time.monotonic()-started,2)
             code,headers,_=request('/api/auth/csrf',cookie=cookie)
             if code!=200 or headers.get('Set-Cookie'):raise ValueError('Session did not survive recreation')
             code,headers,body=request(note_path,cookie=owner_cookie)
@@ -353,10 +386,12 @@ def main():
             if request('/api/auth/logout',method='POST',cookie=cookie,csrf=csrf)[0]!=204:raise ValueError('Persisted CSRF proof rejected')
             resources()
             controlled=provider_control('/counts')
-            if controlled['token']!=3 or controlled['objectPut']!=3 or controlled['objectGet']<4:raise ValueError('Controlled workload incomplete')
+            if controlled['token']!=3 or controlled['objectPut']!=(5 if full else 3) or controlled['objectGet']<(8 if full else 4):raise ValueError('Controlled workload incomplete')
             if any(marker in run('docker','logs',app) for marker in markers):raise ValueError('Authenticated logs disclosed request material')
             print(json.dumps({'image':image,'nativeArchitecture':run('uname','-m'),'rootlessSingleContainer':True,
-                'appProxyRedisCombinedBudget':True,'firstBootSeconds':first,'recreatedBootSeconds':second,
+                'appProxyRedisCombinedBudget':True,'fullHostedNativeWorkload':full,
+                'providerProcessingQualified':False,'releaseEligible':False,
+                'firstBootSeconds':first,'recreatedBootSeconds':second,
                 'gracefulShutdownSeconds':shutdown,'privateListenersLoopbackOnly':True,'perimeterAndCsrfDenials':True,
                 'untrustedForwardingDiscarded':True,'sessionAndCsrfSurviveAppAndPgRecreation':True,
                 'isolatedLogicalRestoreQuarantine':True,'migrations':20,'databaseTlsVerifiedWithIsolatedFixtureCa':True,

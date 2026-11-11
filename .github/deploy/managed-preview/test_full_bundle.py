@@ -38,6 +38,9 @@ class FullBundleSupervisorTests(unittest.TestCase):
             for original, replacement in (
                 ('/etc/secrets', './secrets'), ('/tmp/nkw-edge', './edge'),
                 ('/tmp/nkw-redis', './redis'), ('/app/nginx.conf', './nginx.conf'),
+                ('/tmp/nkw-pdf-recovery', './pdf-recovery'),
+                ('/tmp/nkw-video-recovery', './video-recovery'),
+                ('/tmp/nkw-video-scratch', './video-scratch'),
                 ('/jdk/bin/java', './bin/java'),
             ):
                 script = script.replace(original, replacement)

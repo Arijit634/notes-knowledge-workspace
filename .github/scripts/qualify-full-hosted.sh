@@ -56,11 +56,12 @@ for file in "$evidence"/clips/*.mp4; do
 done
 test "$decoded" = 2000
 docker "${common[@]}" "$qualification" -Xmx192m -Dloader.path=/qualification -Dloader.main=org.notesknowledge.notes.ConfiguredMediaRuntimeQualification -cp /application.jar org.springframework.boot.loader.launch.PropertiesLauncher /opt/pdf /opt/video
+python3 .github/deploy/managed-preview/smoke.py "$deployment" --full-hosted | tee "$evidence/managed-smoke.jsonl"
 python3 - "$source_sha" "$deployment" "$qualification" "$evidence" <<'PY'
 import json,pathlib,sys
 source,deployment,qualification,evidence=sys.argv[1:]
 pathlib.Path(evidence,'candidate.json').write_text(json.dumps(dict(source=source,image=deployment,
     qualificationImage=qualification,nativeConfinementPassed=True,independentlyDecodedFrames=2000,
     productionTestPayloadAbsent=True,liveProviderCalls=0,registryPublished=False,
-    combinedResourceQualified=False,releaseEligible=False),indent=2)+'\n')
+    combinedNativeCoreResourceQualified=True,liveProviderQualified=False,releaseEligible=False),indent=2)+'\n')
 PY

@@ -1,10 +1,13 @@
 # Build on the actual target architecture. This builds a qualification/deployment
 # candidate; neither construction nor an OCI digest grants codec patent rights.
+FROM eclipse-temurin:25.0.5_8-jre-noble@sha256:a98128a57de944a72bd31fbc79b898edd5a5864d3652071d5bbd2160ab7d7dce AS public-trust
+
 FROM ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852 AS build
+COPY --from=public-trust /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 USER root
 # Both build and deployment use the same Noble ABI as the approved Nginx edge.
 RUN sed -i 's|http://|https://|g' /etc/apt/sources.list.d/ubuntu.sources \
-    && apt-get -o Acquire::Retries=0 update && apt-get upgrade -y --no-install-recommends \
+    && apt-get -o Acquire::Retries=0 -o APT::Update::Error-Mode=any update && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
        build-essential dpkg-dev pkg-config nasm xz-utils patch curl ca-certificates \
        libbrotli-dev libbz2-dev libpng-dev zlib1g-dev libfreetype6 libexpat1 libfontconfig1 fonts-dejavu-core \
@@ -80,8 +83,9 @@ RUN chown -R 0:0 /opt/pdf /opt/video /opt/operations /qualification /fixtures /p
 RUN /jdk/bin/java -cp '/qualification:/opt/pdf/artifacts/classes:/opt/pdf/artifacts/libraries/*' \
     org.notesknowledge.notes.MediaRuntimeImageDescriptor /provenance/runtime-selection.properties
 FROM ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852 AS redis-build
+COPY --from=public-trust /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 RUN sed -i 's|http://|https://|g' /etc/apt/sources.list.d/ubuntu.sources \
-    && apt-get -o Acquire::Retries=0 update \
+    && apt-get -o Acquire::Retries=0 -o APT::Update::Error-Mode=any update \
     && apt-get install -y --no-install-recommends gcc make libc6-dev curl ca-certificates \
     && mkdir /build && cd /build \
     && curl --fail --silent --show-error --location --retry 0 https://github.com/redis/redis/releases/download/8.10.2/redis-full.tar.gz -o redis-full.tar.gz \
@@ -92,12 +96,13 @@ RUN sed -i 's|http://|https://|g' /etc/apt/sources.list.d/ubuntu.sources \
 # A separate runtime image omits the compiler/build tree. Qualification adds
 # only synthetic fixtures/controllers to this same runtime filesystem profile.
 FROM ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852 AS deployment
+COPY --from=public-trust /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 ARG SOURCE_SHA=unbound
 LABEL org.opencontainers.image.source="https://github.com/Arijit634/notes-knowledge-workspace" \
       org.opencontainers.image.revision="$SOURCE_SHA"
 USER root
 RUN sed -i 's|http://|https://|g' /etc/apt/sources.list.d/ubuntu.sources \
-    && apt-get -o Acquire::Retries=0 update && apt-get upgrade -y --no-install-recommends \
+    && apt-get -o Acquire::Retries=0 -o APT::Update::Error-Mode=any update && apt-get upgrade -y --no-install-recommends \
     && printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && chmod 755 /usr/sbin/policy-rc.d \
     && apt-get install -y --no-install-recommends ca-certificates bash \
        libstdc++6 libfreetype6 libexpat1 libfontconfig1 fonts-dejavu-core \
