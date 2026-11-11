@@ -21,12 +21,13 @@ RUN /bin/sh /native/build-media-libraries.sh
 RUN echo '8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e  /source.tar.xz' | sha256sum -c - \
     && mkdir /codec && tar -xJf /source.tar.xz -C /codec --strip-components=1 \
     && cd /codec && patch --fuzz=0 -p1 < /native/empty-metadata.patch \
-    && ./configure --prefix=/opt/video/tools --disable-autodetect --disable-iconv --disable-gpl --disable-nonfree \
+    && ./configure --prefix=/opt/video/tools --extra-version=nkw-security24593 --disable-autodetect --disable-iconv --disable-gpl --disable-nonfree \
        --disable-doc --disable-debug --disable-network --disable-everything \
        --enable-ffmpeg --enable-ffprobe --enable-libopenh264 --enable-protocol=file,pipe \
        --enable-demuxer=mov --enable-muxer=mp4,segment,null,wav --enable-decoder=h264,wrapped_avframe,aac \
        --enable-parser=h264,aac --enable-encoder=libopenh264,pcm_s16le --enable-bsf=h264_mp4toannexb \
        --enable-filter=format,null,scale,setsar,setpts,trim,testsrc,color,aresample,apad,atrim,asetpts,aformat --enable-indev=lavfi \
+    && /bin/sh /native/backport-ffmpeg-security.sh \
     && make -j2 && make install
 RUN mkdir -p /opt/pdf /opt/video /opt/operations /fixtures /provenance /native-diagnostics \
     && gcc -std=c11 -O2 -Wall -Wextra -Werror=implicit-function-declaration -o /opt/pdf/helper /native/pdf-sandbox.c \

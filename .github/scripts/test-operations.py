@@ -27,6 +27,16 @@ reconciliation = load('image_reconciliation', 'reconcile-image-security.py')
 
 
 class ImageReconciliationContracts(unittest.TestCase):
+    def test_ffmpeg_backport_requires_all_exact_controls(self):
+        values=[dict(facts.FFMPEG_SECURITY_PATCHES),
+            dict(unpatchedCleanupExit=139,expectedStackExhaustion=True,coreDumpEnabled=False),
+            dict(ffmpegEncryptionRegression=True,cleanupNodes=100000,appendRecords=10000,boundedStackKiB=256),
+            dict(upstreamEncryptionInfoFatePassed=True),'!CONFIG_CDXL_DECODER=yes\n']
+        self.assertTrue(facts.validate_ffmpeg_security(*values)['cdxlDecoderDisabled'])
+        for index in range(len(values)):
+            changed=copy.deepcopy(values);changed[index]={} if index<4 else 'CONFIG_CDXL_DECODER=yes\n'
+            with self.subTest(index=index),self.assertRaises(ValueError):facts.validate_ffmpeg_security(*changed)
+
     def setUp(self):
         self.today=datetime.date(2026,11,10)
         self.image='sha256:'+'a'*64

@@ -72,8 +72,8 @@ assert sum(c.get('purl','').startswith('pkg:maven/') for c in data['components']
 # Add their exact shipped binary hashes without inventing vulnerability coverage.
 shipped={line.split()[1]:line.split()[0] for line in (root/'shipped-artifacts.sha256').read_text().splitlines()}
 explicit_refs=[]
-for file,name,version in [('/opt/video/tools/bin/ffmpeg','ffmpeg','9.0.2'),
-                          ('/opt/video/tools/bin/ffprobe','ffprobe','9.0.2'),
+for file,name,version in [('/opt/video/tools/bin/ffmpeg','ffmpeg','9.0.2+nkw-security24593'),
+                          ('/opt/video/tools/bin/ffprobe','ffprobe','9.0.2+nkw-security24593'),
                           ('/opt/pdf/helper','pdf-sandbox-helper',None),
                           ('/opt/video/helper','video-sandbox-helper',None),
                           ('/opt/operations/health-probe','fixed-loopback-health-probe',None),

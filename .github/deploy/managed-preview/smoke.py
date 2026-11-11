@@ -403,7 +403,22 @@ def main():
                 if full:print(json.dumps(dict(syntheticUploadStarted=media)),flush=True)
                 code,_,body=request(note_path+'/attachments',method='POST',cookie=owner_cookie,csrf=owner_csrf,
                     extra={'Content-Type':'multipart/form-data; boundary='+boundary},data=upload,stage='synthetic-upload-'+media)
-                if code!=201:raise ValueError('Authenticated synthetic upload failed')
+                if code!=201:
+                    # Only fixed protocol facts, never the response body or upload.
+                    snapshot=subprocess.run(['docker','exec',app,'/bin/sh','-c',
+                        'cat /sys/fs/cgroup/memory.current /sys/fs/cgroup/memory.peak; '
+                        'cat /sys/fs/cgroup/memory.events /sys/fs/cgroup/memory.stat /sys/fs/cgroup/cpu.stat'],
+                        capture_output=True,text=True,timeout=10)
+                    observation=safe_resource_observation(snapshot.stdout) if snapshot.returncode==0 else dict(available=False)
+                    problem={}
+                    try:problem=json.loads(body)
+                    except (ValueError,TypeError):pass
+                    safe_code=problem.get('code')
+                    if safe_code not in ('invalid_input','invalid_media','service_unavailable','request_too_large','rate_limited'):
+                        safe_code='unclassified'
+                    print(json.dumps(dict(syntheticUploadRejected=media,status=code,
+                        problemCode=safe_code,resources=observation)),flush=True)
+                    raise ValueError('Authenticated synthetic upload failed')
                 if full:print(json.dumps(dict(syntheticUploadAccepted=media,seconds=authenticated_seconds[-1])),flush=True)
                 attachment_path=note_path+'/attachments/'+json.loads(body)['id']
                 code,_,received=request(attachment_path+'/content',cookie=owner_cookie,response_limit=20_000_000 if full else 1024*1024)

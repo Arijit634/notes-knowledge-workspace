@@ -3,9 +3,24 @@
 import argparse,hashlib,json,os,pathlib,platform,re,subprocess,tempfile,uuid,zipfile
 
 ROOT=pathlib.Path(__file__).resolve().parents[2]
+FFMPEG_SECURITY_PATCHES={
+    '969c7eb091989a664cb7bf66a1f02051cc46cb52':'594a0cbca9527bc1edab7f76679af5a73cee23aadc878e2cc6a9001e22742c45',
+    'd1434518fbd03789e3e5dc0657a7a9f1123ce074':'1fd3c8a2b37bb24fe4c8500422090453e18a06634e2647d8fb50216beb5332b8',
+    '71403a21b02a92b925e26e609e9bd3e48df451cf':'af4bf01465777b2b8d159e8cd8a2185f155a0db39baa7fc2c0e6acf4d5f734b8'}
 
 def require(condition,code):
     if not condition:raise ValueError(code)
+
+def validate_ffmpeg_security(patches,negative,regression,upstream,config):
+    require(patches==FFMPEG_SECURITY_PATCHES,'ffmpeg_security_patch_identity_mismatch')
+    require(negative==dict(unpatchedCleanupExit=139,expectedStackExhaustion=True,coreDumpEnabled=False),
+        'ffmpeg_negative_control_missing')
+    require(regression==dict(ffmpegEncryptionRegression=True,cleanupNodes=100000,
+        appendRecords=10000,boundedStackKiB=256),'ffmpeg_security_regression_missing')
+    require(upstream==dict(upstreamEncryptionInfoFatePassed=True),'ffmpeg_upstream_tests_missing')
+    require('!CONFIG_CDXL_DECODER=yes' in config.splitlines(),'unexpected_cdxl_decoder')
+    return dict(patchSha256=patches,negativeControl=negative,regression=regression,
+        upstreamTests=upstream,cdxlDecoderDisabled=True)
 
 def command(*args):
     result=subprocess.run(args,cwd=ROOT,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=90)
@@ -105,6 +120,12 @@ def main():
     require(font_sizes and all(value>=0 for value in font_sizes),'font_configuration_inventory_missing')
     linkage=inspect('cat /provenance/runtime-linkage.txt')
     codec_config=inspect('cat /provenance/ffmpeg-config.mak')
+    ffmpeg_security=validate_ffmpeg_security(
+        {commit:inspect('sha256sum /provenance/ffmpeg-security/'+commit+'.patch').split()[0]
+            for commit in FFMPEG_SECURITY_PATCHES},
+        json.loads(inspect('cat /provenance/ffmpeg-security/negative-control.json')),
+        json.loads(inspect('cat /provenance/ffmpeg-security/regression.json')),
+        json.loads(inspect('cat /provenance/ffmpeg-security/upstream-tests.json')),codec_config)
     # Retain only a bound, never host DNS names, addresses or resolver contents.
     resolver=inspect('cat /etc/resolv.conf')
     search_domains=[]
@@ -156,6 +177,7 @@ def main():
         packageInventorySha256=hashlib.sha256(packages.encode()).hexdigest(),packages=versions,
         mediaLibraryAbi=abi,expatBackportPatchSha256=backport,alignedAllocationCheck=allocation,
         expatRegressionApiCompatibilitySha256=compatibility,
+        ffmpegSecurity=ffmpeg_security,
         components=components,setuidSetgidFilesAbsent=not privileged,
         fontConfigurationRootOwnedAndNotWritable=not fonts,defaultLocaleInputsRestricted=locale_safe,
         fontConfigurationLargestBytes=max(font_sizes),fontConfigurationTotalBytes=sum(font_sizes),
