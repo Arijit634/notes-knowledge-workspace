@@ -82,6 +82,9 @@ def main():
     for commit,digest in backport.items():
         require(inspect('sha256sum /provenance/media-libraries/expat-'+commit+'.patch').split()[0]==digest,
             'expat_backport_provenance_mismatch')
+    compatibility='6f71b7c60c0fedd8de8840ebaadd17fd3401b5b33a501655de8d2c7538b74418'
+    require(inspect('sha256sum /provenance/media-libraries/expat-2.10-regression-compat.patch').split()[0]==compatibility,
+        'expat_regression_compatibility_provenance_mismatch')
     components={}
     probes={
         'infocmp':'/usr/bin/infocmp','tic':'/usr/bin/tic','aptKey':'/usr/bin/apt-key',
@@ -98,7 +101,10 @@ def main():
         components[name]=dict(path=path,absent=value=='absent')
     privileged=inspect("find /usr /opt /jdk -xdev -type f -perm /6000 -print -quit")
     fonts=inspect("find /etc/fonts /usr/share/fonts /usr/share/fontconfig -type f \\( ! -uid 0 -o -perm /022 \\) -print -quit")
+    font_sizes=[int(value) for value in inspect('find /etc/fonts /usr/share/fontconfig -type f -exec stat -c %s {} +').splitlines()]
+    require(font_sizes and all(value>=0 for value in font_sizes),'font_configuration_inventory_missing')
     linkage=inspect('cat /provenance/runtime-linkage.txt')
+    codec_config=inspect('cat /provenance/ffmpeg-config.mak')
     removals=inspect('cat /provenance/removed-runtime-tools.sha256')
     locales={key:None for key in ('LANG','LC_ALL','LANGUAGE','LOCALDOMAIN')}
     for entry in metadata[0]['Config'].get('Env',[]):
@@ -127,8 +133,11 @@ def main():
         architecture=architecture,imageUser='65533:65533',productionSourceFingerprint=production_fingerprint(),
         packageInventorySha256=hashlib.sha256(packages.encode()).hexdigest(),packages=versions,
         mediaLibraryAbi=abi,expatBackportPatchSha256=backport,alignedAllocationCheck=allocation,
+        expatRegressionApiCompatibilitySha256=compatibility,
         components=components,setuidSetgidFilesAbsent=not privileged,
         fontConfigurationRootOwnedAndNotWritable=not fonts,defaultLocaleInputsRestricted=locale_safe,
+        fontConfigurationLargestBytes=max(font_sizes),fontConfigurationTotalBytes=sum(font_sizes),
+        ffmpegIconvDisabled='!CONFIG_ICONV=yes' in codec_config.splitlines(),
         nativeLinkageMentionsSqlite='sqlite' in linkage.casefold(),sqliteApplicationDependencyPresent=sqlite,
         applicationJarSha256=jar_sha,packagedJavaDependencies=len(dependencies),
         runtimeToolRemovalInventorySha256=hashlib.sha256(removals.encode()).hexdigest(),

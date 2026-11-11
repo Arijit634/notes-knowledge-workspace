@@ -1,0 +1,9 @@
+diff --git a/tests/misc_tests.c b/tests/misc_tests.c
+--- a/tests/misc_tests.c
++++ b/tests/misc_tests.c
+@@ -1037,3 +1037,4 @@ START_TEST(test_misc_unknown_encoding_no_source_overread) {
+-  char *const buffer = XML_GetBuffer64(parser, docLen);
++  assert_true(docLen <= 32); // The fixed regression payload fits the 2.10 API.
++  char *const buffer = XML_GetBuffer(parser, (int)docLen);
+   assert_true(buffer != NULL);
+   memcpy(buffer, doc, docLen);

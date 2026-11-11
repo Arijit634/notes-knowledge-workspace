@@ -28,12 +28,17 @@ def controls(facts, smoke):
         'numericUnprivilegedImage':facts['imageUser']=='65533:65533',
         'setuidSetgidAbsent':facts['setuidSetgidFilesAbsent'] is True,
         'trustedFontConfiguration':facts['fontConfigurationRootOwnedAndNotWritable'] is True,
+        'boundedFontConfiguration':0<facts.get('fontConfigurationLargestBytes',0)<=65536
+            and 0<facts.get('fontConfigurationTotalBytes',0)<=1048576,
+        'ffmpegIconvDisabled':facts.get('ffmpegIconvDisabled') is True,
         'restrictedLocaleInputs':facts['defaultLocaleInputsRestricted'] is True,
         'alignedAllocationOverflowRejected':facts.get('alignedAllocationCheck')==dict(alignedAllocationOverflowRejected=True,cases=30),
         'freetype215Verified':facts.get('mediaLibraryAbi',{}).get('abiProbePassed') is True
             and facts['mediaLibraryAbi']['freetype']=='2.15.0',
         'expat210BackportVerified':facts.get('mediaLibraryAbi',{}).get('abiProbePassed') is True
-            and facts['mediaLibraryAbi']['expat']=='2.10.0' and facts.get('expatBackportPatchSha256')=={
+            and facts['mediaLibraryAbi']['expat']=='2.10.0'
+            and facts.get('expatRegressionApiCompatibilitySha256')=='6f71b7c60c0fedd8de8840ebaadd17fd3401b5b33a501655de8d2c7538b74418'
+            and facts.get('expatBackportPatchSha256')=={
                 'bf26290d2f021111cf806753dcb87d165f53571b':'56b71deecec296aba42cd80ebde30215527aec9fa5c3ea183d0a056f2bb1520e',
                 '3d77567612994172f9d09b46f31bb604e16fb08d':'42caed50fae3f88186155b0c4280025a89913a83aed2a02986b545e0a8d1e7ed',
                 '05075975dc246f5f6c0757d532f22f518850e7af':'89d6e66a1c346ffcb57abfaf5fc6b251b351d6dcc778270e09ea513ab9e4eb89'},

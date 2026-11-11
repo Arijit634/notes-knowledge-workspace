@@ -38,6 +38,10 @@ tar -xJf expat-2.10.0.tar.xz
 for commit in bf26290d2f021111cf806753dcb87d165f53571b 3d77567612994172f9d09b46f31bb604e16fb08d 05075975dc246f5f6c0757d532f22f518850e7af; do
   (cd expat-2.10.0 && patch --batch --fuzz=0 -p2 < "../expat-$commit.patch")
 done
+# Only the upstream test's allocation API needs adapting to the stable release.
+# Keep the source-overread assertion, attack bytes and error expectation intact.
+(cd expat-2.10.0 && patch --batch --fuzz=0 -p1 < /native/expat-2.10-regression-compat.patch)
+cp /native/expat-2.10-regression-compat.patch /media-library-build/
 (cd freetype-2.15.0 && ./configure --prefix=/usr --libdir="/usr/lib/$triplet" \
   --enable-shared --disable-static --with-harfbuzz=no --with-zlib=yes --with-bzip2=yes --with-png=yes --with-brotli=yes \
   && make -j2 && make DESTDIR=/media-library-build/freetype-stage install)

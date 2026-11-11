@@ -21,7 +21,7 @@ RUN /bin/sh /native/build-media-libraries.sh
 RUN echo '8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e  /source.tar.xz' | sha256sum -c - \
     && mkdir /codec && tar -xJf /source.tar.xz -C /codec --strip-components=1 \
     && cd /codec && patch --fuzz=0 -p1 < /native/empty-metadata.patch \
-    && ./configure --prefix=/opt/video/tools --disable-autodetect --disable-gpl --disable-nonfree \
+    && ./configure --prefix=/opt/video/tools --disable-autodetect --disable-iconv --disable-gpl --disable-nonfree \
        --disable-doc --disable-debug --disable-network --disable-everything \
        --enable-ffmpeg --enable-ffprobe --enable-libopenh264 --enable-protocol=file,pipe \
        --enable-demuxer=mov --enable-muxer=mp4,segment,null,wav --enable-decoder=h264,wrapped_avframe,aac \
