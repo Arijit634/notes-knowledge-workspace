@@ -31,6 +31,7 @@ def controls(facts, smoke):
         'boundedFontConfiguration':0<facts.get('fontConfigurationLargestBytes',0)<=65536
             and 0<facts.get('fontConfigurationTotalBytes',0)<=1048576,
         'ffmpegIconvDisabled':facts.get('ffmpegIconvDisabled') is True,
+        'resolverSearchDomainsBounded':facts.get('resolverSearchDomainsBounded') is True,
         'restrictedLocaleInputs':facts['defaultLocaleInputsRestricted'] is True,
         'alignedAllocationOverflowRejected':facts.get('alignedAllocationCheck')==dict(alignedAllocationOverflowRejected=True,cases=30),
         'freetype215Verified':facts.get('mediaLibraryAbi',{}).get('abiProbePassed') is True
@@ -55,15 +56,19 @@ def controls(facts, smoke):
 
 
 def reconcile(scan,facts,smoke,policy,today=None):
-    today=today or datetime.datetime.now(datetime.timezone.utc).date()
+    now=(datetime.datetime.combine(today,datetime.time(12),datetime.timezone.utc) if today is not None
+        else datetime.datetime.now(datetime.timezone.utc))
+    today=now.date()
     image=scan['image']
     require(re.fullmatch(r'sha256:[0-9a-f]{64}',image),'exact_image_required')
     require(facts['deploymentImage']==image==smoke['deploymentImage'],'evidence_image_mismatch')
     require(scan['scanExit'] in (0,1) and scan['javaPackagesAnalyzed']>=200
         and scan['osPackagesAnalyzed']>0,'scan_coverage_missing')
-    updated=datetime.datetime.fromisoformat(scan['database']['UpdatedAt'].replace('Z','+00:00')).date()
-    downloaded=datetime.datetime.fromisoformat(scan['database']['DownloadedAt'].replace('Z','+00:00')).date()
-    require(0<=(today-updated).days<=1 and downloaded==today,'fresh_vulnerability_database_required')
+    updated=datetime.datetime.fromisoformat(scan['database']['UpdatedAt'].replace('Z','+00:00'))
+    downloaded=datetime.datetime.fromisoformat(scan['database']['DownloadedAt'].replace('Z','+00:00'))
+    require(updated.tzinfo is not None and downloaded.tzinfo is not None
+        and -300<=(now-updated).total_seconds()<=172800
+        and -300<=(now-downloaded).total_seconds()<=129600,'fresh_vulnerability_database_required')
     require(scan['secretFindingCount']==0 and not scan['secretFindings'],'secret_gate_failed')
     require(not scan['misconfigurations'],'configuration_gate_failed')
     require(scan['javaVulnerabilityCount']==0,'application_dependency_gate_failed')

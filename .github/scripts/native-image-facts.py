@@ -105,6 +105,14 @@ def main():
     require(font_sizes and all(value>=0 for value in font_sizes),'font_configuration_inventory_missing')
     linkage=inspect('cat /provenance/runtime-linkage.txt')
     codec_config=inspect('cat /provenance/ffmpeg-config.mak')
+    # Retain only a bound, never host DNS names, addresses or resolver contents.
+    resolver=inspect('cat /etc/resolv.conf')
+    search_domains=[]
+    for line in resolver.splitlines():
+        fields=line.split('#',1)[0].split()
+        if fields and fields[0] in ('search','domain'):search_domains.extend(fields[1:])
+    resolver_bounded=len(search_domains)<=6 and all(len(name)<180 for name in search_domains)
+    del resolver,search_domains
     removals=inspect('cat /provenance/removed-runtime-tools.sha256')
     locales={key:None for key in ('LANG','LC_ALL','LANGUAGE','LOCALDOMAIN')}
     for entry in metadata[0]['Config'].get('Env',[]):
@@ -138,6 +146,7 @@ def main():
         fontConfigurationRootOwnedAndNotWritable=not fonts,defaultLocaleInputsRestricted=locale_safe,
         fontConfigurationLargestBytes=max(font_sizes),fontConfigurationTotalBytes=sum(font_sizes),
         ffmpegIconvDisabled='!CONFIG_ICONV=yes' in codec_config.splitlines(),
+        resolverSearchDomainsBounded=resolver_bounded,
         nativeLinkageMentionsSqlite='sqlite' in linkage.casefold(),sqliteApplicationDependencyPresent=sqlite,
         applicationJarSha256=jar_sha,packagedJavaDependencies=len(dependencies),
         runtimeToolRemovalInventorySha256=hashlib.sha256(removals.encode()).hexdigest(),

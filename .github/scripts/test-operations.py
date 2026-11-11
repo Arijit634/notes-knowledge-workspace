@@ -107,6 +107,13 @@ class ImageReconciliationContracts(unittest.TestCase):
         self.policy['findings'].pop();self.rule['requiredControls']=[]
         with self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
 
+    def test_a_recent_scan_survives_midnight_but_future_timestamps_do_not(self):
+        self.today=datetime.date(2026,11,11)
+        self.scan['database'].update(UpdatedAt='2026-11-10T22:00:00Z',DownloadedAt='2026-11-10T23:00:00Z')
+        self.assertTrue(self.run_policy()['releaseSecurityReconciled'])
+        self.scan['database']['DownloadedAt']='2026-11-12T00:00:00Z'
+        with self.assertRaisesRegex(ValueError,'fresh_vulnerability_database_required'):self.run_policy()
+
 
 class NativeArtifactFactContracts(unittest.TestCase):
     def test_image_evidence_must_match_architecture_user_and_source(self):
