@@ -5,8 +5,14 @@ FROM eclipse-temurin:25.0.5_8-jre-noble@sha256:a98128a57de944a72bd31fbc79b898edd
 FROM ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852 AS build
 COPY --from=public-trust /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 USER root
+# HTTPS mirror of the SAME Ubuntu archive; the pinned base's Ubuntu signing
+# keyring, package pins and APT authentication remain authoritative.
 # Both build and deployment use the same Noble ABI as the approved Nginx edge.
-RUN sed -i 's|http://|https://|g' /etc/apt/sources.list.d/ubuntu.sources \
+RUN sed -i -e 's|http://|https://|g' \
+    -e 's|https://archive.ubuntu.com/ubuntu|https://mirrors.ocf.berkeley.edu/ubuntu|g' \
+    -e 's|https://security.ubuntu.com/ubuntu|https://mirrors.ocf.berkeley.edu/ubuntu|g' \
+    -e 's|https://ports.ubuntu.com/ubuntu-ports|https://mirrors.ocf.berkeley.edu/ubuntu-ports|g' \
+    /etc/apt/sources.list.d/ubuntu.sources \
     && apt-get -o Acquire::Retries=0 -o APT::Update::Error-Mode=any update && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
        build-essential dpkg-dev pkg-config nasm xz-utils patch curl ca-certificates \
@@ -85,7 +91,11 @@ RUN /jdk/bin/java -cp '/qualification:/opt/pdf/artifacts/classes:/opt/pdf/artifa
     org.notesknowledge.notes.MediaRuntimeImageDescriptor /provenance/runtime-selection.properties
 FROM ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852 AS redis-build
 COPY --from=public-trust /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-RUN sed -i 's|http://|https://|g' /etc/apt/sources.list.d/ubuntu.sources \
+RUN sed -i -e 's|http://|https://|g' \
+    -e 's|https://archive.ubuntu.com/ubuntu|https://mirrors.ocf.berkeley.edu/ubuntu|g' \
+    -e 's|https://security.ubuntu.com/ubuntu|https://mirrors.ocf.berkeley.edu/ubuntu|g' \
+    -e 's|https://ports.ubuntu.com/ubuntu-ports|https://mirrors.ocf.berkeley.edu/ubuntu-ports|g' \
+    /etc/apt/sources.list.d/ubuntu.sources \
     && apt-get -o Acquire::Retries=0 -o APT::Update::Error-Mode=any update \
     && apt-get install -y --no-install-recommends gcc make libc6-dev curl ca-certificates \
     && mkdir /build && cd /build \
@@ -102,7 +112,11 @@ ARG SOURCE_SHA=unbound
 LABEL org.opencontainers.image.source="https://github.com/Arijit634/notes-knowledge-workspace" \
       org.opencontainers.image.revision="$SOURCE_SHA"
 USER root
-RUN sed -i 's|http://|https://|g' /etc/apt/sources.list.d/ubuntu.sources \
+RUN sed -i -e 's|http://|https://|g' \
+    -e 's|https://archive.ubuntu.com/ubuntu|https://mirrors.ocf.berkeley.edu/ubuntu|g' \
+    -e 's|https://security.ubuntu.com/ubuntu|https://mirrors.ocf.berkeley.edu/ubuntu|g' \
+    -e 's|https://ports.ubuntu.com/ubuntu-ports|https://mirrors.ocf.berkeley.edu/ubuntu-ports|g' \
+    /etc/apt/sources.list.d/ubuntu.sources \
     && apt-get -o Acquire::Retries=0 -o APT::Update::Error-Mode=any update && apt-get upgrade -y --no-install-recommends \
     && printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && chmod 755 /usr/sbin/policy-rc.d \
     && apt-get install -y --no-install-recommends ca-certificates bash \
