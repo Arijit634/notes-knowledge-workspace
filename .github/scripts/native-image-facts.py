@@ -20,7 +20,7 @@ def package_inventory(packages):
         require(name not in versions,'duplicate_package_identity')
         versions[name]=dict(version=version,source=source)
     require(versions.get('libfreetype6',{}).get('version')=='2.15.0-0nkw1'
-        and versions.get('libexpat1',{}).get('version')=='2.10.0-0nkw1','security_library_version_mismatch')
+        and versions.get('libexpat1',{}).get('version')=='2.10.0-0nkw2','security_library_version_mismatch')
     return versions
 
 def validate_images(metadata,source):
@@ -73,11 +73,21 @@ def main():
     versions=package_inventory(packages)
     abi=json.loads(command(*common,'--entrypoint','/qualification/media-library-versions',args.qualification))
     require(abi==dict(mediaLibraryVersions=True,freetype='2.15.0',expat='2.10.0',abiProbePassed=True),'actual_library_abi_failed')
+    allocation=json.loads(command(*common,'--entrypoint','/qualification/allocation-overflow-probe',args.qualification))
+    require(allocation==dict(alignedAllocationOverflowRejected=True,cases=30),'aligned_allocation_check_failed')
+    backport={
+        'bf26290d2f021111cf806753dcb87d165f53571b':'56b71deecec296aba42cd80ebde30215527aec9fa5c3ea183d0a056f2bb1520e',
+        '3d77567612994172f9d09b46f31bb604e16fb08d':'42caed50fae3f88186155b0c4280025a89913a83aed2a02986b545e0a8d1e7ed',
+        '05075975dc246f5f6c0757d532f22f518850e7af':'89d6e66a1c346ffcb57abfaf5fc6b251b351d6dcc778270e09ea513ab9e4eb89'}
+    for commit,digest in backport.items():
+        require(inspect('sha256sum /provenance/media-libraries/expat-'+commit+'.patch').split()[0]==digest,
+            'expat_backport_provenance_mismatch')
     components={}
     probes={
         'infocmp':'/usr/bin/infocmp','tic':'/usr/bin/tic','aptKey':'/usr/bin/apt-key',
         'perl':'/usr/bin/perl','tar':'/usr/bin/tar','mount':'/usr/bin/mount','nsenter':'/usr/bin/nsenter',
-        'login':'/usr/bin/login','chown':'/usr/bin/chown','diff3':'/usr/bin/diff3',
+        'login':'/usr/bin/login','chown':'/usr/bin/chown','chgrp':'/usr/bin/chgrp','diff3':'/usr/bin/diff3',
+        'sort':'/usr/bin/sort','uniq':'/usr/bin/uniq','unexpand':'/usr/bin/unexpand',
         'systemdHomed':'/usr/lib/systemd/systemd-homed','systemdOomd':'/usr/lib/systemd/systemd-oomd',
         'systemdJournald':'/usr/lib/systemd/systemd-journald','nscd':'/usr/sbin/nscd',
         'pngimage':'/usr/bin/pngimage','pnm2png':'/usr/bin/pnm2png','bzip2recover':'/usr/bin/bzip2recover'}
@@ -116,7 +126,8 @@ def main():
     receipt=dict(schemaVersion=1,source=args.source,deploymentImage=args.deployment,qualificationImage=args.qualification,
         architecture=architecture,imageUser='65533:65533',productionSourceFingerprint=production_fingerprint(),
         packageInventorySha256=hashlib.sha256(packages.encode()).hexdigest(),packages=versions,
-        mediaLibraryAbi=abi,components=components,setuidSetgidFilesAbsent=not privileged,
+        mediaLibraryAbi=abi,expatBackportPatchSha256=backport,alignedAllocationCheck=allocation,
+        components=components,setuidSetgidFilesAbsent=not privileged,
         fontConfigurationRootOwnedAndNotWritable=not fonts,defaultLocaleInputsRestricted=locale_safe,
         nativeLinkageMentionsSqlite='sqlite' in linkage.casefold(),sqliteApplicationDependencyPresent=sqlite,
         applicationJarSha256=jar_sha,packagedJavaDependencies=len(dependencies),

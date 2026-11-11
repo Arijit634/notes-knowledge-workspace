@@ -33,6 +33,8 @@ RUN mkdir -p /opt/pdf /opt/video /opt/operations /fixtures /provenance /native-d
     && gcc -std=c11 -O2 -Wall -Wextra -Werror=implicit-function-declaration -o /opt/video/helper /native/video-sandbox.c \
     && gcc -std=c11 -O2 -Wall -Wextra -DPDF_SANDBOX_DIAGNOSTIC -o /native-diagnostics/pdf-diagnostic-helper /native/pdf-sandbox.c \
     && gcc -std=c11 -O2 -Wall -Wextra -Werror -o /opt/operations/health-probe /native/health-probe.c \
+    && g++ -std=c++17 -O2 -Wall -Wextra -Werror -o /native-diagnostics/allocation-overflow-probe /native/allocation-overflow-probe.cpp \
+    && /native-diagnostics/allocation-overflow-probe \
     && /jdk/bin/jlink --add-modules java.base,java.desktop,java.logging,java.xml \
        --strip-debug --no-header-files --no-man-pages --compress=zip-6 --output /tmp/pdf-linked-runtime \
     && cp -rL /tmp/pdf-linked-runtime /opt/pdf/runtime \
@@ -120,6 +122,7 @@ COPY --from=build /qualification /qualification
 COPY --from=build /fixtures /fixtures
 COPY --from=build /native-diagnostics/pdf-diagnostic-helper /qualification/pdf-diagnostic-helper
 COPY --from=build /native-diagnostics/media-library-versions /qualification/media-library-versions
+COPY --from=build /native-diagnostics/allocation-overflow-probe /qualification/allocation-overflow-probe
 # Fixture ownership changes are a qualification-only capability, not a runtime tool.
 COPY --from=build /usr/bin/chown /qualification/bin/chown
 USER 65533:65533

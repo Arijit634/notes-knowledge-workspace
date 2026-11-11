@@ -8,6 +8,7 @@ test ! -e "$context"
 mkdir -p "$context/artifacts/classes" "$context/artifacts/libraries" "$context/controller" "$context/native"
 cp -a "$JAVA_HOME" "$context/jdk"
 cp src/main/native/*.c src/main/native/empty-metadata.patch "$context/native/"
+cp src/main/native/allocation-overflow-probe.cpp "$context/native/"
 cp src/main/native/build-media-libraries.sh "$context/native/"
 cp src/main/native/minimize-runtime-tools.sh "$context/native/"
 # Frozen synthetic AAC fixture, also exercised by the upload/decoder regressions.
@@ -83,7 +84,7 @@ assert package_versions['perl-base']=='5.40.1-6+deb13u1'
 assert package_versions['libpcre2-8-0']=='10.46-1~deb13u3'
 assert package_versions['libopenh264-8']=='2.6.0+dfsg-2'
 assert package_versions['libfreetype6']=='2.15.0-0nkw1'
-assert package_versions['libexpat1']=='2.10.0-0nkw1'
+assert package_versions['libexpat1']=='2.10.0-0nkw2'
 assert not any(p.startswith(('nodejs','npm')) for p in package_versions)
 # Preserve the raw scanner finding. This independently inspects the shipped
 # binary for the specific contrib/minizip entry point described by Debian.
@@ -177,4 +178,12 @@ fi
 # Run the actual production process, with no test classes or Docker socket mounted.
 # Scan evidence survives even if this independent operational gate fails.
 python3 .github/scripts/deployment-smoke.py "$deployment" "$image" "$RUNNER_TEMP/media-deployment-smoke"
+if test -f .github/security/native-runtime-dispositions.json; then
+python3 .github/scripts/reconcile-image-security.py \
+  "$RUNNER_TEMP/media-security-readiness/security-readiness.json" \
+  "$RUNNER_TEMP/media-security-readiness/native-artifact-facts.json" \
+  "$RUNNER_TEMP/media-deployment-smoke/deployment-smoke.json" \
+  .github/security/native-runtime-dispositions.json \
+  "$RUNNER_TEMP/media-security-readiness/security-applicability.json"
+fi
 exit "$result"

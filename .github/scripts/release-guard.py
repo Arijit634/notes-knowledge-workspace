@@ -2,6 +2,7 @@
 """Fail-closed release/promotion checks. No registry, cloud or deployment mutations."""
 import argparse
 import hashlib
+import importlib.util
 import json
 import pathlib
 import re
@@ -64,11 +65,23 @@ def protected_main(repository, source):
     return dict(source=source, protectedMainGreen=True, requiredContexts=len(contexts['contexts']), checks=sorted(MAIN_CONTEXTS))
 
 
-def candidate(source, image, security, sbom, smoke):
+def candidate(source, image, security, sbom, smoke, facts=None, dispositions=None):
     sha(source); digest(image)
-    require(security['image'] == image and security['scanExit'] == 0, 'exact_image_scan_missing')
+    require(security['image'] == image, 'exact_image_scan_missing')
     require(security['secretFindingCount'] == 0, 'secret_gate_failed')
-    require(security['releaseGatePassed'] is True, 'image_security_gate_failed')
+    if facts is not None or dispositions is not None:
+        require(facts is not None and dispositions is not None and facts['source']==source,'applicability_evidence_missing')
+        def load(file):
+            spec=importlib.util.spec_from_file_location(file,pathlib.Path(__file__).with_name(file+'.py'))
+            module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+            return module
+        current=load('native-image-facts').production_fingerprint()
+        require(current['sha256']==facts['productionSourceFingerprint']['sha256'],'reviewed_production_source_changed')
+        result=load('reconcile-image-security').reconcile(security,facts,smoke,dispositions)
+        require(result['releaseSecurityReconciled'],'image_security_gate_failed')
+    else:
+        require(security['scanExit']==0,'exact_image_scan_missing')
+        require(security['releaseGatePassed'] is True, 'image_security_gate_failed')
     require(sbom['image'] == image and sbom['format'] == 'CycloneDX' and sbom['explicitShippedArtifacts'] == 9, 'exact_sbom_missing')
     require(smoke['passed'] is True and smoke['deploymentImage'] == image and smoke['productionJar'] is True, 'production_smoke_missing')
     require(not smoke.get('feasibilityOnly', False), 'resource_probe_is_not_release_qualification')
@@ -79,6 +92,7 @@ def candidate(source, image, security, sbom, smoke):
     return dict(source=source, candidateImage=image, architecture='arm64', schemaVersion=smoke['schemaVersion'], relations=smoke['relations'],
                 sbomSha256=sbom['sha256'], securityGatePassed=True, smokePassed=True,
                 containerProfileSha256=smoke['containerProfileSha256'],
+                expiringApplicabilityReview=facts is not None,
                 registryPublished=False, attestationVerified=False, releaseEligible=False, productionAuthorized=False)
 
 
@@ -123,12 +137,14 @@ def main():
     parser.add_argument('--source'); parser.add_argument('--image'); parser.add_argument('--repository')
     parser.add_argument('--security', type=pathlib.Path); parser.add_argument('--sbom', type=pathlib.Path)
     parser.add_argument('--smoke', type=pathlib.Path); parser.add_argument('--manifest', type=pathlib.Path)
+    parser.add_argument('--facts',type=pathlib.Path);parser.add_argument('--dispositions',type=pathlib.Path)
     parser.add_argument('--approval', type=pathlib.Path); parser.add_argument('--output', type=pathlib.Path, required=True)
     args = parser.parse_args(); load = lambda path: json.loads(path.read_text())
     if args.mode == 'main':
         result = protected_main(args.repository, args.source)
     elif args.mode == 'candidate':
-        result = candidate(args.source, args.image, load(args.security), load(args.sbom), load(args.smoke))
+        result = candidate(args.source, args.image, load(args.security), load(args.sbom), load(args.smoke),
+            load(args.facts) if args.facts else None,load(args.dispositions) if args.dispositions else None)
     else:
         manifest=load(args.manifest)
         result = promotion(manifest, load(args.approval))

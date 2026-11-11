@@ -23,6 +23,89 @@ ops = load('operations_plan', 'operations-plan.py')
 release = load('release_guard', 'release-guard.py')
 smoke = load('deployment_smoke', 'deployment-smoke.py')
 facts = load('native_image_facts', 'native-image-facts.py')
+reconciliation = load('image_reconciliation', 'reconcile-image-security.py')
+
+
+class ImageReconciliationContracts(unittest.TestCase):
+    def setUp(self):
+        self.today=datetime.date(2026,11,10)
+        self.image='sha256:'+'a'*64
+        self.finding=dict(VulnerabilityID='CVE-2025-69720',PkgName='ncurses-bin',InstalledVersion='6.5-test',Severity='HIGH')
+        self.scan=dict(image=self.image,scanExit=1,javaPackagesAnalyzed=250,osPackagesAnalyzed=80,
+            javaVulnerabilityCount=0,secretFindingCount=0,secretFindings=[],misconfigurations=[],
+            vulnerabilityCounts=dict(HIGH=1),vulnerabilities=[self.finding],
+            database=dict(UpdatedAt='2026-11-10T00:00:00Z',DownloadedAt='2026-11-10T01:00:00Z'))
+        self.facts=dict(deploymentImage=self.image,source='b'*40,architecture='arm64',imageUser='65533:65533',
+            productionSourceFingerprint=dict(sha256='c'*64),packages={'ncurses-bin':dict(version='6.5-test')},
+            setuidSetgidFilesAbsent=True,fontConfigurationRootOwnedAndNotWritable=True,defaultLocaleInputsRestricted=True,
+            nativeLinkageMentionsSqlite=False,sqliteApplicationDependencyPresent=False,
+            components=dict(infocmp=dict(absent=True)))
+        self.smoke=dict(deploymentImage=self.image,passed=True,productionJar=True,events=[],
+            resourceMeasurements=[dict(javaProcessesInspected=1,sqliteLoaded=False)])
+        self.rule=dict(self.finding,kind='component-not-shipped',owner='synthetic-test-maintainer',
+            reviewedOn='2026-11-10',expiresOn='2026-11-17',rationale='The vulnerable tool is absent from this exact synthetic image.',
+            compensatingControls='Numeric unprivileged identity, absent executable and immutable source binding.',
+            remediationTarget='Review a fixed stable vendor package by the expiry date.',requiredControls=['infocmpAbsent'],
+            references=['https://security-tracker.debian.org/tracker/CVE-2025-69720'])
+        self.policy=dict(schemaVersion=1,purpose='exact-native-runtime-applicability',architectures=['arm64'],
+            productionSourceSha256='c'*64,findings=[self.rule])
+
+    def run_policy(self):
+        return reconciliation.reconcile(self.scan,self.facts,self.smoke,self.policy,self.today)
+
+    def test_exact_non_shipped_component_retains_the_original_failed_scan(self):
+        before=copy.deepcopy(self.scan)
+        result=self.run_policy()
+        self.assertTrue(result['releaseSecurityReconciled'])
+        self.assertEqual(1,result['rawScannerExit'])
+        self.assertEqual(dict(HIGH=1),result['rawVulnerabilityCounts'])
+        self.assertEqual(1,result['findingsRetained'])
+        self.assertFalse(result['scannerFindingsSuppressed'])
+        self.assertFalse(result['publicLaunchApproved'])
+        self.assertEqual(before,self.scan)
+
+    def test_new_finding_is_not_covered_by_an_existing_review(self):
+        self.scan['vulnerabilities'].append(dict(self.finding,VulnerabilityID='CVE-2099-12345'))
+        self.scan['vulnerabilityCounts']['HIGH']=2
+        result=self.run_policy()
+        self.assertFalse(result['releaseSecurityReconciled'])
+        self.assertEqual('CVE-2099-12345',result['unreviewedFindings'][0]['finding'])
+
+    def test_changed_code_architecture_package_or_control_fails_closed(self):
+        original=copy.deepcopy(self.facts)
+        for change in ('source','architecture','package','component'):
+            self.facts=copy.deepcopy(original)
+            if change=='source': self.facts['productionSourceFingerprint']['sha256']='d'*64
+            elif change=='architecture': self.facts['architecture']='amd64'
+            elif change=='package': self.facts['packages']['ncurses-bin']['version']='new-version'
+            else: self.facts['components']['infocmp']['absent']=False
+            with self.subTest(change=change),self.assertRaises(ValueError):self.run_policy()
+
+    def test_expired_future_and_overlong_reviews_are_rejected(self):
+        for reviewed,expires in [('2026-11-01','2026-11-08'),('2026-11-11','2026-11-17'),('2026-11-10','2026-12-10')]:
+            self.rule.update(reviewedOn=reviewed,expiresOn=expires)
+            with self.subTest(reviewed=reviewed,expires=expires),self.assertRaises(ValueError):self.run_policy()
+
+    def test_secret_misconfiguration_and_java_findings_are_never_excepted(self):
+        original=copy.deepcopy(self.scan)
+        for field,value in [('secretFindingCount',1),('secretFindings',[{}]),('misconfigurations',[{}]),('javaVulnerabilityCount',1),('scanExit',2)]:
+            self.scan=dict(copy.deepcopy(original),**{field:value})
+            with self.subTest(field=field),self.assertRaises(ValueError):self.run_policy()
+
+    def test_weak_or_mismatched_evidence_is_rejected(self):
+        original=copy.deepcopy(self.smoke)
+        for field,value in [('deploymentImage','sha256:'+'f'*64),('passed',False),('productionJar',False),('feasibilityOnly',True)]:
+            self.smoke=dict(copy.deepcopy(original),**{field:value})
+            with self.subTest(field=field),self.assertRaises(ValueError):self.run_policy()
+
+    def test_stale_scanner_database_and_incomplete_or_duplicate_reviews_are_rejected(self):
+        self.scan['database']['UpdatedAt']='2026-11-08T00:00:00Z'
+        with self.assertRaisesRegex(ValueError,'fresh_vulnerability_database_required'):self.run_policy()
+        self.scan['database']['UpdatedAt']='2026-11-10T00:00:00Z'
+        self.policy['findings'].append(copy.deepcopy(self.rule))
+        with self.assertRaisesRegex(ValueError,'duplicate_disposition'):self.run_policy()
+        self.policy['findings'].pop();self.rule['requiredControls']=[]
+        with self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
 
 
 class NativeArtifactFactContracts(unittest.TestCase):
@@ -41,9 +124,9 @@ class NativeArtifactFactContracts(unittest.TestCase):
         with self.assertRaises(ValueError): facts.validate_images([image],source)
 
     def test_version_facts_reject_old_or_ambiguous_security_libraries(self):
-        packages='libfreetype6:arm64\t2.15.0-0nkw1\tlibfreetype6\nlibexpat1:arm64\t2.10.0-0nkw1\tlibexpat1\n'
+        packages='libfreetype6:arm64\t2.15.0-0nkw1\tlibfreetype6\nlibexpat1:arm64\t2.10.0-0nkw2\tlibexpat1\n'
         self.assertEqual(2,len(facts.package_inventory(packages)))
-        for invalid in (packages.replace('2.10.0-0nkw1','2.7.1-1'),
+        for invalid in (packages.replace('2.10.0-0nkw2','2.7.1-1'),packages.replace('2.10.0-0nkw2','2.10.0-0nkw1'),
                         packages.splitlines()[0],packages+packages.splitlines()[0]+'\n'):
             with self.subTest(invalid=invalid),self.assertRaises(ValueError): facts.package_inventory(invalid)
 
@@ -223,6 +306,13 @@ class ReleaseContracts(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'image_security_gate_failed'):
             release.candidate('a' * 40, 'sha256:' + 'b' * 64,
                 dict(image='sha256:' + 'b' * 64, scanExit=0, secretFindingCount=0, releaseGatePassed=False), {}, {})
+
+    def test_partial_or_wrong_source_applicability_evidence_cannot_authorize_a_release(self):
+        source='a'*40;image='sha256:'+'b'*64
+        security=dict(image=image,scanExit=1,secretFindingCount=0,releaseGatePassed=False)
+        for facts,policy in [(dict(source=source),None),(None,{}),(dict(source='c'*40),{})]:
+            with self.subTest(facts=facts),self.assertRaisesRegex(ValueError,'applicability_evidence_missing'):
+                release.candidate(source,image,security,{}, {},facts,policy)
 
     def test_manual_promotion_requires_exact_identity_and_every_manual_gate(self):
         manifest = dict(source='a' * 40, publishedDigest='sha256:' + 'b' * 64, releaseEligible=True,

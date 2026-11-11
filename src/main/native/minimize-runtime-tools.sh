@@ -12,7 +12,7 @@ remove_tool() {
     rm -f -- "$1"
   fi
 }
-for package in apt perl-base tar util-linux bsdutils login passwd ncurses-bin sysvinit-utils; do
+for package in apt perl-base tar util-linux mount bsdutils login passwd ncurses-bin sysvinit-utils; do
   dpkg-query -L "$package" | while IFS= read -r path; do
     case "$path" in /usr/bin/*|/usr/sbin/*|/bin/*|/sbin/*|/usr/libexec/rmt*)
       if [ ! -d "$path" ]; then remove_tool "$path"; fi ;;

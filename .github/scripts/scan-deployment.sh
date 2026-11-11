@@ -92,7 +92,7 @@ root_dependency=next((row for row in dependencies if row['ref']==root_ref),None)
 if root_dependency is None:
     root_dependency=dict(ref=root_ref,dependsOn=[]);dependencies.append(root_dependency)
 root_dependency.setdefault('dependsOn',[]).extend(explicit_refs)
-for suffix,name,version in [('/libfreetype.so.6','freetype','2.15.0'),('/libexpat.so.1','expat','2.10.0')]:
+for suffix,name,version in [('/libfreetype.so.6','freetype','2.15.0'),('/libexpat.so.1','expat','2.10.0+security.1492')]:
     paths=[artifact_path for artifact_path in shipped if artifact_path.endswith(suffix)]
     assert len(paths)==1, 'Updated media library hash missing'
     library_path=paths[0];ref='urn:nkw:artifact:'+name+':'+shipped[library_path]
