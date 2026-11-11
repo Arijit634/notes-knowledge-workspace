@@ -17,6 +17,14 @@ on:
         description: Measure app, proxy and Redis in one 448 MiB / 0.1 CPU aggregate budget
         type: boolean
         default: false
+      qualify_host_kernel:
+        description: Build and publish only the zero-data Linux kernel diagnostic
+        type: boolean
+        default: false
+      zero_cost_probe_verified:
+        description: Operator verified no-charge public runner and public GHCR entitlement
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -25,6 +33,68 @@ concurrency:
 env:
   SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 jobs:
+  host-kernel:
+    name: Preview / disposable host-kernel diagnostic
+    if: github.event_name == 'workflow_dispatch' && inputs.qualify_host_kernel && inputs.zero_cost_probe_verified
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - name: Build only the dependency-free diagnostic
+        env:
+          SMALL_HOST: ${{ inputs.qualify_small_host }}
+          SMALL_BUNDLE: ${{ inputs.qualify_small_bundle }}
+        run: |
+          set -euo pipefail
+          test "$SMALL_HOST" = false && test "$SMALL_BUNDLE" = false
+          test "$(uname -m)" = x86_64
+          docker build --build-arg "SOURCE_SHA=$SOURCE_SHA" --iidfile "$RUNNER_TEMP/kernel-image" .github/deploy/kernel-probe
+          image="$(cat "$RUNNER_TEMP/kernel-image")"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$SOURCE_SHA"
+          python3 .github/deploy/kernel-probe/test_probe.py "$image" | tee "$RUNNER_TEMP/kernel-diagnostic-tests.json"
+      - name: Publish that same zero-data image
+        id: publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          repository="ghcr.io/${GITHUB_REPOSITORY,,}-kernel-probe"
+          image="$(cat "$RUNNER_TEMP/kernel-image")"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin >/dev/null
+          if docker manifest inspect "$repository:sha-$SOURCE_SHA" >/dev/null 2>&1; then exit 1; fi
+          docker tag "$image" "$repository:sha-$SOURCE_SHA"
+          docker push "$repository:sha-$SOURCE_SHA"
+          canonical="$(docker image inspect --format '{{index .RepoDigests 0}}' "$repository:sha-$SOURCE_SHA")"
+          [[ "$canonical" =~ ^ghcr.io/arijit634/notes-knowledge-workspace-kernel-probe@sha256:[0-9a-f]{64}$ ]]
+          printf 'name=%s\ndigest=%s\n' "$repository" "${canonical#*@}" >> "$GITHUB_OUTPUT"
+          printf '{"source":"%s","image":"%s","diagnosticOnly":true,"applicationDataIncluded":false,"runtimeDependencies":0}\n' "$SOURCE_SHA" "$canonical" > "$RUNNER_TEMP/kernel-publication.json"
+      - name: Attest diagnostic provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-name: ${{ steps.publication.outputs.name }}
+          subject-digest: ${{ steps.publication.outputs.digest }}
+          push-to-registry: true
+      - name: Finish registry authentication
+        if: always()
+        run: docker logout ghcr.io >/dev/null 2>&1 || true
+      - name: Preserve diagnostic-only receipts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kernel-diagnostic
+          path: |
+            ${{ runner.temp }}/kernel-diagnostic-tests.json
+            ${{ runner.temp }}/kernel-publication.json
+          retention-days: 3
+          if-no-files-found: warn
   small-host:
     name: Preview / constrained x86_64 feasibility
     if: github.event_name == 'workflow_dispatch' && (inputs.qualify_small_host || inputs.qualify_small_bundle)
@@ -51,7 +121,7 @@ jobs:
           python3 .github/deploy/private-preview/smoke.py "$(cat "$RUNNER_TEMP/preview-image")" "$mode"
   native-preview:
     name: Preview / native ARM and deployment controls
-    if: github.event_name != 'workflow_dispatch' || (!inputs.qualify_small_host && !inputs.qualify_small_bundle)
+    if: github.event_name != 'workflow_dispatch' || (!inputs.qualify_small_host && !inputs.qualify_small_bundle && !inputs.qualify_host_kernel)
     # Standard ARM runner is free for this public repository; never a larger runner.
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
