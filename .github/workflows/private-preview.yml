@@ -183,6 +183,7 @@ jobs:
           persist-credentials: false
       - name: Verify offline deployment contracts
         run: |
+          python3 .github/scripts/test-gitleaks-contract.py
           python3 .github/scripts/test-operations.py
           python3 .github/scripts/test-health-probe.py
           python3 -m unittest discover -s .github/deploy/managed-preview -p 'test_*.py'
