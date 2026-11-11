@@ -218,5 +218,6 @@ jobs:
             ${{ runner.temp }}/full-hosted-candidate/security/shipped-artifacts.sha256
             ${{ runner.temp }}/full-hosted-candidate/security/full-runtime.cdx.json
             ${{ runner.temp }}/full-hosted-candidate/security/full-bundle-artifacts.sha256
+            ${{ runner.temp }}/full-hosted-candidate/security/native-artifact-facts.json
           if-no-files-found: warn
           retention-days: 3

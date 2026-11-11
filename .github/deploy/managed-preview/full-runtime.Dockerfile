@@ -88,8 +88,8 @@ RUN sed -i 's|http://|https://|g' /etc/apt/sources.list.d/ubuntu.sources \
     && apt-get -o Acquire::Retries=0 -o APT::Update::Error-Mode=any update \
     && apt-get install -y --no-install-recommends gcc make libc6-dev curl ca-certificates \
     && mkdir /build && cd /build \
-    && curl --fail --silent --show-error --location --retry 0 https://github.com/redis/redis/releases/download/8.10.2/redis-full.tar.gz -o redis-full.tar.gz \
-    && echo 'ae6973de9b6ad8e6cf21b1e764abccab59200689af6aabce10d4cf6bbb2e253f  redis-full.tar.gz' | sha256sum --check - \
+    && curl --fail --silent --show-error --location --retry 0 https://github.com/redis/redis/releases/download/8.10.3/redis-full.tar.gz -o redis-full.tar.gz \
+    && echo '5e0c00ed77f789fb1a4a30f1fbb58a793cc88c41c0f11f0e38e1b4f192991188  redis-full.tar.gz' | sha256sum --check - \
     && mkdir redis && tar -xzf redis-full.tar.gz -C redis --strip-components=1 \
     && make -C redis -j2 MALLOC=libc BUILD_TLS=no redis-server && strip redis/src/redis-server
 
@@ -128,7 +128,7 @@ COPY --from=build /native/minimize-runtime-tools.sh /tmp/minimize-runtime-tools.
 RUN find /usr /opt /jdk -xdev -type f -perm /6000 -exec chmod a-s {} +
 RUN /bin/sh /tmp/minimize-runtime-tools.sh && rm /tmp/minimize-runtime-tools.sh
 COPY --from=redis-build /build/redis/src/redis-server /usr/local/bin/redis-server
-COPY --from=redis-build /build/redis-full.tar.gz /provenance/redis-8.10.2-source.tar.gz
+COPY --from=redis-build /build/redis-full.tar.gz /provenance/redis-8.10.3-source.tar.gz
 COPY --chmod=755 managed/start-full.sh /app/start-full.sh
 COPY managed/nginx.conf /app/nginx.conf
 RUN ln -s /application.jar /app/application.jar && nginx -v && redis-server --version

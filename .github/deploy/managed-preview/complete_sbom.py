@@ -32,8 +32,8 @@ def complete_full(source, destination, shipped):
     if parent is None:
         parent=dict(ref=root,dependsOn=[]);dependencies.append(parent)
     for path,name,version,source_hash in (
-        ('/usr/local/bin/redis-server','redis-server','8.10.2',
-            'ae6973de9b6ad8e6cf21b1e764abccab59200689af6aabce10d4cf6bbb2e253f'),
+        ('/usr/local/bin/redis-server','redis-server','8.10.3',
+            '5e0c00ed77f789fb1a4a30f1fbb58a793cc88c41c0f11f0e38e1b4f192991188'),
         (codec_paths[0],'openh264-noble-source-build','2.6.0+dfsg-2nkw1',
             '52fc65775e03abe70f3f453c3c57fa7b31c71fe240de84da53d75f2ddc7dd519')):
         reference='urn:nkw:artifact:'+name+':'+shipped[path]

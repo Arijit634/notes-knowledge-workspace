@@ -114,6 +114,20 @@ def main():
     resolver_bounded=len(search_domains)<=6 and all(len(name)<180 for name in search_domains)
     del resolver,search_domains
     removals=inspect('cat /provenance/removed-runtime-tools.sha256')
+    full_bundle={}
+    if inspect('if test -x /usr/local/bin/redis-server && test -x /usr/sbin/nginx; then printf full; else printf native; fi')=='full':
+        bundle_linkage=inspect('LD_LIBRARY_PATH=/opt/pdf/runtime/lib/server:/jdk/lib/server ldd /usr/sbin/nginx /usr/local/bin/redis-server /jdk/lib/server/libjvm.so /opt/pdf/runtime/lib/libfontmanager.so /opt/video/tools/bin/ffmpeg')
+        require('not found' not in bundle_linkage,'full_bundle_linkage_unresolved')
+        bitness=inspect('getconf LONG_BIT')
+        codec_source=inspect('sha256sum /provenance/openh264-source/openh264_2.6.0+dfsg.orig.tar.xz').split()[0]
+        codec_hashes=inspect('sha256sum /opt/video/tools/libopenh264.so.8 /usr/lib/*-linux-gnu/libopenh264.so.2.6.0').splitlines()
+        require(len(codec_hashes)==2 and codec_hashes[0].split()[0]==codec_hashes[1].split()[0],
+            'source_built_codec_copy_mismatch')
+        full_bundle=dict(gnutlsNotLinked='gnutls' not in bundle_linkage.casefold(),
+            elfBpfNotLinked=not any(name in bundle_linkage.casefold() for name in ('libelf','libbpf')),
+            native64BitAbi=bitness=='64',
+            openh264SourceSha256=codec_source,
+            openh264SourceCopiesMatch=True)
     locales={key:None for key in ('LANG','LC_ALL','LANGUAGE','LOCALDOMAIN')}
     for entry in metadata[0]['Config'].get('Env',[]):
         key,_,value=entry.partition('=')
@@ -154,6 +168,7 @@ def main():
         applicationJarSha256=jar_sha,packagedJavaDependencies=len(dependencies),
         runtimeToolRemovalInventorySha256=hashlib.sha256(removals.encode()).hexdigest(),
         healthCheck=metadata[0]['Config'].get('Healthcheck',{}),
+        fullHostedBundle=full_bundle,
         liveDataOrProviderAccess=False,rawLogsOrEnvironmentValuesRetained=False,
         riskDispositionsApproved=False,releaseGatePassed=False)
     output.parent.mkdir(parents=True,exist_ok=True)

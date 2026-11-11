@@ -57,6 +57,7 @@ done
 test "$decoded" = 2000
 docker "${common[@]}" "$qualification" -Xmx192m -Dloader.path=/qualification -Dloader.main=org.notesknowledge.notes.ConfiguredMediaRuntimeQualification -cp /application.jar org.springframework.boot.loader.launch.PropertiesLauncher /opt/pdf /opt/video
 bash .github/scripts/scan-deployment.sh "$deployment" "$evidence/security" "$RUNNER_TEMP/full-hosted-trivy-cache"
+python3 .github/scripts/native-image-facts.py "$deployment" "$qualification" "$source_sha" "$evidence/security/native-artifact-facts.json"
 docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
   --entrypoint sha256sum "$deployment" /usr/local/bin/redis-server /usr/lib/x86_64-linux-gnu/libopenh264.so.2.6.0 > "$evidence/security/full-bundle-artifacts.sha256"
 python3 - "$evidence/security" <<'PY'

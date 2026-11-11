@@ -27,6 +27,20 @@ PG='pgvector/pgvector:0.8.6-pg18-trixie@sha256:78bf48b801e792f99e3ac62b5036fd387
 HOST='ep-fixture.ap-southeast-1.aws.neon.tech'
 OTHER_HOST='ep-other.ap-southeast-1.aws.neon.tech'
 
+def safe_startup_diagnostics(logs):
+    """Only server-owned codes/class names; never messages, values or raw stacks."""
+    markers=['preview_port_invalid','preview_configuration_unavailable','preview_origin_invalid',
+        'preview_perimeter_unavailable','preview_edge_configuration_invalid','preview_constituent_stopped',
+        'Restricted private preview configuration required','APPLICATION FAILED TO START','ConfigDataResourceNotFoundException',
+        'OutOfMemoryError','Security email sender is not configured','Authenticated TLS SMTP is required',
+        'SMTP timeout exceeds delivery policy','Combined SMTP timeouts exceed delivery policy',
+        'Media runtime preflight unavailable','PDF runtime preflight unavailable',
+        'Media runtime deployment configuration unavailable','Invalid provider timeout configuration']
+    classes=re.findall(r'Caused by: ((?:java\.|org\.springframework\.|org\.notesknowledge\.|com\.google\.genai\.|jakarta\.mail\.)[A-Za-z0-9_.$]+)',logs)
+    frames=re.findall(r'at (org\.notesknowledge\.[A-Za-z0-9_.$]+)\(',logs)
+    return dict(observedSafeCodes=[code for code in markers if code in logs],
+        causeClasses=list(dict.fromkeys(classes))[-12:],applicationFrames=list(dict.fromkeys(frames))[-12:])
+
 def synthetic_pdf():
     """One fictional text page, with byte-accurate xref offsets for real validation."""
     stream=b'BT /F1 12 Tf 10 60 Td (Synthetic full runtime fixture) Tj ET\n'
@@ -97,6 +111,14 @@ def main():
             # memory measurement includes them. This fake key cannot authorize
             # a real provider; the isolated network has no external egress.
             values.update({
+                'spring.mail.host':'127.0.0.1',
+                'spring.mail.port':'1025',
+                'spring.mail.username':'synthetic-smtp-user',
+                'spring.mail.password':'synthetic-smtp-password-no-authority',
+                'spring.mail.properties.mail.smtp.connectiontimeout':'5000',
+                'spring.mail.properties.mail.smtp.timeout':'5000',
+                'spring.mail.properties.mail.smtp.writetimeout':'5000',
+                'identity.delivery.from':'synthetic-sender@example.test',
                 'spring.ai.google.genai.api-key':'synthetic-provider-key-not-authority',
                 'knowledge.derivation.embedding-model':'gemini-embedding-2',
                 'knowledge.derivation.media-model':'gemini-3.6-flash',
@@ -225,12 +247,8 @@ def main():
                 metadata=json.loads(run('docker','inspect',app))[0]
                 if not metadata['State']['Running']:
                     logs=run('docker','logs',app)
-                    known=['preview_port_invalid','preview_configuration_unavailable','preview_origin_invalid',
-                        'preview_perimeter_unavailable','preview_edge_configuration_invalid','preview_constituent_stopped',
-                        'Restricted private preview configuration required','APPLICATION FAILED TO START',
-                        'ConfigDataResourceNotFoundException','OutOfMemoryError']
                     print(json.dumps({'runtimeExited':True,'exitCode':metadata['State']['ExitCode'],
-                        'oomKilled':metadata['State']['OOMKilled'],'observedSafeCodes':[code for code in known if code in logs]}))
+                        'oomKilled':metadata['State']['OOMKilled'],**safe_startup_diagnostics(logs)}))
                     raise ValueError('Runtime exited before readiness')
                 # Internal networks intentionally do not publish host ports. The
                 # native Linux runner reaches this isolated bridge directly;
@@ -271,7 +289,7 @@ def main():
             code,_,body=request('/api/auth/oidc/google/callback?state=synthetic-state-marker&code=synthetic-code-marker',
                 extra={'Cookie':'QUALIFICATION=synthetic-cookie-marker'})
             markers=['synthetic-state-marker','synthetic-code-marker','synthetic-cookie-marker',auth]
-            if full:markers.append('synthetic-provider-key-not-authority')
+            if full:markers.extend(['synthetic-provider-key-not-authority','synthetic-smtp-password-no-authority'])
             if code!=401 or any(marker.encode() in body for marker in markers):raise ValueError('Invalid callback boundary failed')
             logs=run('docker','logs',app)
             if any(marker in logs for marker in markers):raise ValueError('Edge or application logs disclosed request material')
@@ -353,6 +371,12 @@ def main():
                 elif media=='audio/wav' and received!=payload:raise ValueError('PCM WAV bytes changed')
                 elif media=='video/mp4' and not received:raise ValueError('Accepted video bytes unavailable')
                 attachments.append((attachment_path,received))
+            if full:
+                if request('/api/public/explore')[0]!=200:raise ValueError('Full public discovery unavailable')
+                public='/api/public/publications/'+note['id']
+                media_id=attachments[0][0].rsplit('/',1)[1]
+                if request(public)[0]!=404 or request(public+'/media/'+media_id+'/content')[0]!=404:
+                    raise ValueError('Public locator fell through to private Note or Attachment')
             print(json.dumps({'authenticatedPngAndWav':True}),flush=True)
             other_cookie,_=login('other')
             if request(note_path,cookie=other_cookie)[0]!=404 or request(attachments[0][0]+'/content',cookie=other_cookie)[0]!=404:
@@ -408,7 +432,7 @@ def main():
             controlled=provider_control('/counts')
             if controlled['token']!=3 or controlled['objectPut']!=(5 if full else 3) or controlled['objectGet']<(8 if full else 4):raise ValueError('Controlled workload incomplete')
             if any(marker in run('docker','logs',app) for marker in markers):raise ValueError('Authenticated logs disclosed request material')
-            print(json.dumps({'image':image,'nativeArchitecture':run('uname','-m'),'rootlessSingleContainer':True,
+            result={'image':image,'nativeArchitecture':run('uname','-m'),'rootlessSingleContainer':True,
                 'appProxyRedisCombinedBudget':True,'fullHostedNativeWorkload':full,
                 'providerProcessingQualified':False,'releaseEligible':False,
                 'firstBootSeconds':first,'recreatedBootSeconds':second,
@@ -420,7 +444,13 @@ def main():
                 'authenticatedCoreWorkload':True,'controlledOidcSignatureNoncePkce':True,'crossOwnerDenial':True,
                 'authenticatedSessionNoteAndFilesSurviveRecreation':True,'returningLoginAndLogout':True,
                 'controlledProviderCounts':controlled,'publicTlsOrProviderQualified':False,'liveProviderCalls':0,
-                'realDataUsed':False,'resources':samples}))
+                'realDataUsed':False,'resources':samples}
+            if full:
+                result.update(passed=True,productionJar=True,deploymentImage=image,resourceMeasurements=samples,
+                    events=[dict(step='production_startup',nativePreflight=True),
+                        dict(step='authorized_storage',crossOwnerDenied=True,csrfRequired=True),
+                        dict(step='public_private_separation',privateResourceDenied=True)])
+            print(json.dumps(result))
         finally:
             if provider is not None:
                 provider.terminate()

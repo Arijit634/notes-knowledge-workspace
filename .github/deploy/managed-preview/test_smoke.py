@@ -11,6 +11,17 @@ spec=importlib.util.spec_from_file_location('managed_smoke',Path(__file__).with_
 smoke=importlib.util.module_from_spec(spec);spec.loader.exec_module(smoke)
 
 class ReadinessTests(unittest.TestCase):
+    def test_startup_diagnostic_does_not_return_messages_or_sensitive_material(self):
+        raw=('APPLICATION FAILED TO START\nCaused by: java.lang.IllegalArgumentException: '
+            'Security email sender is not configured synthetic-private-marker\n'
+            ' at org.notesknowledge.identity.ManagedEmailDeliveryAdapter.create(Adapter.java:123)\n'
+            'Caused by: attacker.payload.ShouldNotBeCopied: synthetic-private-marker')
+        result=smoke.safe_startup_diagnostics(raw)
+        self.assertEqual(['java.lang.IllegalArgumentException'],result['causeClasses'])
+        self.assertEqual(['org.notesknowledge.identity.ManagedEmailDeliveryAdapter.create'],result['applicationFrames'])
+        self.assertNotIn('synthetic-private-marker',json.dumps(result))
+        self.assertNotIn('attacker.payload',json.dumps(result))
+
     def wait(self,responses,timeout=2):
         clock=[0.0];calls=[];remaining=iter(responses)
         def request(path,authenticated):
