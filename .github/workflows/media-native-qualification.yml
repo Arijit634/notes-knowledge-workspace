@@ -3,6 +3,10 @@ name: Native media qualification
 on:
   pull_request:
     paths:
+      - 'src/main/native/**'
+      - '.github/scripts/qualify-media.sh'
+      - '.github/scripts/native-image-facts.py'
+      - '.github/security/native-runtime-dispositions.json'
       - '.github/workflows/backend-release.yml'
       - '.github/workflows/media-native-qualification.yml'
       - '.github/scripts/deployment-smoke.py'

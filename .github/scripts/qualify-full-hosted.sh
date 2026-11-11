@@ -71,6 +71,14 @@ PY
 # Scans retain every raw finding. A collected scan is not an applicability or
 # release clearance; those remain separate exact-image gates.
 python3 .github/deploy/managed-preview/smoke.py "$deployment" --full-hosted | tee "$evidence/managed-smoke.jsonl"
+python3 - "$evidence" <<'PY'
+import json,pathlib,sys
+root=pathlib.Path(sys.argv[1]);lines=(root/'managed-smoke.jsonl').read_text().splitlines()
+smoke=json.loads(lines[-1])
+assert smoke['passed'] is True and smoke['productionJar'] is True and smoke['fullHostedNativeWorkload'] is True
+assert smoke['liveProviderCalls']==0 and smoke['releaseEligible'] is False
+(root/'combined-runtime.json').write_text(json.dumps(smoke,indent=2)+'\n')
+PY
 python3 - "$source_sha" "$deployment" "$qualification" "$evidence" <<'PY'
 import json,pathlib,sys
 source,deployment,qualification,evidence=sys.argv[1:]

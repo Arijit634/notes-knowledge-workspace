@@ -21,6 +21,20 @@ def step(name, workflow=WORKFLOW):
 
 
 class PublicationAuthTests(unittest.TestCase):
+    def test_full_publication_requires_both_no_cost_and_codec_clearance(self):
+        bash = os.environ.get('BASH_FOR_TESTS') or shutil.which('bash')
+        command = step('Enforce the no-cost publication choice').split('        run: |\n', 1)[1]
+        command = command.split('      - uses:', 1)[0]
+        for publish, free, full, clearance, expected in (
+            ('true','true','true','false',1),('true','false','true','true',1),
+            ('true','true','true','true',0),('false','false','true','false',0),
+            ('true','true','false','false',0)):
+            env = dict(os.environ,PUBLISH=publish,FREE_VERIFIED=free,FULL_RUNTIME=full,REDISTRIBUTION=clearance)
+            result = subprocess.run([bash,'--noprofile','--norc','-c','set -euo pipefail\n'+textwrap.dedent(command)],
+                                    env=env,capture_output=True,timeout=10)
+            with self.subTest(publish=publish,free=free,full=full,clearance=clearance):
+                self.assertEqual(expected,result.returncode)
+
     def run_transport(self, push_exit, target):
         workflow, publish_name, _, suffix = target
         bash = os.environ.get('BASH_FOR_TESTS') or shutil.which('bash')
