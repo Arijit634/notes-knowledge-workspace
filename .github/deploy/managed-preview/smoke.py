@@ -41,6 +41,23 @@ def safe_startup_diagnostics(logs):
     return dict(observedSafeCodes=[code for code in markers if code in logs],
         causeClasses=list(dict.fromkeys(classes))[-12:],applicationFrames=list(dict.fromkeys(frames))[-12:])
 
+def request_observer_timeout(full):
+    # Observe the fixed 120-second edge deadline; do not change that deadline,
+    # any provider timeout, or the native worker's own enforcement.
+    return 130 if full else 45
+
+def safe_resource_observation(text):
+    lines=text.splitlines()
+    if len(lines)<2 or not all(row.isdecimal() for row in lines[:2]):return dict(available=False)
+    allowed={'low','high','max','oom','oom_kill','oom_group_kill','usage_usec','user_usec',
+        'system_usec','nr_periods','nr_throttled','throttled_usec'}
+    counters={}
+    for line in lines[2:]:
+        fields=line.split()
+        if len(fields)==2 and fields[0] in allowed and fields[1].isdecimal():counters[fields[0]]=int(fields[1])
+    if not {'oom','oom_kill','usage_usec'}.issubset(counters):return dict(available=False)
+    return dict(available=True,memoryCurrentBytes=int(lines[0]),memoryPeakBytes=int(lines[1]),counters=counters)
+
 def synthetic_pdf():
     """One fictional text page, with byte-accurate xref offsets for real validation."""
     stream=b'BT /F1 12 Tf 10 60 Td (Synthetic full runtime fixture) Tj ET\n'
@@ -243,7 +260,7 @@ def main():
             opener=urllib.request.build_opener(NoRedirect(),urllib.request.ProxyHandler({}))
             auth='Basic '+base64.b64encode(b'preview:synthetic-preview-perimeter-only').decode()
             authenticated_seconds=[]
-            def request(path,*,authenticated=True,method='GET',cookie=None,csrf=None,extra=None,data=None,expected_redirect=False):
+            def request(path,*,authenticated=True,method='GET',cookie=None,csrf=None,extra=None,data=None,expected_redirect=False,stage='request'):
                 metadata=json.loads(run('docker','inspect',app))[0]
                 if not metadata['State']['Running']:
                     logs=run('docker','logs',app)
@@ -267,8 +284,21 @@ def main():
                 headers.update(extra or {})
                 req=urllib.request.Request('http://'+str(address)+':10000'+path,headers=headers,method=method,data=data)
                 request_started=time.monotonic()
-                try:response=opener.open(req,timeout=45)
+                try:response=opener.open(req,timeout=request_observer_timeout(full))
                 except urllib.error.HTTPError as error:response=error
+                except (TimeoutError,ConnectionError,urllib.error.URLError):
+                    if full:
+                        state=json.loads(run('docker','inspect',app))[0]['State']
+                        observation=dict(available=False)
+                        if state['Running']:
+                            snapshot=subprocess.run(['docker','exec',app,'/bin/sh','-c',
+                                'cat /sys/fs/cgroup/memory.current /sys/fs/cgroup/memory.peak; '
+                                'cat /sys/fs/cgroup/memory.events /sys/fs/cgroup/cpu.stat'],
+                                capture_output=True,text=True,timeout=10)
+                            if snapshot.returncode==0:observation=safe_resource_observation(snapshot.stdout)
+                        print(json.dumps(dict(requestObservationFailed=True,stage=stage,
+                            containerRunning=state['Running'],oomKilled=state['OOMKilled'],resources=observation)),flush=True)
+                    raise
                 with response:
                     body=response.read(1024*1024+1)
                     if len(body)>1024*1024:raise ValueError('Unbounded fixture response')
@@ -355,9 +385,11 @@ def main():
             for name,media,payload in uploads:
                 boundary='nkw-controlled-upload'
                 upload=(f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{name}"\r\nContent-Type: {media}\r\n\r\n').encode()+payload+f'\r\n--{boundary}--\r\n'.encode()
+                if full:print(json.dumps(dict(syntheticUploadStarted=media)),flush=True)
                 code,_,body=request(note_path+'/attachments',method='POST',cookie=owner_cookie,csrf=owner_csrf,
-                    extra={'Content-Type':'multipart/form-data; boundary='+boundary},data=upload)
+                    extra={'Content-Type':'multipart/form-data; boundary='+boundary},data=upload,stage='synthetic-upload-'+media)
                 if code!=201:raise ValueError('Authenticated synthetic upload failed')
+                if full:print(json.dumps(dict(syntheticUploadAccepted=media,seconds=authenticated_seconds[-1])),flush=True)
                 attachment_path=note_path+'/attachments/'+json.loads(body)['id']
                 code,_,received=request(attachment_path+'/content',cookie=owner_cookie)
                 if code!=200:raise ValueError('Private byte delivery failed; status='+str(code))
