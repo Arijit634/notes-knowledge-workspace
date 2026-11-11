@@ -745,6 +745,34 @@
         "https://github.com/canonical/ubuntu-security-notices/blob/c7ce33c8b88be177f7ba06882bb690c46d93bd86/osv/cve/2026/UBUNTU-CVE-2026-76642.json"
       ],
       "vendorEvidenceSha256": "03034f3fd46701a979dd6959c8d532b076d1cb2ab6c57cff68ba6aab36e497b7"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-82560",
+      "PkgName": "perl-base",
+      "InstalledVersion": "5.38.2-3.2ubuntu0.6",
+      "FixedVersion": "5.38.2-3.2ubuntu0.7",
+      "Severity": "MEDIUM",
+      "Status": "fixed",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-82560",
+      "kind": "component-not-shipped",
+      "rationale": "The vulnerable Pod::Text formatter requires the Perl interpreter. The exact image removes the perl-base executable programs and records their removal hashes; its measured /usr/bin/perl absence is mandatory. No application or fixed worker invokes Perl or formats caller-supplied POD. The package inventory and raw scanner finding remain visible; this is not a package-upgrade claim.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "perlAbsent"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-11",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Bind the exact production source, package, image and absent interpreter to qualified owner/CSRF and private/public controls; reject missing, changed, expired or newly observed evidence.",
+      "remediationTarget": "Recheck vendor fixed Noble package 5.38.2-3.2ubuntu0.7 by 2026-11-18; retain the finding until a new scan verifies remediation.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/d27f7ae949795bce7385a2d7526c7dbc85b89d93/osv/cve/2026/UBUNTU-CVE-2026-82560.json"
+      ],
+      "vendorEvidenceSha256": "e1f5eab8b8a3f23cd663408c27e83215d0ce01afb57f460bde35f4fdc0d13443"
     }
   ]
 }
