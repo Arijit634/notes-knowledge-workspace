@@ -57,6 +57,15 @@ done
 test "$decoded" = 2000
 docker "${common[@]}" "$qualification" -Xmx192m -Dloader.path=/qualification -Dloader.main=org.notesknowledge.notes.ConfiguredMediaRuntimeQualification -cp /application.jar org.springframework.boot.loader.launch.PropertiesLauncher /opt/pdf /opt/video
 bash .github/scripts/scan-deployment.sh "$deployment" "$evidence/security" "$RUNNER_TEMP/full-hosted-trivy-cache"
+docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+  --entrypoint sha256sum "$deployment" /usr/local/bin/redis-server /usr/lib/x86_64-linux-gnu/libopenh264.so.2.6.0 > "$evidence/security/full-bundle-artifacts.sha256"
+python3 - "$evidence/security" <<'PY'
+import importlib.util,pathlib,sys
+path=pathlib.Path('.github/deploy/managed-preview/complete_sbom.py')
+spec=importlib.util.spec_from_file_location('full_sbom',path);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+root=pathlib.Path(sys.argv[1]);shipped={row.split()[1]:row.split()[0] for row in (root/'full-bundle-artifacts.sha256').read_text().splitlines()}
+module.complete_full(root/'deployment.cdx.json',root/'full-runtime.cdx.json',shipped)
+PY
 # Scans retain every raw finding. A collected scan is not an applicability or
 # release clearance; those remain separate exact-image gates.
 python3 .github/deploy/managed-preview/smoke.py "$deployment" --full-hosted | tee "$evidence/managed-smoke.jsonl"

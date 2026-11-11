@@ -93,6 +93,25 @@ def main():
             # exists, all Notes below are AI-OFF, and this network has no egress.
             # Native/core workload evidence must never imply live AI qualification.
             (secret/'processing-disclosure.json').write_text('{}\n')
+            # Instantiate the actual SDK/client and enabled worker beans so the
+            # memory measurement includes them. This fake key cannot authorize
+            # a real provider; the isolated network has no external egress.
+            values.update({
+                'spring.ai.google.genai.api-key':'synthetic-provider-key-not-authority',
+                'knowledge.derivation.embedding-model':'gemini-embedding-2',
+                'knowledge.derivation.media-model':'gemini-3.6-flash',
+                'knowledge.derivation.model-revision':'hosted-qualification-v1',
+                'knowledge.derivation.configuration-id':'hosted-qualification-v1',
+                'knowledge.derivation.adapter-version':'google-genai-sdk-1.65.0',
+                'knowledge.derivation.dimension':'768',
+                'knowledge.derivation.operator':'cosine',
+                'knowledge.derivation.normalization':'unit',
+                'knowledge.derivation.approved-policy-fingerprint':'a'*64,
+                'knowledge.derivation.pdf-page-children':'true',
+                'knowledge.derivation.video-children':'true',
+                'knowledge.derivation.direct-audio-search':'true',
+                'knowledge.derivation.direct-video-soundtrack-search':'true',
+            })
         for value in values.values():
             if '\n' in value or '\r' in value or '\\' in value:raise ValueError('Unframed fixture value')
         (secret/'runtime.properties').write_text('\n'.join(k+'='+v for k,v in values.items())+'\n')
@@ -123,7 +142,7 @@ def main():
         try:
             holder=run('docker','create',image)
             containers.append(holder)
-            run('docker','cp',holder+':/app/application.jar',str(temp/'application.jar'))
+            run('docker','cp',holder+(':/application.jar' if full else ':/app/application.jar'),str(temp/'application.jar'))
             with zipfile.ZipFile(temp/'application.jar') as jar:
                 (temp/'crypto.jar').write_bytes(jar.read('BOOT-INF/lib/spring-security-crypto-7.1.1.jar'))
             hashed=run('java','-Xmx96m','-cp',str(temp/'crypto.jar'),str(ROOT/'FixtureHash.java'))
@@ -252,6 +271,7 @@ def main():
             code,_,body=request('/api/auth/oidc/google/callback?state=synthetic-state-marker&code=synthetic-code-marker',
                 extra={'Cookie':'QUALIFICATION=synthetic-cookie-marker'})
             markers=['synthetic-state-marker','synthetic-code-marker','synthetic-cookie-marker',auth]
+            if full:markers.append('synthetic-provider-key-not-authority')
             if code!=401 or any(marker.encode() in body for marker in markers):raise ValueError('Invalid callback boundary failed')
             logs=run('docker','logs',app)
             if any(marker in logs for marker in markers):raise ValueError('Edge or application logs disclosed request material')
