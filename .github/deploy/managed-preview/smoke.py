@@ -6,6 +6,7 @@ import ipaddress
 import io
 import json
 import os
+import random
 from pathlib import Path
 import re
 import subprocess
@@ -50,7 +51,7 @@ def safe_resource_observation(text):
     lines=text.splitlines()
     if len(lines)<2 or not all(row.isdecimal() for row in lines[:2]):return dict(available=False)
     allowed={'low','high','max','oom','oom_kill','oom_group_kill','usage_usec','user_usec',
-        'system_usec','nr_periods','nr_throttled','throttled_usec'}
+        'system_usec','nr_periods','nr_throttled','throttled_usec','anon','file','kernel','shmem','inactive_file','active_file'}
     counters={}
     for line in lines[2:]:
         fields=line.split()
@@ -260,7 +261,8 @@ def main():
             opener=urllib.request.build_opener(NoRedirect(),urllib.request.ProxyHandler({}))
             auth='Basic '+base64.b64encode(b'preview:synthetic-preview-perimeter-only').decode()
             authenticated_seconds=[]
-            def request(path,*,authenticated=True,method='GET',cookie=None,csrf=None,extra=None,data=None,expected_redirect=False,stage='request'):
+            def request(path,*,authenticated=True,method='GET',cookie=None,csrf=None,extra=None,data=None,expected_redirect=False,stage='request',response_limit=1024*1024):
+                if response_limit not in (1024*1024,20_000_000):raise ValueError('Unexpected fixture response bound')
                 metadata=json.loads(run('docker','inspect',app))[0]
                 if not metadata['State']['Running']:
                     logs=run('docker','logs',app)
@@ -300,8 +302,8 @@ def main():
                             containerRunning=state['Running'],oomKilled=state['OOMKilled'],resources=observation)),flush=True)
                     raise
                 with response:
-                    body=response.read(1024*1024+1)
-                    if len(body)>1024*1024:raise ValueError('Unbounded fixture response')
+                    body=response.read(response_limit+1)
+                    if len(body)>response_limit:raise ValueError('Unbounded fixture response')
                     if 300<=response.status<400 and not expected_redirect:raise ValueError('Unexpected fixture redirect')
                     if authenticated:authenticated_seconds.append(round(time.monotonic()-request_started,3))
                     return response.status,response.headers,body
@@ -371,8 +373,16 @@ def main():
             print(json.dumps({'authenticatedNoteSearchAndProfile':True}),flush=True)
             def png_chunk(kind,data):return struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data)&0xffffffff)
             png=b'\x89PNG\r\n\x1a\n'+png_chunk(b'IHDR',struct.pack('>IIBBBBB',8,8,8,2,0,0,0))+png_chunk(b'IDAT',zlib.compress((b'\0'+b'\x40\x80\xc0'*8)*8))+png_chunk(b'IEND',b'')
+            if full:
+                pixels=random.Random(731).randbytes(1200*1200*3)
+                raster=b''.join(b'\0'+pixels[y*3600:(y+1)*3600] for y in range(1200))
+                png=b'\x89PNG\r\n\x1a\n'+png_chunk(b'IHDR',struct.pack('>IIBBBBB',1200,1200,8,2,0,0,0))+png_chunk(b'IDAT',zlib.compress(raster))+png_chunk(b'IEND',b'')
+                (temp/'original-fixture.png').write_bytes(png)
+                del pixels,raster
             buffer=io.BytesIO()
-            with wave.open(buffer,'wb') as audio:audio.setnchannels(1);audio.setsampwidth(2);audio.setframerate(8000);audio.writeframes(b'\0\0'*3200)
+            with wave.open(buffer,'wb') as audio:
+                audio.setnchannels(1);audio.setsampwidth(2);audio.setframerate(16000 if full else 8000)
+                audio.writeframes(b'\0\0'*(16000*300 if full else 3200))
             attachments=[]
             uploads=[('probe.png','image/png',png),('probe.wav','audio/wav',buffer.getvalue())]
             if full:
@@ -380,6 +390,11 @@ def main():
                 payload=subprocess.run(['docker','run','--rm','--network','none','--read-only',
                     '--cap-drop','ALL','--security-opt','no-new-privileges','--entrypoint','cat',image,
                     '/opt/video/tools/preflight.mp4'],capture_output=True,check=True,timeout=30).stdout
+                padding=20_000_000-len(payload)
+                if padding<8:raise ValueError('Unexpected synthetic clip size')
+                # Legal inert padding exercises the maximum accepted video byte
+                # size without pretending this one-second clip tests five minutes.
+                payload+=struct.pack('>I4s',padding,b'free')+b'\0'*(padding-8)
                 uploads.append(('probe.mp4','video/mp4',payload))
                 uploads.append(('probe.pdf','application/pdf',synthetic_pdf()))
             for name,media,payload in uploads:
@@ -391,14 +406,15 @@ def main():
                 if code!=201:raise ValueError('Authenticated synthetic upload failed')
                 if full:print(json.dumps(dict(syntheticUploadAccepted=media,seconds=authenticated_seconds[-1])),flush=True)
                 attachment_path=note_path+'/attachments/'+json.loads(body)['id']
-                code,_,received=request(attachment_path+'/content',cookie=owner_cookie)
+                code,_,received=request(attachment_path+'/content',cookie=owner_cookie,response_limit=20_000_000 if full else 1024*1024)
                 if code!=200:raise ValueError('Private byte delivery failed; status='+str(code))
                 if media=='image/png':
                     # Safe image admission rewrites the raster and strips metadata.
                     # Check every decoded pixel, then preserve exact accepted bytes
                     # for the later recreation/readback assertion.
                     check=temp/'accepted-fixture.png';check.write_bytes(received)
-                    if run('java','-Xmx64m',str(ROOT/'FixtureImage.java'),str(check))!='synthetic-raster-verified':
+                    arguments=[str(check),str(temp/'original-fixture.png')] if full else [str(check)]
+                    if run('java','-Xmx96m' if full else '-Xmx64m',str(ROOT/'FixtureImage.java'),*arguments)!='synthetic-raster-verified':
                         raise ValueError('Canonical PNG changed synthetic pixels')
                 elif media=='audio/wav' and received!=payload:raise ValueError('PCM WAV bytes changed')
                 elif media=='video/mp4' and not received:raise ValueError('Accepted video bytes unavailable')
@@ -429,6 +445,12 @@ def main():
                     if not listeners or any(address not in ('0100007F','0000000000000000FFFF00000100007F') for address in listeners):raise ValueError('Private listener exposed')
                 samples.append({'peakBytes':peak,'memoryLimitBytes':metadata['HostConfig']['Memory'],
                     'cpuQuota':metadata['HostConfig']['NanoCpus'],'oomEvents':0,'restarts':0,'privateListenersLoopbackOnly':True})
+                if full:
+                    observation=safe_resource_observation(run('docker','exec',app,'/bin/sh','-c',
+                        'cat /sys/fs/cgroup/memory.current /sys/fs/cgroup/memory.peak; '
+                        'cat /sys/fs/cgroup/memory.events /sys/fs/cgroup/memory.stat /sys/fs/cgroup/cpu.stat'))
+                    if not observation['available']:raise ValueError('Resource composition observation missing')
+                    samples[-1].update(memoryCompositionAtSample=observation,memoryCompositionIsPeak=False)
             resources()
             stopped=time.monotonic();run('docker','stop','--time','28',app,timeout=40)
             shutdown=round(time.monotonic()-stopped,2)
@@ -442,7 +464,7 @@ def main():
             code,headers,body=request(note_path,cookie=owner_cookie)
             if code!=200 or json.loads(body)['title']!='Budget fixture saved':raise ValueError('Authenticated Note/session did not survive recreation')
             for attachment_path,payload in attachments:
-                code,_,received=request(attachment_path+'/content',cookie=owner_cookie)
+                code,_,received=request(attachment_path+'/content',cookie=owner_cookie,response_limit=20_000_000 if full else 1024*1024)
                 if code!=200 or received!=payload:raise ValueError('Private files did not survive recreation')
             if request('/api/auth/logout',method='POST',cookie=owner_cookie,csrf=owner_csrf)[0]!=204:raise ValueError('Authenticated logout failed')
             if request(note_path,cookie=owner_cookie)[0]!=401:raise ValueError('Logged-out authority retained')

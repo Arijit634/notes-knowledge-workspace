@@ -21,6 +21,10 @@ on:
         description: Build and exercise the explicit full native bundle; no publication or live providers
         type: boolean
         default: false
+      expected_source:
+        description: Exact 40-character SHA required for full hosted qualification
+        type: string
+        default: ''
       qualify_native_startup:
         description: Measure native backend startup at 512 MiB / 0.1 CPU; not full feature or release clearance
         type: boolean
@@ -178,8 +182,15 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     steps:
+      - name: Require the exact requested source revision
+        env:
+          EXPECTED_SOURCE: ${{ inputs.expected_source }}
+        run: |
+          [[ "$EXPECTED_SOURCE" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_SHA" = "$EXPECTED_SOURCE"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.expected_source }}
           persist-credentials: false
       - name: Verify offline deployment contracts
         run: |
