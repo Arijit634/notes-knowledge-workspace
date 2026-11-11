@@ -88,6 +88,8 @@ jobs:
             ${{ runner.temp }}/media-security-readiness/security-readiness.json
             ${{ runner.temp }}/media-security-readiness/deployment.cdx.json
             ${{ runner.temp }}/media-security-readiness/sbom-receipt.json
+            ${{ runner.temp }}/media-security-readiness/native-artifact-facts.json
+            ${{ runner.temp }}/media-security-readiness/security-applicability.json
             ${{ runner.temp }}/media-security-readiness/runtime-comparison.json
             ${{ runner.temp }}/media-before-security/security-readiness.json
             ${{ runner.temp }}/media-before-security/deployment.cdx.json

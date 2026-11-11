@@ -2,11 +2,16 @@
 set -euo pipefail
 test "$(id -u)" != 0
 case "$(uname -m)" in x86_64|aarch64) ;; *) exit 1 ;; esac
+python3 .github/scripts/test-health-probe.py
 context="$RUNNER_TEMP/media-context"
 test ! -e "$context"
 mkdir -p "$context/artifacts/classes" "$context/artifacts/libraries" "$context/controller" "$context/native"
 cp -a "$JAVA_HOME" "$context/jdk"
 cp src/main/native/*.c src/main/native/empty-metadata.patch "$context/native/"
+cp src/main/native/allocation-overflow-probe.cpp "$context/native/"
+cp src/main/native/expat-2.10-regression-compat.patch "$context/native/"
+cp src/main/native/build-media-libraries.sh "$context/native/"
+cp src/main/native/minimize-runtime-tools.sh "$context/native/"
 # Frozen synthetic AAC fixture, also exercised by the upload/decoder regressions.
 cp src/test/resources/attachments/synthetic-aac-video.mp4 "$context/native/audio-preflight.mp4"
 cp target/notes-knowledge-workspace-0.0.1-SNAPSHOT.jar "$context/application.jar"
@@ -50,6 +55,9 @@ docker run --rm --network none --user 65533:65533 --cap-drop ALL --security-opt 
   --entrypoint /bin/sh "$deployment" -c 'test ! -e /qualification && test ! -e /fixtures && test ! -e /codec && test ! -e /native && test ! -e /jdk/bin/javac && test ! -e /jdk/bin/jlink && ! command -v gcc && test -z "$(find /usr /opt /jdk -xdev -type f -perm /6000 -print -quit)" && dpkg-query -W' \
   > "$RUNNER_TEMP/media-deployment-packages.txt"
 docker run --rm --network none --user 65533:65533 --cap-drop ALL --security-opt no-new-privileges --read-only \
+  --entrypoint /bin/sh "$deployment" -c \
+  'test ! -e /usr/bin/chown && test ! -e /usr/bin/perl && test ! -e /usr/bin/tar && test ! -e /usr/bin/apt-get'
+docker run --rm --network none --user 65533:65533 --cap-drop ALL --security-opt no-new-privileges --read-only \
   --entrypoint sha256sum "$deployment" /provenance/runtime-files.sha256 > "$RUNNER_TEMP/media-runtime-manifest.sha256"
 provenance="$RUNNER_TEMP/media-runtime-provenance"
 mkdir "$provenance"
@@ -76,6 +84,8 @@ package_versions={p['name'].split(':')[0]:p['version'] for p in os_packages}
 assert package_versions['perl-base']=='5.40.1-6+deb13u1'
 assert package_versions['libpcre2-8-0']=='10.46-1~deb13u3'
 assert package_versions['libopenh264-8']=='2.6.0+dfsg-2'
+assert package_versions['libfreetype6']=='2.15.0-0nkw1'
+assert package_versions['libexpat1']=='2.10.0-0nkw2'
 assert not any(p.startswith(('nodejs','npm')) for p in package_versions)
 # Preserve the raw scanner finding. This independently inspects the shipped
 # binary for the specific contrib/minizip entry point described by Debian.
@@ -97,6 +107,7 @@ print(json.dumps(dict(releaseInventory=True,deploymentImage=image,user='65533:65
     codecLegalClearance=False)))
 PY
 common=(run --rm --init --network none --user 65533:65533 --cap-drop ALL --security-opt no-new-privileges --read-only --memory=1g --cpus=2 --pids-limit=300 --tmpfs /tmp:rw,noexec,nosuid,nodev,size=192m)
+docker "${common[@]}" --entrypoint /qualification/media-library-versions "$image"
 cp='/qualification:/opt/pdf/artifacts/classes:/qualification/libraries/*'
 docker "${common[@]}" "$image" -Xmx192m -cp "$cp" org.notesknowledge.notes.NativePdfStartupDiagnostic /opt/pdf
 helper_hash="$(docker "${common[@]}" --entrypoint sha256sum "$image" /opt/pdf/helper | cut -d ' ' -f 1)"
@@ -134,7 +145,7 @@ chmod -R a+rwX "$testspace"
 # Production roots stay administrator-owned/read-only; the application and
 # native workers still start non-root with ALL capabilities dropped.
 docker run --rm --network none --user 0:0 --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges --read-only \
-  -v "$testspace:/harness" --entrypoint /bin/chown "$image" --no-dereference --recursive 65533:65533 /harness
+  -v "$testspace:/harness" --entrypoint /qualification/bin/chown "$image" --no-dereference --recursive 65533:65533 /harness
 result=0
 docker_group="$(stat -c '%g' /var/run/docker.sock)"
 [[ "$docker_group" =~ ^[0-9]+$ ]]
@@ -161,10 +172,19 @@ if [ "${NKW_CANDIDATE_ONLY:-false}" != true ]; then
 bash .github/scripts/scan-deployment.sh "$before" "$RUNNER_TEMP/media-before-security" "$RUNNER_TEMP/media-security-cache"
 fi
 bash .github/scripts/scan-deployment.sh "$deployment" "$RUNNER_TEMP/media-security-readiness" "$RUNNER_TEMP/media-security-cache"
+python3 .github/scripts/native-image-facts.py "$deployment" "$image" "$source_sha" "$RUNNER_TEMP/media-security-readiness/native-artifact-facts.json"
 if [ "${NKW_CANDIDATE_ONLY:-false}" != true ]; then
 python3 .github/scripts/compare-deployment.py "$before" "$deployment" "$RUNNER_TEMP"
 fi
 # Run the actual production process, with no test classes or Docker socket mounted.
 # Scan evidence survives even if this independent operational gate fails.
 python3 .github/scripts/deployment-smoke.py "$deployment" "$image" "$RUNNER_TEMP/media-deployment-smoke"
+if test -f .github/security/native-runtime-dispositions.json; then
+python3 .github/scripts/reconcile-image-security.py \
+  "$RUNNER_TEMP/media-security-readiness/security-readiness.json" \
+  "$RUNNER_TEMP/media-security-readiness/native-artifact-facts.json" \
+  "$RUNNER_TEMP/media-deployment-smoke/deployment-smoke.json" \
+  .github/security/native-runtime-dispositions.json \
+  "$RUNNER_TEMP/media-security-readiness/security-applicability.json"
+fi
 exit "$result"

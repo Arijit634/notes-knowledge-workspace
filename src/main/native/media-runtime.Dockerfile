@@ -7,7 +7,8 @@ USER root
 RUN sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources \
     && apt-get update && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
-    build-essential pkg-config nasm xz-utils patch perl-base=5.40.1-6+deb13u1 \
+    build-essential pkg-config nasm xz-utils patch curl ca-certificates \
+    libbrotli-dev libbz2-dev libpng-dev zlib1g-dev perl-base=5.40.1-6+deb13u1 \
     libopenh264-dev=2.6.0+dfsg-2 \
     libfreetype6=2.13.3+dfsg-1+deb13u1 libfontconfig1=2.15.0-2.3 fonts-dejavu-core=2.37-8 \
     && mkdir -p /provenance/openh264-source \
@@ -16,20 +17,24 @@ RUN sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.s
 COPY jdk/ /jdk/
 COPY ffmpeg-9.0.2.tar.xz /source.tar.xz
 COPY native/ /native/
+RUN /bin/sh /native/build-media-libraries.sh
 RUN echo '8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e  /source.tar.xz' | sha256sum -c - \
     && mkdir /codec && tar -xJf /source.tar.xz -C /codec --strip-components=1 \
     && cd /codec && patch --fuzz=0 -p1 < /native/empty-metadata.patch \
-    && ./configure --prefix=/opt/video/tools --disable-autodetect --disable-gpl --disable-nonfree \
+    && ./configure --prefix=/opt/video/tools --disable-autodetect --disable-iconv --disable-gpl --disable-nonfree \
        --disable-doc --disable-debug --disable-network --disable-everything \
        --enable-ffmpeg --enable-ffprobe --enable-libopenh264 --enable-protocol=file,pipe \
        --enable-demuxer=mov --enable-muxer=mp4,segment,null,wav --enable-decoder=h264,wrapped_avframe,aac \
        --enable-parser=h264,aac --enable-encoder=libopenh264,pcm_s16le --enable-bsf=h264_mp4toannexb \
        --enable-filter=format,null,scale,setsar,setpts,trim,testsrc,color,aresample,apad,atrim,asetpts,aformat --enable-indev=lavfi \
     && make -j2 && make install
-RUN mkdir -p /opt/pdf /opt/video /fixtures /provenance /native-diagnostics \
+RUN mkdir -p /opt/pdf /opt/video /opt/operations /fixtures /provenance /native-diagnostics \
     && gcc -std=c11 -O2 -Wall -Wextra -Werror=implicit-function-declaration -o /opt/pdf/helper /native/pdf-sandbox.c \
     && gcc -std=c11 -O2 -Wall -Wextra -Werror=implicit-function-declaration -o /opt/video/helper /native/video-sandbox.c \
     && gcc -std=c11 -O2 -Wall -Wextra -DPDF_SANDBOX_DIAGNOSTIC -o /native-diagnostics/pdf-diagnostic-helper /native/pdf-sandbox.c \
+    && gcc -std=c11 -O2 -Wall -Wextra -Werror -o /opt/operations/health-probe /native/health-probe.c \
+    && g++ -std=c++17 -O2 -Wall -Wextra -Werror -o /native-diagnostics/allocation-overflow-probe /native/allocation-overflow-probe.cpp \
+    && /native-diagnostics/allocation-overflow-probe \
     && /jdk/bin/jlink --add-modules java.base,java.desktop,java.logging,java.xml \
        --strip-debug --no-header-files --no-man-pages --compress=zip-6 --output /tmp/pdf-linked-runtime \
     && cp -rL /tmp/pdf-linked-runtime /opt/pdf/runtime \
@@ -73,9 +78,9 @@ RUN /jdk/bin/jdeps -J-Xmx256m --multi-release 25 --ignore-missing-deps --recursi
     && /service-runtime/bin/java --list-modules > /provenance/service-modules.txt \
     && for module in $(tr ',' ' ' < /provenance/service-required-modules.txt); do \
          grep -q "^${module}@" /provenance/service-modules.txt || exit 1; done
-RUN chown -R 0:0 /opt/pdf /opt/video /qualification /fixtures /provenance \
-    && chmod -R go-w /opt/pdf /opt/video /qualification /fixtures /provenance \
-    && find /opt/pdf /opt/video -type f -exec sha256sum {} \; > /provenance/runtime-files.sha256
+RUN chown -R 0:0 /opt/pdf /opt/video /opt/operations /qualification /fixtures /provenance \
+    && chmod -R go-w /opt/pdf /opt/video /opt/operations /qualification /fixtures /provenance \
+    && find /opt/pdf /opt/video /opt/operations -type f -exec sha256sum {} \; > /provenance/runtime-files.sha256
 RUN /jdk/bin/java -cp '/qualification:/opt/pdf/artifacts/classes:/opt/pdf/artifacts/libraries/*' \
     org.notesknowledge.notes.MediaRuntimeImageDescriptor /provenance/runtime-selection.properties
 # A separate runtime image omits the compiler/build tree. Qualification adds
@@ -92,14 +97,21 @@ RUN apt-get update && apt-get upgrade -y --no-install-recommends && apt-get inst
 COPY --from=build /service-runtime /jdk
 COPY --from=build /opt/pdf /opt/pdf
 COPY --from=build /opt/video /opt/video
+COPY --from=build /opt/operations /opt/operations
 COPY --from=build /provenance /provenance
 COPY --from=build /source.tar.xz /provenance/ffmpeg-9.0.2.tar.xz
 COPY --from=build /native/empty-metadata.patch /provenance/empty-metadata.patch
 COPY --from=build /application.jar /application.jar
+COPY --from=build /media-library-packages /tmp/controlled-media-libraries
+RUN dpkg -i /tmp/controlled-media-libraries/libexpat1.deb /tmp/controlled-media-libraries/libfreetype6.deb \
+    && ldconfig && rm -rf /tmp/controlled-media-libraries
+COPY --from=build /native/minimize-runtime-tools.sh /tmp/minimize-runtime-tools.sh
 # The service never needs setuid/setgid utilities. Remove their privilege bits
 # as image-level defense in depth, independently of runtime no-new-privileges.
 RUN find /usr /opt /jdk -xdev -type f -perm /6000 -exec chmod a-s {} +
+RUN /bin/sh /tmp/minimize-runtime-tools.sh && rm /tmp/minimize-runtime-tools.sh
 USER 65533:65533
+HEALTHCHECK --interval=30s --start-period=15m --start-interval=30s --timeout=4s --retries=3 CMD ["/opt/operations/health-probe"]
 ENTRYPOINT ["/jdk/bin/java", "-jar", "/application.jar"]
 # No registry publication is performed. A release must separately reconcile
 # redistribution, source availability/notice obligations AND codec patent rights.
@@ -109,5 +121,9 @@ COPY --from=build /jdk /jdk
 COPY --from=build /qualification /qualification
 COPY --from=build /fixtures /fixtures
 COPY --from=build /native-diagnostics/pdf-diagnostic-helper /qualification/pdf-diagnostic-helper
+COPY --from=build /native-diagnostics/media-library-versions /qualification/media-library-versions
+COPY --from=build /native-diagnostics/allocation-overflow-probe /qualification/allocation-overflow-probe
+# Fixture ownership changes are a qualification-only capability, not a runtime tool.
+COPY --from=build /usr/bin/chown /qualification/bin/chown
 USER 65533:65533
 ENTRYPOINT ["/jdk/bin/java"]

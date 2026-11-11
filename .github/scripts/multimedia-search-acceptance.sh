@@ -8,6 +8,10 @@ test ! -e "$context"
 mkdir -p "$context/artifacts/classes" "$context/artifacts/libraries" "$context/controller/libraries" "$context/native"
 cp -a "$JAVA_HOME" "$context/jdk"
 cp src/main/native/*.c src/main/native/empty-metadata.patch "$context/native/"
+cp src/main/native/allocation-overflow-probe.cpp "$context/native/"
+cp src/main/native/expat-2.10-regression-compat.patch "$context/native/"
+cp src/main/native/build-media-libraries.sh "$context/native/"
+cp src/main/native/minimize-runtime-tools.sh "$context/native/"
 cp src/test/resources/attachments/synthetic-aac-video.mp4 "$context/native/audio-preflight.mp4"
 cp target/notes-knowledge-workspace-0.0.1-SNAPSHOT.jar "$context/application.jar"
 (cd "$context" && "$JAVA_HOME/bin/jar" xf application.jar BOOT-INF)
@@ -26,7 +30,7 @@ image="$(docker image inspect --format '{{.Id}}' nkw-multimedia-search)"
 report="$RUNNER_TEMP/multimedia-search-report"
 mkdir "$report"
 docker run --rm --network none --user 0:0 --cap-drop ALL --cap-add CHOWN --read-only \
-  -v "$report:/report" --entrypoint /bin/chown "$image" 65533:65533 /report
+  -v "$report:/report" --entrypoint /qualification/bin/chown "$image" 65533:65533 /report
 group="$(stat -c '%g' /var/run/docker.sock)"
 [[ "$group" =~ ^[0-9]+$ ]]
 # Testcontainers' approved JNA transport needs to map its trusted JAR library.

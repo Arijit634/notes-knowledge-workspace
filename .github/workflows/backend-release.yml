@@ -87,7 +87,12 @@ jobs:
           "$JAVA_HOME/bin/jar" tf target/notes-knowledge-workspace-0.0.1-SNAPSHOT.jar | grep -Fx 'BOOT-INF/classes/static/index.html'
           python3 .github/scripts/release-guard.py main --repository "$GITHUB_REPOSITORY" --source "$GITHUB_SHA" --output "$RUNNER_TEMP/main-before-publication.json"
           image="$(tail -n 1 "$RUNNER_TEMP/media-deployment-image")"
+          applicability=()
+          if test -f .github/security/native-runtime-dispositions.json; then
+            applicability=(--facts "$RUNNER_TEMP/media-security-readiness/native-artifact-facts.json" --dispositions .github/security/native-runtime-dispositions.json)
+          fi
           python3 .github/scripts/release-guard.py candidate --source "$GITHUB_SHA" --image "$image" \
+            "${applicability[@]}" \
             --security "$RUNNER_TEMP/media-security-readiness/security-readiness.json" \
             --sbom "$RUNNER_TEMP/media-security-readiness/sbom-receipt.json" \
             --smoke "$RUNNER_TEMP/media-deployment-smoke/deployment-smoke.json" --output "$RUNNER_TEMP/release-candidate.json"
