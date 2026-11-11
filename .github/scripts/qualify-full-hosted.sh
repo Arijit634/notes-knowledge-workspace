@@ -56,6 +56,9 @@ for file in "$evidence"/clips/*.mp4; do
 done
 test "$decoded" = 2000
 docker "${common[@]}" "$qualification" -Xmx192m -Dloader.path=/qualification -Dloader.main=org.notesknowledge.notes.ConfiguredMediaRuntimeQualification -cp /application.jar org.springframework.boot.loader.launch.PropertiesLauncher /opt/pdf /opt/video
+bash .github/scripts/scan-deployment.sh "$deployment" "$evidence/security" "$RUNNER_TEMP/full-hosted-trivy-cache"
+# Scans retain every raw finding. A collected scan is not an applicability or
+# release clearance; those remain separate exact-image gates.
 python3 .github/deploy/managed-preview/smoke.py "$deployment" --full-hosted | tee "$evidence/managed-smoke.jsonl"
 python3 - "$source_sha" "$deployment" "$qualification" "$evidence" <<'PY'
 import json,pathlib,sys

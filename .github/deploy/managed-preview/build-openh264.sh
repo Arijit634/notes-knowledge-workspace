@@ -21,8 +21,8 @@ cd /openh264-build/source
 triplet=$(gcc -dumpmachine)
 architecture=$(dpkg --print-architecture)
 case "$architecture:$triplet" in amd64:x86_64-linux-gnu|arm64:aarch64-linux-gnu) ;; *) exit 1 ;; esac
-make -j2 libraries PREFIX=/usr LIBDIR_NAME="lib/$triplet"
-make DESTDIR=/openh264-build/stage PREFIX=/usr LIBDIR_NAME="lib/$triplet" install-shared
+make -j2 libraries PREFIX=/usr LIBDIR_NAME="lib/$triplet" SHAREDLIB_DIR="/usr/lib/$triplet"
+make DESTDIR=/openh264-build/stage PREFIX=/usr LIBDIR_NAME="lib/$triplet" SHAREDLIB_DIR="/usr/lib/$triplet" install-shared
 cp -a /openh264-build/stage/usr/. /usr/
 ldconfig
 mkdir -p "/codec-package/usr/lib/$triplet" /codec-package/usr/share/doc/libopenh264-8

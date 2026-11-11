@@ -213,5 +213,8 @@ jobs:
           path: |
             ${{ runner.temp }}/full-hosted-candidate/*.json
             ${{ runner.temp }}/full-hosted-candidate/*.jsonl
+            ${{ runner.temp }}/full-hosted-candidate/security/security-readiness.json
+            ${{ runner.temp }}/full-hosted-candidate/security/deployment.cdx.json
+            ${{ runner.temp }}/full-hosted-candidate/security/shipped-artifacts.sha256
           if-no-files-found: warn
           retention-days: 3

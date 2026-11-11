@@ -24,7 +24,8 @@ assert raw.is_file(), 'Scanner infrastructure failed; missing evidence is not ze
 data=json.loads(raw.read_text()); vulnerabilities=[]; secrets=[]; misconfigurations=[]; java_packages=0; os_packages=0
 assert int(os.environ['SCAN_RESULT']) in (0,1) and data.get('Metadata'), 'Scanner execution failed'
 recognized_os=data['Metadata'].get('OS',{})
-assert recognized_os.get('Family')=='debian' and str(recognized_os.get('Name','')).split('.')[0] in ('12','13'), 'Supported deployment OS not recognized'
+assert (recognized_os.get('Family')=='debian' and str(recognized_os.get('Name','')).split('.')[0] in ('12','13')
+        or recognized_os.get('Family')=='ubuntu' and recognized_os.get('Name')=='24.04'), 'Supported deployment OS not recognized'
 for item in data.get('Results',[]):
     if item.get('Type')=='jar': java_packages+=len(item.get('Packages',[]))
     if item.get('Class')=='os-pkgs': os_packages+=len(item.get('Packages',[]))
