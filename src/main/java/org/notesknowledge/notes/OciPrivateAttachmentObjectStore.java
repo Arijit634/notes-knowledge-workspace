@@ -52,10 +52,13 @@ final class OciPrivateAttachmentObjectStore implements PrivateAttachmentObjectSt
                         .useArnRegionEnabled(false).multiRegionEnabled(false).build())
                 .requestChecksumCalculation(RequestChecksumCalculation.WHEN_REQUIRED)
                 .responseChecksumValidation(ResponseChecksumValidation.WHEN_REQUIRED)
-                .overrideConfiguration(c->c.apiCallTimeout(Duration.ofSeconds(10)).apiCallAttemptTimeout(Duration.ofSeconds(8))
+                // A maximum-size upload on a constrained low-CPU host can spend
+                // most of eight seconds in TLS alone. Keep a finite, single
+                // attempt within the outer request budget; never retry a write.
+                .overrideConfiguration(c->c.apiCallTimeout(Duration.ofSeconds(30)).apiCallAttemptTimeout(Duration.ofSeconds(25))
                         .retryStrategy(StandardRetryStrategy.builder().maxAttempts(1).build()));
         if(transport==null)builder.httpClientBuilder(UrlConnectionHttpClient.builder()
-                .connectionTimeout(Duration.ofSeconds(2)).socketTimeout(Duration.ofSeconds(5)));
+                .connectionTimeout(Duration.ofSeconds(2)).socketTimeout(Duration.ofSeconds(15)));
         else builder.httpClient(transport); // Test-only controlled transport, never selected by configuration.
         return builder.build();
     }

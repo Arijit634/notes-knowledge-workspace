@@ -1,2 +1,10 @@
 [extend]
 useDefault = true
+
+# This exact Python list contains security-control identifiers, not an OAuth ID.
+# Keep scanning every other line and every real LinkedIn client identifier.
+[[allowlists]]
+description = "Exact public security-control list misread as a LinkedIn client ID"
+targetRules = ["linkedin-client-id"]
+regexTarget = "line"
+regexes = ['''^\+?\s*required=\['gnutlsNotLin[k]edInFullBundle','elfBpfNotLin[k]edInFullBundle','native64BitAbi',\s*$''']

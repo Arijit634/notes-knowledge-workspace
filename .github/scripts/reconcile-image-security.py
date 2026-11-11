@@ -35,7 +35,7 @@ def controls(facts, smoke):
         'opensslNotLinkedInMedia':facts.get('ffmpegOpenSslDisabled') is True
             and facts.get('nativeLinkageMentionsOpenSsl') is False,
         'opensslNotLoadedInWorkload':bool(smoke['resourceMeasurements']) and all(
-            row['javaProcessesInspected']>0 and row.get('opensslLoaded') is False for row in smoke['resourceMeasurements']),
+            row.get('javaProcessesInspected',0)>0 and row.get('opensslLoaded') is False for row in smoke['resourceMeasurements']),
         'restrictedLocaleInputs':facts['defaultLocaleInputsRestricted'] is True,
         'alignedAllocationOverflowRejected':facts.get('alignedAllocationCheck')==dict(alignedAllocationOverflowRejected=True,cases=30),
         'freetype215Verified':facts.get('mediaLibraryAbi',{}).get('abiProbePassed') is True
@@ -50,11 +50,17 @@ def controls(facts, smoke):
         'sqliteNotLinkedOrPackaged':facts['nativeLinkageMentionsSqlite'] is False
             and facts['sqliteApplicationDependencyPresent'] is False,
         'sqliteNotLoadedInWorkload':bool(smoke['resourceMeasurements']) and all(
-            row['javaProcessesInspected']>0 and row['sqliteLoaded'] is False for row in smoke['resourceMeasurements']),
+            row.get('javaProcessesInspected',0)>0 and row.get('sqliteLoaded') is False for row in smoke['resourceMeasurements']),
         'nativeStartupQualified':events.get('production_startup',{}).get('nativePreflight') is True,
         'ownerAndCsrfQualified':events.get('authorized_storage',{}).get('crossOwnerDenied') is True
             and events.get('authorized_storage',{}).get('csrfRequired') is True,
         'publicDenialQualified':events.get('public_generation_denial',{}).get('anonymousDenied') is True,
+        'publicPrivateSeparationQualified':events.get('public_private_separation',{}).get('privateResourceDenied') is True,
+        'gnutlsNotLinkedInFullBundle':facts.get('fullHostedBundle',{}).get('gnutlsNotLinked') is True,
+        'elfBpfNotLinkedInFullBundle':facts.get('fullHostedBundle',{}).get('elfBpfNotLinked') is True,
+        'native64BitAbi':facts.get('fullHostedBundle',{}).get('native64BitAbi') is True,
+        'upstreamOpenH26426Verified':facts.get('fullHostedBundle',{}).get('openh264SourceCopiesMatch') is True
+            and facts.get('fullHostedBundle',{}).get('openh264SourceSha256')=='52fc65775e03abe70f3f453c3c57fa7b31c71fe240de84da53d75f2ddc7dd519',
         **{name+'Absent':value['absent'] is True for name,value in facts['components'].items()},
     }
 

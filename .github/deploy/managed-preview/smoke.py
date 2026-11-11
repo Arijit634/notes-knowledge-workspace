@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Closed-egress native test of the actual rootless, single-container preview."""
 import base64
+import datetime
 import importlib.util
 import ipaddress
 import io
 import json
 import os
+import random
 from pathlib import Path
 import re
 import subprocess
@@ -26,6 +28,60 @@ REPO=ROOT.parents[2]
 PG='pgvector/pgvector:0.8.6-pg18-trixie@sha256:78bf48b801e792f99e3ac62b5036fd3876e9be48afda16c1e331af1c75ceb2ff'
 HOST='ep-fixture.ap-southeast-1.aws.neon.tech'
 OTHER_HOST='ep-other.ap-southeast-1.aws.neon.tech'
+
+def safe_startup_diagnostics(logs):
+    """Only server-owned codes/class names; never messages, values or raw stacks."""
+    markers=['preview_port_invalid','preview_configuration_unavailable','preview_origin_invalid',
+        'preview_perimeter_unavailable','preview_edge_configuration_invalid','preview_constituent_stopped',
+        'Restricted private preview configuration required','APPLICATION FAILED TO START','ConfigDataResourceNotFoundException',
+        'OutOfMemoryError','Security email sender is not configured','Authenticated TLS SMTP is required',
+        'SMTP timeout exceeds delivery policy','Combined SMTP timeouts exceed delivery policy',
+        'Media runtime preflight unavailable','PDF runtime preflight unavailable',
+        'Media runtime deployment configuration unavailable','Invalid provider timeout configuration']
+    classes=re.findall(r'Caused by: ((?:java\.|org\.springframework\.|org\.notesknowledge\.|com\.google\.genai\.|jakarta\.mail\.)[A-Za-z0-9_.$]+)',logs)
+    frames=re.findall(r'at (org\.notesknowledge\.[A-Za-z0-9_.$]+)\(',logs)
+    return dict(observedSafeCodes=[code for code in markers if code in logs],
+        causeClasses=list(dict.fromkeys(classes))[-12:],applicationFrames=list(dict.fromkeys(frames))[-12:])
+
+def request_observer_timeout(full):
+    # Observe the fixed 120-second edge deadline; do not change that deadline,
+    # any provider timeout, or the native worker's own enforcement.
+    return 130 if full else 45
+
+def safe_resource_observation(text):
+    lines=text.splitlines()
+    if len(lines)<2 or not all(row.isdecimal() for row in lines[:2]):return dict(available=False)
+    allowed={'low','high','max','oom','oom_kill','oom_group_kill','usage_usec','user_usec',
+        'system_usec','nr_periods','nr_throttled','throttled_usec','anon','file','kernel','shmem','inactive_file','active_file'}
+    counters={}
+    for line in lines[2:]:
+        fields=line.split()
+        if len(fields)==2 and fields[0] in allowed and fields[1].isdecimal():counters[fields[0]]=int(fields[1])
+    if not {'oom','oom_kill','usage_usec'}.issubset(counters):return dict(available=False)
+    return dict(available=True,memoryCurrentBytes=int(lines[0]),memoryPeakBytes=int(lines[1]),counters=counters)
+
+def safe_container_state(metadata):
+    state=metadata['State']
+    return dict(running=state['Running'] is True,oomKilled=state['OOMKilled'] is True,
+        exitCode=int(state['ExitCode']),restarts=int(metadata['RestartCount']))
+
+def synthetic_pdf():
+    """One fictional text page, with byte-accurate xref offsets for real validation."""
+    stream=b'BT /F1 12 Tf 10 60 Td (Synthetic full runtime fixture) Tj ET\n'
+    objects=[b'<< /Type /Catalog /Pages 2 0 R >>',
+        b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+        b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+        b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+        b'<< /Length '+str(len(stream)).encode()+b' >>\nstream\n'+stream+b'endstream']
+    document=bytearray(b'%PDF-1.4\n');offsets=[]
+    for number,body in enumerate(objects,1):
+        offsets.append(len(document))
+        document.extend(str(number).encode()+b' 0 obj\n'+body+b'\nendobj\n')
+    xref=len(document)
+    document.extend(b'xref\n0 6\n0000000000 65535 f \n')
+    for offset in offsets:document.extend(f'{offset:010d} 00000 n \n'.encode())
+    document.extend(b'trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n'+str(xref).encode()+b'\n%%EOF\n')
+    return bytes(document)
 
 def run(*args,timeout=240):
     # Docker can write image-pull progress to stderr during create. An identifier
@@ -55,7 +111,8 @@ def await_readiness(request,timeout=600,now=time.monotonic,pause=time.sleep):
     raise RuntimeError('Managed preview readiness deadline exceeded')
 
 def main():
-    if os.name!='posix' or len(sys.argv)!=2 or not re.fullmatch(r'sha256:[0-9a-f]{64}',sys.argv[1]):
+    full=len(sys.argv)==3 and sys.argv[2]=='--full-hosted'
+    if os.name!='posix' or not (len(sys.argv)==2 or full) or not re.fullmatch(r'sha256:[0-9a-f]{64}',sys.argv[1]):
         raise ValueError('Native Linux and immutable local image required')
     image=sys.argv[1];prefix='nkw-managed-'+uuid.uuid4().hex[:12]
     network=None;volume=None;pg=None;app=None;holder=None;provider=None;containers=[]
@@ -69,6 +126,38 @@ def main():
             'synthetic-private-bucket','synthetic.apps.googleusercontent.com','synthetic-client-secret',
             'synthetic-access-key','synthetic-storage-secret')
         values['nkw.preview.database-host']=HOST
+        if full:
+            # Negative provider boundary: no current disclosure/acknowledgement
+            # exists, all Notes below are AI-OFF, and this network has no egress.
+            # Native/core workload evidence must never imply live AI qualification.
+            (secret/'processing-disclosure.json').write_text('{}\n')
+            # Instantiate the actual SDK/client and enabled worker beans so the
+            # memory measurement includes them. This fake key cannot authorize
+            # a real provider; the isolated network has no external egress.
+            values.update({
+                'spring.mail.host':'127.0.0.1',
+                'spring.mail.port':'1025',
+                'spring.mail.username':'synthetic-smtp-user',
+                'spring.mail.password':'synthetic-smtp-password-no-authority',
+                'spring.mail.properties.mail.smtp.connectiontimeout':'5000',
+                'spring.mail.properties.mail.smtp.timeout':'5000',
+                'spring.mail.properties.mail.smtp.writetimeout':'5000',
+                'identity.delivery.from':'synthetic-sender@example.test',
+                'spring.ai.google.genai.api-key':'synthetic-provider-key-not-authority',
+                'knowledge.derivation.embedding-model':'gemini-embedding-2',
+                'knowledge.derivation.media-model':'gemini-3.6-flash',
+                'knowledge.derivation.model-revision':'hosted-qualification-v1',
+                'knowledge.derivation.configuration-id':'hosted-qualification-v1',
+                'knowledge.derivation.adapter-version':'google-genai-sdk-1.65.0',
+                'knowledge.derivation.dimension':'768',
+                'knowledge.derivation.operator':'cosine',
+                'knowledge.derivation.normalization':'unit',
+                'knowledge.derivation.approved-policy-fingerprint':'a'*64,
+                'knowledge.derivation.pdf-page-children':'true',
+                'knowledge.derivation.video-children':'true',
+                'knowledge.derivation.direct-audio-search':'true',
+                'knowledge.derivation.direct-video-soundtrack-search':'true',
+            })
         for value in values.values():
             if '\n' in value or '\r' in value or '\\' in value:raise ValueError('Unframed fixture value')
         (secret/'runtime.properties').write_text('\n'.join(k+'='+v for k,v in values.items())+'\n')
@@ -99,7 +188,7 @@ def main():
         try:
             holder=run('docker','create',image)
             containers.append(holder)
-            run('docker','cp',holder+':/app/application.jar',str(temp/'application.jar'))
+            run('docker','cp',holder+(':/application.jar' if full else ':/app/application.jar'),str(temp/'application.jar'))
             with zipfile.ZipFile(temp/'application.jar') as jar:
                 (temp/'crypto.jar').write_bytes(jar.read('BOOT-INF/lib/spring-security-crypto-7.1.1.jar'))
             hashed=run('java','-Xmx96m','-cp',str(temp/'crypto.jar'),str(ROOT/'FixtureHash.java'))
@@ -150,7 +239,7 @@ def main():
                     time.sleep(0.25)
                 raise RuntimeError('Fixture PostgreSQL unavailable')
             pg=start_postgres()
-            migration=['docker','run','--rm','--network',network,'--entrypoint','java',
+            migration=['docker','run','--rm','--network',network,'--entrypoint','/jdk/bin/java' if full else 'java',
                 '--read-only','--cap-drop','ALL','--security-opt','no-new-privileges',
                 '--tmpfs','/tmp:rw,noexec,nosuid,nodev,size=32m,uid=65533,gid=65533,mode=700',
                 '-v',str(cert)+':/fixture:ro']
@@ -165,9 +254,9 @@ def main():
             run(*migration,'-e','JAVA_TOOL_OPTIONS='+trust,*command,'/fixture/migration.properties')
             def start_app():
                 identifier=run('docker','create','--network',network,'--read-only',
-                    '--memory','448m','--memory-swap','448m','--cpus','0.1','--pids-limit','512',
+                    '--memory','512m' if full else '448m','--memory-swap','512m' if full else '448m','--cpus','0.1','--pids-limit','512',
                     '--cap-drop','ALL','--security-opt','no-new-privileges',
-                    '--tmpfs','/tmp:rw,noexec,nosuid,nodev,size=32m,uid=65533,gid=65533,mode=700',
+                    '--tmpfs',f'/tmp:rw,noexec,nosuid,nodev,size={256 if full else 32}m,uid=65533,gid=65533,mode=700',
                     '-v',str(secret)+':/etc/secrets:ro','-v',str(cert/'truststore')+':/fixture/truststore:ro',
                     '--add-host','accounts.google.com:'+gateway,'--add-host',storage_host+':'+gateway,
                     '-e','JAVA_TOOL_OPTIONS='+trust,'-e','APP_VERSION=synthetic-managed-smoke',image)
@@ -178,16 +267,13 @@ def main():
             opener=urllib.request.build_opener(NoRedirect(),urllib.request.ProxyHandler({}))
             auth='Basic '+base64.b64encode(b'preview:synthetic-preview-perimeter-only').decode()
             authenticated_seconds=[]
-            def request(path,*,authenticated=True,method='GET',cookie=None,csrf=None,extra=None,data=None,expected_redirect=False):
+            def request(path,*,authenticated=True,method='GET',cookie=None,csrf=None,extra=None,data=None,expected_redirect=False,stage='request',response_limit=1024*1024):
+                if response_limit not in (1024*1024,20_000_000):raise ValueError('Unexpected fixture response bound')
                 metadata=json.loads(run('docker','inspect',app))[0]
                 if not metadata['State']['Running']:
                     logs=run('docker','logs',app)
-                    known=['preview_port_invalid','preview_configuration_unavailable','preview_origin_invalid',
-                        'preview_perimeter_unavailable','preview_edge_configuration_invalid','preview_constituent_stopped',
-                        'Restricted private preview configuration required','APPLICATION FAILED TO START',
-                        'ConfigDataResourceNotFoundException','OutOfMemoryError']
                     print(json.dumps({'runtimeExited':True,'exitCode':metadata['State']['ExitCode'],
-                        'oomKilled':metadata['State']['OOMKilled'],'observedSafeCodes':[code for code in known if code in logs]}))
+                        'oomKilled':metadata['State']['OOMKilled'],**safe_startup_diagnostics(logs)}))
                     raise ValueError('Runtime exited before readiness')
                 # Internal networks intentionally do not publish host ports. The
                 # native Linux runner reaches this isolated bridge directly;
@@ -206,20 +292,33 @@ def main():
                 headers.update(extra or {})
                 req=urllib.request.Request('http://'+str(address)+':10000'+path,headers=headers,method=method,data=data)
                 request_started=time.monotonic()
-                try:response=opener.open(req,timeout=45)
+                try:response=opener.open(req,timeout=request_observer_timeout(full))
                 except urllib.error.HTTPError as error:response=error
+                except (TimeoutError,ConnectionError,urllib.error.URLError):
+                    if full:
+                        state=json.loads(run('docker','inspect',app))[0]['State']
+                        observation=dict(available=False)
+                        if state['Running']:
+                            snapshot=subprocess.run(['docker','exec',app,'/bin/sh','-c',
+                                'cat /sys/fs/cgroup/memory.current /sys/fs/cgroup/memory.peak; '
+                                'cat /sys/fs/cgroup/memory.events /sys/fs/cgroup/cpu.stat'],
+                                capture_output=True,text=True,timeout=10)
+                            if snapshot.returncode==0:observation=safe_resource_observation(snapshot.stdout)
+                        print(json.dumps(dict(requestObservationFailed=True,stage=stage,
+                            containerRunning=state['Running'],oomKilled=state['OOMKilled'],resources=observation)),flush=True)
+                    raise
                 with response:
-                    body=response.read(1024*1024+1)
-                    if len(body)>1024*1024:raise ValueError('Unbounded fixture response')
+                    body=response.read(response_limit+1)
+                    if len(body)>response_limit:raise ValueError('Unbounded fixture response')
                     if 300<=response.status<400 and not expected_redirect:raise ValueError('Unexpected fixture redirect')
                     if authenticated:authenticated_seconds.append(round(time.monotonic()-request_started,3))
                     return response.status,response.headers,body
-            await_readiness(request);first=round(time.monotonic()-started,2)
+            await_readiness(request,timeout=900 if full else 600);first=round(time.monotonic()-started,2)
             if request('/login',authenticated=False)[0]!=401:raise ValueError('Missing perimeter accepted')
             if request('/login',extra={'Authorization':'Basic '+base64.b64encode(b'preview:incorrect').decode()})[0]!=401:raise ValueError('Wrong perimeter accepted')
-            for path,expected in [('/login',200),('/api/auth/session',200),('/api/notes',401),
-                    ('/api/knowledge/query',503),('/api/public/explore',503),('/actuator/health',404),
-                    ('/api/auth/login/password',503)]:
+            boundaries=[('/login',200),('/api/auth/session',200),('/api/notes',401),('/actuator/health',404)]
+            if not full:boundaries += [('/api/knowledge/query',503),('/api/public/explore',503),('/api/auth/login/password',503)]
+            for path,expected in boundaries:
                 if request(path)[0]!=expected:raise ValueError('Managed boundary status failed')
             if request('/login',extra={'Forwarded':'host=evil.invalid;proto=http','X-Forwarded-Host':'evil.invalid',
                     'X-Forwarded-Proto':'http','X-Forwarded-For':'198.51.100.22'})[0]!=200:raise ValueError('Caller forwarding became authority')
@@ -228,6 +327,7 @@ def main():
             code,_,body=request('/api/auth/oidc/google/callback?state=synthetic-state-marker&code=synthetic-code-marker',
                 extra={'Cookie':'QUALIFICATION=synthetic-cookie-marker'})
             markers=['synthetic-state-marker','synthetic-code-marker','synthetic-cookie-marker',auth]
+            if full:markers.extend(['synthetic-provider-key-not-authority','synthetic-smtp-password-no-authority'])
             if code!=401 or any(marker.encode() in body for marker in markers):raise ValueError('Invalid callback boundary failed')
             logs=run('docker','logs',app)
             if any(marker in logs for marker in markers):raise ValueError('Edge or application logs disclosed request material')
@@ -279,27 +379,85 @@ def main():
             print(json.dumps({'authenticatedNoteSearchAndProfile':True}),flush=True)
             def png_chunk(kind,data):return struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data)&0xffffffff)
             png=b'\x89PNG\r\n\x1a\n'+png_chunk(b'IHDR',struct.pack('>IIBBBBB',8,8,8,2,0,0,0))+png_chunk(b'IDAT',zlib.compress((b'\0'+b'\x40\x80\xc0'*8)*8))+png_chunk(b'IEND',b'')
+            if full:
+                pixels=random.Random(731).randbytes(1200*1200*3)
+                raster=b''.join(b'\0'+pixels[y*3600:(y+1)*3600] for y in range(1200))
+                png=b'\x89PNG\r\n\x1a\n'+png_chunk(b'IHDR',struct.pack('>IIBBBBB',1200,1200,8,2,0,0,0))+png_chunk(b'IDAT',zlib.compress(raster))+png_chunk(b'IEND',b'')
+                (temp/'original-fixture.png').write_bytes(png)
+                del pixels,raster
             buffer=io.BytesIO()
-            with wave.open(buffer,'wb') as audio:audio.setnchannels(1);audio.setsampwidth(2);audio.setframerate(8000);audio.writeframes(b'\0\0'*3200)
+            with wave.open(buffer,'wb') as audio:
+                audio.setnchannels(1);audio.setsampwidth(2);audio.setframerate(16000 if full else 8000)
+                audio.writeframes(b'\0\0'*(16000*300 if full else 3200))
             attachments=[]
-            for name,media,payload in [('probe.png','image/png',png),('probe.wav','audio/wav',buffer.getvalue())]:
+            uploads=[('probe.png','image/png',png),('probe.wav','audio/wav',buffer.getvalue())]
+            if full:
+                # Real supervised video admission on the same aggregate cgroup.
+                payload=subprocess.run(['docker','run','--rm','--network','none','--read-only',
+                    '--cap-drop','ALL','--security-opt','no-new-privileges','--entrypoint','cat',image,
+                    '/opt/video/tools/preflight.mp4'],capture_output=True,check=True,timeout=30).stdout
+                padding=20_000_000-len(payload)
+                if padding<8:raise ValueError('Unexpected synthetic clip size')
+                # Legal inert padding exercises the maximum accepted video byte
+                # size without pretending this one-second clip tests five minutes.
+                payload+=struct.pack('>I4s',padding,b'free')+b'\0'*(padding-8)
+                uploads.append(('probe.mp4','video/mp4',payload))
+                uploads.append(('probe.pdf','application/pdf',synthetic_pdf()))
+            for name,media,payload in uploads:
                 boundary='nkw-controlled-upload'
                 upload=(f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{name}"\r\nContent-Type: {media}\r\n\r\n').encode()+payload+f'\r\n--{boundary}--\r\n'.encode()
+                if full:print(json.dumps(dict(syntheticUploadStarted=media)),flush=True)
                 code,_,body=request(note_path+'/attachments',method='POST',cookie=owner_cookie,csrf=owner_csrf,
-                    extra={'Content-Type':'multipart/form-data; boundary='+boundary},data=upload)
-                if code!=201:raise ValueError('Authenticated synthetic upload failed')
+                    extra={'Content-Type':'multipart/form-data; boundary='+boundary},data=upload,stage='synthetic-upload-'+media)
+                if code!=201:
+                    # Only fixed protocol facts, never the response body or upload.
+                    metadata=json.loads(run('docker','inspect',app))[0]
+                    container_state=safe_container_state(metadata)
+                    snapshot=subprocess.run(['docker','exec',app,'/bin/sh','-c',
+                        'cat /sys/fs/cgroup/memory.current /sys/fs/cgroup/memory.peak; '
+                        'cat /sys/fs/cgroup/memory.events /sys/fs/cgroup/memory.stat /sys/fs/cgroup/cpu.stat'],
+                        capture_output=True,text=True,timeout=10)
+                    observation=safe_resource_observation(snapshot.stdout) if snapshot.returncode==0 else dict(available=False)
+                    problem={}
+                    try:problem=json.loads(body)
+                    except (ValueError,TypeError):pass
+                    safe_code=problem.get('code')
+                    if safe_code not in ('invalid_input','invalid_media','service_unavailable','request_too_large','rate_limited'):
+                        safe_code='unclassified'
+                    events=subprocess.run(['docker','events','--since',metadata['Created'],
+                        '--until',datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                        '--filter','type=container','--filter','container='+app,'--filter','event=oom',
+                        '--format','{{.Action}}'],capture_output=True,text=True,timeout=10)
+                    logs=subprocess.run(['docker','logs','--tail','200',app],capture_output=True,text=True,timeout=10)
+                    print(json.dumps(dict(syntheticUploadRejected=media,status=code,
+                        problemCode=safe_code,resources=observation,
+                        containerState=container_state,
+                        containerOomEvents=sum(line.strip()=='oom' for line in events.stdout.splitlines())
+                            if events.returncode==0 else None,
+                        safeDiagnostics=safe_startup_diagnostics(logs.stdout+logs.stderr),
+                        controlledTransportCounts=provider_control('/counts'))),flush=True)
+                    raise ValueError('Authenticated synthetic upload failed')
+                if full:print(json.dumps(dict(syntheticUploadAccepted=media,seconds=authenticated_seconds[-1])),flush=True)
                 attachment_path=note_path+'/attachments/'+json.loads(body)['id']
-                code,_,received=request(attachment_path+'/content',cookie=owner_cookie)
+                code,_,received=request(attachment_path+'/content',cookie=owner_cookie,response_limit=20_000_000 if full else 1024*1024)
                 if code!=200:raise ValueError('Private byte delivery failed; status='+str(code))
                 if media=='image/png':
                     # Safe image admission rewrites the raster and strips metadata.
                     # Check every decoded pixel, then preserve exact accepted bytes
                     # for the later recreation/readback assertion.
                     check=temp/'accepted-fixture.png';check.write_bytes(received)
-                    if run('java','-Xmx64m',str(ROOT/'FixtureImage.java'),str(check))!='synthetic-raster-verified':
+                    arguments=[str(check),str(temp/'original-fixture.png')] if full else [str(check)]
+                    if run('java','-Xmx96m' if full else '-Xmx64m',str(ROOT/'FixtureImage.java'),*arguments)!='synthetic-raster-verified':
                         raise ValueError('Canonical PNG changed synthetic pixels')
-                elif received!=payload:raise ValueError('PCM WAV bytes changed')
+                elif media=='audio/wav' and received!=payload:raise ValueError('PCM WAV bytes changed')
+                elif media=='video/mp4' and not received:raise ValueError('Accepted video bytes unavailable')
                 attachments.append((attachment_path,received))
+            if full:
+                if request('/api/public/explore')[0]!=200:raise ValueError('Full public discovery unavailable')
+                public='/api/public/publications/'+note['id']
+                media_id=attachments[0][0].rsplit('/',1)[1]
+                if request(public)[0]!=404 or request(public+'/media/'+media_id+'/content')[0]!=404:
+                    raise ValueError('Public locator fell through to private Note or Attachment')
             print(json.dumps({'authenticatedPngAndWav':True}),flush=True)
             other_cookie,_=login('other')
             if request(note_path,cookie=other_cookie)[0]!=404 or request(attachments[0][0]+'/content',cookie=other_cookie)[0]!=404:
@@ -312,7 +470,7 @@ def main():
                 events=dict(line.split() for line in run('docker','exec',app,'cat','/sys/fs/cgroup/memory.events').splitlines())
                 if metadata['State']['OOMKilled'] or metadata['RestartCount'] or int(events['oom']) or int(events['oom_kill']):raise ValueError('Resource failure')
                 peak=int(run('docker','exec',app,'cat','/sys/fs/cgroup/memory.peak'))
-                if peak>448*1024*1024:raise ValueError('Budget exceeded')
+                if peak>(512 if full else 448)*1024*1024:raise ValueError('Budget exceeded')
                 sockets=run('docker','exec',app,'cat','/proc/net/tcp','/proc/net/tcp6').splitlines()
                 for port in (8080,8081,6379):
                     listeners=[line.split()[1].split(':')[0].upper() for line in sockets
@@ -320,6 +478,12 @@ def main():
                     if not listeners or any(address not in ('0100007F','0000000000000000FFFF00000100007F') for address in listeners):raise ValueError('Private listener exposed')
                 samples.append({'peakBytes':peak,'memoryLimitBytes':metadata['HostConfig']['Memory'],
                     'cpuQuota':metadata['HostConfig']['NanoCpus'],'oomEvents':0,'restarts':0,'privateListenersLoopbackOnly':True})
+                if full:
+                    observation=safe_resource_observation(run('docker','exec',app,'/bin/sh','-c',
+                        'cat /sys/fs/cgroup/memory.current /sys/fs/cgroup/memory.peak; '
+                        'cat /sys/fs/cgroup/memory.events /sys/fs/cgroup/memory.stat /sys/fs/cgroup/cpu.stat'))
+                    if not observation['available']:raise ValueError('Resource composition observation missing')
+                    samples[-1].update(memoryCompositionAtSample=observation,memoryCompositionIsPeak=False)
             resources()
             stopped=time.monotonic();run('docker','stop','--time','28',app,timeout=40)
             shutdown=round(time.monotonic()-stopped,2)
@@ -327,13 +491,13 @@ def main():
             if shutdown>=30 or metadata['State']['ExitCode']!=0:raise ValueError('Graceful bounded shutdown failed')
             run('docker','rm',app);app=None
             run('docker','stop',pg);run('docker','rm',pg);pg=None
-            pg=start_postgres();started=time.monotonic();app=start_app();await_readiness(request);second=round(time.monotonic()-started,2)
+            pg=start_postgres();started=time.monotonic();app=start_app();await_readiness(request,timeout=900 if full else 600);second=round(time.monotonic()-started,2)
             code,headers,_=request('/api/auth/csrf',cookie=cookie)
             if code!=200 or headers.get('Set-Cookie'):raise ValueError('Session did not survive recreation')
             code,headers,body=request(note_path,cookie=owner_cookie)
             if code!=200 or json.loads(body)['title']!='Budget fixture saved':raise ValueError('Authenticated Note/session did not survive recreation')
             for attachment_path,payload in attachments:
-                code,_,received=request(attachment_path+'/content',cookie=owner_cookie)
+                code,_,received=request(attachment_path+'/content',cookie=owner_cookie,response_limit=20_000_000 if full else 1024*1024)
                 if code!=200 or received!=payload:raise ValueError('Private files did not survive recreation')
             if request('/api/auth/logout',method='POST',cookie=owner_cookie,csrf=owner_csrf)[0]!=204:raise ValueError('Authenticated logout failed')
             if request(note_path,cookie=owner_cookie)[0]!=401:raise ValueError('Logged-out authority retained')
@@ -353,10 +517,12 @@ def main():
             if request('/api/auth/logout',method='POST',cookie=cookie,csrf=csrf)[0]!=204:raise ValueError('Persisted CSRF proof rejected')
             resources()
             controlled=provider_control('/counts')
-            if controlled['token']!=3 or controlled['objectPut']!=3 or controlled['objectGet']<4:raise ValueError('Controlled workload incomplete')
+            if controlled['token']!=3 or controlled['objectPut']!=(5 if full else 3) or controlled['objectGet']<(8 if full else 4):raise ValueError('Controlled workload incomplete')
             if any(marker in run('docker','logs',app) for marker in markers):raise ValueError('Authenticated logs disclosed request material')
-            print(json.dumps({'image':image,'nativeArchitecture':run('uname','-m'),'rootlessSingleContainer':True,
-                'appProxyRedisCombinedBudget':True,'firstBootSeconds':first,'recreatedBootSeconds':second,
+            result={'image':image,'nativeArchitecture':run('uname','-m'),'rootlessSingleContainer':True,
+                'appProxyRedisCombinedBudget':True,'fullHostedNativeWorkload':full,
+                'providerProcessingQualified':False,'releaseEligible':False,
+                'firstBootSeconds':first,'recreatedBootSeconds':second,
                 'gracefulShutdownSeconds':shutdown,'privateListenersLoopbackOnly':True,'perimeterAndCsrfDenials':True,
                 'untrustedForwardingDiscarded':True,'sessionAndCsrfSurviveAppAndPgRecreation':True,
                 'isolatedLogicalRestoreQuarantine':True,'migrations':20,'databaseTlsVerifiedWithIsolatedFixtureCa':True,
@@ -365,7 +531,13 @@ def main():
                 'authenticatedCoreWorkload':True,'controlledOidcSignatureNoncePkce':True,'crossOwnerDenial':True,
                 'authenticatedSessionNoteAndFilesSurviveRecreation':True,'returningLoginAndLogout':True,
                 'controlledProviderCounts':controlled,'publicTlsOrProviderQualified':False,'liveProviderCalls':0,
-                'realDataUsed':False,'resources':samples}))
+                'realDataUsed':False,'resources':samples}
+            if full:
+                result.update(passed=True,productionJar=True,deploymentImage=image,resourceMeasurements=samples,
+                    events=[dict(step='production_startup',nativePreflight=True),
+                        dict(step='authorized_storage',crossOwnerDenied=True,csrfRequired=True),
+                        dict(step='public_private_separation',privateResourceDenied=True)])
+            print(json.dumps(result))
         finally:
             if provider is not None:
                 provider.terminate()

@@ -18,8 +18,12 @@ RUN chmod +x mvnw && ./mvnw --batch-mode --no-transfer-progress -Pwith-frontend 
 FROM eclipse-temurin:25.0.5_8-jdk-noble@sha256:95e350ad1eb738f943e141640f7e3d797e483359a3b33c3864255bfd1ad71f8a AS redis-build
 # Same approved server, built unmodified against the runtime's libc. No modules,
 # downloaded build scripts, third-party binary or compiler enters the runtime.
-RUN sed -i 's|http://|https://|g' /etc/apt/sources.list.d/ubuntu.sources \
-    && apt-get -o Acquire::Retries=0 update \
+RUN sed -i -e 's|http://|https://|g' \
+    -e 's|https://archive.ubuntu.com/ubuntu|https://mirrors.ocf.berkeley.edu/ubuntu|g' \
+    -e 's|https://security.ubuntu.com/ubuntu|https://mirrors.ocf.berkeley.edu/ubuntu|g' \
+    -e 's|https://ports.ubuntu.com/ubuntu-ports|https://mirrors.ocf.berkeley.edu/ubuntu-ports|g' \
+    /etc/apt/sources.list.d/ubuntu.sources \
+    && apt-get -o Acquire::Retries=0 -o APT::Update::Error-Mode=any update \
     && apt-get -o Acquire::Retries=0 install --no-install-recommends -y gcc make libc6-dev curl ca-certificates \
     && mkdir /build && cd /build \
     && curl --fail --silent --show-error --location --retry 0 https://github.com/redis/redis/releases/download/8.10.2/redis-full.tar.gz -o redis-full.tar.gz \
@@ -33,8 +37,12 @@ ARG SOURCE_SHA
 LABEL org.opencontainers.image.source="https://github.com/Arijit634/notes-knowledge-workspace" \
       org.opencontainers.image.revision="$SOURCE_SHA"
 # CVE-2026-109518. HTTPS + no retries also protects the bootstrap update itself.
-RUN sed -i 's|http://|https://|g' /etc/apt/sources.list.d/ubuntu.sources \
-    && apt-get -o Acquire::Retries=0 update \
+RUN sed -i -e 's|http://|https://|g' \
+    -e 's|https://archive.ubuntu.com/ubuntu|https://mirrors.ocf.berkeley.edu/ubuntu|g' \
+    -e 's|https://security.ubuntu.com/ubuntu|https://mirrors.ocf.berkeley.edu/ubuntu|g' \
+    -e 's|https://ports.ubuntu.com/ubuntu-ports|https://mirrors.ocf.berkeley.edu/ubuntu-ports|g' \
+    /etc/apt/sources.list.d/ubuntu.sources \
+    && apt-get -o Acquire::Retries=0 -o APT::Update::Error-Mode=any update \
     && printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && chmod 755 /usr/sbin/policy-rc.d \
     && apt-get -o Acquire::Retries=0 install --no-install-recommends -y apt=2.8.4ubuntu0.1 libapt-pkg6.0t64=2.8.4ubuntu0.1 nginx=1.24.0-2ubuntu7.19 nginx-common=1.24.0-2ubuntu7.19 \
     && rm /usr/sbin/policy-rc.d \

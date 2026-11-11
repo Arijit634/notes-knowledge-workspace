@@ -1,0 +1,778 @@
+{
+  "schemaVersion": 1,
+  "purpose": "exact-native-runtime-applicability",
+  "architectures": [
+    "amd64"
+  ],
+  "productionSourceSha256": "7509a380cdf7dbebb43312108ef3835eddf9b52bb3070aed823deab8ffeb4ccf",
+  "findings": [
+    {
+      "VulnerabilityID": "CVE-2026-76642",
+      "PkgName": "bsdutils",
+      "InstalledVersion": "1:2.39.3-9ubuntu6.6",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-76642",
+      "kind": "unreachable-precondition",
+      "rationale": "This mount-helper/post-mount-hook escalation requires a privileged mount operation. The mount/nsenter programs are removed, no setuid/setgid file remains, and no application or worker receives mount privilege or an arbitrary command interface. Shared util-linux libraries remain inventoried; the vulnerable command/privileged hook path is unavailable.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "mountAbsent",
+        "nsenterAbsent"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-11",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
+      "remediationTarget": "Recheck the supported vendor package and upstream fix by2026-11-18; renew only after fresh qualification.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/c7ce33c8b88be177f7ba06882bb690c46d93bd86/osv/cve/2026/UBUNTU-CVE-2026-76642.json"
+      ],
+      "vendorEvidenceSha256": "03034f3fd46701a979dd6959c8d532b076d1cb2ab6c57cff68ba6aab36e497b7"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-102473",
+      "PkgName": "dash",
+      "InstalledVersion": "0.5.12-6ubuntu5",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-102473",
+      "kind": "unreachable-precondition",
+      "rationale": "No request chooses a shell program, glob expression, printf format or OS environment file. Display filenames remain metadata and upload custody filenames are server-owned. The full supervisor is Bash with fixed formats; native helpers clear inherited environment and execute fixed binaries without a shell. The described dash matcher/Unicode-format input is not a Product input path.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "restrictedLocaleInputs"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-11",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
+      "remediationTarget": "Recheck the supported vendor package and upstream fix by2026-11-18; renew only after fresh qualification.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/c7ce33c8b88be177f7ba06882bb690c46d93bd86/osv/cve/2026/UBUNTU-CVE-2026-102473.json"
+      ],
+      "vendorEvidenceSha256": "ee3ce5fd986db42e62aff6989b4957bac30ce2a4667d035f1333f5bef171a3f0"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-102474",
+      "PkgName": "dash",
+      "InstalledVersion": "0.5.12-6ubuntu5",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-102474",
+      "kind": "unreachable-precondition",
+      "rationale": "No request chooses a shell program, glob expression, printf format or OS environment file. Display filenames remain metadata and upload custody filenames are server-owned. The full supervisor is Bash with fixed formats; native helpers clear inherited environment and execute fixed binaries without a shell. The described dash matcher/Unicode-format input is not a Product input path.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "restrictedLocaleInputs"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-11",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
+      "remediationTarget": "Recheck the supported vendor package and upstream fix by2026-11-18; renew only after fresh qualification.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/c7ce33c8b88be177f7ba06882bb690c46d93bd86/osv/cve/2026/UBUNTU-CVE-2026-102474.json"
+      ],
+      "vendorEvidenceSha256": "269f45920d570ea9a9c7f4c192082dcb19123b019b1459fe8569b57862c6f86e"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-76642",
+      "PkgName": "libblkid1",
+      "InstalledVersion": "2.39.3-9ubuntu6.6",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-76642",
+      "kind": "unreachable-precondition",
+      "rationale": "This mount-helper/post-mount-hook escalation requires a privileged mount operation. The mount/nsenter programs are removed, no setuid/setgid file remains, and no application or worker receives mount privilege or an arbitrary command interface. Shared util-linux libraries remain inventoried; the vulnerable command/privileged hook path is unavailable.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "mountAbsent",
+        "nsenterAbsent"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-11",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
+      "remediationTarget": "Recheck the supported vendor package and upstream fix by2026-11-18; renew only after fresh qualification.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/c7ce33c8b88be177f7ba06882bb690c46d93bd86/osv/cve/2026/UBUNTU-CVE-2026-76642.json"
+      ],
+      "vendorEvidenceSha256": "03034f3fd46701a979dd6959c8d532b076d1cb2ab6c57cff68ba6aab36e497b7"
+    },
+    {
+      "VulnerabilityID": "CVE-2025-29481",
+      "PkgName": "libbpf1",
+      "InstalledVersion": "1:1.3.0-2build2",
+      "FixedVersion": null,
+      "Severity": "LOW",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2025-29481",
+      "kind": "unreachable-precondition",
+      "rationale": "The vulnerable eBPF/ELF inspection functions are outside the service/worker/edge/cache linkage. No Product operation accepts ELF programs, loads eBPF objects or runs eu-readelf/eu-strip. Numeric unprivileged execution and native confinement remain mandatory; package metadata and the raw scanner result remain intact.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "elfBpfNotLinkedInFullBundle"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-11",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
+      "remediationTarget": "Recheck the supported vendor package and upstream fix by2026-11-18; renew only after fresh qualification.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/c7ce33c8b88be177f7ba06882bb690c46d93bd86/osv/cve/2025/UBUNTU-CVE-2025-29481.json"
+      ],
+      "vendorEvidenceSha256": "422027c95a3a1ac71c276f595b0aa7bb8497f9cba41c4b602fc6fba37d348659"
+    },
+    {
+      "VulnerabilityID": "CVE-2025-1352",
+      "PkgName": "libelf1t64",
+      "InstalledVersion": "0.190-1.1ubuntu0.1",
+      "FixedVersion": null,
+      "Severity": "LOW",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2025-1352",
+      "kind": "unreachable-precondition",
+      "rationale": "The vulnerable eBPF/ELF inspection functions are outside the service/worker/edge/cache linkage. No Product operation accepts ELF programs, loads eBPF objects or runs eu-readelf/eu-strip. Numeric unprivileged execution and native confinement remain mandatory; package metadata and the raw scanner result remain intact.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "elfBpfNotLinkedInFullBundle"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-11",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
+      "remediationTarget": "Recheck the supported vendor package and upstream fix by2026-11-18; renew only after fresh qualification.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/c7ce33c8b88be177f7ba06882bb690c46d93bd86/osv/cve/2025/UBUNTU-CVE-2025-1352.json"
+      ],
+      "vendorEvidenceSha256": "6753ce958df7df687579062b802f2be79271e49c66ac9fecfe84713b5b928e61"
+    },
+    {
+      "VulnerabilityID": "CVE-2025-1376",
+      "PkgName": "libelf1t64",
+      "InstalledVersion": "0.190-1.1ubuntu0.1",
+      "FixedVersion": null,
+      "Severity": "LOW",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2025-1376",
+      "kind": "unreachable-precondition",
+      "rationale": "The vulnerable eBPF/ELF inspection functions are outside the service/worker/edge/cache linkage. No Product operation accepts ELF programs, loads eBPF objects or runs eu-readelf/eu-strip. Numeric unprivileged execution and native confinement remain mandatory; package metadata and the raw scanner result remain intact.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "elfBpfNotLinkedInFullBundle"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-11",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
+      "remediationTarget": "Recheck the supported vendor package and upstream fix by2026-11-18; renew only after fresh qualification.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/c7ce33c8b88be177f7ba06882bb690c46d93bd86/osv/cve/2025/UBUNTU-CVE-2025-1376.json"
+      ],
+      "vendorEvidenceSha256": "9c174f186b6abe3ba39baf73ff274f940fb89acc66cff8896c6a118649be0609"
+    },
+    {
+      "VulnerabilityID": "CVE-2025-66382",
+      "PkgName": "libexpat1",
+      "InstalledVersion": "2.10.0-0nkw2",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2025-66382",
+      "kind": "unreachable-precondition",
+      "rationale": "Native Expat is used for trusted image-owned Fontconfig configuration. Individual configuration files are at most64KiB and the total at most1MiB; uploads cannot supply native XML/font configuration. The described crafted approximately2MiB XML path is outside that input boundary. The original finding remains visible.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "trustedFontConfiguration",
+        "boundedFontConfiguration"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-11",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
+      "remediationTarget": "Recheck the supported vendor package and upstream fix by2026-11-18; renew only after fresh qualification.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/c7ce33c8b88be177f7ba06882bb690c46d93bd86/osv/cve/2025/UBUNTU-CVE-2025-66382.json"
+      ],
+      "vendorEvidenceSha256": "79bc1588003f29b67c47b475a3f9d1b515cdf6837074b9884452327c4df859f2"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-102633",
+      "PkgName": "libexpat1",
+      "InstalledVersion": "2.10.0-0nkw2",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-102633",
+      "kind": "unreachable-precondition",
+      "rationale": "The reported expat_realloc overflow requires 32-bit allocation arithmetic. Only measured native 64-bit service and worker ABIs are selected here; native Expat handles bounded immutable Fontconfig XML rather than uploaded XML. This is an applicability assessment, not a claim that the separate backport fixes this CVE.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "native64BitAbi",
+        "trustedFontConfiguration",
+        "boundedFontConfiguration",
+        "expat210BackportVerified"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-11",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
+      "remediationTarget": "Recheck the supported vendor package and upstream fix by2026-11-18; renew only after fresh qualification.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/c7ce33c8b88be177f7ba06882bb690c46d93bd86/osv/cve/2026/UBUNTU-CVE-2026-102633.json"
+      ],
+      "vendorEvidenceSha256": "6686e942a0446b69604d6fac1620e8cea5d40e5a8e8b25c685ca52ba3e8a0778"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-67693",
+      "PkgName": "libgnutls30t64",
+      "InstalledVersion": "3.8.3-1.1ubuntu3.6",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-67693",
+      "kind": "unreachable-precondition",
+      "rationale": "The reviewed GnuTLS certificate KU/EKU/name-constraint path is not linked by the full bundle service, JVM, Fontconfig worker, Nginx, Redis or media executable. Java certificate/hostname verification and the existing Nginx/OpenSSL edge remain separate; no caller-controlled native TLS plugin is loaded. The vendor finding is retained rather than treated as a TLS waiver.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "gnutlsNotLinkedInFullBundle"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-11",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
+      "remediationTarget": "Recheck the supported vendor package and upstream fix by2026-11-18; renew only after fresh qualification.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/c7ce33c8b88be177f7ba06882bb690c46d93bd86/osv/cve/2026/UBUNTU-CVE-2026-67693.json"
+      ],
+      "vendorEvidenceSha256": "a335090a80ed1933aa9010eff1fd99e9d56453bfc724fe6d618b0c47a49e6950"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-88647",
+      "PkgName": "libgnutls30t64",
+      "InstalledVersion": "3.8.3-1.1ubuntu3.6",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-88647",
+      "kind": "unreachable-precondition",
+      "rationale": "The reviewed GnuTLS certificate KU/EKU/name-constraint path is not linked by the full bundle service, JVM, Fontconfig worker, Nginx, Redis or media executable. Java certificate/hostname verification and the existing Nginx/OpenSSL edge remain separate; no caller-controlled native TLS plugin is loaded. The vendor finding is retained rather than treated as a TLS waiver.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "gnutlsNotLinkedInFullBundle"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-11",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
+      "remediationTarget": "Recheck the supported vendor package and upstream fix by2026-11-18; renew only after fresh qualification.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/c7ce33c8b88be177f7ba06882bb690c46d93bd86/osv/cve/2026/UBUNTU-CVE-2026-88647.json"
+      ],
+      "vendorEvidenceSha256": "c7b645f7a2cac68eea00bf4455389b000d86223dd9e699a7188198e433ddc9d7"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-88648",
+      "PkgName": "libgnutls30t64",
+      "InstalledVersion": "3.8.3-1.1ubuntu3.6",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-88648",
+      "kind": "unreachable-precondition",
+      "rationale": "The reviewed GnuTLS certificate KU/EKU/name-constraint path is not linked by the full bundle service, JVM, Fontconfig worker, Nginx, Redis or media executable. Java certificate/hostname verification and the existing Nginx/OpenSSL edge remain separate; no caller-controlled native TLS plugin is loaded. The vendor finding is retained rather than treated as a TLS waiver.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "gnutlsNotLinkedInFullBundle"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-11",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
+      "remediationTarget": "Recheck the supported vendor package and upstream fix by2026-11-18; renew only after fresh qualification.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/c7ce33c8b88be177f7ba06882bb690c46d93bd86/osv/cve/2026/UBUNTU-CVE-2026-88648.json"
+      ],
+      "vendorEvidenceSha256": "290d33ac8008f4164ec0813ffb4136fdf6ca0c3b788f1b4e71eb46eb9e76f61a"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-95184",
+      "PkgName": "libgnutls30t64",
+      "InstalledVersion": "3.8.3-1.1ubuntu3.6",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-95184",
+      "kind": "unreachable-precondition",
+      "rationale": "The reviewed GnuTLS certificate KU/EKU/name-constraint path is not linked by the full bundle service, JVM, Fontconfig worker, Nginx, Redis or media executable. Java certificate/hostname verification and the existing Nginx/OpenSSL edge remain separate; no caller-controlled native TLS plugin is loaded. The vendor finding is retained rather than treated as a TLS waiver.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "gnutlsNotLinkedInFullBundle"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-11",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
+      "remediationTarget": "Recheck the supported vendor package and upstream fix by2026-11-18; renew only after fresh qualification.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/c7ce33c8b88be177f7ba06882bb690c46d93bd86/osv/cve/2026/UBUNTU-CVE-2026-95184.json"
+      ],
+      "vendorEvidenceSha256": "9387aa81f6b19804fae57e4849a46ba3dbb4e67b6d97a1f32b26693590549758"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-95210",
+      "PkgName": "libgnutls30t64",
+      "InstalledVersion": "3.8.3-1.1ubuntu3.6",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-95210",
+      "kind": "unreachable-precondition",
+      "rationale": "The reviewed GnuTLS certificate KU/EKU/name-constraint path is not linked by the full bundle service, JVM, Fontconfig worker, Nginx, Redis or media executable. Java certificate/hostname verification and the existing Nginx/OpenSSL edge remain separate; no caller-controlled native TLS plugin is loaded. The vendor finding is retained rather than treated as a TLS waiver.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "gnutlsNotLinkedInFullBundle"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-11",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
+      "remediationTarget": "Recheck the supported vendor package and upstream fix by2026-11-18; renew only after fresh qualification.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/c7ce33c8b88be177f7ba06882bb690c46d93bd86/osv/cve/2026/UBUNTU-CVE-2026-95210.json"
+      ],
+      "vendorEvidenceSha256": "e223ff15f050bcc5a7cbe914158b646217c57139a8d31ebc81fbe439a6acc382"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-76642",
+      "PkgName": "libmount1",
+      "InstalledVersion": "2.39.3-9ubuntu6.6",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-76642",
+      "kind": "unreachable-precondition",
+      "rationale": "This mount-helper/post-mount-hook escalation requires a privileged mount operation. The mount/nsenter programs are removed, no setuid/setgid file remains, and no application or worker receives mount privilege or an arbitrary command interface. Shared util-linux libraries remain inventoried; the vulnerable command/privileged hook path is unavailable.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "mountAbsent",
+        "nsenterAbsent"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-11",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
+      "remediationTarget": "Recheck the supported vendor package and upstream fix by2026-11-18; renew only after fresh qualification.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/c7ce33c8b88be177f7ba06882bb690c46d93bd86/osv/cve/2026/UBUNTU-CVE-2026-76642.json"
+      ],
+      "vendorEvidenceSha256": "03034f3fd46701a979dd6959c8d532b076d1cb2ab6c57cff68ba6aab36e497b7"
+    },
+    {
+      "VulnerabilityID": "CVE-2025-27091",
+      "PkgName": "libopenh264-8",
+      "InstalledVersion": "2.6.0+dfsg-2nkw1",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2025-27091",
+      "kind": "upstream-fixed",
+      "rationale": "Cisco identifies 2.6.0 as containing the SPS/non-IDR race fix. This existing codec is rebuilt from the exact pinned 2.6.0 Debian source, with matching production/worker library hashes. A custom Noble package version is not evidence that an older vulnerable codec was shipped.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "upstreamOpenH26426Verified"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-11",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
+      "remediationTarget": "Recheck the supported vendor package and upstream fix by2026-11-18; renew only after fresh qualification.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/c7ce33c8b88be177f7ba06882bb690c46d93bd86/osv/cve/2025/UBUNTU-CVE-2025-27091.json",
+        "https://github.com/cisco/openh264/security/advisories/GHSA-m99q-5j7x-7m9x"
+      ],
+      "vendorEvidenceSha256": "87818ddd889642197cab25abef76dfe32d531b0d224ff37e4c1218e886a60fc4"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-76642",
+      "PkgName": "libsmartcols1",
+      "InstalledVersion": "2.39.3-9ubuntu6.6",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-76642",
+      "kind": "unreachable-precondition",
+      "rationale": "This mount-helper/post-mount-hook escalation requires a privileged mount operation. The mount/nsenter programs are removed, no setuid/setgid file remains, and no application or worker receives mount privilege or an arbitrary command interface. Shared util-linux libraries remain inventoried; the vulnerable command/privileged hook path is unavailable.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "mountAbsent",
+        "nsenterAbsent"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-11",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
+      "remediationTarget": "Recheck the supported vendor package and upstream fix by2026-11-18; renew only after fresh qualification.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/c7ce33c8b88be177f7ba06882bb690c46d93bd86/osv/cve/2026/UBUNTU-CVE-2026-76642.json"
+      ],
+      "vendorEvidenceSha256": "03034f3fd46701a979dd6959c8d532b076d1cb2ab6c57cff68ba6aab36e497b7"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-40228",
+      "PkgName": "libsystemd0",
+      "InstalledVersion": "255.4-1ubuntu8.18",
+      "FixedVersion": null,
+      "Severity": "LOW",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-40228",
+      "kind": "unreachable-precondition",
+      "rationale": "No systemd-journald daemon or ForwardToWall terminal delivery runs in this rootless container. Application and edge logging use bounded sanitized stdout; the described journald emerg-message terminal injection path is absent.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "systemdJournaldAbsent"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-11",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
+      "remediationTarget": "Recheck the supported vendor package and upstream fix by2026-11-18; renew only after fresh qualification.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/c7ce33c8b88be177f7ba06882bb690c46d93bd86/osv/cve/2026/UBUNTU-CVE-2026-40228.json"
+      ],
+      "vendorEvidenceSha256": "4ddf927636f629be28b61719da9bbe291ee72de50f2db83dc98a21ff7e0055d1"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-40228",
+      "PkgName": "libudev1",
+      "InstalledVersion": "255.4-1ubuntu8.18",
+      "FixedVersion": null,
+      "Severity": "LOW",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-40228",
+      "kind": "unreachable-precondition",
+      "rationale": "No systemd-journald daemon or ForwardToWall terminal delivery runs in this rootless container. Application and edge logging use bounded sanitized stdout; the described journald emerg-message terminal injection path is absent.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "systemdJournaldAbsent"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-11",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
+      "remediationTarget": "Recheck the supported vendor package and upstream fix by2026-11-18; renew only after fresh qualification.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/c7ce33c8b88be177f7ba06882bb690c46d93bd86/osv/cve/2026/UBUNTU-CVE-2026-40228.json"
+      ],
+      "vendorEvidenceSha256": "4ddf927636f629be28b61719da9bbe291ee72de50f2db83dc98a21ff7e0055d1"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-76642",
+      "PkgName": "libuuid1",
+      "InstalledVersion": "2.39.3-9ubuntu6.6",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-76642",
+      "kind": "unreachable-precondition",
+      "rationale": "This mount-helper/post-mount-hook escalation requires a privileged mount operation. The mount/nsenter programs are removed, no setuid/setgid file remains, and no application or worker receives mount privilege or an arbitrary command interface. Shared util-linux libraries remain inventoried; the vulnerable command/privileged hook path is unavailable.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "mountAbsent",
+        "nsenterAbsent"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-11",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
+      "remediationTarget": "Recheck the supported vendor package and upstream fix by2026-11-18; renew only after fresh qualification.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/c7ce33c8b88be177f7ba06882bb690c46d93bd86/osv/cve/2026/UBUNTU-CVE-2026-76642.json"
+      ],
+      "vendorEvidenceSha256": "03034f3fd46701a979dd6959c8d532b076d1cb2ab6c57cff68ba6aab36e497b7"
+    },
+    {
+      "VulnerabilityID": "CVE-2024-56433",
+      "PkgName": "login",
+      "InstalledVersion": "1:4.13+dfsg1-4ubuntu3.2",
+      "FixedVersion": null,
+      "Severity": "LOW",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2024-56433",
+      "kind": "unreachable-precondition",
+      "rationale": "The fixed numeric service identity does not create OS users, map subordinate IDs or mount NFS home directories. Login and privilege-bearing utilities are absent; no remote OS-login or user-account management interface exists. Application accounts do not create operating-system accounts.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "loginAbsent"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-11",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
+      "remediationTarget": "Recheck the supported vendor package and upstream fix by2026-11-18; renew only after fresh qualification.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/c7ce33c8b88be177f7ba06882bb690c46d93bd86/osv/cve/2024/UBUNTU-CVE-2024-56433.json"
+      ],
+      "vendorEvidenceSha256": "dd54dd16a39f2525a8ebc4ba83fcf0d97e269aa436e596055cb642477b4387db"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-76642",
+      "PkgName": "mount",
+      "InstalledVersion": "2.39.3-9ubuntu6.6",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-76642",
+      "kind": "unreachable-precondition",
+      "rationale": "This mount-helper/post-mount-hook escalation requires a privileged mount operation. The mount/nsenter programs are removed, no setuid/setgid file remains, and no application or worker receives mount privilege or an arbitrary command interface. Shared util-linux libraries remain inventoried; the vulnerable command/privileged hook path is unavailable.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "mountAbsent",
+        "nsenterAbsent"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-11",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
+      "remediationTarget": "Recheck the supported vendor package and upstream fix by2026-11-18; renew only after fresh qualification.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/c7ce33c8b88be177f7ba06882bb690c46d93bd86/osv/cve/2026/UBUNTU-CVE-2026-76642.json"
+      ],
+      "vendorEvidenceSha256": "03034f3fd46701a979dd6959c8d532b076d1cb2ab6c57cff68ba6aab36e497b7"
+    },
+    {
+      "VulnerabilityID": "CVE-2024-56433",
+      "PkgName": "passwd",
+      "InstalledVersion": "1:4.13+dfsg1-4ubuntu3.2",
+      "FixedVersion": null,
+      "Severity": "LOW",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2024-56433",
+      "kind": "unreachable-precondition",
+      "rationale": "The fixed numeric service identity does not create OS users, map subordinate IDs or mount NFS home directories. Login and privilege-bearing utilities are absent; no remote OS-login or user-account management interface exists. Application accounts do not create operating-system accounts.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "loginAbsent"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-11",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
+      "remediationTarget": "Recheck the supported vendor package and upstream fix by2026-11-18; renew only after fresh qualification.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/c7ce33c8b88be177f7ba06882bb690c46d93bd86/osv/cve/2024/UBUNTU-CVE-2024-56433.json"
+      ],
+      "vendorEvidenceSha256": "dd54dd16a39f2525a8ebc4ba83fcf0d97e269aa436e596055cb642477b4387db"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-18477",
+      "PkgName": "tar",
+      "InstalledVersion": "1.35+dfsg-3ubuntu0.4",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-18477",
+      "kind": "component-not-shipped",
+      "rationale": "The tar/rmt extraction command is removed. Product upload accepts bounded media, not archives; no request selects an archive-extraction command. Build-only extraction uses checksum-pinned public sources and is excluded from the runtime.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "tarAbsent"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-11",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
+      "remediationTarget": "Recheck the supported vendor package and upstream fix by2026-11-18; renew only after fresh qualification.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/c7ce33c8b88be177f7ba06882bb690c46d93bd86/osv/cve/2026/UBUNTU-CVE-2026-18477.json"
+      ],
+      "vendorEvidenceSha256": "68c1af84c28ba120aec09bea90a2266fe34541febdd60b34efad53b4da605760"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-18508",
+      "PkgName": "tar",
+      "InstalledVersion": "1.35+dfsg-3ubuntu0.4",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-18508",
+      "kind": "component-not-shipped",
+      "rationale": "The tar/rmt extraction command is removed. Product upload accepts bounded media, not archives; no request selects an archive-extraction command. Build-only extraction uses checksum-pinned public sources and is excluded from the runtime.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "tarAbsent"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-11",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
+      "remediationTarget": "Recheck the supported vendor package and upstream fix by2026-11-18; renew only after fresh qualification.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/c7ce33c8b88be177f7ba06882bb690c46d93bd86/osv/cve/2026/UBUNTU-CVE-2026-18508.json"
+      ],
+      "vendorEvidenceSha256": "3e17824e5889911c3487864259efd09b76d58a3e2fce9d4be9c7722b3628cb7a"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-76642",
+      "PkgName": "util-linux",
+      "InstalledVersion": "2.39.3-9ubuntu6.6",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-76642",
+      "kind": "unreachable-precondition",
+      "rationale": "This mount-helper/post-mount-hook escalation requires a privileged mount operation. The mount/nsenter programs are removed, no setuid/setgid file remains, and no application or worker receives mount privilege or an arbitrary command interface. Shared util-linux libraries remain inventoried; the vulnerable command/privileged hook path is unavailable.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "mountAbsent",
+        "nsenterAbsent"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-11",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
+      "remediationTarget": "Recheck the supported vendor package and upstream fix by2026-11-18; renew only after fresh qualification.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/c7ce33c8b88be177f7ba06882bb690c46d93bd86/osv/cve/2026/UBUNTU-CVE-2026-76642.json"
+      ],
+      "vendorEvidenceSha256": "03034f3fd46701a979dd6959c8d532b076d1cb2ab6c57cff68ba6aab36e497b7"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-82560",
+      "PkgName": "perl-base",
+      "InstalledVersion": "5.38.2-3.2ubuntu0.6",
+      "FixedVersion": "5.38.2-3.2ubuntu0.7",
+      "Severity": "MEDIUM",
+      "Status": "fixed",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-82560",
+      "kind": "component-not-shipped",
+      "rationale": "The vulnerable Pod::Text formatter requires the Perl interpreter. The exact image removes the perl-base executable programs and records their removal hashes; its measured /usr/bin/perl absence is mandatory. No application or fixed worker invokes Perl or formats caller-supplied POD. The package inventory and raw scanner finding remain visible; this is not a package-upgrade claim.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "perlAbsent"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-11",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Bind the exact production source, package, image and absent interpreter to qualified owner/CSRF and private/public controls; reject missing, changed, expired or newly observed evidence.",
+      "remediationTarget": "Recheck vendor fixed Noble package 5.38.2-3.2ubuntu0.7 by 2026-11-18; retain the finding until a new scan verifies remediation.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/d27f7ae949795bce7385a2d7526c7dbc85b89d93/osv/cve/2026/UBUNTU-CVE-2026-82560.json"
+      ],
+      "vendorEvidenceSha256": "e1f5eab8b8a3f23cd663408c27e83215d0ce01afb57f460bde35f4fdc0d13443"
+    }
+  ]
+}

@@ -24,7 +24,8 @@ assert raw.is_file(), 'Scanner infrastructure failed; missing evidence is not ze
 data=json.loads(raw.read_text()); vulnerabilities=[]; secrets=[]; misconfigurations=[]; java_packages=0; os_packages=0
 assert int(os.environ['SCAN_RESULT']) in (0,1) and data.get('Metadata'), 'Scanner execution failed'
 recognized_os=data['Metadata'].get('OS',{})
-assert recognized_os.get('Family')=='debian' and str(recognized_os.get('Name','')).split('.')[0] in ('12','13'), 'Supported deployment OS not recognized'
+assert (recognized_os.get('Family')=='debian' and str(recognized_os.get('Name','')).split('.')[0] in ('12','13')
+        or recognized_os.get('Family')=='ubuntu' and recognized_os.get('Name')=='24.04'), 'Supported deployment OS not recognized'
 for item in data.get('Results',[]):
     if item.get('Type')=='jar': java_packages+=len(item.get('Packages',[]))
     if item.get('Class')=='os-pkgs': os_packages+=len(item.get('Packages',[]))
@@ -71,8 +72,8 @@ assert sum(c.get('purl','').startswith('pkg:maven/') for c in data['components']
 # Add their exact shipped binary hashes without inventing vulnerability coverage.
 shipped={line.split()[1]:line.split()[0] for line in (root/'shipped-artifacts.sha256').read_text().splitlines()}
 explicit_refs=[]
-for file,name,version in [('/opt/video/tools/bin/ffmpeg','ffmpeg','9.0.2'),
-                          ('/opt/video/tools/bin/ffprobe','ffprobe','9.0.2'),
+for file,name,version in [('/opt/video/tools/bin/ffmpeg','ffmpeg','9.0.2+nkw-security24593'),
+                          ('/opt/video/tools/bin/ffprobe','ffprobe','9.0.2+nkw-security24593'),
                           ('/opt/pdf/helper','pdf-sandbox-helper',None),
                           ('/opt/video/helper','video-sandbox-helper',None),
                           ('/opt/operations/health-probe','fixed-loopback-health-probe',None),

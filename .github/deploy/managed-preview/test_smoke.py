@@ -11,6 +11,36 @@ spec=importlib.util.spec_from_file_location('managed_smoke',Path(__file__).with_
 smoke=importlib.util.module_from_spec(spec);spec.loader.exec_module(smoke)
 
 class ReadinessTests(unittest.TestCase):
+    def test_container_exit_diagnostic_excludes_configuration_and_raw_error(self):
+        data={'State':{'Running':False,'OOMKilled':True,'ExitCode':137,'Error':'synthetic-private-marker'},
+              'RestartCount':0,'Config':{'Env':['synthetic-private-marker']}}
+        self.assertEqual({'running':False,'oomKilled':True,'exitCode':137,'restarts':0},smoke.safe_container_state(data))
+        self.assertNotIn('synthetic-private-marker',json.dumps(smoke.safe_container_state(data)))
+
+    def test_full_client_observes_edge_deadline_without_changing_legacy_observer(self):
+        self.assertEqual(45,smoke.request_observer_timeout(False))
+        self.assertEqual(130,smoke.request_observer_timeout(True))
+
+    def test_resource_observation_keeps_only_bounded_numeric_counters(self):
+        result=smoke.safe_resource_observation('123\n456\noom 0\noom_kill 0\nusage_usec 789\nprivate synthetic-marker\n')
+        self.assertTrue(result['available'])
+        self.assertEqual(456,result['memoryPeakBytes'])
+        self.assertEqual({'oom':0,'oom_kill':0,'usage_usec':789},result['counters'])
+        self.assertNotIn('synthetic-marker',json.dumps(result))
+        self.assertEqual({'available':False},smoke.safe_resource_observation('not-a-measurement'))
+        self.assertEqual({'available':False},smoke.safe_resource_observation('1\n2\noom 0\n'))
+
+    def test_startup_diagnostic_does_not_return_messages_or_sensitive_material(self):
+        raw=('APPLICATION FAILED TO START\nCaused by: java.lang.IllegalArgumentException: '
+            'Security email sender is not configured synthetic-private-marker\n'
+            ' at org.notesknowledge.identity.ManagedEmailDeliveryAdapter.create(Adapter.java:123)\n'
+            'Caused by: attacker.payload.ShouldNotBeCopied: synthetic-private-marker')
+        result=smoke.safe_startup_diagnostics(raw)
+        self.assertEqual(['java.lang.IllegalArgumentException'],result['causeClasses'])
+        self.assertEqual(['org.notesknowledge.identity.ManagedEmailDeliveryAdapter.create'],result['applicationFrames'])
+        self.assertNotIn('synthetic-private-marker',json.dumps(result))
+        self.assertNotIn('attacker.payload',json.dumps(result))
+
     def wait(self,responses,timeout=2):
         clock=[0.0];calls=[];remaining=iter(responses)
         def request(path,authenticated):

@@ -13,6 +13,7 @@ cp src/main/native/allocation-overflow-probe.cpp "$context/native/"
 cp src/main/native/expat-2.10-regression-compat.patch "$context/native/"
 cp src/main/native/build-media-libraries.sh "$context/native/"
 cp src/main/native/minimize-runtime-tools.sh "$context/native/"
+cp src/main/native/backport-ffmpeg-security.sh "$context/native/"
 cp src/test/resources/attachments/synthetic-aac-video.mp4 "$context/native/audio-preflight.mp4"
 cp target/notes-knowledge-workspace-0.0.1-SNAPSHOT.jar "$context/application.jar"
 "$JAVA_HOME/bin/jar" tf "$context/application.jar" | grep -Fx 'BOOT-INF/classes/static/index.html'

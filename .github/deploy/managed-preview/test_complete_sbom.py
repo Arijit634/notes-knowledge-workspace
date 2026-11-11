@@ -12,6 +12,52 @@ spec.loader.exec_module(sbom)
 
 
 class SbomTests(unittest.TestCase):
+    def full_inputs(self, root, architecture='x86_64'):
+        source=root/'scanner.json';final=root/'complete.json'
+        source.write_text(json.dumps(dict(bomFormat='CycloneDX',metadata=dict(component={'bom-ref':'container'}),
+            components=[{'bom-ref':'existing-java','name':'existing-java'}],
+            dependencies=[dict(ref='container',dependsOn=['existing-java'])])))
+        return source,final,{'/usr/local/bin/redis-server':'a'*64,
+            '/usr/lib/'+architecture+'-linux-gnu/libopenh264.so.2.6.0':'b'*64}
+
+    def test_full_bundle_preserves_scanner_input_and_binds_exact_shipped_hashes(self):
+        for architecture in ('x86_64','aarch64'):
+            with self.subTest(architecture=architecture),tempfile.TemporaryDirectory() as temporary:
+                source,final,shipped=self.full_inputs(Path(temporary),architecture)
+                original=source.read_bytes();sbom.complete_full(source,final,shipped)
+                self.assertEqual(original,source.read_bytes())
+                result=json.loads(final.read_text())
+                self.assertEqual('existing-java',result['components'][0]['name'])
+                self.assertEqual(3,len(result['components']))
+                for component in result['components'][1:]:
+                    properties={p['name']:p['value'] for p in component['properties']}
+                    self.assertEqual(shipped[properties['nkw:shipped:path']],component['hashes'][0]['content'])
+                    self.assertIn(component['bom-ref'],result['dependencies'][0]['dependsOn'])
+                    self.assertIn('not invented vulnerability coverage',properties['nkw:scanner:coverage'])
+
+    def test_full_bundle_rejects_missing_extra_and_malformed_artifacts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source,final,shipped=self.full_inputs(Path(temporary))
+            bad=[{},dict(shipped,extra='c'*64),dict(shipped,**{'/usr/local/bin/redis-server':'invalid'})]
+            for values in bad:
+                with self.subTest(values=values),self.assertRaises(ValueError):
+                    sbom.complete_full(source,final,values)
+                self.assertFalse(final.exists())
+
+    def test_full_bundle_cannot_replace_input_or_prior_evidence(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source,final,shipped=self.full_inputs(Path(temporary))
+            with self.assertRaises(ValueError):sbom.complete_full(source,source,shipped)
+            final.write_text('retained')
+            with self.assertRaises(FileExistsError):sbom.complete_full(source,final,shipped)
+            self.assertEqual('retained',final.read_text())
+
+    def test_full_bundle_rejects_duplicate_component_identity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source,final,shipped=self.full_inputs(Path(temporary))
+            sbom.complete_full(source,final,shipped)
+            with self.assertRaises(ValueError):sbom.complete_full(final,source.with_name('duplicate.json'),shipped)
+
     def test_read_only_scanner_output_produces_separate_complete_sbom(self):
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / 'raw.json'

@@ -128,7 +128,7 @@ def handler(fixture, control=False):
                 self.reply(403)
                 return
             if self.command == 'PUT':
-                body = self.read_body(1024 * 1024)
+                body = self.read_body(20_000_000)
                 checksum=base64.b64encode(hashlib.md5(body,usedforsecurity=False).digest()).decode()
                 if self.headers.get('Content-MD5')!=checksum or self.headers.get('If-None-Match')!='*':
                     self.reply(400)

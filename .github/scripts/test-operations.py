@@ -27,6 +27,16 @@ reconciliation = load('image_reconciliation', 'reconcile-image-security.py')
 
 
 class ImageReconciliationContracts(unittest.TestCase):
+    def test_ffmpeg_backport_requires_all_exact_controls(self):
+        values=[dict(facts.FFMPEG_SECURITY_PATCHES),
+            dict(unpatchedCleanupExit=139,expectedStackExhaustion=True,coreDumpEnabled=False),
+            dict(ffmpegEncryptionRegression=True,cleanupNodes=100000,appendRecords=10000,boundedStackKiB=256),
+            dict(upstreamEncryptionInfoFatePassed=True),'!CONFIG_CDXL_DECODER=yes\n']
+        self.assertTrue(facts.validate_ffmpeg_security(*values)['cdxlDecoderDisabled'])
+        for index in range(len(values)):
+            changed=copy.deepcopy(values);changed[index]={} if index<4 else 'CONFIG_CDXL_DECODER=yes\n'
+            with self.subTest(index=index),self.assertRaises(ValueError):facts.validate_ffmpeg_security(*changed)
+
     def setUp(self):
         self.today=datetime.date(2026,11,10)
         self.image='sha256:'+'a'*64
@@ -52,6 +62,31 @@ class ImageReconciliationContracts(unittest.TestCase):
 
     def run_policy(self):
         return reconciliation.reconcile(self.scan,self.facts,self.smoke,self.policy,self.today)
+
+    def test_full_bundle_dispositions_require_measured_controls(self):
+        required=['gnutlsNotLinkedInFullBundle','elfBpfNotLinkedInFullBundle','native64BitAbi',
+            'upstreamOpenH26426Verified','publicPrivateSeparationQualified']
+        self.rule['requiredControls']=required
+        with self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
+        bundle=dict(gnutlsNotLinked=True,elfBpfNotLinked=True,native64BitAbi=True,
+            openh264SourceCopiesMatch=True,
+            openh264SourceSha256='52fc65775e03abe70f3f453c3c57fa7b31c71fe240de84da53d75f2ddc7dd519')
+        self.facts['fullHostedBundle']=bundle
+        self.smoke['events']=[dict(step='public_private_separation',privateResourceDenied=True)]
+        self.assertTrue(self.run_policy()['releaseSecurityReconciled'])
+        original=copy.deepcopy(bundle)
+        for name in bundle:
+            self.facts['fullHostedBundle']=dict(original,**{name:False if isinstance(bundle[name],bool) else '0'*64})
+            with self.subTest(name=name),self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
+        self.facts['fullHostedBundle']=original
+        self.smoke['events']=[]
+        with self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
+
+    def test_missing_java_mapping_observations_do_not_become_unloaded_claims(self):
+        self.smoke['resourceMeasurements']=[dict(peakBytes=100)]
+        active=reconciliation.controls(self.facts,self.smoke)
+        self.assertFalse(active['opensslNotLoadedInWorkload'])
+        self.assertFalse(active['sqliteNotLoadedInWorkload'])
 
     def test_exact_non_shipped_component_retains_the_original_failed_scan(self):
         before=copy.deepcopy(self.scan)

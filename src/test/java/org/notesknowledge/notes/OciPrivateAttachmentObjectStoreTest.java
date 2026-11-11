@@ -13,8 +13,18 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 class OciPrivateAttachmentObjectStoreTest {
     @TempDir Path directory;
     private static String key(int value){return "private-attachment/"+String.format("%064x",value);}
+    @Test void realSdkKeepsAFiniteSingleAttemptBudgetForMaximumSizeUploads() {
+        var credentials=software.amazon.awssdk.auth.credentials.StaticCredentialsProvider.create(
+                software.amazon.awssdk.auth.credentials.AwsBasicCredentials.create("synthetic-access-key","synthetic-secret-key"));
+        try(var client=OciPrivateAttachmentObjectStore.client(ControlledObjectStorageTransport.properties(),credentials,
+                new ControlledObjectStorageTransport(directory))) {
+            var configuration=client.serviceClientConfiguration().overrideConfiguration();
+            assertThat(configuration.apiCallTimeout()).contains(java.time.Duration.ofSeconds(30));
+            assertThat(configuration.apiCallAttemptTimeout()).contains(java.time.Duration.ofSeconds(25));
+        }
+    }
     @Test void realSdkCreatesChecksummedStreamingObjectsWithoutOverwriteAndSurvivesRestart()throws Exception {
-        byte[] bytes=new byte[600_000];new java.util.Random(17).nextBytes(bytes);
+        byte[] bytes=new byte[(int)OciPrivateAttachmentObjectStore.MAX_BYTES];new java.util.Random(17).nextBytes(bytes);
         var transport=new ControlledObjectStorageTransport(directory);
         try(var store=ControlledObjectStorageTransport.store(transport)){
             store.write(key(1),new ByteArrayInputStream(bytes),bytes.length);

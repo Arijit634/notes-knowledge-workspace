@@ -17,6 +17,14 @@ on:
         description: Measure app, proxy and Redis in one 448 MiB / 0.1 CPU aggregate budget
         type: boolean
         default: false
+      qualify_full_hosted:
+        description: Build and exercise the explicit full native bundle; no publication or live providers
+        type: boolean
+        default: false
+      expected_source:
+        description: Exact 40-character SHA required for full hosted qualification
+        type: string
+        default: ''
       qualify_native_startup:
         description: Measure native backend startup at 512 MiB / 0.1 CPU; not full feature or release clearance
         type: boolean
@@ -55,7 +63,7 @@ jobs:
           python3 .github/deploy/private-preview/smoke.py "$(cat "$RUNNER_TEMP/preview-image")" "$mode"
   native-preview:
     name: Preview / native ARM and deployment controls
-    if: github.event_name != 'workflow_dispatch' || (!inputs.qualify_small_host && !inputs.qualify_small_bundle && !inputs.qualify_native_startup)
+    if: github.event_name != 'workflow_dispatch' || (!inputs.qualify_small_host && !inputs.qualify_small_bundle && !inputs.qualify_native_startup && !inputs.qualify_full_hosted)
     # Standard ARM runner is free for this public repository; never a larger runner.
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
@@ -154,7 +162,7 @@ jobs:
       - name: Package production JAR and compile isolated controllers
         run: >-
           ./mvnw --batch-mode --no-transfer-progress -Pwith-frontend
-          -Dtest=MediaRuntimePropertiesTest,MediaRuntimeConfigurationTest,PostgresRecoveryCommandTest
+          -Dtest=MediaRuntimePropertiesTest,MediaRuntimeConfigurationTest,PostgresRecoveryCommandTest,OciPrivateAttachmentObjectStoreTest,CompactAttachmentParserTest
           package -q
       - name: Measure actual native startup at the Free host ceilings
         run: bash .github/scripts/probe-native-budget.sh
@@ -166,5 +174,62 @@ jobs:
           path: |
             ${{ runner.temp }}/native-budget-startup/*.json
             ${{ runner.temp }}/native-budget-startup/*.jsonl
+          if-no-files-found: warn
+          retention-days: 3
+
+  full-hosted:
+    if: github.event_name == 'workflow_dispatch' && inputs.qualify_full_hosted
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - name: Require the exact requested source revision
+        env:
+          EXPECTED_SOURCE: ${{ inputs.expected_source }}
+        run: |
+          [[ "$EXPECTED_SOURCE" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_SHA" = "$EXPECTED_SOURCE"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.expected_source }}
+          persist-credentials: false
+      - name: Verify offline deployment contracts
+        run: |
+          python3 .github/scripts/test-gitleaks-contract.py
+          python3 .github/scripts/test-operations.py
+          python3 .github/scripts/test-health-probe.py
+          python3 -m unittest discover -s .github/deploy/managed-preview -p 'test_*.py'
+          bash -n .github/deploy/managed-preview/start-full.sh
+          bash -n .github/deploy/managed-preview/build-openh264.sh
+          bash -n .github/scripts/qualify-full-hosted.sh
+      - name: Install checksum-pinned native JDK
+        run: bash .github/scripts/media-jdk.sh
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+      - name: Build the accepted frontend
+        working-directory: frontend
+        run: npm ci && npm run build
+      - name: Package production classes and isolated native controllers
+        run: >-
+          ./mvnw --batch-mode --no-transfer-progress -Pwith-frontend
+          -Dtest=MediaRuntimePropertiesTest,MediaRuntimeConfigurationTest,PostgresRecoveryCommandTest
+          package -q
+      - name: Build and exercise the complete native bundle
+        run: bash .github/scripts/qualify-full-hosted.sh
+      - name: Preserve bounded qualification evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.1
+        with:
+          name: full-hosted-candidate
+          path: |
+            ${{ runner.temp }}/full-hosted-candidate/*.json
+            ${{ runner.temp }}/full-hosted-candidate/*.jsonl
+            ${{ runner.temp }}/full-hosted-candidate/security/security-readiness.json
+            ${{ runner.temp }}/full-hosted-candidate/security/deployment.cdx.json
+            ${{ runner.temp }}/full-hosted-candidate/security/shipped-artifacts.sha256
+            ${{ runner.temp }}/full-hosted-candidate/security/full-runtime.cdx.json
+            ${{ runner.temp }}/full-hosted-candidate/security/full-bundle-artifacts.sha256
+            ${{ runner.temp }}/full-hosted-candidate/security/native-artifact-facts.json
           if-no-files-found: warn
           retention-days: 3

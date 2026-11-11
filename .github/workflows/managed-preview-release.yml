@@ -10,6 +10,14 @@ on:
         description: Operator reverified no-charge public runner and GHCR entitlement
         type: boolean
         default: false
+      full_runtime:
+        description: Qualify the complete native application instead of the restricted preview
+        type: boolean
+        default: false
+      redistribution_clearance_verified:
+        description: Owner verified source notices and codec redistribution clearance for the full image
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -19,7 +27,7 @@ jobs:
   candidate:
     if: github.repository == 'Arijit634/notes-knowledge-workspace' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 75
     permissions:
       contents: read
       checks: read
@@ -31,7 +39,11 @@ jobs:
         env:
           PUBLISH: ${{ inputs.publish }}
           FREE_VERIFIED: ${{ inputs.zero_cost_ghcr_verified }}
-        run: test "$PUBLISH" != true || test "$FREE_VERIFIED" = true
+          FULL_RUNTIME: ${{ inputs.full_runtime }}
+          REDISTRIBUTION: ${{ inputs.redistribution_clearance_verified }}
+        run: |
+          test "$PUBLISH" != true || test "$FREE_VERIFIED" = true
+          test "$PUBLISH" != true || test "$FULL_RUNTIME" != true || test "$REDISTRIBUTION" = true
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -44,6 +56,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 .github/scripts/release-guard.py main --repository "$GITHUB_REPOSITORY" --source "$GITHUB_SHA" --output "$RUNNER_TEMP/preview-protected-main.json"
       - name: Build one immutable preview candidate
+        if: '!inputs.full_runtime'
         run: |
           set -euo pipefail
           test "$(uname -m)" = x86_64
@@ -52,6 +65,7 @@ jobs:
           python3 -m unittest discover -s .github/deploy/managed-preview -p 'test_*.py'
           docker build --build-arg "SOURCE_SHA=$GITHUB_SHA" --iidfile "$RUNNER_TEMP/preview-image" -f .github/deploy/managed-preview/Dockerfile .
       - name: Scan the actual image and retain only safe aggregate counts
+        if: '!inputs.full_runtime'
         run: |
           set -euo pipefail
           image="$(cat "$RUNNER_TEMP/preview-image")"
@@ -73,10 +87,12 @@ jobs:
           assert receipt['scanExit']==0 and findings==0
           PY
       - name: Qualify that same image without providers
+        if: '!inputs.full_runtime'
         run: |
           set -euo pipefail
           python3 .github/deploy/managed-preview/smoke.py "$(cat "$RUNNER_TEMP/preview-image")" | tee "$RUNNER_TEMP/preview-smoke.json"
       - name: Generate the matching CycloneDX SBOM
+        if: '!inputs.full_runtime'
         run: |
           set -euo pipefail
           image="$(cat "$RUNNER_TEMP/preview-image")"
@@ -85,6 +101,29 @@ jobs:
             image --format cyclonedx --output /evidence/preview-raw.cdx.json "$image"
           docker run --rm --network none --entrypoint redis-server "$image" --version | grep -F 'v=8.10.2'
           python3 .github/deploy/managed-preview/complete_sbom.py
+      - name: Install checksum-pinned native JDK
+        if: inputs.full_runtime
+        run: bash .github/scripts/media-jdk.sh
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: inputs.full_runtime
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+      - name: Build and qualify the complete application
+        if: inputs.full_runtime
+        run: |
+          set -euo pipefail
+          (cd frontend && npm ci && npm run build)
+          ./mvnw --batch-mode --no-transfer-progress -Pwith-frontend -Dtest=MediaRuntimePropertiesTest,MediaRuntimeConfigurationTest,PostgresRecoveryCommandTest,OciPrivateAttachmentObjectStoreTest,CompactAttachmentParserTest package -q
+          bash .github/scripts/qualify-full-hosted.sh
+          python3 .github/scripts/reconcile-image-security.py \
+            "$RUNNER_TEMP/full-hosted-candidate/security/security-readiness.json" \
+            "$RUNNER_TEMP/full-hosted-candidate/security/native-artifact-facts.json" \
+            "$RUNNER_TEMP/full-hosted-candidate/combined-runtime.json" \
+            .github/security/full-hosted-runtime-dispositions.json \
+            "$RUNNER_TEMP/full-hosted-candidate/security/security-applicability.json"
+          cp "$RUNNER_TEMP/full-hosted-image" "$RUNNER_TEMP/preview-image"
+          cp "$RUNNER_TEMP/full-hosted-candidate/security/full-runtime.cdx.json" "$RUNNER_TEMP/preview.cdx.json"
       - name: Publish the same qualified image without rebuilding
         if: inputs.publish && inputs.zero_cost_ghcr_verified
         id: publication
@@ -153,5 +192,6 @@ jobs:
             ${{ runner.temp }}/preview-provenance-verification.json
             ${{ runner.temp }}/preview-sbom-verification.json
             ${{ runner.temp }}/preview-image-publication.json
+            ${{ runner.temp }}/full-hosted-candidate/**
           if-no-files-found: warn
           retention-days: 3
