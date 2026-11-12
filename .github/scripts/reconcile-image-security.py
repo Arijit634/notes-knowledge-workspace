@@ -59,6 +59,11 @@ def controls(facts, smoke):
         'gnutlsNotLinkedInFullBundle':facts.get('fullHostedBundle',{}).get('gnutlsNotLinked') is True,
         'elfBpfNotLinkedInFullBundle':facts.get('fullHostedBundle',{}).get('elfBpfNotLinked') is True,
         'native64BitAbi':facts.get('fullHostedBundle',{}).get('native64BitAbi') is True,
+        'managedServiceBoundaryQualified':facts.get('fullHostedBundle',{}).get('serviceBoundaryEntryPoint') is True
+            and bool(re.fullmatch('[0-9a-f]{64}',facts.get('fullHostedBundle',{}).get('serviceBoundaryArtifactSha256','')))
+            and smoke.get('managedWritableHostProfile') is True and smoke.get('managedServiceKernelBoundary') is True
+            and bool(smoke['resourceMeasurements'])
+            and all(row.get('managedProcessBoundaryVerified') is True for row in smoke['resourceMeasurements']),
         'upstreamOpenH26426Verified':facts.get('fullHostedBundle',{}).get('openh264SourceCopiesMatch') is True
             and facts.get('fullHostedBundle',{}).get('openh264SourceSha256')=='52fc65775e03abe70f3f453c3c57fa7b31c71fe240de84da53d75f2ddc7dd519',
         **{name+'Absent':value['absent'] is True for name,value in facts['components'].items()},
@@ -90,6 +95,8 @@ def reconcile(scan,facts,smoke,policy,today=None):
         'reviewed_production_source_changed')
     require(facts['architecture'] in policy['architectures'],'unreviewed_architecture')
     active=controls(facts,smoke)
+    if 'serviceBoundaryArtifactSha256' in facts.get('fullHostedBundle',{}):
+        require(active['managedServiceBoundaryQualified'],'managed_service_boundary_evidence_missing')
     findings=scan['vulnerabilities']
     require(scan['scanExit']==0 or findings,'scanner_failed_without_findings')
     require(sum(scan['vulnerabilityCounts'].values())==len(findings),'scan_count_mismatch')

@@ -149,6 +149,11 @@ def main():
             native64BitAbi=bitness=='64',
             openh264SourceSha256=codec_source,
             openh264SourceCopiesMatch=True)
+        service_boundary=inspect('sha256sum /opt/operations/service-boundary').split()[0]
+        require(re.fullmatch('[0-9a-f]{64}',service_boundary)
+            and metadata[0]['Config']['Entrypoint']==['/opt/operations/service-boundary'],
+            'managed_service_boundary_artifact_missing')
+        full_bundle.update(serviceBoundaryArtifactSha256=service_boundary,serviceBoundaryEntryPoint=True)
     locales={key:None for key in ('LANG','LC_ALL','LANGUAGE','LOCALDOMAIN')}
     for entry in metadata[0]['Config'].get('Env',[]):
         key,_,value=entry.partition('=')

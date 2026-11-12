@@ -88,6 +88,18 @@ class ImageReconciliationContracts(unittest.TestCase):
         self.assertFalse(active['opensslNotLoadedInWorkload'])
         self.assertFalse(active['sqliteNotLoadedInWorkload'])
 
+    def test_managed_boundary_requires_artifact_entrypoint_and_measured_processes(self):
+        self.facts['fullHostedBundle']=dict(serviceBoundaryArtifactSha256='d'*64,serviceBoundaryEntryPoint=True)
+        with self.assertRaisesRegex(ValueError,'managed_service_boundary_evidence_missing'):self.run_policy()
+        self.smoke.update(managedWritableHostProfile=True,managedServiceKernelBoundary=True)
+        self.smoke['resourceMeasurements'][0]['managedProcessBoundaryVerified']=True
+        self.assertTrue(self.run_policy()['releaseSecurityReconciled'])
+        self.smoke['resourceMeasurements'][0]['managedProcessBoundaryVerified']=False
+        with self.assertRaisesRegex(ValueError,'managed_service_boundary_evidence_missing'):self.run_policy()
+        self.smoke['resourceMeasurements'][0]['managedProcessBoundaryVerified']=True
+        self.facts['fullHostedBundle']['serviceBoundaryEntryPoint']=False
+        with self.assertRaisesRegex(ValueError,'managed_service_boundary_evidence_missing'):self.run_policy()
+
     def test_exact_non_shipped_component_retains_the_original_failed_scan(self):
         before=copy.deepcopy(self.scan)
         result=self.run_policy()
