@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Read-only artifact facts for review. No risk acceptance or release verdict."""
-import argparse,hashlib,json,os,pathlib,platform,re,subprocess,tempfile,uuid,zipfile
+import argparse,hashlib,importlib.util,json,os,pathlib,platform,re,subprocess,tempfile,uuid,zipfile
 
 ROOT=pathlib.Path(__file__).resolve().parents[2]
 EXPAT_SECURITY_PATCHES={
@@ -176,6 +176,9 @@ def main():
                 require(len(dependencies)>=200,'packaged_dependencies_missing')
                 sqlite=any('sqlite' in n.casefold() for n in dependencies)
             jar_sha=hashlib.sha256(jar.read_bytes()).hexdigest()
+            spec=importlib.util.spec_from_file_location('runtime_symbols',ROOT/'.github/scripts/runtime-symbol-audit.py')
+            symbols=importlib.util.module_from_spec(spec);spec.loader.exec_module(symbols)
+            symbol_audit=symbols.audit(args.deployment,name,jar,directory,architecture,bool(full_bundle),inspect)
         finally:
             if created:command('docker','rm',name)
     receipt=dict(schemaVersion=1,source=args.source,deploymentImage=args.deployment,qualificationImage=args.qualification,
@@ -197,6 +200,7 @@ def main():
         runtimeToolRemovalInventorySha256=hashlib.sha256(removals.encode()).hexdigest(),
         healthCheck=metadata[0]['Config'].get('Healthcheck',{}),
         fullHostedBundle=full_bundle,
+        glibcInputAudit=symbol_audit,
         liveDataOrProviderAccess=False,rawLogsOrEnvironmentValuesRetained=False,
         riskDispositionsApproved=False,releaseGatePassed=False)
     output.parent.mkdir(parents=True,exist_ok=True)

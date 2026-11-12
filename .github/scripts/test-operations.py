@@ -72,8 +72,13 @@ class ImageReconciliationContracts(unittest.TestCase):
         return reconciliation.reconcile(self.scan,self.facts,self.smoke,self.policy,self.today)
 
     def test_full_bundle_dispositions_require_measured_controls(self):
-        required=['gnutlsNotLinkedInFullBundle','elfBpfNotLinkedInFullBundle','native64BitAbi',
-            'upstreamOpenH26426Verified','publicPrivateSeparationQualified']
+        required=[
+            'native64BitAbi',
+            'gnutlsNotLinkedInFullBundle',
+            'elfBpfNotLinkedInFullBundle',
+            'upstreamOpenH26426Verified',
+            'publicPrivateSeparationQualified',
+        ]
         self.rule['requiredControls']=required
         with self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
         bundle=dict(gnutlsNotLinked=True,elfBpfNotLinked=True,native64BitAbi=True,
@@ -107,6 +112,24 @@ class ImageReconciliationContracts(unittest.TestCase):
         self.smoke['resourceMeasurements'][0]['managedProcessBoundaryVerified']=True
         self.facts['fullHostedBundle']['serviceBoundaryEntryPoint']=False
         with self.assertRaisesRegex(ValueError,'managed_service_boundary_evidence_missing'):self.run_policy()
+
+    def test_glibc_assessment_rejects_unexpected_native_and_jni_inputs(self):
+        audit=dict(image=self.image,architecture='arm64',selectedRuntimeAndLinkageInspected=True,
+            vulnerableLibcPresent=True,inspectedElfFiles=20,copiedNativeCodeExecuted=False,
+            runtimeCredentialsUsed=False,glibcDeclaredFixed=False,inventorySha256='d'*64,
+            regexConsumers=[],wideScanfConsumers=[],supervisorScriptMatchesSource=False)
+        self.facts['glibcInputAudit']=audit
+        self.assertTrue(self.run_policy()['releaseSecurityReconciled'])
+        audit['wideScanfConsumers']=[dict(path='BOOT-INF/lib/example.jar!/native.so',wideScanf=['__isoc99_vswscanf'])]
+        with self.assertRaisesRegex(ValueError,'unreviewed_glibc_input_path'):self.run_policy()
+        audit['wideScanfConsumers']=[];audit['regexConsumers']=[dict(path='/opt/video/tools/bin/ffmpeg',regex=['regexec'])]
+        with self.assertRaisesRegex(ValueError,'unreviewed_glibc_input_path'):self.run_policy()
+        audit['regexConsumers']=[dict(path='/bin/bash',regex=['regexec'])]
+        with self.assertRaisesRegex(ValueError,'unreviewed_glibc_input_path'):self.run_policy()
+        self.facts['fullHostedBundle']=dict(example=True);audit['supervisorScriptMatchesSource']=True
+        self.assertTrue(self.run_policy()['releaseSecurityReconciled'])
+        audit['inventorySha256']=''
+        with self.assertRaisesRegex(ValueError,'unreviewed_glibc_input_path'):self.run_policy()
 
     def test_exact_non_shipped_component_retains_the_original_failed_scan(self):
         before=copy.deepcopy(self.scan)

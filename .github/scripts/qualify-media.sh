@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+python3 .github/scripts/test-runtime-symbol-audit.py
 test "$(id -u)" != 0
 case "$(uname -m)" in x86_64|aarch64) ;; *) exit 1 ;; esac
 python3 .github/scripts/test-health-probe.py

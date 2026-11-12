@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Native candidate evidence only. No publication, credentials or live provider calls.
 set -euo pipefail
+python3 .github/scripts/test-runtime-symbol-audit.py
 test "$(uname -m)" = x86_64
 source_sha="$(git rev-parse HEAD)"
 [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]

@@ -24,7 +24,23 @@ def identity(row):
 
 def controls(facts, smoke):
     events={row['step']:row for row in smoke['events']}
+    audit=facts.get('glibcInputAudit',{})
+    audited=(audit.get('image')==facts['deploymentImage'] and audit.get('architecture')==facts['architecture']
+        and audit.get('selectedRuntimeAndLinkageInspected') is True and audit.get('vulnerableLibcPresent') is True
+        and audit.get('inspectedElfFiles',0)>=10 and audit.get('copiedNativeCodeExecuted') is False
+        and audit.get('runtimeCredentialsUsed') is False and audit.get('glibcDeclaredFixed') is False
+        and bool(re.fullmatch('[0-9a-f]{64}',audit.get('inventorySha256',''))))
+    regex=audit.get('regexConsumers');wide=audit.get('wideScanfConsumers')
+    # Java and PCRE regex are distinct from libc's affected POSIX regex. The
+    # only permitted libc consumer is the full bundle's source-bound Bash
+    # supervisor, whose fixed operator-only checks finish before app startup.
+    # An unexpected native/JNI consumer fails; it is never silently excluded.
+    restricted_regex=(isinstance(regex,list) and (not regex or
+        audit.get('supervisorScriptMatchesSource') is True and bool(facts.get('fullHostedBundle'))
+        and all(r.get('path')=='/bin/bash' and r.get('regex') for r in regex)))
     return {
+        'glibcWideScanfNotReferenced':audited and isinstance(wide,list) and not wide,
+        'glibcRegexInputsRestricted':audited and restricted_regex,
         'numericUnprivilegedImage':facts['imageUser']=='65533:65533',
         'setuidSetgidAbsent':facts['setuidSetgidFilesAbsent'] is True,
         'trustedFontConfiguration':facts['fontConfigurationRootOwnedAndNotWritable'] is True,
@@ -95,6 +111,9 @@ def reconcile(scan,facts,smoke,policy,today=None):
         'reviewed_production_source_changed')
     require(facts['architecture'] in policy['architectures'],'unreviewed_architecture')
     active=controls(facts,smoke)
+    if 'glibcInputAudit' in facts:
+        require(active['glibcWideScanfNotReferenced'] and active['glibcRegexInputsRestricted'],
+            'unreviewed_glibc_input_path')
     if 'serviceBoundaryArtifactSha256' in facts.get('fullHostedBundle',{}):
         require(active['managedServiceBoundaryQualified'],'managed_service_boundary_evidence_missing')
     findings=scan['vulnerabilities']
