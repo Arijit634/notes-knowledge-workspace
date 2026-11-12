@@ -13,6 +13,7 @@
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/sysmacros.h>
 #include <unistd.h>
 #ifdef SERVICE_BOUNDARY_DIAGNOSTIC
 #include <stdio.h>
@@ -45,9 +46,15 @@ static void boundary(void) {
     int temporary=open("/tmp",O_PATH|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);struct stat facts;
     if(rules<0||temporary<0||fstat(temporary,&facts)||facts.st_uid!=0||!S_ISDIR(facts.st_mode))unavailable();
     struct landlock_path_beneath_attr allow={.allowed_access=writes,.parent_fd=temporary};
-    if(syscall(SYS_landlock_add_rule,rules,LANDLOCK_RULE_PATH_BENEATH,&allow,0)
+    if(syscall(SYS_landlock_add_rule,rules,LANDLOCK_RULE_PATH_BENEATH,&allow,0))unavailable();
+    // Existing subprocesses discard diagnostics through this exact OS device.
+    // No other /dev path or trusted deployment file gains write permission.
+    int sink=open("/dev/null",O_PATH|O_NOFOLLOW|O_CLOEXEC);
+    if(sink<0||fstat(sink,&facts)||!S_ISCHR(facts.st_mode)||major(facts.st_rdev)!=1||minor(facts.st_rdev)!=3)unavailable();
+    struct landlock_path_beneath_attr discard={.allowed_access=LANDLOCK_ACCESS_FS_WRITE_FILE,.parent_fd=sink};
+    if(syscall(SYS_landlock_add_rule,rules,LANDLOCK_RULE_PATH_BENEATH,&discard,0)
         ||syscall(SYS_landlock_restrict_self,rules,0))unavailable();
-    close(temporary);close(rules);
+    close(sink);close(temporary);close(rules);
     /* Prevent cross-process memory modification or creating another mount/user
      * namespace to evade custody. Normal networking/JVM/child exec remain intact.
      */
