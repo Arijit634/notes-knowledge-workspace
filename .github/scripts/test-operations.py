@@ -27,6 +27,14 @@ reconciliation = load('image_reconciliation', 'reconcile-image-security.py')
 
 
 class ImageReconciliationContracts(unittest.TestCase):
+    def test_checked_in_expat_patches_are_the_exact_reviewed_source_inputs(self):
+        for commit,digest in facts.EXPAT_SECURITY_PATCHES.items():
+            path=facts.ROOT/'src/main/native/upstream'/('expat-'+commit+'.patch')
+            self.assertTrue(path.is_file())
+            data=path.read_bytes()
+            self.assertLess(len(data),65536)
+            self.assertEqual(digest,__import__('hashlib').sha256(data).hexdigest())
+            self.assertTrue(data.startswith(('From '+commit+' ').encode()))
     def test_ffmpeg_backport_requires_all_exact_controls(self):
         values=[dict(facts.FFMPEG_SECURITY_PATCHES),
             dict(unpatchedCleanupExit=139,expectedStackExhaustion=True,coreDumpEnabled=False),

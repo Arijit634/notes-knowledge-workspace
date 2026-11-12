@@ -11,6 +11,7 @@ cp src/main/native/*.c src/main/native/empty-metadata.patch "$context/native/"
 cp src/main/native/allocation-overflow-probe.cpp "$context/native/"
 cp src/main/native/expat-2.10-regression-compat.patch "$context/native/"
 cp src/main/native/build-media-libraries.sh "$context/native/"
+cp -a src/main/native/upstream "$context/native/"
 cp src/main/native/minimize-runtime-tools.sh "$context/native/"
 cp src/main/native/backport-ffmpeg-security.sh "$context/native/"
 # Frozen synthetic AAC fixture, also exercised by the upload/decoder regressions.

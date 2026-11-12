@@ -13,6 +13,7 @@ cp src/main/native/*.c src/main/native/empty-metadata.patch src/main/native/allo
   src/main/native/expat-2.10-regression-compat.patch src/main/native/build-media-libraries.sh \
   src/main/native/minimize-runtime-tools.sh "$context/native/"
 cp src/main/native/backport-ffmpeg-security.sh "$context/native/"
+cp -a src/main/native/upstream "$context/native/"
 cp .github/deploy/managed-preview/{build-openh264.sh,start-full.sh,nginx.conf,service-boundary.c} "$context/managed/"
 cp src/test/resources/attachments/synthetic-aac-video.mp4 "$context/native/audio-preflight.mp4"
 cp target/notes-knowledge-workspace-0.0.1-SNAPSHOT.jar "$context/application.jar"
