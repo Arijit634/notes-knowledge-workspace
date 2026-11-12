@@ -15,8 +15,15 @@ def main():
     if args.scanner:
         version=subprocess.run([str(args.scanner),'version'],capture_output=True,text=True,check=True,timeout=10)
         if version.stdout.strip()!='8.30.1':raise ValueError('Pinned scanner required')
-    code=next(line for line in (ROOT/'.github/scripts/test-operations.py').read_text().splitlines()
-              if line.strip().startswith('required=[') and 'native64BitAbi' in line)+'\n'
+    # Preserve the historical false-positive fixture independently of how the
+    # production-control test is formatted now. Also scan that current file.
+    names=(
+        'gnutlsNotLinkedInFullBundle',
+        'elfBpfNotLinkedInFullBundle',
+        'native64BitAbi',
+    )
+    code='        required=['+','.join(repr(name) for name in names)+',\n'
+    current=(ROOT/'.github/scripts/test-operations.py').read_text()
     # Deliberately generated and never used with any provider or account.
     positive='linkedin'+'_client_id = "'+'86'+''.join('abcdefgh')+'1234"\n'
     cases=[]
@@ -24,7 +31,8 @@ def main():
         baseline=Path(temporary)/'baseline.toml';baseline.write_text('[extend]\nuseDefault=true\n')
         for name,payload,original,expected in (
             ('original-control-list',code,True,1),('exact-control-list',code,False,0),
-            ('synthetic-client-id',positive,False,1),('control-list-with-extra-id',code.rstrip()+' '+positive,False,1)):
+            ('synthetic-client-id',positive,False,1),('control-list-with-extra-id',code.rstrip()+' '+positive,False,1),
+            ('current-control-tests',current,False,0)):
             if args.scanner:
                 command=[str(args.scanner),'stdin','--config='+str(baseline if original else ROOT/'.gitleaks.toml')]
             else:
