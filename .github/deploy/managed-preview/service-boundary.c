@@ -5,6 +5,7 @@
 #include <linux/capability.h>
 #include <linux/filter.h>
 #include <linux/landlock.h>
+#include <linux/sched.h>
 #include <linux/seccomp.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -59,6 +60,17 @@ static void boundary(void) {
         /* Reject the x32 syscall namespace, not just its native-number aliases. */
         BPF_JUMP(BPF_JMP|BPF_JSET|BPF_K,0x40000000,0,1),
         BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_KILL_PROCESS),
+        /* clone3's pointed-to flags are opaque to classic BPF. Force libc's
+         * inspectable clone fallback and reject every namespace-creation flag.
+         * Ordinary JVM threads and supervised process creation remain allowed.
+         */
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,SYS_clone3,0,1),
+        BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|ENOSYS),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,SYS_clone,0,4),
+        BPF_STMT(BPF_LD|BPF_W|BPF_ABS,offsetof(struct seccomp_data,args[0])),
+        BPF_JUMP(BPF_JMP|BPF_JSET|BPF_K,CLONE_NEWCGROUP|CLONE_NEWIPC|CLONE_NEWNET|CLONE_NEWNS|CLONE_NEWPID|CLONE_NEWTIME|CLONE_NEWUSER|CLONE_NEWUTS,0,1),
+        BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|EPERM),
+        BPF_STMT(BPF_LD|BPF_W|BPF_ABS,offsetof(struct seccomp_data,nr)),
         DENY(SYS_ptrace),DENY(SYS_process_vm_writev),DENY(SYS_mount),DENY(SYS_umount2),
         DENY(SYS_pivot_root),DENY(SYS_unshare),DENY(SYS_setns),DENY(SYS_bpf),
         DENY(SYS_fsopen),DENY(SYS_fsconfig),DENY(SYS_fsmount),DENY(SYS_move_mount),
