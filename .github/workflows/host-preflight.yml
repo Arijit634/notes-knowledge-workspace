@@ -92,11 +92,12 @@ jobs:
           subject-digest: ${{ steps.publish.outputs.digest }}
           push-to-registry: true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
         with:
           name: host-preflight-${{ github.sha }}
           path: |
             ${{ runner.temp }}/readonly.json
             ${{ runner.temp }}/writable.json
             ${{ runner.temp }}/host-probe-subject.txt
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7
