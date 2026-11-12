@@ -27,7 +27,15 @@
 #if !defined(__linux__) || !defined(__x86_64__)
 #error This managed service profile requires native Linux x86_64 qualification
 #endif
-static _Noreturn void unavailable(void) { _exit(125); }
+static _Noreturn void fail_at(int line) {
+#ifdef SERVICE_BOUNDARY_DIAGNOSTIC
+    dprintf(2,"service_boundary_line_%d_errno_%d\n",line,errno);
+#else
+    (void)line;
+#endif
+    _exit(125);
+}
+#define unavailable() fail_at(__LINE__)
 static void boundary(void) {
     if(getuid()!=65533||geteuid()!=65533||getgid()!=65533||getegid()!=65533)unavailable();
     struct __user_cap_header_struct header={.version=_LINUX_CAPABILITY_VERSION_3,.pid=0};
@@ -99,11 +107,11 @@ int main(int argc,char **argv) {
     boundary();
 #ifdef SERVICE_BOUNDARY_DIAGNOSTIC
     int file=open("/provenance/service-write-probe",O_WRONLY|O_CLOEXEC|O_NOFOLLOW);
-    if(file>=0||errno!=EACCES)unavailable();
-    errno=0;if(truncate("/provenance/service-write-probe",0)==0||errno!=EACCES)unavailable();
+    if(file>=0||(errno!=EACCES&&errno!=EROFS))unavailable();
+    errno=0;if(truncate("/provenance/service-write-probe",0)==0||(errno!=EACCES&&errno!=EROFS))unavailable();
     if(symlink("/provenance/service-write-probe","/tmp/service-boundary-link"))unavailable();
     errno=0;file=open("/tmp/service-boundary-link",O_WRONLY|O_CLOEXEC);
-    if(file>=0||errno!=EACCES||unlink("/tmp/service-boundary-link"))unavailable();
+    if(file>=0||(errno!=EACCES&&errno!=EROFS)||unlink("/tmp/service-boundary-link"))unavailable();
     struct rlimit raised={301,301};errno=0;
     if(setrlimit(RLIMIT_NPROC,&raised)==0||errno!=EPERM)unavailable();
     errno=0;if(syscall(SYS_unshare,0)==0||errno!=EPERM)unavailable();

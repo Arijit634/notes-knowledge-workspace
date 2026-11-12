@@ -65,6 +65,14 @@ def safe_container_state(metadata):
     return dict(running=state['Running'] is True,oomKilled=state['OOMKilled'] is True,
         exitCode=int(state['ExitCode']),restarts=int(metadata['RestartCount']))
 
+def managed_process_protected(text):
+    """Only fixed proc fields; never return process/environment/credential data."""
+    if not isinstance(text,str) or len(text)>65536:return False
+    patterns=[r'(?m)^NoNewPrivs:\s*1\s*$',r'(?m)^Uid:\s*65533\s+65533\s+65533\s+65533\s*$',
+        r'(?m)^Max processes\s+300\s+300\s+processes\s*$']
+    patterns += [r'(?m)^'+name+r':\s*0{16}\s*$' for name in ('CapInh','CapPrm','CapEff','CapAmb')]
+    return all(re.search(pattern,text) for pattern in patterns)
+
 def synthetic_pdf():
     """One fictional text page, with byte-accurate xref offsets for real validation."""
     stream=b'BT /F1 12 Tf 10 60 Td (Synthetic full runtime fixture) Tj ET\n'
@@ -253,10 +261,14 @@ def main():
                 if rejected.returncode!=2:raise ValueError('Untrusted certificate or wrong hostname accepted')
             run(*migration,'-e','JAVA_TOOL_OPTIONS='+trust,*command,'/fixture/migration.properties')
             def start_app():
-                identifier=run('docker','create','--network',network,'--read-only',
-                    '--memory','512m' if full else '448m','--memory-swap','512m' if full else '448m','--cpus','0.1','--pids-limit','512',
+                # Reproduce the actual managed-host root/process settings. The
+                # full image must install its own inherited kernel boundary.
+                filesystem=[] if full else ['--read-only']
+                temporary='uid=0,gid=0,mode=1777' if full else 'uid=65533,gid=65533,mode=700'
+                identifier=run('docker','create','--network',network,*filesystem,
+                    '--memory','512m' if full else '448m','--memory-swap','512m' if full else '448m','--cpus','0.1','--pids-limit','34583' if full else '512',
                     '--cap-drop','ALL','--security-opt','no-new-privileges',
-                    '--tmpfs',f'/tmp:rw,noexec,nosuid,nodev,size={256 if full else 32}m,uid=65533,gid=65533,mode=700',
+                    '--tmpfs',f'/tmp:rw,noexec,nosuid,nodev,size={256 if full else 32}m,'+temporary,
                     '-v',str(secret)+':/etc/secrets:ro','-v',str(cert/'truststore')+':/fixture/truststore:ro',
                     '--add-host','accounts.google.com:'+gateway,'--add-host',storage_host+':'+gateway,
                     '-e','JAVA_TOOL_OPTIONS='+trust,'-e','APP_VERSION=synthetic-managed-smoke',image)
@@ -465,8 +477,12 @@ def main():
             samples=[]
             def resources():
                 metadata=json.loads(run('docker','inspect',app))[0]
-                if metadata['Config']['User']!='65533:65533' or not metadata['HostConfig']['ReadonlyRootfs']:
+                if metadata['Config']['User']!='65533:65533' or metadata['HostConfig']['ReadonlyRootfs']!=(not full):
                     raise ValueError('Runtime confinement changed')
+                if full and metadata['Config']['Entrypoint']!=['/opt/operations/service-boundary']:
+                    raise ValueError('Managed service kernel entry point missing')
+                if full and not managed_process_protected(run('docker','exec',app,'cat','/proc/1/status','/proc/1/limits')):
+                    raise ValueError('Inherited service process boundary missing')
                 events=dict(line.split() for line in run('docker','exec',app,'cat','/sys/fs/cgroup/memory.events').splitlines())
                 if metadata['State']['OOMKilled'] or metadata['RestartCount'] or int(events['oom']) or int(events['oom_kill']):raise ValueError('Resource failure')
                 peak=int(run('docker','exec',app,'cat','/sys/fs/cgroup/memory.peak'))
@@ -484,6 +500,7 @@ def main():
                         'cat /sys/fs/cgroup/memory.events /sys/fs/cgroup/memory.stat /sys/fs/cgroup/cpu.stat'))
                     if not observation['available']:raise ValueError('Resource composition observation missing')
                     samples[-1].update(memoryCompositionAtSample=observation,memoryCompositionIsPeak=False)
+                    samples[-1]['managedProcessBoundaryVerified']=True
             resources()
             stopped=time.monotonic();run('docker','stop','--time','28',app,timeout=40)
             shutdown=round(time.monotonic()-stopped,2)
@@ -521,6 +538,7 @@ def main():
             if any(marker in run('docker','logs',app) for marker in markers):raise ValueError('Authenticated logs disclosed request material')
             result={'image':image,'nativeArchitecture':run('uname','-m'),'rootlessSingleContainer':True,
                 'appProxyRedisCombinedBudget':True,'fullHostedNativeWorkload':full,
+                'managedWritableHostProfile':full,'managedServiceKernelBoundary':full,
                 'providerProcessingQualified':False,'releaseEligible':False,
                 'firstBootSeconds':first,'recreatedBootSeconds':second,
                 'gracefulShutdownSeconds':shutdown,'privateListenersLoopbackOnly':True,'perimeterAndCsrfDenials':True,

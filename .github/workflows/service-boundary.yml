@@ -35,6 +35,15 @@ jobs:
       - name: Compile the exact proposed boundary against pinned runtime classes
         run: |
           set -euo pipefail
+          python3 - <<'PY'
+          import json,os,pathlib,xml.etree.ElementTree as ET
+          totals=dict(tests=0,failures=0,errors=0,skipped=0)
+          for file in pathlib.Path('target/surefire-reports').glob('TEST-*.xml'):
+              root=ET.parse(file).getroot()
+              for key in totals:totals[key]+=int(root.attrib.get(key,0))
+          assert totals['tests']>0 and totals['failures']==totals['errors']==totals['skipped']==0
+          pathlib.Path(os.environ['RUNNER_TEMP'],'service-boundary-focused-tests.json').write_text(json.dumps(dict(source=os.environ['GITHUB_SHA'],**totals))+'\n')
+          PY
           test "$(uname -m)" = x86_64
           image=ghcr.io/arijit634/notes-knowledge-workspace-private-preview@sha256:e40b0a9551773440989e669b0fcff900df5d98788f00beab8624c3f724435b62
           docker pull "$image"
