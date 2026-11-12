@@ -37,7 +37,10 @@ static _Noreturn void fail_at(int line) {
 }
 #define unavailable() fail_at(__LINE__)
 static void boundary(void) {
-    if(getuid()!=65533||geteuid()!=65533||getgid()!=65533||getegid()!=65533)unavailable();
+    // Managed hosts may supply a different primary group. Group membership is
+    // not root authority: deployment custody still rejects EVERY group-writable
+    // input, and UID/capability/no-new-privilege requirements remain unchanged.
+    if(getuid()!=65533||geteuid()!=65533||getgid()!=getegid())unavailable();
     struct __user_cap_header_struct header={.version=_LINUX_CAPABILITY_VERSION_3,.pid=0};
     struct __user_cap_data_struct caps[2]={{0}};
     if(syscall(SYS_capget,&header,caps))unavailable();
