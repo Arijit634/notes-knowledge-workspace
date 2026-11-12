@@ -49,6 +49,7 @@ nginx -e /dev/null -c /tmp/nkw-edge/nginx.conf & edge_pid=$!
     -XX:ReservedCodeCacheSize=32m -XX:TieredStopAtLevel=1 -XX:+UseSerialGC -Xss512k \
     -XX:ActiveProcessorCount=1 -XX:-HeapDumpOnOutOfMemoryError -XX:+ExitOnOutOfMemoryError \
     -Dnkw.attachment-parser.profile=compact-v1 \
+    -Dnkw.media.service-boundary=landlock-managed-v1 \
     -Duser.timezone=UTC -Djava.io.tmpdir=/tmp -jar /app/application.jar \
     --spring.profiles.active=operations,private-preview,managed-preview,full-hosted \
     --spring.config.additional-location=file:/provenance/runtime-selection.properties \

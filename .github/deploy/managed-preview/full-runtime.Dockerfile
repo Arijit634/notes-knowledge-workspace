@@ -19,6 +19,7 @@ RUN sed -i -e 's|http://|https://|g' \
        libbrotli-dev libbz2-dev libpng-dev zlib1g-dev libfreetype6 libexpat1 libfontconfig1 fonts-dejavu-core \
     && mkdir -p /provenance
 COPY managed/build-openh264.sh /native/build-openh264.sh
+COPY managed/service-boundary.c /native/service-boundary.c
 RUN /bin/sh /native/build-openh264.sh
 COPY jdk/ /jdk/
 COPY ffmpeg-9.0.2.tar.xz /source.tar.xz
@@ -40,6 +41,8 @@ RUN mkdir -p /opt/pdf /opt/video /opt/operations /fixtures /provenance /native-d
     && gcc -std=c11 -O2 -Wall -Wextra -Werror=implicit-function-declaration -o /opt/video/helper /native/video-sandbox.c \
     && gcc -std=c11 -O2 -Wall -Wextra -DPDF_SANDBOX_DIAGNOSTIC -o /native-diagnostics/pdf-diagnostic-helper /native/pdf-sandbox.c \
     && gcc -std=c11 -O2 -Wall -Wextra -Werror -o /opt/operations/health-probe /native/health-probe.c \
+    && gcc -std=c11 -O2 -Wall -Wextra -Werror -o /opt/operations/service-boundary /native/service-boundary.c \
+    && gcc -std=c11 -O2 -Wall -Wextra -Werror -DSERVICE_BOUNDARY_DIAGNOSTIC -o /native-diagnostics/service-boundary-diagnostic /native/service-boundary.c \
     && g++ -std=c++17 -O2 -Wall -Wextra -Werror -o /native-diagnostics/allocation-overflow-probe /native/allocation-overflow-probe.cpp \
     && /native-diagnostics/allocation-overflow-probe \
     && /jdk/bin/jlink --add-modules java.base,java.desktop,java.logging,java.xml \
@@ -146,12 +149,13 @@ COPY --from=redis-build /build/redis/src/redis-server /usr/local/bin/redis-serve
 COPY --from=redis-build /build/redis-full.tar.gz /provenance/redis-8.10.3-source.tar.gz
 COPY --chmod=755 managed/start-full.sh /app/start-full.sh
 COPY managed/nginx.conf /app/nginx.conf
-RUN ln -s /application.jar /app/application.jar && nginx -v && redis-server --version
+RUN ln -s /application.jar /app/application.jar && nginx -v && redis-server --version \
+    && printf x > /provenance/service-write-probe && chmod 666 /provenance/service-write-probe
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC APP_ENVIRONMENT=private-preview
 EXPOSE 10000
 USER 65533:65533
 HEALTHCHECK --interval=30s --start-period=15m --start-interval=30s --timeout=4s --retries=3 CMD ["/opt/operations/health-probe"]
-ENTRYPOINT ["/app/start-full.sh"]
+ENTRYPOINT ["/opt/operations/service-boundary"]
 # No registry publication is performed. A release must separately reconcile
 # redistribution, source availability/notice obligations AND codec patent rights.
 FROM deployment AS qualification
@@ -162,6 +166,7 @@ COPY --from=build /fixtures /fixtures
 COPY --from=build /native-diagnostics/pdf-diagnostic-helper /qualification/pdf-diagnostic-helper
 COPY --from=build /native-diagnostics/media-library-versions /qualification/media-library-versions
 COPY --from=build /native-diagnostics/allocation-overflow-probe /qualification/allocation-overflow-probe
+COPY --from=build /native-diagnostics/service-boundary-diagnostic /qualification/service-boundary-diagnostic
 # Fixture ownership changes are a qualification-only capability, not a runtime tool.
 COPY --from=build /usr/bin/chown /qualification/bin/chown
 USER 65533:65533
