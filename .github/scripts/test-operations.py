@@ -71,6 +71,19 @@ class ImageReconciliationContracts(unittest.TestCase):
     def run_policy(self):
         return reconciliation.reconcile(self.scan,self.facts,self.smoke,self.policy,self.today)
 
+    def test_source_package_unpacker_review_requires_each_affected_component_absent(self):
+        components=('dpkgSource','dpkgSourceV2','perl','tar')
+        self.rule['requiredControls']=[name+'Absent' for name in components]
+        for name in components:self.facts['components'][name]=dict(absent=True)
+        self.assertTrue(self.run_policy()['releaseSecurityReconciled'])
+        for name in components:
+            with self.subTest(component=name):
+                self.facts['components'][name]['absent']=False
+                with self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
+                del self.facts['components'][name]
+                with self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
+                self.facts['components'][name]=dict(absent=True)
+
     def test_full_bundle_dispositions_require_measured_controls(self):
         required=[
             'native64BitAbi',

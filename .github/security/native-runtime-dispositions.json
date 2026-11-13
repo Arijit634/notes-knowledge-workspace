@@ -5,7 +5,7 @@
     "amd64",
     "arm64"
   ],
-  "productionSourceSha256": "2df5e49d1e27e8e378d1a4e97af6e20ababc65312a449e1076678fe9aea598fd",
+  "productionSourceSha256": "cecac694343cdae124f615e0d26cde5d23ac534929738fea36d7ba23b00f060c",
   "findings": [
     {
       "VulnerabilityID": "CVE-2011-3374",
@@ -5881,6 +5881,38 @@
       "references": [
         "https://security-tracker.debian.org/tracker/CVE-2026-115819"
       ]
+    },
+    {
+      "VulnerabilityID": "CVE-2026-91094",
+      "PkgName": "dpkg",
+      "InstalledVersion": "1.22.22",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-91094",
+      "kind": "component-not-shipped",
+      "rationale": "The Debian CNA identifies traversal during 3.0 (quilt) source-package extraction in Dpkg::Source::Package::V2. Neither dpkg-source nor its V2 Perl module is shipped; Perl and tar are also absent. dpkg-query only reads retained package metadata and is not the affected source-package extractor. No request or runtime operation accepts or unpacks Debian source packages. The installed dpkg package remains vulnerable in the raw inventory; no upstream fix or whole-package exemption is claimed.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "dpkgSourceAbsent",
+        "dpkgSourceV2Absent",
+        "perlAbsent",
+        "tarAbsent"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-91094",
+        "https://github.com/CVEProject/cvelistV5/blob/main/cves/2026/91xxx/CVE-2026-91094.json"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-13",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Measure absence of both affected program and Perl module, plus interpreter and tar, in each exact image; retain scanner findings and fail on component/source/package change, missing runtime evidence or review expiry.",
+      "remediationTarget": "Re-evaluate a fixed stable vendor release or source-package extraction reachability by 2026-11-18; no automatic renewal.",
+      "vendorEvidenceSha256": "efd8ada2ffc7fe4b95c8b86b6da49919fdc64b0e8f1c0a972b1a8764dd25fc05"
     }
   ],
   "limits": [

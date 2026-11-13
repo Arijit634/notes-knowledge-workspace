@@ -103,6 +103,8 @@ def main():
         'expat_regression_compatibility_provenance_mismatch')
     components={}
     probes={
+        'dpkgSource':'/usr/bin/dpkg-source',
+        'dpkgSourceV2':'/usr/share/perl5/Dpkg/Source/Package/V2.pm',
         'infocmp':'/usr/bin/infocmp','tic':'/usr/bin/tic','aptKey':'/usr/bin/apt-key',
         'perl':'/usr/bin/perl','tar':'/usr/bin/tar','mount':'/usr/bin/mount','nsenter':'/usr/bin/nsenter',
         'login':'/usr/bin/login','chown':'/usr/bin/chown','chgrp':'/usr/bin/chgrp','diff3':'/usr/bin/diff3',
