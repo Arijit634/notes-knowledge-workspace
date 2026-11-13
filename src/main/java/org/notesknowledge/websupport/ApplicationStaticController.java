@@ -42,9 +42,13 @@ public final class ApplicationStaticController implements RequestMatcher {
 
     @Autowired
     public ApplicationStaticController(Environment environment) {
-        this(new ClassPathResource("static/index.html"),
+        this(new ClassPathResource("static/index.html"), environment);
+    }
+    ApplicationStaticController(Resource index, Environment environment) {
+        this(index,
             environment.getProperty("identity.oidc.google.enabled", Boolean.class, false),
-            environment.matchesProfiles("localhost"), environment.matchesProfiles("private-preview"));
+            environment.matchesProfiles("localhost"),
+            environment.matchesProfiles("private-preview") && !environment.matchesProfiles("full-hosted"));
     }
     ApplicationStaticController(Resource index) { this(index, false, false); }
     ApplicationStaticController(Resource index, boolean googleEnabled, boolean syntheticEmailOnly) {

@@ -73,6 +73,29 @@ class ApplicationStaticControllerTest {
             .andExpect(content().string(org.hamcrest.Matchers.containsString("google=enabled;email=disabled;preview=private")))
             .andExpect(header().string("Content-Security-Policy", org.hamcrest.Matchers.containsString("script-src 'self'")));
     }
+    @Test void fullHostedProfileAdvertisesTheOrdinaryAppRatherThanGoogleOnlyRestrictions() throws Exception {
+        var resource = new ByteArrayResource("<html><head><meta name=\"nkw-presentation\" content=\"unconfigured\" /></head><body>App</body></html>".getBytes(StandardCharsets.UTF_8));
+        for (boolean google : new boolean[]{false, true}) {
+            var environment = new org.springframework.mock.env.MockEnvironment()
+                .withProperty("identity.oidc.google.enabled", Boolean.toString(google));
+            environment.setActiveProfiles("operations", "private-preview", "managed-preview", "full-hosted");
+            var selected = new ApplicationStaticController(resource, environment);
+            MockMvcBuilders.standaloneSetup(selected).build().perform(get("/login"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("google=" + (google ? "enabled" : "disabled") + ";email=ordinary\"")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("preview=private"))))
+                .andExpect(header().string("Content-Security-Policy", org.hamcrest.Matchers.containsString("script-src 'self'")));
+            assertThat(selected.matches(new MockHttpServletRequest("GET", "/api/presentation"))).isFalse();
+        }
+    }
+    @Test void restrictedPreviewEnvironmentStillAdvertisesGoogleOnlyAvailability() throws Exception {
+        var resource = new ByteArrayResource("<meta name=\"nkw-presentation\" content=\"unconfigured\" />".getBytes(StandardCharsets.UTF_8));
+        var environment = new org.springframework.mock.env.MockEnvironment().withProperty("identity.oidc.google.enabled", "true");
+        environment.setActiveProfiles("operations", "private-preview", "managed-preview");
+        MockMvcBuilders.standaloneSetup(new ApplicationStaticController(resource, environment)).build().perform(get("/login"))
+            .andExpect(status().isOk())
+            .andExpect(content().string(org.hamcrest.Matchers.containsString("google=enabled;email=disabled;preview=private")));
+    }
     private boolean matches(String method, String path) {
         var request = new MockHttpServletRequest(method, path); request.setServletPath(path); return controller.matches(request);
     }
