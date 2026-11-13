@@ -332,6 +332,9 @@ def main():
             if not full:boundaries += [('/api/knowledge/query',503),('/api/public/explore',503),('/api/auth/login/password',503)]
             for path,expected in boundaries:
                 if request(path)[0]!=expected:raise ValueError('Managed boundary status failed')
+            presentation=b'google=enabled;email=ordinary' if full else b'google=enabled;email=disabled;preview=private'
+            if b'name="nkw-presentation" content="'+presentation+b'"' not in request('/login')[2]:
+                raise ValueError('Packaged application presentation does not match selected profile')
             if request('/login',extra={'Forwarded':'host=evil.invalid;proto=http','X-Forwarded-Host':'evil.invalid',
                     'X-Forwarded-Proto':'http','X-Forwarded-For':'198.51.100.22'})[0]!=200:raise ValueError('Caller forwarding became authority')
             if request('/login',extra={'Host':'evil.invalid'})[0]!=400:raise ValueError('Unowned host accepted')
@@ -539,6 +542,7 @@ def main():
             result={'image':image,'nativeArchitecture':run('uname','-m'),'rootlessSingleContainer':True,
                 'appProxyRedisCombinedBudget':True,'fullHostedNativeWorkload':full,
                 'managedWritableHostProfile':full,'managedServiceKernelBoundary':full,
+                'packagedPresentationMatchesProfile':True,
                 'providerProcessingQualified':False,'releaseEligible':False,
                 'firstBootSeconds':first,'recreatedBootSeconds':second,
                 'gracefulShutdownSeconds':shutdown,'privateListenersLoopbackOnly':True,'perimeterAndCsrfDenials':True,
