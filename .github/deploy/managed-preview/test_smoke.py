@@ -22,6 +22,11 @@ class ReadinessTests(unittest.TestCase):
         headers['Cache-Control']='no-store';headers['Cache-Control']='no-store, no-transform'
         with self.assertRaises(ValueError):smoke.require_core_validator(headers)
 
+    def test_encoded_core_response_is_not_the_selected_identity_representation(self):
+        for encoding in ('gzip','br','deflate','zstd'):
+            with self.subTest(encoding=encoding),self.assertRaises(ValueError):
+                smoke.require_core_validator({'ETag':'"opaque"','Cache-Control':'no-store, no-transform','Content-Encoding':encoding})
+
     def test_transformed_missing_or_ambiguous_core_validator_fails_closed(self):
         for tag in (None,'W/"opaque"','bare','*','"a", "b"','""'):
             with self.subTest(tag=tag),self.assertRaises(ValueError):

@@ -38,6 +38,8 @@ def require_core_validator(headers):
         raise ValueError('Core mutation validator was missing or transformed')
     if len(controls)!=1 or not {'no-store','no-transform'}.issubset(directives):
         raise ValueError('Core response permits intermediary storage or transformation')
+    if headers.get('Content-Encoding','identity').lower()!='identity':
+        raise ValueError('Core response encoding changed the selected representation')
     return tags[0]
 
 
@@ -398,7 +400,11 @@ def main():
             note=json.loads(body);note_path='/api/notes/'+note['id'];old_etag=require_core_validator(headers)
             code,headers,body=json_request(note_path,{'title':'Budget fixture saved','markdown':'budgetmarker explicitly saved'},method='PUT',if_match=old_etag)
             if code!=200 or json.loads(body)['markdown']!='budgetmarker explicitly saved':raise ValueError('Explicit Note Save failed')
-            if require_core_validator(headers)==old_etag:raise ValueError('Saved Note validator did not advance')
+            saved_etag=require_core_validator(headers)
+            if saved_etag==old_etag:raise ValueError('Saved Note validator did not advance')
+            code,headers,body=request(note_path,cookie=owner_cookie,extra={'Accept-Encoding':'gzip, br'})
+            if code!=200 or require_core_validator(headers)!=saved_etag or json.loads(body)['markdown']!='budgetmarker explicitly saved':
+                raise ValueError('Compression-capable intermediary changed the core response')
             if json_request(note_path,{'title':'stale','markdown':'stale'},method='PUT',if_match=old_etag)[0]!=412:raise ValueError('Stale mutation accepted')
             code,_,body=json_request('/api/notes/search',{'query':'budgetmarker'})
             if code!=200 or note['id'] not in body.decode():raise ValueError('Ordinary search missed owned Note')
