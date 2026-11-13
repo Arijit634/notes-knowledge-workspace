@@ -29,6 +29,18 @@ PG='pgvector/pgvector:0.8.6-pg18-trixie@sha256:78bf48b801e792f99e3ac62b5036fd387
 HOST='ep-fixture.ap-southeast-1.aws.neon.tech'
 OTHER_HOST='ep-other.ap-southeast-1.aws.neon.tech'
 
+def require_core_validator(headers):
+    """The deployment must preserve the server's strong mutation validator."""
+    tags=headers.get_all('ETag',[]) if hasattr(headers,'get_all') else [headers.get('ETag')]
+    controls=headers.get_all('Cache-Control',[]) if hasattr(headers,'get_all') else [headers.get('Cache-Control','')]
+    directives={item.strip().lower() for value in controls for item in value.split(',')}
+    if len(tags)!=1 or not isinstance(tags[0],str) or not re.fullmatch(r'"[A-Za-z0-9_-]{1,128}"',tags[0]):
+        raise ValueError('Core mutation validator was missing or transformed')
+    if not {'no-store','no-transform'}.issubset(directives):
+        raise ValueError('Core response permits intermediary storage or transformation')
+    return tags[0]
+
+
 def safe_startup_diagnostics(logs):
     """Only server-owned codes/class names; never messages, values or raw stacks."""
     markers=['preview_port_invalid','preview_configuration_unavailable','preview_origin_invalid',
@@ -383,9 +395,10 @@ def main():
                 return request(path,method=method,cookie=owner_cookie,csrf=owner_csrf,extra=extra,data=json.dumps(value).encode())
             code,headers,body=json_request('/api/notes',{'title':'Budget fixture','markdown':'budgetmarker evidence','aiEnabled':False})
             if code!=201:raise ValueError('Authenticated Note creation failed')
-            note=json.loads(body);note_path='/api/notes/'+note['id'];old_etag=headers['ETag']
+            note=json.loads(body);note_path='/api/notes/'+note['id'];old_etag=require_core_validator(headers)
             code,headers,body=json_request(note_path,{'title':'Budget fixture saved','markdown':'budgetmarker explicitly saved'},method='PUT',if_match=old_etag)
             if code!=200 or json.loads(body)['markdown']!='budgetmarker explicitly saved':raise ValueError('Explicit Note Save failed')
+            if require_core_validator(headers)==old_etag:raise ValueError('Saved Note validator did not advance')
             if json_request(note_path,{'title':'stale','markdown':'stale'},method='PUT',if_match=old_etag)[0]!=412:raise ValueError('Stale mutation accepted')
             code,_,body=json_request('/api/notes/search',{'query':'budgetmarker'})
             if code!=200 or note['id'] not in body.decode():raise ValueError('Ordinary search missed owned Note')
