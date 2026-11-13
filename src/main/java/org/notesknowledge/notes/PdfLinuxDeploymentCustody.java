@@ -13,8 +13,12 @@ import java.nio.file.Path;
  * by that trusted deployment authority. No chmod/chown/mount is performed here.
  */
 final class PdfLinuxDeploymentCustody {
-    private PdfLinuxDeploymentCustody(){ }
+    private final boolean managed;
+    private PdfLinuxDeploymentCustody(boolean managed){this.managed=managed;}
     static void require(Path helper,Path runtime,Path artifacts)throws IOException {
+        new PdfLinuxDeploymentCustody(ManagedMediaBoundary.verified()).verify(helper,runtime,artifacts);
+    }
+    private void verify(Path helper,Path runtime,Path artifacts)throws IOException {
         if(!System.getProperty("os.name").equals("Linux"))throw unavailable();
         if(((Number)Files.getAttribute(Path.of("/proc/self"),"unix:uid")).longValue()==0)throw unavailable();
         // Helpers enforce no Linux capabilities before parsing. The parent must
@@ -44,7 +48,7 @@ final class PdfLinuxDeploymentCustody {
         ancestors(loader);
         Path cache=Path.of("/etc/ld.so.cache");if(Files.exists(cache))ancestors(cache);
     }
-    private static void systemTree(Path root)throws IOException {
+    private void systemTree(Path root)throws IOException {
         ancestors(root);
         // No nested writable mount or mutable loader/font dependency is allowed.
         // Distribution-managed links are allowed ONLY in these fixed OS trees,
@@ -59,18 +63,18 @@ final class PdfLinuxDeploymentCustody {
             }
         }
     }
-    private static void ancestors(Path path)throws IOException {
+    private void ancestors(Path path)throws IOException {
         PdfRuntimeIdentity.noLinks(path);
         for(Path current=path.toAbsolutePath();current!=null;current=current.getParent())immutable(current);
     }
-    private static void immutable(Path path)throws IOException {
+    private void immutable(Path path)throws IOException {
         var facts=Files.readAttributes(path,"unix:uid,mode,nlink,isRegularFile,isDirectory,isSymbolicLink",LinkOption.NOFOLLOW_LINKS);
         int mode=((Number)facts.get("mode")).intValue();
         if(((Number)facts.get("uid")).longValue()!=0||(mode&0022)!=0||(mode&06000)!=0
                 ||Boolean.TRUE.equals(facts.get("isSymbolicLink"))
                 ||!Boolean.TRUE.equals(facts.get("isRegularFile"))&&!Boolean.TRUE.equals(facts.get("isDirectory"))
                 ||Boolean.TRUE.equals(facts.get("isRegularFile"))&&((Number)facts.get("nlink")).longValue()!=1
-                ||!Files.getFileStore(path).isReadOnly())throw unavailable();
+                ||!managed&&!Files.getFileStore(path).isReadOnly())throw unavailable();
     }
     private static IOException unavailable(){return new IOException("PDF deployment custody unavailable");}
 }

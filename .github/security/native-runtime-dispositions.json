@@ -5,7 +5,7 @@
     "amd64",
     "arm64"
   ],
-  "productionSourceSha256": "7509a380cdf7dbebb43312108ef3835eddf9b52bb3070aed823deab8ffeb4ccf",
+  "productionSourceSha256": "dfa0b122c12cc2532bdf3474c89899e076ee63fd0d08ded09aa7dfade752df1c",
   "findings": [
     {
       "VulnerabilityID": "CVE-2011-3374",
@@ -5777,6 +5777,110 @@
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Re-evaluate against a fixed stable vendor release or security backport by 2026-11-18; renew only after fresh artifact and control qualification.",
       "vendorEvidenceSha256": "00feb7f18e310259c9a494a0d52fc3a4586c39c59422ca0ea36279acfe0aa131"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-100290",
+      "PkgName": "libc-bin",
+      "InstalledVersion": "2.41-12+deb13u4",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-100290",
+      "kind": "unreachable-precondition",
+      "reviewedOn": "2026-11-12",
+      "expiresOn": "2026-11-18",
+      "rationale": "Client patterns and subjects do not reach libc regex through the selected native/JNI runtime. The measured consumer list must be empty, except for a source-bound full-profile Bash supervisor whose fixed operator-only checks finish before application startup. Java and PCRE regex are separate engines. The affected libc package and original UNKNOWN finding remain visible; this is not a vendor-fix claim.",
+      "compensatingControls": "Exact image/source/package binding, bounded rootless workers, current owner/CSRF checks and a mandatory same-architecture ELF/JNI consumer audit.",
+      "owner": "NKW runtime maintainer",
+      "remediationTarget": "Recheck the vendor security package by 2026-11-18; prefer a fixed stable distribution package when available.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "glibcRegexInputsRestricted"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-100290"
+      ]
+    },
+    {
+      "VulnerabilityID": "CVE-2026-115819",
+      "PkgName": "libc-bin",
+      "InstalledVersion": "2.41-12+deb13u4",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-115819",
+      "kind": "unreachable-precondition",
+      "reviewedOn": "2026-11-12",
+      "expiresOn": "2026-11-18",
+      "rationale": "The exact selected runtime and same-architecture JNI import audit must show no consumer of the affected wide scanf family, including ISO and variadic aliases. Narrow scanf is distinct. An unexpected consumer blocks promotion. The affected libc package and original UNKNOWN finding remain visible; this is not a vendor-fix claim.",
+      "compensatingControls": "Exact image/source/package binding, bounded rootless workers, current owner/CSRF checks and a mandatory same-architecture ELF/JNI consumer audit.",
+      "owner": "NKW runtime maintainer",
+      "remediationTarget": "Recheck the vendor security package by 2026-11-18; prefer a fixed stable distribution package when available.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "glibcWideScanfNotReferenced"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-115819"
+      ]
+    },
+    {
+      "VulnerabilityID": "CVE-2026-100290",
+      "PkgName": "libc6",
+      "InstalledVersion": "2.41-12+deb13u4",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-100290",
+      "kind": "unreachable-precondition",
+      "reviewedOn": "2026-11-12",
+      "expiresOn": "2026-11-18",
+      "rationale": "Client patterns and subjects do not reach libc regex through the selected native/JNI runtime. The measured consumer list must be empty, except for a source-bound full-profile Bash supervisor whose fixed operator-only checks finish before application startup. Java and PCRE regex are separate engines. The affected libc package and original UNKNOWN finding remain visible; this is not a vendor-fix claim.",
+      "compensatingControls": "Exact image/source/package binding, bounded rootless workers, current owner/CSRF checks and a mandatory same-architecture ELF/JNI consumer audit.",
+      "owner": "NKW runtime maintainer",
+      "remediationTarget": "Recheck the vendor security package by 2026-11-18; prefer a fixed stable distribution package when available.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "glibcRegexInputsRestricted"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-100290"
+      ]
+    },
+    {
+      "VulnerabilityID": "CVE-2026-115819",
+      "PkgName": "libc6",
+      "InstalledVersion": "2.41-12+deb13u4",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-115819",
+      "kind": "unreachable-precondition",
+      "reviewedOn": "2026-11-12",
+      "expiresOn": "2026-11-18",
+      "rationale": "The exact selected runtime and same-architecture JNI import audit must show no consumer of the affected wide scanf family, including ISO and variadic aliases. Narrow scanf is distinct. An unexpected consumer blocks promotion. The affected libc package and original UNKNOWN finding remain visible; this is not a vendor-fix claim.",
+      "compensatingControls": "Exact image/source/package binding, bounded rootless workers, current owner/CSRF checks and a mandatory same-architecture ELF/JNI consumer audit.",
+      "owner": "NKW runtime maintainer",
+      "remediationTarget": "Recheck the vendor security package by 2026-11-18; prefer a fixed stable distribution package when available.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "glibcWideScanfNotReferenced"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-115819"
+      ]
     }
   ],
   "limits": [

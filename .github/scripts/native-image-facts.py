@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Read-only artifact facts for review. No risk acceptance or release verdict."""
-import argparse,hashlib,json,os,pathlib,platform,re,subprocess,tempfile,uuid,zipfile
+import argparse,hashlib,importlib.util,json,os,pathlib,platform,re,subprocess,tempfile,uuid,zipfile
 
 ROOT=pathlib.Path(__file__).resolve().parents[2]
+EXPAT_SECURITY_PATCHES={
+    'bf26290d2f021111cf806753dcb87d165f53571b':'56b71deecec296aba42cd80ebde30215527aec9fa5c3ea183d0a056f2bb1520e',
+    '3d77567612994172f9d09b46f31bb604e16fb08d':'42caed50fae3f88186155b0c4280025a89913a83aed2a02986b545e0a8d1e7ed',
+    '05075975dc246f5f6c0757d532f22f518850e7af':'89d6e66a1c346ffcb57abfaf5fc6b251b351d6dcc778270e09ea513ab9e4eb89'}
 FFMPEG_SECURITY_PATCHES={
     '969c7eb091989a664cb7bf66a1f02051cc46cb52':'594a0cbca9527bc1edab7f76679af5a73cee23aadc878e2cc6a9001e22742c45',
     'd1434518fbd03789e3e5dc0657a7a9f1123ce074':'1fd3c8a2b37bb24fe4c8500422090453e18a06634e2647d8fb50216beb5332b8',
@@ -90,10 +94,7 @@ def main():
     require(abi==dict(mediaLibraryVersions=True,freetype='2.15.0',expat='2.10.0',abiProbePassed=True),'actual_library_abi_failed')
     allocation=json.loads(command(*common,'--entrypoint','/qualification/allocation-overflow-probe',args.qualification))
     require(allocation==dict(alignedAllocationOverflowRejected=True,cases=30),'aligned_allocation_check_failed')
-    backport={
-        'bf26290d2f021111cf806753dcb87d165f53571b':'56b71deecec296aba42cd80ebde30215527aec9fa5c3ea183d0a056f2bb1520e',
-        '3d77567612994172f9d09b46f31bb604e16fb08d':'42caed50fae3f88186155b0c4280025a89913a83aed2a02986b545e0a8d1e7ed',
-        '05075975dc246f5f6c0757d532f22f518850e7af':'89d6e66a1c346ffcb57abfaf5fc6b251b351d6dcc778270e09ea513ab9e4eb89'}
+    backport=EXPAT_SECURITY_PATCHES
     for commit,digest in backport.items():
         require(inspect('sha256sum /provenance/media-libraries/expat-'+commit+'.patch').split()[0]==digest,
             'expat_backport_provenance_mismatch')
@@ -149,6 +150,11 @@ def main():
             native64BitAbi=bitness=='64',
             openh264SourceSha256=codec_source,
             openh264SourceCopiesMatch=True)
+        service_boundary=inspect('sha256sum /opt/operations/service-boundary').split()[0]
+        require(re.fullmatch('[0-9a-f]{64}',service_boundary)
+            and metadata[0]['Config']['Entrypoint']==['/opt/operations/service-boundary'],
+            'managed_service_boundary_artifact_missing')
+        full_bundle.update(serviceBoundaryArtifactSha256=service_boundary,serviceBoundaryEntryPoint=True)
     locales={key:None for key in ('LANG','LC_ALL','LANGUAGE','LOCALDOMAIN')}
     for entry in metadata[0]['Config'].get('Env',[]):
         key,_,value=entry.partition('=')
@@ -170,6 +176,9 @@ def main():
                 require(len(dependencies)>=200,'packaged_dependencies_missing')
                 sqlite=any('sqlite' in n.casefold() for n in dependencies)
             jar_sha=hashlib.sha256(jar.read_bytes()).hexdigest()
+            spec=importlib.util.spec_from_file_location('runtime_symbols',ROOT/'.github/scripts/runtime-symbol-audit.py')
+            symbols=importlib.util.module_from_spec(spec);spec.loader.exec_module(symbols)
+            symbol_audit=symbols.audit(args.deployment,name,jar,directory,architecture,bool(full_bundle),inspect)
         finally:
             if created:command('docker','rm',name)
     receipt=dict(schemaVersion=1,source=args.source,deploymentImage=args.deployment,qualificationImage=args.qualification,
@@ -191,6 +200,7 @@ def main():
         runtimeToolRemovalInventorySha256=hashlib.sha256(removals.encode()).hexdigest(),
         healthCheck=metadata[0]['Config'].get('Healthcheck',{}),
         fullHostedBundle=full_bundle,
+        glibcInputAudit=symbol_audit,
         liveDataOrProviderAccess=False,rawLogsOrEnvironmentValuesRetained=False,
         riskDispositionsApproved=False,releaseGatePassed=False)
     output.parent.mkdir(parents=True,exist_ok=True)

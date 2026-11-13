@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+python3 .github/scripts/test-runtime-symbol-audit.py
 test "$(id -u)" != 0
 case "$(uname -m)" in x86_64|aarch64) ;; *) exit 1 ;; esac
 python3 .github/scripts/test-health-probe.py
@@ -11,6 +12,7 @@ cp src/main/native/*.c src/main/native/empty-metadata.patch "$context/native/"
 cp src/main/native/allocation-overflow-probe.cpp "$context/native/"
 cp src/main/native/expat-2.10-regression-compat.patch "$context/native/"
 cp src/main/native/build-media-libraries.sh "$context/native/"
+cp -a src/main/native/upstream "$context/native/"
 cp src/main/native/minimize-runtime-tools.sh "$context/native/"
 cp src/main/native/backport-ffmpeg-security.sh "$context/native/"
 # Frozen synthetic AAC fixture, also exercised by the upload/decoder regressions.

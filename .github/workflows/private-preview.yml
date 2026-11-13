@@ -9,6 +9,18 @@ on:
       - 'pom.xml'
   workflow_dispatch:
     inputs:
+      qualify_service_boundary:
+        description: Qualify the complete inherited managed-host boundary without credentials
+        type: boolean
+        default: false
+      qualify_host_preflight:
+        description: Observe exact production native safety gates without application data
+        type: boolean
+        default: false
+      zero_cost_probe_verified:
+        description: Operator verified no-charge public runner and public GHCR entitlement
+        type: boolean
+        default: false
       qualify_small_host:
         description: Measure a 448 MiB app with 64 MiB host headroom and 0.1 CPU on native x86_64
         type: boolean
@@ -37,6 +49,28 @@ concurrency:
 env:
   SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 jobs:
+  service-boundary:
+    if: github.event_name == 'workflow_dispatch' && inputs.qualify_service_boundary && inputs.zero_cost_probe_verified
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/service-boundary.yml
+    with:
+      publish: true
+      zero_cost_verified: true
+  host-preflight:
+    if: github.event_name == 'workflow_dispatch' && inputs.qualify_host_preflight && inputs.zero_cost_probe_verified
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/host-preflight.yml
+    with:
+      publish: true
+      zero_cost_verified: true
   small-host:
     name: Preview / constrained x86_64 feasibility
     if: github.event_name == 'workflow_dispatch' && (inputs.qualify_small_host || inputs.qualify_small_bundle)
@@ -63,7 +97,7 @@ jobs:
           python3 .github/deploy/private-preview/smoke.py "$(cat "$RUNNER_TEMP/preview-image")" "$mode"
   native-preview:
     name: Preview / native ARM and deployment controls
-    if: github.event_name != 'workflow_dispatch' || (!inputs.qualify_small_host && !inputs.qualify_small_bundle && !inputs.qualify_native_startup && !inputs.qualify_full_hosted)
+    if: github.event_name != 'workflow_dispatch' || (!inputs.qualify_small_host && !inputs.qualify_small_bundle && !inputs.qualify_native_startup && !inputs.qualify_full_hosted && !inputs.qualify_host_preflight && !inputs.qualify_service_boundary)
     # Standard ARM runner is free for this public repository; never a larger runner.
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45

@@ -4,6 +4,9 @@ on:
   pull_request:
     paths:
       - 'src/main/native/**'
+      - 'src/main/java/org/notesknowledge/notes/MediaContainerBudget.java'
+      - 'src/main/java/org/notesknowledge/notes/ManagedMediaBoundary.java'
+      - 'src/main/java/org/notesknowledge/notes/PdfLinuxDeploymentCustody.java'
       - '.github/scripts/qualify-media.sh'
       - '.github/scripts/native-image-facts.py'
       - '.github/security/native-runtime-dispositions.json'

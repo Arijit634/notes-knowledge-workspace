@@ -11,6 +11,15 @@ spec=importlib.util.spec_from_file_location('managed_smoke',Path(__file__).with_
 smoke=importlib.util.module_from_spec(spec);spec.loader.exec_module(smoke)
 
 class ReadinessTests(unittest.TestCase):
+    def test_inherited_process_boundary_requires_all_fixed_proc_fields(self):
+        text='Uid:\t65533\t65533\t65533\t65533\nNoNewPrivs:\t1\nMax processes    300    300    processes\n'
+        text+=''.join(name+':\t0000000000000000\n' for name in ('CapInh','CapPrm','CapEff','CapAmb'))
+        self.assertTrue(smoke.managed_process_protected(text))
+        for bad in (text.replace('300','34583'),text.replace('NoNewPrivs:\t1','NoNewPrivs:\t0'),
+                    text.replace('CapAmb:\t0000000000000000','CapAmb:\t0000000000000001'),text.replace('65533','0')):
+            self.assertFalse(smoke.managed_process_protected(bad))
+        self.assertFalse(smoke.managed_process_protected(''))
+        self.assertFalse(smoke.managed_process_protected('x'*65537))
     def test_container_exit_diagnostic_excludes_configuration_and_raw_error(self):
         data={'State':{'Running':False,'OOMKilled':True,'ExitCode':137,'Error':'synthetic-private-marker'},
               'RestartCount':0,'Config':{'Env':['synthetic-private-marker']}}

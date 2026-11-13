@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Native candidate evidence only. No publication, credentials or live provider calls.
 set -euo pipefail
+python3 .github/scripts/test-runtime-symbol-audit.py
 test "$(uname -m)" = x86_64
 source_sha="$(git rev-parse HEAD)"
 [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
@@ -13,7 +14,8 @@ cp src/main/native/*.c src/main/native/empty-metadata.patch src/main/native/allo
   src/main/native/expat-2.10-regression-compat.patch src/main/native/build-media-libraries.sh \
   src/main/native/minimize-runtime-tools.sh "$context/native/"
 cp src/main/native/backport-ffmpeg-security.sh "$context/native/"
-cp .github/deploy/managed-preview/{build-openh264.sh,start-full.sh,nginx.conf} "$context/managed/"
+cp -a src/main/native/upstream "$context/native/"
+cp .github/deploy/managed-preview/{build-openh264.sh,start-full.sh,nginx.conf,service-boundary.c} "$context/managed/"
 cp src/test/resources/attachments/synthetic-aac-video.mp4 "$context/native/audio-preflight.mp4"
 cp target/notes-knowledge-workspace-0.0.1-SNAPSHOT.jar "$context/application.jar"
 (cd "$context" && "$JAVA_HOME/bin/jar" xf application.jar BOOT-INF)
@@ -49,6 +51,13 @@ docker "${common[@]}" "$qualification" -Xmx192m -cp "$cp" org.notesknowledge.not
 mkdir "$evidence/clips" && chmod 0777 "$evidence/clips"
 docker "${common[@]}" -v "$evidence/clips:/output" "$qualification" -Xmx192m -cp "$cp" org.notesknowledge.notes.SupervisedVideoRuntimeQualification /opt/video /fixtures/long.mp4 /fixtures/vfr.mp4 /output /fixtures/broken.mp4 unused
 docker "${common[@]}" "$qualification" -Xmx192m -cp "$cp" org.notesknowledge.notes.VideoSoundtrackRuntimeQualification /opt/video
+
+# The managed platform exposes a writable root and a high cgroup process limit.
+# Prove the inherited kernel boundary under those actual host conditions too.
+docker run --rm --network none --user 65533:65533 --cap-drop ALL --security-opt no-new-privileges \
+  --memory 512m --cpus .15 --pids-limit 34583 --tmpfs /tmp:rw,noexec,nosuid,nodev,size=96m \
+  --entrypoint /qualification/service-boundary-diagnostic "$qualification" --once \
+  | tee "$evidence/service-boundary.jsonl"
 decoded=0
 for file in "$evidence"/clips/*.mp4; do
   frames="$(docker "${common[@]}" -v "$file:/clip.mp4:ro" --entrypoint /opt/video/tools/bin/ffprobe "$qualification" -v error -err_detect explode -count_frames -select_streams v:0 -show_entries stream=nb_read_frames -of csv=p=0 /clip.mp4)"

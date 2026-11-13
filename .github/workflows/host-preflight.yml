@@ -1,0 +1,103 @@
+name: Isolated native host preflight
+on:
+  workflow_call:
+    inputs:
+      publish:
+        type: boolean
+        default: false
+      zero_cost_verified:
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish disposable no-credential diagnostic only
+        type: boolean
+        default: false
+      zero_cost_verified:
+        description: Public free runner and public registry entitlement verified
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: native-host-preflight
+  cancel-in-progress: false
+jobs:
+  diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '25.0.5'
+      - name: Compile against the published production classes
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          image=ghcr.io/arijit634/notes-knowledge-workspace-private-preview@sha256:e40b0a9551773440989e669b0fcff900df5d98788f00beab8624c3f724435b62
+          docker pull "$image"
+          container=$(docker create "$image")
+          trap 'docker rm "$container" >/dev/null' EXIT
+          docker cp "$container:/opt/pdf/artifacts/classes" "$RUNNER_TEMP/production-classes"
+          mkdir -p "$RUNNER_TEMP/host-probe/classes"
+          javac -cp "$RUNNER_TEMP/production-classes" -d "$RUNNER_TEMP/host-probe/classes" .github/deploy/host-preflight/HostPreflight.java
+          docker build --build-arg "SOURCE_SHA=$GITHUB_SHA" -f .github/deploy/host-preflight/Dockerfile -t nkw-host-probe "$RUNNER_TEMP/host-probe"
+      - name: Verify real positive and negative host profiles
+        run: |
+          set -euo pipefail
+          for mode in readonly writable; do
+            flags=()
+            test "$mode" != readonly || flags+=(--read-only)
+            docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges --memory 512m --cpus .1 --pids-limit 300 "${flags[@]}" nkw-host-probe --once > "$RUNNER_TEMP/$mode.json"
+          done
+          python3 - <<'PY'
+          import json,os,pathlib
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])
+          a=json.loads((root/'readonly.json').read_text());b=json.loads((root/'writable.json').read_text())
+          for value in (a,b):
+              assert value['hostPreflight'] and value['uidUnprivileged'] and value['artifactIdentity']
+              assert value['containerBudget'] and value['serviceBudget'] and value['privateCgroupNamespace']
+              assert value['applicationDataAccessed'] is False and value['providerCalls']==0
+          assert a['pdfCustody'] and a['artifactFilesystemReadOnly']
+          assert not b['pdfCustody'] and not b['artifactFilesystemReadOnly']
+          PY
+      - name: Publish the tested diagnostic
+        if: inputs.publish && inputs.zero_cost_verified
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          repository="ghcr.io/${GITHUB_REPOSITORY,,}-host-preflight"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin >/dev/null
+          docker tag nkw-host-probe "$repository:sha-$GITHUB_SHA"
+          docker push "$repository:sha-$GITHUB_SHA"
+          subject=$(docker image inspect --format '{{index .RepoDigests 0}}' "$repository:sha-$GITHUB_SHA")
+          printf 'name=%s\ndigest=%s\n' "$repository" "${subject#*@}" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$subject" > "$RUNNER_TEMP/host-probe-subject.txt"
+      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        if: steps.publish.outcome == 'success'
+        with:
+          subject-name: ${{ steps.publish.outputs.name }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: host-preflight-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/readonly.json
+            ${{ runner.temp }}/writable.json
+            ${{ runner.temp }}/host-probe-subject.txt
+          if-no-files-found: warn
+          retention-days: 7

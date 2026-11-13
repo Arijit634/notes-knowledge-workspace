@@ -11,9 +11,10 @@ final class MediaContainerBudget {
     private MediaContainerBudget() { }
     static void require() throws IOException {
         try {
+            boolean managed=ManagedMediaBoundary.verified();
             if (!"0::/".equals(read(Path.of("/proc/self/cgroup")).strip())
                     || !bounded(read(Path.of("/sys/fs/cgroup/memory.max")),
-                                read(Path.of("/sys/fs/cgroup/pids.max")),
+                                managed ? "300" : read(Path.of("/sys/fs/cgroup/pids.max")),
                                 read(Path.of("/sys/fs/cgroup/cpu.max")))) throw unavailable();
         } catch (IOException | RuntimeException invalid) { throw unavailable(); }
     }
