@@ -40,13 +40,15 @@ final class CoreSchemaHealthIndicator implements HealthIndicator {
                 || migrationAuthority.info().pending().length != 0) {
             return;
         }
-        Boolean vectorAvailable = runtimeJdbc.sql("""
+        // A managed host may advertise a newer default without upgrading this
+        // database. Readiness pins the installed extension, not new-install policy.
+        Boolean vectorInstalled = runtimeJdbc.sql("""
                 select exists (
-                    select 1 from pg_available_extensions
-                    where name = 'vector' and default_version = '0.8.6'
+                    select 1 from pg_extension
+                    where extname = 'vector' and extversion = '0.8.6'
                 )
                 """).query(Boolean.class).single();
-        qualified.set(Boolean.TRUE.equals(vectorAvailable));
+        qualified.set(Boolean.TRUE.equals(vectorInstalled));
     }
 
     @Override
