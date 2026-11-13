@@ -6,11 +6,29 @@ import json
 from pathlib import Path
 import unittest
 import urllib.error
+from email.message import Message
 
 spec=importlib.util.spec_from_file_location('managed_smoke',Path(__file__).with_name('smoke.py'))
 smoke=importlib.util.module_from_spec(spec);spec.loader.exec_module(smoke)
 
 class ReadinessTests(unittest.TestCase):
+    def test_core_validator_requires_strong_tag_and_no_transform_across_headers(self):
+        headers=Message();headers['ETag']='"opaque_current-core"'
+        headers['Cache-Control']='no-store';headers['Cache-Control']='no-store, no-transform'
+        self.assertEqual('"opaque_current-core"',smoke.require_core_validator(headers))
+
+    def test_transformed_missing_or_ambiguous_core_validator_fails_closed(self):
+        for tag in (None,'W/"opaque"','bare','*','"a", "b"','""'):
+            with self.subTest(tag=tag),self.assertRaises(ValueError):
+                smoke.require_core_validator({'ETag':tag,'Cache-Control':'no-store, no-transform'})
+        headers=Message();headers['ETag']='"a"';headers['ETag']='"b"';headers['Cache-Control']='no-store, no-transform'
+        with self.assertRaises(ValueError):smoke.require_core_validator(headers)
+
+    def test_cache_or_transformation_permission_is_not_a_valid_core_response(self):
+        for control in ('no-store','no-transform','public, max-age=60','no-store, x-no-transform'):
+            with self.subTest(control=control),self.assertRaises(ValueError):
+                smoke.require_core_validator({'ETag':'"opaque"','Cache-Control':control})
+
     def test_inherited_process_boundary_requires_all_fixed_proc_fields(self):
         text='Uid:\t65533\t65533\t65533\t65533\nNoNewPrivs:\t1\nMax processes    300    300    processes\n'
         text+=''.join(name+':\t0000000000000000\n' for name in ('CapInh','CapPrm','CapEff','CapAmb'))
