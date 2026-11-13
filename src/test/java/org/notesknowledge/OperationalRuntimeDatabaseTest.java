@@ -17,6 +17,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.images.builder.Transferable;
 import static org.assertj.core.api.Assertions.*;
 
 @Tag("DATABASE") @Tag("SECURITY") @Tag("API")
@@ -58,6 +59,26 @@ class OperationalRuntimeDatabaseTest {
         assertThatThrownBy(()->jdbc.sql("delete from moderation.moderation_decision").update()).isInstanceOf(org.springframework.dao.DataAccessException.class);
         assertThatThrownBy(()->jdbc.sql("update notes.note_version set title='changed'").update()).isInstanceOf(org.springframework.dao.DataAccessException.class);
         assertThatThrownBy(()->jdbc.sql("create table notes.unauthorized_probe(id integer)").update()).isInstanceOf(org.springframework.dao.DataAccessException.class);
+    }
+    @Test void readinessPinsInstalledVectorWhenManagedHostAdvertisesANewerDefault()throws Exception{
+        String controlPath="/usr/share/postgresql/18/extension/vector.control";
+        var read=DB.execInContainer("cat",controlPath);
+        assertThat(read.getExitCode()).isZero();
+        String original=read.getStdout();
+        String advertised=original.replace("default_version = '0.8.6'","default_version = '0.8.7'");
+        assertThat(advertised).isNotEqualTo(original);
+        // Test-only control metadata models a managed host's new-install default.
+        // The real installed extension/library stays at the approved version.
+        try{
+            DB.copyFileToContainer(Transferable.of(advertised.getBytes(StandardCharsets.UTF_8),0644),controlPath);
+            assertThat(jdbc.sql("select default_version from pg_available_extensions where name='vector'").query(String.class).single()).isEqualTo("0.8.7");
+            assertThat(jdbc.sql("select extversion from pg_extension where extname='vector'").query(String.class).single()).isEqualTo("0.8.6");
+            schema.qualifyAtStartup(null);
+            assertThat(schema.health().getStatus().getCode()).isEqualTo("UP");
+        }finally{
+            DB.copyFileToContainer(Transferable.of(original.getBytes(StandardCharsets.UTF_8),0644),controlPath);
+            schema.qualifyAtStartup(null);
+        }
     }
     @Test void privilegedRoleIsRejectedInsteadOfBeingUsedByTheOperationsProfile(){
         var admin=new org.springframework.jdbc.datasource.DriverManagerDataSource(DB.getJdbcUrl(),DB.getUsername(),DB.getPassword());
