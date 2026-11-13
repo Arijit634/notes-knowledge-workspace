@@ -36,7 +36,7 @@ def require_core_validator(headers):
     directives={item.strip().lower() for value in controls for item in value.split(',')}
     if len(tags)!=1 or not isinstance(tags[0],str) or not re.fullmatch(r'"[A-Za-z0-9_-]{1,128}"',tags[0]):
         raise ValueError('Core mutation validator was missing or transformed')
-    if not {'no-store','no-transform'}.issubset(directives):
+    if len(controls)!=1 or not {'no-store','no-transform'}.issubset(directives):
         raise ValueError('Core response permits intermediary storage or transformation')
     return tags[0]
 
