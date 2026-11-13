@@ -12,10 +12,20 @@ spec=importlib.util.spec_from_file_location('managed_smoke',Path(__file__).with_
 smoke=importlib.util.module_from_spec(spec);spec.loader.exec_module(smoke)
 
 class ReadinessTests(unittest.TestCase):
-    def test_core_validator_requires_strong_tag_and_no_transform_across_headers(self):
+    def test_core_validator_requires_strong_tag_and_one_no_transform_policy(self):
+        headers=Message();headers['ETag']='"opaque_current-core"'
+        headers['Cache-Control']='no-store, no-transform'
+        self.assertEqual('"opaque_current-core"',smoke.require_core_validator(headers))
+
+    def test_duplicate_cache_policy_is_not_an_unambiguous_core_response(self):
         headers=Message();headers['ETag']='"opaque_current-core"'
         headers['Cache-Control']='no-store';headers['Cache-Control']='no-store, no-transform'
-        self.assertEqual('"opaque_current-core"',smoke.require_core_validator(headers))
+        with self.assertRaises(ValueError):smoke.require_core_validator(headers)
+
+    def test_encoded_core_response_is_not_the_selected_identity_representation(self):
+        for encoding in ('gzip','br','deflate','zstd'):
+            with self.subTest(encoding=encoding),self.assertRaises(ValueError):
+                smoke.require_core_validator({'ETag':'"opaque"','Cache-Control':'no-store, no-transform','Content-Encoding':encoding})
 
     def test_transformed_missing_or_ambiguous_core_validator_fails_closed(self):
         for tag in (None,'W/"opaque"','bare','*','"a", "b"','""'):
