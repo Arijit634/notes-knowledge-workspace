@@ -6,7 +6,7 @@ test "$(id -u)" = 0
 test ! -e /provenance/removed-runtime-tools.sha256
 : > /provenance/removed-runtime-tools.sha256
 remove_tool() {
-  case "$1" in /usr/bin/*|/usr/sbin/*|/bin/*|/sbin/*|/usr/libexec/rmt*) ;; *) exit 1 ;; esac
+  case "$1" in /usr/bin/*|/usr/sbin/*|/bin/*|/sbin/*|/usr/libexec/rmt*|/usr/lib/systemd/system-generators/systemd-gpt-auto-generator|/lib/systemd/system-generators/systemd-gpt-auto-generator) ;; *) exit 1 ;; esac
   if [ -f "$1" ] || [ -L "$1" ]; then
     if [ -f "$1" ]; then sha256sum "$1" >> /provenance/removed-runtime-tools.sha256; fi
     rm -f -- "$1"
@@ -23,4 +23,9 @@ done
 # operational probes, so remove only their unused vulnerable command surfaces.
 for path in /usr/bin/diff3 /usr/bin/sort /usr/bin/uniq /usr/bin/unexpand \
   /usr/bin/chown /usr/bin/chgrp; do remove_tool "$path"; done
+
+# This application container never discovers or mounts guest GPT partitions.
+# Remove the unused boot generator while retaining package/scanner evidence.
+for path in /usr/lib/systemd/system-generators/systemd-gpt-auto-generator \
+  /lib/systemd/system-generators/systemd-gpt-auto-generator; do remove_tool "$path"; done
 test -x /bin/sh && test -x /usr/bin/cat && test -x /usr/bin/dpkg-query

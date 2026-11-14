@@ -4,7 +4,7 @@
   "architectures": [
     "amd64"
   ],
-  "productionSourceSha256": "103caa2e5d8c33cbbd552acd5999ee92b194fed311a5e0f64c401f1ae5d70781",
+  "productionSourceSha256": "cdfeb12f54245abe69ce19e5ba094a5bee8036a188c598f5e83103e32eb5024f",
   "findings": [
     {
       "VulnerabilityID": "CVE-2026-76642",
@@ -745,6 +745,68 @@
         "https://github.com/canonical/ubuntu-security-notices/blob/c7ce33c8b88be177f7ba06882bb690c46d93bd86/osv/cve/2026/UBUNTU-CVE-2026-76642.json"
       ],
       "vendorEvidenceSha256": "03034f3fd46701a979dd6959c8d532b076d1cb2ab6c57cff68ba6aab36e497b7"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-121876",
+      "PkgName": "libsystemd0",
+      "InstalledVersion": "255.4-1ubuntu8.18",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-121876",
+      "kind": "component-not-shipped",
+      "rationale": "The described flaw requires systemd-gpt-auto-generator discovering attacker-injected GPT partitions during confidential guest boot. This application image removes that unused generator at both merged-usr paths and requires fresh absence evidence. Its entry point is the unprivileged application boundary, not a VM boot/init system; it has no mount program or mounting authority. Shared library packages remain scanned and are not declared patched. This container-specific assessment makes no assurance about the hosting hypervisor or TEE confidentiality.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "managedServiceBoundaryQualified",
+        "mountAbsent",
+        "systemdGptAutoGeneratorAbsent",
+        "systemdGptAutoGeneratorLegacyAbsent"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-14",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Require exact source/image/package/raw scan and both measured generator absences; reject missing, present, changed or expired evidence. Preserve all raw scanner findings.",
+      "remediationTarget": "Recheck vendor systemd fixes and both generator paths by 2026-11-18. No library fix or host attestation is claimed.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/dd17a57526859cf8505026729bf015fc2411a952/osv/cve/2026/UBUNTU-CVE-2026-121876.json"
+      ],
+      "vendorEvidenceSha256": "e2f27bf17f02780a725bfce7491bf006b9af973761ef2337a1ac9ec06d4f5b01"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-121876",
+      "PkgName": "libudev1",
+      "InstalledVersion": "255.4-1ubuntu8.18",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-121876",
+      "kind": "component-not-shipped",
+      "rationale": "The described flaw requires systemd-gpt-auto-generator discovering attacker-injected GPT partitions during confidential guest boot. This application image removes that unused generator at both merged-usr paths and requires fresh absence evidence. Its entry point is the unprivileged application boundary, not a VM boot/init system; it has no mount program or mounting authority. Shared library packages remain scanned and are not declared patched. This container-specific assessment makes no assurance about the hosting hypervisor or TEE confidentiality.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "managedServiceBoundaryQualified",
+        "mountAbsent",
+        "systemdGptAutoGeneratorAbsent",
+        "systemdGptAutoGeneratorLegacyAbsent"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-14",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Require exact source/image/package/raw scan and both measured generator absences; reject missing, present, changed or expired evidence. Preserve all raw scanner findings.",
+      "remediationTarget": "Recheck vendor systemd fixes and both generator paths by 2026-11-18. No library fix or host attestation is claimed.",
+      "references": [
+        "https://github.com/canonical/ubuntu-security-notices/blob/dd17a57526859cf8505026729bf015fc2411a952/osv/cve/2026/UBUNTU-CVE-2026-121876.json"
+      ],
+      "vendorEvidenceSha256": "e2f27bf17f02780a725bfce7491bf006b9af973761ef2337a1ac9ec06d4f5b01"
     }
   ]
 }
