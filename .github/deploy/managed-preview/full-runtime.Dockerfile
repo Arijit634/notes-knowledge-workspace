@@ -79,6 +79,11 @@ RUN for kind in long vfr; do \
     && printf '\000\000\000\010ftyp' > /fixtures/broken.mp4
 COPY application.jar /application.jar
 COPY controller/ /qualification/
+COPY managed/PrepareParserClasspath.java /build-tools/PrepareParserClasspath.java
+RUN /jdk/bin/javac -J-Xmx128m -cp '/opt/pdf/artifacts/classes:/qualification/libraries/*' \
+      -d /build-tools/classes /build-tools/PrepareParserClasspath.java \
+    && /jdk/bin/java -Xmx128m -cp '/build-tools/classes:/opt/pdf/artifacts/classes:/qualification/libraries/*' \
+      org.notesknowledge.notes.PrepareParserClasspath
 # Analyze production classes/dependencies, not the controller classes. Optional
 # external integrations can have absent classes, but every discovered JDK module
 # must be present in the linked service runtime before an image can be qualified.

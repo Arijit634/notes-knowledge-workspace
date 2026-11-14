@@ -88,6 +88,7 @@ class FullBundleSupervisorTests(unittest.TestCase):
         self.assertIn('--spring.profiles.active=operations,private-preview,managed-preview,full-hosted\n', args)
         self.assertIn('-Xmx160m\n', args)
         self.assertIn('-Dnkw.attachment-parser.profile=compact-v1\n', args)
+        self.assertIn('-Dnkw.attachment-parser.classpath-profile=immutable-image-v1\n', args)
         self.assertIn('-Dnkw.media.service-boundary=landlock-managed-v1\n', args)
         self.assertIn('--knowledge.processing-disclosure.path=', args)
         self.assertIn('processing-disclosure.json\n', args)

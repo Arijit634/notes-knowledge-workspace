@@ -498,6 +498,14 @@ def main():
                 if request(public)[0]!=404 or request(public+'/media/'+media_id+'/content')[0]!=404:
                     raise ValueError('Public locator fell through to private Note or Attachment')
             print(json.dumps({'authenticatedPngAndWav':True}),flush=True)
+            if full:
+                # Successful PDF/video metadata must use image-owned code,
+                # without another copy of its libraries in temporary RAM.
+                run('docker','exec',app,'/bin/sh','-c',
+                    'test ! -w /opt/pdf/artifacts/admission && '
+                    'test -f /opt/pdf/artifacts/admission/classes/META-INF/tika/parsers.idx && '
+                    'test ! -e /build-tools && '
+                    'test -z "$(find /tmp -maxdepth 2 -type d -path \'/tmp/nkw-attachment-*/libraries\' -print -quit)"')
             other_cookie,_=login('other')
             if request(note_path,cookie=other_cookie)[0]!=404 or request(attachments[0][0]+'/content',cookie=other_cookie)[0]!=404:
                 raise ValueError('Cross-owner isolation failed')
@@ -629,6 +637,7 @@ def main():
                 result.update(passed=True,productionJar=True,deploymentImage=image,resourceMeasurements=samples,
                     fullCostPasswordLoginsAfterCompleteWorkload=3,argon2MemoryKiB=65536,argon2Passes=3,
                     passwordAuthenticationAfterPublishAndUnpublish=True,
+                    immutableParserClasspathVerified=True,
                     events=[dict(step='production_startup',nativePreflight=True),
                         dict(step='authorized_storage',crossOwnerDenied=True,csrfRequired=True),
                         dict(step='public_private_separation',privateResourceDenied=True)])

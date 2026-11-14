@@ -182,6 +182,13 @@ final class AttachmentParserRuntime implements AutoCloseable {
     }
 
     static String childClasspath(Path directory) throws IOException {
+        return childClasspath(directory,System.getProperty("nkw.attachment-parser.classpath-profile","materialized"));
+    }
+    static String childClasspath(Path directory,String profile) throws IOException {
+        if ("immutable-image-v1".equals(profile)) {
+            return immutableClasspath(Path.of("/opt/pdf/artifacts/admission"));
+        }
+        if (!"materialized".equals(profile)) throw new IOException("Parser classpath unavailable");
         String classpath = System.getProperty("java.class.path");
         // A Boot nested-JAR URL is not a java launcher classpath. Materialize only
         // trusted parser dependencies from the immutable application artifact.
@@ -225,6 +232,49 @@ final class AttachmentParserRuntime implements AutoCloseable {
             }
         }
         return classpath;
+    }
+
+    /** Fixed image-owned code only. Input/configuration files remain in the
+     * private operation directory; no caller supplies a classpath or root. */
+    static String immutableClasspath(Path root) throws IOException {
+        return validateImmutableClasspath(root,Set.of("root","0"));
+    }
+    static String validateImmutableClasspath(Path root,Set<String> imageOwners) throws IOException {
+        var expected=Set.of("org/notesknowledge/notes/PdfEvidenceParser.class",
+                "org/notesknowledge/notes/PdfAdmissionParser.class",
+                "org/notesknowledge/notes/PdfEvidenceParser$1.class",
+                "org/notesknowledge/notes/PdfPageRasterWorker.class",
+                "org/notesknowledge/notes/PdfPageRasterWorker$BoundedPng.class",
+                "META-INF/tika/parsers.idx");
+        Path classes=root.resolve("classes"),libraries=root.resolve("libraries");
+        var found=new java.util.HashSet<String>();int count=0,total=0;
+        try(var paths=Files.walk(root)) {
+            for(var iterator=paths.iterator();iterator.hasNext();) {
+                Path path=iterator.next();
+                if(++total>128)throw new IOException("Parser classpath unavailable");
+                if(Files.isSymbolicLink(path)) throw new IOException("Parser classpath unavailable");
+                var permissions=Files.getPosixFilePermissions(path);
+                if(permissions.contains(java.nio.file.attribute.PosixFilePermission.GROUP_WRITE)
+                        ||permissions.contains(java.nio.file.attribute.PosixFilePermission.OTHERS_WRITE)
+                        ||!imageOwners.contains(Files.getOwner(path).getName()))
+                    throw new IOException("Parser classpath unavailable");
+                if(Files.isDirectory(path)) continue;
+                if(!Files.isRegularFile(path)) throw new IOException("Parser classpath unavailable");
+                long size=Files.size(path);
+                if(path.startsWith(classes)) {
+                    String name=classes.relativize(path).toString().replace(File.separatorChar,'/');
+                    if(!expected.contains(name)||size<1||size>1024*1024) throw new IOException("Parser classpath unavailable");
+                    if(name.endsWith("parsers.idx")&&size>4096) throw new IOException("Parser classpath unavailable");
+                    found.add(name);
+                } else if(libraries.equals(path.getParent())) {
+                    String name=path.getFileName().toString();
+                    if(!name.endsWith(".jar")||!parserLibrary(name)||size<1||size>32L*1024*1024||++count>64)
+                        throw new IOException("Parser classpath unavailable");
+                } else throw new IOException("Parser classpath unavailable");
+            }
+        } catch(UnsupportedOperationException failure) {throw new IOException("Parser classpath unavailable");}
+        if(!found.equals(expected)||count==0) throw new IOException("Parser classpath unavailable");
+        return classes+File.pathSeparator+libraries+File.separator+"*";
     }
 
     static String compactClasspath(Path directory, String classpath) throws IOException {
