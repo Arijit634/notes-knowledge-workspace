@@ -223,7 +223,7 @@ describe('Attachment panel', () => {
     const state = panel(); const invoker = await screen.findByRole('button', { name: 'Remove synthetic.png' })
     fireEvent.click(invoker); const dialog = await screen.findByRole('dialog', { name: 'Remove attachment?' })
     expect(state.calls.filter(call => call.path.endsWith(`/${id}`))).toHaveLength(1)
-    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Keep file' }))
+    await waitFor(() => expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Keep file' })))
     fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true })
     expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Remove file' }))
     fireEvent.keyDown(dialog, { key: 'Escape' }); await waitFor(() => expect(document.activeElement).toBe(invoker))

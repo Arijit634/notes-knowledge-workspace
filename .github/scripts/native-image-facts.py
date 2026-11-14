@@ -111,6 +111,8 @@ def main():
         'sort':'/usr/bin/sort','uniq':'/usr/bin/uniq','unexpand':'/usr/bin/unexpand',
         'systemdHomed':'/usr/lib/systemd/systemd-homed','systemdOomd':'/usr/lib/systemd/systemd-oomd',
         'systemdJournald':'/usr/lib/systemd/systemd-journald','nscd':'/usr/sbin/nscd',
+        'systemdGptAutoGenerator':'/usr/lib/systemd/system-generators/systemd-gpt-auto-generator',
+        'systemdGptAutoGeneratorLegacy':'/lib/systemd/system-generators/systemd-gpt-auto-generator',
         'pngimage':'/usr/bin/pngimage','pnm2png':'/usr/bin/pnm2png','bzip2recover':'/usr/bin/bzip2recover'}
     for name,path in probes.items():
         # Paths are the fixed developer-owned constants above, never caller input.

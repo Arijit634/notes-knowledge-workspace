@@ -84,6 +84,19 @@ class ImageReconciliationContracts(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
                 self.facts['components'][name]=dict(absent=True)
 
+    def test_gpt_generator_review_requires_both_binary_paths_measured_absent(self):
+        names=('systemdGptAutoGenerator','systemdGptAutoGeneratorLegacy')
+        self.rule['requiredControls']=[name+'Absent' for name in names]
+        for name in names:self.facts['components'][name]=dict(absent=True)
+        self.assertTrue(self.run_policy()['releaseSecurityReconciled'])
+        for name in names:
+            with self.subTest(component=name):
+                self.facts['components'][name]['absent']=False
+                with self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
+                del self.facts['components'][name]
+                with self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
+                self.facts['components'][name]=dict(absent=True)
+
     def test_full_bundle_dispositions_require_measured_controls(self):
         required=[
             'native64BitAbi',

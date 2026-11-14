@@ -15,7 +15,7 @@ cp src/main/native/*.c src/main/native/empty-metadata.patch src/main/native/allo
   src/main/native/minimize-runtime-tools.sh "$context/native/"
 cp src/main/native/backport-ffmpeg-security.sh "$context/native/"
 cp -a src/main/native/upstream "$context/native/"
-cp .github/deploy/managed-preview/{build-openh264.sh,start-full.sh,nginx.conf,service-boundary.c} "$context/managed/"
+cp .github/deploy/managed-preview/{build-openh264.sh,start-full.sh,nginx.conf,service-boundary.c,PrepareParserClasspath.java} "$context/managed/"
 cp src/test/resources/attachments/synthetic-aac-video.mp4 "$context/native/audio-preflight.mp4"
 cp target/notes-knowledge-workspace-0.0.1-SNAPSHOT.jar "$context/application.jar"
 (cd "$context" && "$JAVA_HOME/bin/jar" xf application.jar BOOT-INF)
@@ -37,6 +37,28 @@ for image in "$deployment" "$qualification"; do
   test "$(docker image inspect --format '{{.Config.User}}' "$image")" = '65533:65533'
   test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$source_sha"
 done
+docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+  --entrypoint /bin/sh "$deployment" -c \
+  'find /opt/pdf/artifacts/admission -type f -exec sha256sum {} +' > "$evidence/immutable-admission.sha256"
+python3 - "$context/application.jar" "$source_sha" "$deployment" "$evidence" <<'PY'
+import hashlib,json,pathlib,sys,zipfile
+application,source,image,folder=sys.argv[1:];folder=pathlib.Path(folder);records=[];classes=0;libraries=0
+with zipfile.ZipFile(application) as archive:
+    for line in (folder/'immutable-admission.sha256').read_text().splitlines():
+        digest,path=line.split();relative=path.removeprefix('/opt/pdf/artifacts/admission/')
+        assert relative!=path
+        if relative.startswith('libraries/'):
+            entry='BOOT-INF/lib/'+relative.removeprefix('libraries/');libraries+=1
+        else:
+            assert relative.startswith('classes/');entry='BOOT-INF/'+relative;classes+=1
+            if entry not in archive.namelist() and entry.endswith('/META-INF/tika/parsers.idx'):entry='META-INF/tika/parsers.idx'
+        assert hashlib.sha256(archive.read(entry)).hexdigest()==digest
+        records.append(dict(path=relative,sha256=digest))
+assert classes==6 and 0<libraries<=64 and len({r['path'] for r in records})==len(records)
+(folder/'immutable-admission.json').write_text(json.dumps(dict(source=source,image=image,
+    applicationJarSha256=hashlib.sha256(pathlib.Path(application).read_bytes()).hexdigest(),
+    exactApplicationBytesVerified=True,classes=classes,libraries=libraries,files=records),indent=2)+'\n')
+PY
 docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
   --entrypoint /bin/sh "$deployment" -c \
   'test ! -e /qualification && test ! -e /fixtures && test ! -e /jdk/bin/javac && test ! -e /jdk/bin/jlink && ! command -v gcc && test -z "$(find /usr /opt /jdk -xdev -type f -perm /6000 -print -quit)" && nginx -v && redis-server --version'

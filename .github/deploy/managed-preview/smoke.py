@@ -213,6 +213,11 @@ def main():
             run('docker','cp',holder+(':/application.jar' if full else ':/app/application.jar'),str(temp/'application.jar'))
             with zipfile.ZipFile(temp/'application.jar') as jar:
                 (temp/'crypto.jar').write_bytes(jar.read('BOOT-INF/lib/spring-security-crypto-7.1.1.jar'))
+                if full:
+                    (temp/'password-libraries').mkdir()
+                    for name in jar.namelist():
+                        if name.startswith('BOOT-INF/lib/') and Path(name).name.startswith(('spring-security-crypto-','bcprov-jdk18on-','commons-logging-')):
+                            (temp/'password-libraries'/Path(name).name).write_bytes(jar.read(name))
             hashed=run('java','-Xmx96m','-cp',str(temp/'crypto.jar'),str(ROOT/'FixtureHash.java'))
             if not re.fullmatch(r'\$2[aby]\$12\$[./A-Za-z0-9]{53}',hashed):raise ValueError('Fixture hashing failed')
             (secret/'preview-password-hash').write_text(hashed)
@@ -493,6 +498,14 @@ def main():
                 if request(public)[0]!=404 or request(public+'/media/'+media_id+'/content')[0]!=404:
                     raise ValueError('Public locator fell through to private Note or Attachment')
             print(json.dumps({'authenticatedPngAndWav':True}),flush=True)
+            if full:
+                # Successful PDF/video metadata must use image-owned code,
+                # without another copy of its libraries in temporary RAM.
+                run('docker','exec',app,'/bin/sh','-c',
+                    'test ! -w /opt/pdf/artifacts/admission && '
+                    'test -f /opt/pdf/artifacts/admission/classes/META-INF/tika/parsers.idx && '
+                    'test ! -e /build-tools && '
+                    'test -z "$(find /tmp -maxdepth 2 -type d -path \'/tmp/nkw-attachment-*/libraries\' -print -quit)"')
             other_cookie,_=login('other')
             if request(note_path,cookie=other_cookie)[0]!=404 or request(attachments[0][0]+'/content',cookie=other_cookie)[0]!=404:
                 raise ValueError('Cross-owner isolation failed')
@@ -523,6 +536,61 @@ def main():
                     if not observation['available']:raise ValueError('Resource composition observation missing')
                     samples[-1].update(memoryCompositionAtSample=observation,memoryCompositionIsPeak=False)
                     samples[-1]['managedProcessBoundaryVerified']=True
+            if full:
+                # The actual application has now loaded its complete media and
+                # data paths. OIDC alone does not exercise the 64 MiB password
+                # workspace that exposed the hosted heap failure.
+                code,_,_=json_request('/api/me/profile',{'displayName':'Synthetic budget owner','biography':'Fictional qualification only','handle':'budgetfixture'},method='PUT')
+                if code!=200:raise ValueError('Full workload profile update failed')
+                if json_request('/api/me/public-profile',{},method='PUT')[0]!=200:raise ValueError('Full workload profile activation failed')
+                code,headers,_=request(note_path,cookie=owner_cookie)
+                if code!=200:raise ValueError('Full workload source unavailable')
+                source_tag=require_core_validator(headers);selected=[attachments[0][0].rsplit('/',1)[-1]]
+                code,_,body=json_request(note_path+'/publication-preview',{'selectedAttachmentIds':selected},if_match=source_tag)
+                if code!=403 or json.loads(body).get('code')!='recent_authentication_required':
+                    raise ValueError('Primary OIDC login unexpectedly supplied recent publication proof')
+                verifier=run('java','-Xmx256m','-cp',str(temp/'password-libraries/*'),str(ROOT/'FixturePassword.java'))
+                if not re.fullmatch(r'\{argon2id\}\$argon2id\$v=19\$m=65536,t=3,p=1\$[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+',verifier):
+                    raise ValueError('Approved password cost fixture changed')
+                markers.extend([verifier,'Synthetic-full-auth-fixture-2026!'])
+                fixture_sql="update identity.account set password_verifier='"+verifier+"' where canonical_email='owner@fixture.example.test' and account_state='active' and email_verified_at is not null returning user_id;"
+                seed=subprocess.run(['docker','exec','-i',pg,'psql','-X','-U','nkw_preview_migrator','-d','nkw_preview','-At','-v','ON_ERROR_STOP=1'],input=fixture_sql,capture_output=True,text=True,timeout=30)
+                if seed.returncode or not re.fullmatch(r'[0-9a-f-]{36}\nUPDATE 1\s*',seed.stdout):raise ValueError('Isolated password fixture was not installed')
+                if json_request('/api/auth/reauth/password',{'password':'Synthetic-full-auth-fixture-2026!'})[0]!=204:
+                    raise ValueError('Independent full-cost password reauthentication failed')
+                print(json.dumps(dict(independentRecentPasswordProof=True)),flush=True)
+                code,_,body=json_request(note_path+'/publication-preview',{'selectedAttachmentIds':selected},if_match=source_tag)
+                if code!=200:raise ValueError('Full workload Publication preview failed after recent authentication')
+                fingerprint=json.loads(body)['previewFingerprint']
+                code,_,body=json_request(note_path+'/publication',{'selectedAttachmentIds':selected,'previewFingerprint':fingerprint},if_match=source_tag)
+                if code!=201:raise ValueError('Full workload publish failed')
+                publication=json.loads(body)['id'];public_path='/api/public/publications/'+publication
+                code,_,body=request(public_path)
+                if code!=200:raise ValueError('Full workload public copy unavailable')
+                public_media=json.loads(body)['media'][0]['contentUrl']
+                code,_,public_bytes=request(public_media,response_limit=20_000_000)
+                if code!=200 or public_bytes!=attachments[0][1]:raise ValueError('Full workload public media integrity failed')
+                code,headers,_=request('/api/me/publications/'+publication,cookie=owner_cookie)
+                if code!=200:raise ValueError('Full workload owner Publication unavailable')
+                if json_request('/api/me/publications/'+publication+'/unpublish',{},if_match=require_core_validator(headers))[0]!=200:
+                    raise ValueError('Full workload unpublish failed')
+                if request(public_path)[0]!=404 or request(public_media)[0]!=404:raise ValueError('Full workload public denial failed')
+                print(json.dumps(dict(fullPublicationUnpublished=True,liveMediaParserRetained=True)),flush=True)
+                for password_index in range(3):
+                    code,headers,body=request('/api/auth/csrf')
+                    if code!=200:raise ValueError('Password fixture CSRF unavailable')
+                    password_cookie=headers['Set-Cookie'].split(';',1)[0];password_csrf=json.loads(body)['csrfToken']
+                    code,headers,body=request('/api/auth/login/password',method='POST',cookie=password_cookie,csrf=password_csrf,
+                        extra={'Content-Type':'application/json'},data=json.dumps({'email':'owner@fixture.example.test','password':'Synthetic-full-auth-fixture-2026!'}).encode())
+                    if code!=200 or json.loads(body)['state']!='authenticated':raise ValueError('Full-cost password login failed after complete workload')
+                    password_cookie=headers['Set-Cookie'].split(';',1)[0]
+                    code,_,body=request('/api/auth/csrf',cookie=password_cookie)
+                    if code!=200:raise ValueError('Password session CSRF unavailable')
+                    password_csrf=json.loads(body)['csrfToken']
+                    if request(note_path,cookie=password_cookie)[0]!=200:raise ValueError('Password login lost owned Note')
+                    if request('/api/auth/logout',method='POST',cookie=password_cookie,csrf=password_csrf)[0]!=204:raise ValueError('Password logout failed')
+                    if request(note_path,cookie=password_cookie)[0]!=401:raise ValueError('Password logout retained authority')
+                    print(json.dumps(dict(fullCostPasswordLoginPassed=password_index+1)),flush=True)
             resources()
             stopped=time.monotonic();run('docker','stop','--time','28',app,timeout=40)
             shutdown=round(time.monotonic()-stopped,2)
@@ -556,7 +624,7 @@ def main():
             if request('/api/auth/logout',method='POST',cookie=cookie,csrf=csrf)[0]!=204:raise ValueError('Persisted CSRF proof rejected')
             resources()
             controlled=provider_control('/counts')
-            if controlled['token']!=3 or controlled['objectPut']!=(5 if full else 3) or controlled['objectGet']<(8 if full else 4):raise ValueError('Controlled workload incomplete')
+            if controlled['token']!=3 or controlled['objectPut']!=(6 if full else 3) or controlled['objectGet']<(8 if full else 4):raise ValueError('Controlled workload incomplete')
             if any(marker in run('docker','logs',app) for marker in markers):raise ValueError('Authenticated logs disclosed request material')
             result={'image':image,'nativeArchitecture':run('uname','-m'),'rootlessSingleContainer':True,
                 'appProxyRedisCombinedBudget':True,'fullHostedNativeWorkload':full,
@@ -575,6 +643,11 @@ def main():
                 'realDataUsed':False,'resources':samples}
             if full:
                 result.update(passed=True,productionJar=True,deploymentImage=image,resourceMeasurements=samples,
+                    fullCostPasswordLoginsAfterCompleteWorkload=3,argon2MemoryKiB=65536,argon2Passes=3,
+                    passwordAuthenticationAfterPublishAndUnpublish=True,
+                    passwordAuthenticationWithLiveMediaParser=True,
+                    primaryOidcRecentAuthDenialAndIndependentPasswordProof=True,
+                    immutableParserClasspathVerified=True,
                     events=[dict(step='production_startup',nativePreflight=True),
                         dict(step='authorized_storage',crossOwnerDenied=True,csrfRequired=True),
                         dict(step='public_private_separation',privateResourceDenied=True)])

@@ -42,6 +42,8 @@ final class PasswordAuthenticationService {
         boolean matched;
         try {
             matched = passwords.matches(password, candidate.verifier());
+        } catch (ApiFailureException capacity) {
+            throw capacity;
         } catch (RuntimeException exception) {
             matched = false;
         }
@@ -73,6 +75,7 @@ final class PasswordAuthenticationService {
         boolean matched = false;
         if (verifier != null) {
             try { matched = passwords.matches(password, verifier); }
+            catch (ApiFailureException capacity) { throw capacity; }
             catch (RuntimeException ignored) { matched = false; }
         }
         if (!matched) {

@@ -6,6 +6,7 @@ on:
       - '.github/workflows/managed-preview.yml'
       - 'src/main/java/org/notesknowledge/PrivatePreviewConfiguration.java'
       - 'src/main/java/org/notesknowledge/PreviewMigrationCommand.java'
+      - 'src/main/java/org/notesknowledge/identity/**'
       - 'src/main/resources/application*preview.properties'
   workflow_dispatch:
 permissions:
@@ -54,3 +55,41 @@ jobs:
           python3 .github/deploy/managed-preview/complete_sbom.py
       - name: Verify single-container budget, TLS, perimeter, sessions and recovery without providers
         run: python3 .github/deploy/managed-preview/smoke.py "$(cat "$RUNNER_TEMP/managed-preview-image")"
+  full-password-budget:
+    name: Preview / full application password and memory budget
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - name: Install checksum-pinned native JDK
+        run: bash .github/scripts/media-jdk.sh
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+      - name: Build the complete production application
+        run: |
+          set -euo pipefail
+          (cd frontend && npm ci && npm run build)
+          ./mvnw --batch-mode --no-transfer-progress -Pwith-frontend -Dtest=BoundedPasswordEncoderTest,Argon2CompatibilityTest,MediaRuntimeConfigurationTest package -q
+      - name: Qualify full-cost password authentication within the unchanged service budget
+        run: |
+          set -euo pipefail
+          bash .github/scripts/qualify-full-hosted.sh
+          python3 .github/scripts/reconcile-image-security.py \
+            "$RUNNER_TEMP/full-hosted-candidate/security/security-readiness.json" \
+            "$RUNNER_TEMP/full-hosted-candidate/security/native-artifact-facts.json" \
+            "$RUNNER_TEMP/full-hosted-candidate/combined-runtime.json" \
+            .github/security/full-hosted-runtime-dispositions.json \
+            "$RUNNER_TEMP/full-hosted-candidate/security/security-applicability.json"
+      - name: Retain exact candidate evidence without publishing an image
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: full-password-budget-${{ env.SOURCE_SHA }}
+          path: ${{ runner.temp }}/full-hosted-candidate/
+          if-no-files-found: warn
+          retention-days: 3
