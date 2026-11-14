@@ -5,7 +5,7 @@
     "amd64",
     "arm64"
   ],
-  "productionSourceSha256": "8a5ed17cdcd474fc1399d3c4e3ea36790120ad0f09a1f1d899c841280f151a62",
+  "productionSourceSha256": "34ff771cd6346f37c93e763de80e880bdb8feaaf1ca502f08309288b8857f053",
   "findings": [
     {
       "VulnerabilityID": "CVE-2011-3374",
@@ -5913,6 +5913,37 @@
       "compensatingControls": "Measure absence of both affected program and Perl module, plus interpreter and tar, in each exact image; retain scanner findings and fail on component/source/package change, missing runtime evidence or review expiry.",
       "remediationTarget": "Re-evaluate a fixed stable vendor release or source-package extraction reachability by 2026-11-18; no automatic renewal.",
       "vendorEvidenceSha256": "efd8ada2ffc7fe4b95c8b86b6da49919fdc64b0e8f1c0a972b1a8764dd25fc05"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-128241",
+      "PkgName": "libexpat1",
+      "InstalledVersion": "2.10.0-0nkw2",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-128241",
+      "kind": "component-not-shipped",
+      "rationale": "The affected code is the xmlwf CLI output writer, not the linked Expat parser API. The controlled library build uses --without-xmlwf. Both standard executable paths and a final-image xmlwf name inventory must be measured absent; no library patch is claimed.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "xmlwfAbsent",
+        "xmlwfLocalAbsent",
+        "xmlwfInventoryAbsent"
+      ],
+      "references": [
+        "https://github.com/CVEProject/cvelistV5/blob/43c5bd726b16614401b9cee5164d93966b986141/cves/2026/128xxx/CVE-2026-128241.json",
+        "https://github.com/libexpat/libexpat/pull/1502"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-14",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Retain the raw UNKNOWN-severity scanner finding and require fresh exact-image absence, source/package binding and all existing runtime/authorization controls. Missing or present tool evidence blocks release.",
+      "remediationTarget": "Re-evaluate the upstream stable release or vendor package by 2026-11-18; do not extend an existing review automatically.",
+      "vendorEvidenceSha256": "c6652571986f5da71820eb8dfb58e5e51aab3a0ddcdf2c31b8b766c6842b728e"
     }
   ],
   "limits": [
