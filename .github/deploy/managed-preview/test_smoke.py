@@ -12,6 +12,18 @@ spec=importlib.util.spec_from_file_location('managed_smoke',Path(__file__).with_
 smoke=importlib.util.module_from_spec(spec);spec.loader.exec_module(smoke)
 
 class ReadinessTests(unittest.TestCase):
+    def test_save_observation_preserves_status_without_private_response_data(self):
+        result=smoke.saved_note_observation(503,b'{"code":"service_unavailable","detail":"private-marker","traceId":"private-marker"}')
+        self.assertEqual({'status':503,'savedContentMatches':False,'problemCode':'service_unavailable'},result)
+        self.assertNotIn('private-marker',json.dumps(result))
+        for value in (b'{"code":"private-marker"}',b'{"code":["private-marker"]}',b'private-marker',b'[]'):
+            self.assertEqual('unclassified',smoke.saved_note_observation(502,value)['problemCode'])
+            self.assertNotIn('private-marker',json.dumps(smoke.saved_note_observation(502,value)))
+
+    def test_save_observation_requires_exact_expected_content(self):
+        self.assertTrue(smoke.saved_note_observation(200,b'{"markdown":"budgetmarker explicitly saved"}')['savedContentMatches'])
+        self.assertFalse(smoke.saved_note_observation(200,b'{"markdown":"private-marker"}')['savedContentMatches'])
+
     def test_core_validator_requires_strong_tag_and_one_no_transform_policy(self):
         headers=Message();headers['ETag']='"opaque_current-core"'
         headers['Cache-Control']='no-store, no-transform'
