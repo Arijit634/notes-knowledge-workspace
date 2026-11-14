@@ -45,7 +45,7 @@ trap shutdown EXIT
 redis-server /etc/secrets/redis.conf >/dev/null 2>&1 & redis_pid=$!
 nginx -e /dev/null -c /tmp/nkw-edge/nginx.conf & edge_pid=$!
 # The perimeter credential is not exposed to application configuration.
-/jdk/bin/java -Xmx128m -XX:MaxDirectMemorySize=16m -XX:MaxMetaspaceSize=192m \
+/jdk/bin/java -Xmx192m -XX:MaxDirectMemorySize=16m -XX:MaxMetaspaceSize=192m \
     -XX:ReservedCodeCacheSize=32m -XX:TieredStopAtLevel=1 -XX:+UseSerialGC -Xss512k \
     -XX:ActiveProcessorCount=1 -XX:-HeapDumpOnOutOfMemoryError -XX:+ExitOnOutOfMemoryError \
     -Dnkw.attachment-parser.profile=compact-v1 \

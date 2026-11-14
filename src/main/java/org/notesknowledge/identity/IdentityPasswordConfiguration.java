@@ -17,6 +17,6 @@ class IdentityPasswordConfiguration {
     PasswordEncoder identityPasswordEncoder() {
         // 64 MiB, three passes, one lane. Benchmark on the target ARM64 host before rollout.
         var argon2id = new Argon2PasswordEncoder(16, 32, 1, 65_536, 3);
-        return new DelegatingPasswordEncoder("argon2id", Map.of("argon2id", argon2id));
+        return new BoundedPasswordEncoder(new DelegatingPasswordEncoder("argon2id", Map.of("argon2id", argon2id)));
     }
 }
