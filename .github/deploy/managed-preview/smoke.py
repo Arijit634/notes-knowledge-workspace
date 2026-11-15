@@ -92,6 +92,11 @@ def saved_note_observation(status, body):
     return dict(status=status,savedContentMatches=matches,
         problemCode=code if isinstance(code,str) and code in codes else 'unclassified')
 
+def publication_failure_observation(status, body):
+    """Keep a failed workload actionable without recording the publication DTO."""
+    value=saved_note_observation(status,body)
+    return dict(status=value['status'],problemCode=value['problemCode'])
+
 
 def managed_process_protected(text):
     """Only fixed proc fields; never return process/environment/credential data."""
@@ -456,10 +461,10 @@ def main():
                 return browser_cookie,json.loads(body)['csrfToken']
             owner_cookie,owner_csrf=login('owner')
             print(json.dumps({'controlledOwnerLogin':True}),flush=True)
-            def json_request(path,value,*,method='POST',if_match=None):
+            def json_request(path,value,*,method='POST',if_match=None,stage='request'):
                 extra={'Content-Type':'application/json'}
                 if if_match:extra['If-Match']=if_match
-                return request(path,method=method,cookie=owner_cookie,csrf=owner_csrf,extra=extra,data=json.dumps(value).encode())
+                return request(path,method=method,cookie=owner_cookie,csrf=owner_csrf,extra=extra,data=json.dumps(value).encode(),stage=stage)
             code,headers,body=json_request('/api/notes',{'title':'Budget fixture','markdown':'budgetmarker evidence','aiEnabled':False})
             if code!=201:raise ValueError('Authenticated Note creation failed')
             note=json.loads(body);note_path='/api/notes/'+note['id'];old_etag=require_core_validator(headers)
@@ -634,8 +639,17 @@ def main():
                 code,_,body=json_request(note_path+'/publication-preview',{'selectedAttachmentIds':selected},if_match=source_tag)
                 if code!=200:raise ValueError('Full workload Publication preview failed after recent authentication')
                 fingerprint=json.loads(body)['previewFingerprint']
-                code,_,body=json_request(note_path+'/publication',{'selectedAttachmentIds':selected,'previewFingerprint':fingerprint},if_match=source_tag)
-                if code!=201:raise ValueError('Full workload publish failed')
+                code,_,body=json_request(note_path+'/publication',{'selectedAttachmentIds':selected,'previewFingerprint':fingerprint},if_match=source_tag,stage='publication-create')
+                if code!=201:
+                    metadata=json.loads(run('docker','inspect',app))[0]
+                    logs=subprocess.run(['docker','logs','--tail','200',app],capture_output=True,text=True,timeout=15)
+                    counters=subprocess.run(['docker','exec',app,'/bin/sh','-c',
+                        'cat /sys/fs/cgroup/memory.current /sys/fs/cgroup/memory.peak; '
+                        'cat /sys/fs/cgroup/memory.events /sys/fs/cgroup/cpu.stat'],capture_output=True,text=True,timeout=10)
+                    print(json.dumps(dict(publicationCreateFailed=True,**publication_failure_observation(code,body),
+                        container=safe_container_state(metadata),resources=safe_resource_observation(counters.stdout),
+                        safeDiagnostics=safe_startup_diagnostics(logs.stdout+logs.stderr))),flush=True)
+                    raise ValueError('Full workload publish failed')
                 publication=json.loads(body)['id'];public_path='/api/public/publications/'+publication
                 code,_,body=request(public_path)
                 if code!=200:raise ValueError('Full workload public copy unavailable')

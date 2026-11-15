@@ -61,6 +61,15 @@ class PublicAccessTests(unittest.TestCase):
             self.verify(lambda p,m,c,s,e,v:(v[0],v[1],b'{}') if p=='/api/notes/fixture' and c is None else v)
 
 class ReadinessTests(unittest.TestCase):
+    def test_publication_failure_excludes_dto_detail_and_correlation_material(self):
+        value=smoke.publication_failure_observation(503,b'{"code":"service_unavailable","detail":"private-marker","traceId":"private-marker","title":"private-marker"}')
+        self.assertEqual({'status':503,'problemCode':'service_unavailable'},value)
+        self.assertNotIn('private-marker',json.dumps(value))
+
+    def test_publication_failure_uses_only_the_fixed_problem_vocabulary(self):
+        for body in (b'{"code":"private-marker"}',b'[]',b'<html>private-marker</html>',b'{"code":["private-marker"]}'):
+            self.assertEqual({'status':502,'problemCode':'unclassified'},smoke.publication_failure_observation(502,body))
+
     def test_save_observation_preserves_status_without_private_response_data(self):
         result=smoke.saved_note_observation(503,b'{"code":"service_unavailable","detail":"private-marker","traceId":"private-marker"}')
         self.assertEqual({'status':503,'savedContentMatches':False,'problemCode':'service_unavailable'},result)
