@@ -6,15 +6,42 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import uuid
 
 HELPER = Path(__file__).with_name('resolve-disclosure.sh').resolve()
 
 
 @unittest.skipUnless(os.name == 'posix', 'Managed-host filesystem admission requires Linux')
 class DisclosureFileTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # Hosted-runner checkouts need not be traversable by the fixture user.
+        # Keep the fixture under non-writable ancestors without changing checkout
+        # permissions or trusting the world-writable /tmp directory.
+        cls.fixture_parent = Path('/run') / ('nkw-disclosure-test-' + uuid.uuid4().hex)
+        cls.fixture_context = None
+        if os.geteuid() == 0:
+            cls.fixture_context = tempfile.TemporaryDirectory(prefix='.disclosure-tests-', dir=Path.cwd())
+            cls.fixture_parent = Path(cls.fixture_context.name)
+            cls.fixture_parent.chmod(0o755)
+        else:
+            assert cls.fixture_parent.parent == Path('/run') and not cls.fixture_parent.exists()
+            subprocess.run(['sudo', '-n', 'install', '-d', '-m', '755', '-o', str(os.getuid()),
+                '-g', str(os.getgid()), str(cls.fixture_parent)], check=True, capture_output=True, timeout=10)
+
+    @classmethod
+    def tearDownClass(cls):
+        if cls.fixture_context is not None:
+            cls.fixture_context.cleanup()
+        else:
+            assert cls.fixture_parent.parent == Path('/run') and cls.fixture_parent.name.startswith('nkw-disclosure-test-')
+            # Nonrecursive: unexpected contents are an error, never discarded.
+            subprocess.run(['sudo', '-n', 'rmdir', '--', str(cls.fixture_parent)],
+                check=True, capture_output=True, timeout=10)
+
     @contextmanager
     def fixture(self, kind='direct'):
-        with tempfile.TemporaryDirectory(prefix='.disclosure-test-', dir=Path.cwd()) as temporary:
+        with tempfile.TemporaryDirectory(prefix='.disclosure-test-', dir=self.fixture_parent) as temporary:
             parent = Path(temporary)
             parent.chmod(0o755)
             root = parent / 'secrets'
@@ -45,7 +72,7 @@ class DisclosureFileTests(unittest.TestCase):
     def run_helper(self, *args):
         import pwd
         nobody = pwd.getpwnam('nobody')
-        command = [shutil.which('bash'), str(HELPER), *(str(arg) for arg in args)]
+        command = [shutil.which('bash'), '--noprofile', '--norc', '-s', '--', *(str(arg) for arg in args)]
         options = {}
         if os.geteuid() == 0:
             options.update(user=nobody.pw_uid, group=nobody.pw_gid, extra_groups=[])
@@ -54,7 +81,8 @@ class DisclosureFileTests(unittest.TestCase):
             self.assertIsNotNone(sudo, 'Linux qualification needs its unprivileged fixture user')
             command = [sudo, '-n', '-u', '#' + str(nobody.pw_uid),
                        '-g', '#' + str(nobody.pw_gid), '--', *command]
-        return subprocess.run(command, cwd='/', capture_output=True, text=True, timeout=10, **options)
+        return subprocess.run(command, cwd='/', input=HELPER.read_text(),
+            capture_output=True, text=True, timeout=10, **options)
 
     def assert_denied(self, result):
         self.assertEqual(2, result.returncode)
