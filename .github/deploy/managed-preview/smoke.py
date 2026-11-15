@@ -92,6 +92,11 @@ def saved_note_observation(status, body):
     return dict(status=status,savedContentMatches=matches,
         problemCode=code if isinstance(code,str) and code in codes else 'unclassified')
 
+def publication_failure_observation(status, body):
+    """Keep a failed workload actionable without recording the publication DTO."""
+    value=saved_note_observation(status,body)
+    return dict(status=value['status'],problemCode=value['problemCode'])
+
 
 def managed_process_protected(text):
     """Only fixed proc fields; never return process/environment/credential data."""
@@ -100,6 +105,43 @@ def managed_process_protected(text):
         r'(?m)^Max processes\s+300\s+300\s+processes\s*$']
     patterns += [r'(?m)^'+name+r':\s*0{16}\s*$' for name in ('CapInh','CapPrm','CapEff','CapAmb')]
     return all(re.search(pattern,text) for pattern in patterns)
+
+def verify_public_access(request, note_path, attachment_path, owner_cookie, owner_csrf, other_cookie):
+    """Public entry must reach the application without granting private authority."""
+    def checked(path, status, **kwargs):
+        code, headers, body = request(path, authenticated=False, **kwargs)
+        if code != status:
+            raise ValueError('Public entry security boundary failed')
+        return headers, body
+    headers, _ = checked('/login', 200)
+    if headers.get('WWW-Authenticate'):
+        raise ValueError('Public entry retained the extra gate')
+    checked('/login', 200, extra={'Authorization': 'Basic '+base64.b64encode(b'preview:incorrect').decode()})
+    checked('/login', 400, extra={'Host': 'evil.invalid'})
+    checked('/login', 200, extra={'Forwarded': 'host=evil.invalid;proto=http',
+        'X-Forwarded-Host': 'evil.invalid', 'X-Forwarded-Proto': 'http'})
+    checked('/api/auth/session', 200)
+    for path in (note_path, attachment_path+'/content'):
+        _, body = checked(path, 401)
+        if json.loads(body).get('status') != 401:
+            raise ValueError('Public private-resource denial was not an application problem')
+        checked(path, 404, cookie=other_cookie)
+    headers, _ = checked(note_path, 200, cookie=owner_cookie)
+    require_core_validator(headers)
+    checked('/api/auth/logout', 403, method='POST', cookie=owner_cookie)
+    checked('/api/auth/logout', 403, method='POST', cookie=owner_cookie, csrf='synthetic-invalid-proof')
+    checked('/api/auth/logout', 403, method='POST', cookie=owner_cookie, csrf=owner_csrf,
+        extra={'Origin': 'https://evil.invalid'})
+    checked('/api/notes', 403, method='OPTIONS', extra={'Origin':'https://evil.invalid',
+        'Access-Control-Request-Method':'POST'})
+    checked('/api/notes/search',200,method='POST',cookie=owner_cookie,csrf=owner_csrf,
+        extra={'Origin':'https://preview.example.test','Content-Type':'application/json'},
+        data=json.dumps({'query':'budgetmarker'}).encode())
+    for path in ('/actuator/health', '/management', '/debug', '/v3/api-docs'):
+        checked(path, 404)
+    checked('/_preview/ready', 405, method='POST')
+    return dict(publicEntryWithoutSharedPassword=True,privateOwnershipAndCsrfRetained=True,
+        publicModeStrongValidatorPreserved=True,untrustedForwardingAndManagementDenied=True)
 
 def synthetic_pdf():
     """One fictional text page, with byte-accurate xref offsets for real validation."""
@@ -299,12 +341,13 @@ def main():
                 rejected=subprocess.run(migration+additional+command+[configuration],capture_output=True,timeout=60)
                 if rejected.returncode!=2:raise ValueError('Untrusted certificate or wrong hostname accepted')
             run(*migration,'-e','JAVA_TOOL_OPTIONS='+trust,*command,'/fixture/migration.properties')
-            def start_app():
+            def start_app(access_mode=None):
                 # Reproduce the actual managed-host root/process settings. The
                 # full image must install its own inherited kernel boundary.
                 filesystem=[] if full else ['--read-only']
                 temporary='uid=0,gid=0,mode=1777' if full else 'uid=65533,gid=65533,mode=700'
-                identifier=run('docker','create','--network',network,*filesystem,
+                mode=[] if access_mode is None else ['-e','NKW_HOSTED_ACCESS_MODE='+access_mode]
+                identifier=run('docker','create','--network',network,*filesystem,*mode,
                     '--memory','512m' if full else '448m','--memory-swap','512m' if full else '448m','--cpus','0.1','--pids-limit','34583' if full else '512',
                     '--cap-drop','ALL','--security-opt','no-new-privileges',
                     '--tmpfs',f'/tmp:rw,noexec,nosuid,nodev,size={256 if full else 32}m,'+temporary,
@@ -423,10 +466,10 @@ def main():
                 return browser_cookie,json.loads(body)['csrfToken']
             owner_cookie,owner_csrf=login('owner')
             print(json.dumps({'controlledOwnerLogin':True}),flush=True)
-            def json_request(path,value,*,method='POST',if_match=None):
+            def json_request(path,value,*,method='POST',if_match=None,stage='request'):
                 extra={'Content-Type':'application/json'}
                 if if_match:extra['If-Match']=if_match
-                return request(path,method=method,cookie=owner_cookie,csrf=owner_csrf,extra=extra,data=json.dumps(value).encode())
+                return request(path,method=method,cookie=owner_cookie,csrf=owner_csrf,extra=extra,data=json.dumps(value).encode(),stage=stage)
             code,headers,body=json_request('/api/notes',{'title':'Budget fixture','markdown':'budgetmarker evidence','aiEnabled':False})
             if code!=201:raise ValueError('Authenticated Note creation failed')
             note=json.loads(body);note_path='/api/notes/'+note['id'];old_etag=require_core_validator(headers)
@@ -601,8 +644,17 @@ def main():
                 code,_,body=json_request(note_path+'/publication-preview',{'selectedAttachmentIds':selected},if_match=source_tag)
                 if code!=200:raise ValueError('Full workload Publication preview failed after recent authentication')
                 fingerprint=json.loads(body)['previewFingerprint']
-                code,_,body=json_request(note_path+'/publication',{'selectedAttachmentIds':selected,'previewFingerprint':fingerprint},if_match=source_tag)
-                if code!=201:raise ValueError('Full workload publish failed')
+                code,_,body=json_request(note_path+'/publication',{'selectedAttachmentIds':selected,'previewFingerprint':fingerprint},if_match=source_tag,stage='publication-create')
+                if code!=201:
+                    metadata=json.loads(run('docker','inspect',app))[0]
+                    logs=subprocess.run(['docker','logs','--tail','200',app],capture_output=True,text=True,timeout=15)
+                    counters=subprocess.run(['docker','exec',app,'/bin/sh','-c',
+                        'cat /sys/fs/cgroup/memory.current /sys/fs/cgroup/memory.peak; '
+                        'cat /sys/fs/cgroup/memory.events /sys/fs/cgroup/cpu.stat'],capture_output=True,text=True,timeout=10)
+                    print(json.dumps(dict(publicationCreateFailed=True,**publication_failure_observation(code,body),
+                        container=safe_container_state(metadata),resources=safe_resource_observation(counters.stdout),
+                        safeDiagnostics=safe_startup_diagnostics(logs.stdout+logs.stderr))),flush=True)
+                    raise ValueError('Full workload publish failed')
                 publication=json.loads(body)['id'];public_path='/api/public/publications/'+publication
                 code,_,body=request(public_path)
                 if code!=200:raise ValueError('Full workload public copy unavailable')
@@ -637,8 +689,14 @@ def main():
             if shutdown>=30 or metadata['State']['ExitCode']!=0:raise ValueError('Graceful bounded shutdown failed')
             run('docker','rm',app);app=None
             run('docker','stop',pg);run('docker','rm',pg);pg=None
-            pg=start_postgres();started=time.monotonic();app=start_app();await_readiness(request,timeout=900 if full else 600);second=round(time.monotonic()-started,2)
+            pg=start_postgres();started=time.monotonic();app=start_app('public' if full else None);await_readiness(request,timeout=900 if full else 600);second=round(time.monotonic()-started,2)
             verify_disclosure_projection()
+            public_access={}
+            if full:
+                public_access=verify_public_access(request,note_path,attachments[0][0],owner_cookie,owner_csrf,other_cookie)
+                # Unpublish remains authoritative after removing only the gate.
+                if request(public_path,authenticated=False)[0]!=404 or request(public_media,authenticated=False)[0]!=404:
+                    raise ValueError('Public mode revived an unavailable publication')
             code,headers,_=request('/api/auth/csrf',cookie=cookie)
             if code!=200 or headers.get('Set-Cookie'):raise ValueError('Session did not survive recreation')
             code,headers,body=request(note_path,cookie=owner_cookie)
@@ -689,6 +747,8 @@ def main():
                     primaryOidcRecentAuthDenialAndIndependentPasswordProof=True,
                     immutableParserClasspathVerified=True,
                     projectedDisclosureSnapshotQualified=True,projectedDisclosureColdStarts=2,
+                    publicAccessModeQualified=True,defaultPrivateGateQualified=True,
+                    publicModeRecreatedSessionAndDataPreserved=True,publicAccessChecks=public_access,
                     events=[dict(step='production_startup',nativePreflight=True),
                         dict(step='authorized_storage',crossOwnerDenied=True,csrfRequired=True),
                         dict(step='public_private_separation',privateResourceDenied=True)])

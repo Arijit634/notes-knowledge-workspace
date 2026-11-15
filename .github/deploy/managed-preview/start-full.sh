@@ -3,6 +3,12 @@
 set -euo pipefail
 umask 077
 [[ "${PORT:-10000}" == 10000 ]] || { echo 'preview_port_invalid' >&2; exit 2; }
+access_mode=${NKW_HOSTED_ACCESS_MODE-private}
+case "$access_mode" in
+    private|public) ;;
+    *) echo 'preview_access_mode_invalid' >&2; exit 2 ;;
+esac
+unset NKW_HOSTED_ACCESS_MODE
 for name in runtime.properties processing-disclosure.json preview-origin preview-password-hash redis.conf; do
     [[ -f "/etc/secrets/$name" && -r "/etc/secrets/$name" ]] || { echo 'preview_configuration_unavailable' >&2; exit 2; }
 done
@@ -17,8 +23,14 @@ mkdir -p /tmp/nkw-edge/body /tmp/nkw-edge/proxy /tmp/nkw-redis \
     /tmp/nkw-pdf-recovery /tmp/nkw-video-recovery /tmp/nkw-video-scratch
 printf 'preview:%s\n' "$PREVIEW_PASSWORD_HASH" > /tmp/nkw-edge/htpasswd
 template=$(cat /app/nginx.conf)
+# Only the full application's operator-selected mode can remove this extra
+# gate. Spring authentication, CSRF and owner authorization are unchanged.
+if [[ "$access_mode" == public ]]; then
+    [[ "$template" == *'auth_basic "Private preview";'* ]] || { echo 'preview_edge_configuration_invalid' >&2; exit 2; }
+    template=${template/'auth_basic "Private preview";'/'auth_basic off;'}
+fi
 printf '%s\n' "${template//__PREVIEW_HOST__/$PREVIEW_HOST}" > /tmp/nkw-edge/nginx.conf
-unset template PREVIEW_PASSWORD_HASH
+unset template PREVIEW_PASSWORD_HASH access_mode
 nginx -e /dev/null -t -c /tmp/nkw-edge/nginx.conf >/dev/null 2>&1 || { echo 'preview_edge_configuration_invalid' >&2; exit 2; }
 java_pid='';redis_pid='';edge_pid='';stopping=0
 shutdown() {

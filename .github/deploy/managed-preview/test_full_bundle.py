@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parent
 
 
 class FullBundleSupervisorTests(unittest.TestCase):
-    def run_supervisor(self, missing=None, origin='https://preview.example.test', port='10000', resolver_exit=0):
+    def run_supervisor(self, missing=None, origin='https://preview.example.test', port='10000', resolver_exit=0, access_mode=None):
         bash = os.environ.get('BASH_FOR_TESTS') or shutil.which('bash')
         self.assertIsNotNone(bash)
         with tempfile.TemporaryDirectory() as temporary:
@@ -49,6 +49,9 @@ class FullBundleSupervisorTests(unittest.TestCase):
             executable = root / 'supervisor.sh'
             executable.write_text(script, newline='\n')
             env = os.environ.copy()
+            env.pop('NKW_HOSTED_ACCESS_MODE', None)
+            if access_mode is not None:
+                env['NKW_HOSTED_ACCESS_MODE'] = access_mode
             bash_dir = Path(bash).resolve().parent
             env.update(PORT=port, FIXTURE_ARGS=(root / 'args').as_posix(),
                        FIXTURE_DISCLOSURE=(secret / 'processing-disclosure.json').resolve().as_posix(),
@@ -56,7 +59,37 @@ class FullBundleSupervisorTests(unittest.TestCase):
             result = subprocess.run([bash, '--noprofile', '--norc', executable.as_posix()],
                                     cwd=root, env=env, capture_output=True, text=True, timeout=15)
             args = (root / 'args').read_text() if (root / 'args').exists() else ''
+            result.edge_config = (root / 'edge/nginx.conf').read_text() if (root / 'edge/nginx.conf').exists() else ''
+            result.disclosure_path = (secret / 'processing-disclosure.json').resolve().as_posix()
             return result, args
+
+    def test_default_and_explicit_private_modes_keep_the_password_gate(self):
+        for mode in (None, 'private'):
+            with self.subTest(mode=mode):
+                result, args = self.run_supervisor(access_mode=mode)
+                self.assertEqual(1, result.returncode)
+                self.assertIn('auth_basic "Private preview";', result.edge_config)
+                self.assertNotIn('auth_basic off;', result.edge_config)
+                self.assertNotIn('NKW_HOSTED_ACCESS_MODE', args)
+
+    def test_public_mode_removes_only_the_extra_edge_gate(self):
+        private, private_args = self.run_supervisor()
+        public, public_args = self.run_supervisor(access_mode='public')
+        self.assertEqual(1, public.returncode)
+        self.assertEqual(private.edge_config.replace('auth_basic "Private preview";', 'auth_basic off;'), public.edge_config)
+        self.assertEqual(private_args.replace(private.disclosure_path, '<fixture-disclosure>'),
+                         public_args.replace(public.disclosure_path, '<fixture-disclosure>'))
+        self.assertIn('proxy_set_header Authorization "";', public.edge_config)
+        self.assertIn('proxy_set_header X-Forwarded-Host preview.example.test;', public.edge_config)
+
+    def test_invalid_modes_stop_before_any_constituent_launch(self):
+        for mode in ('', 'PUBLIC', ' public', 'public ', 'public\n', 'public; auth_basic off;', 'false'):
+            with self.subTest(mode=mode):
+                result, args = self.run_supervisor(access_mode=mode)
+                self.assertEqual(2, result.returncode)
+                self.assertEqual('preview_access_mode_invalid\n', result.stderr)
+                self.assertEqual('', args)
+                self.assertEqual('', result.edge_config)
 
     def test_missing_disclosure_stops_before_any_application_launch(self):
         result, args = self.run_supervisor(missing='processing-disclosure.json')
