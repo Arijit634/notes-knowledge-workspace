@@ -164,6 +164,13 @@ def main():
             and metadata[0]['Config']['Entrypoint']==['/opt/operations/service-boundary'],
             'managed_service_boundary_artifact_missing')
         full_bundle.update(serviceBoundaryArtifactSha256=service_boundary,serviceBoundaryEntryPoint=True)
+        disclosure_resolver=inspect('sha256sum /app/resolve-disclosure.sh').split()[0]
+        require(disclosure_resolver==hashlib.sha256((ROOT/'.github/deploy/managed-preview/resolve-disclosure.sh').read_bytes()).hexdigest(),
+            'managed_disclosure_resolver_source_mismatch')
+        require(inspect('stat -c %u:%g:%a /app/resolve-disclosure.sh')=='0:0:755',
+            'managed_disclosure_resolver_custody_mismatch')
+        full_bundle.update(disclosureResolverSha256=disclosure_resolver,
+            disclosureResolverMatchesSource=True,disclosureResolverRootOwned=True)
     locales={key:None for key in ('LANG','LC_ALL','LANGUAGE','LOCALDOMAIN')}
     for entry in metadata[0]['Config'].get('Env',[]):
         key,_,value=entry.partition('=')

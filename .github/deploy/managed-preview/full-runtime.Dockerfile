@@ -153,6 +153,7 @@ RUN /bin/sh /tmp/minimize-runtime-tools.sh && rm /tmp/minimize-runtime-tools.sh
 COPY --from=redis-build /build/redis/src/redis-server /usr/local/bin/redis-server
 COPY --from=redis-build /build/redis-full.tar.gz /provenance/redis-8.10.3-source.tar.gz
 COPY --chmod=755 managed/start-full.sh /app/start-full.sh
+COPY --chmod=755 managed/resolve-disclosure.sh /app/resolve-disclosure.sh
 COPY managed/nginx.conf /app/nginx.conf
 RUN ln -s /application.jar /app/application.jar && nginx -v && redis-server --version \
     && printf x > /provenance/service-write-probe && chmod 666 /provenance/service-write-probe

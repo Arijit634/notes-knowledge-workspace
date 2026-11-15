@@ -167,6 +167,12 @@ def main():
             # exists, all Notes below are AI-OFF, and this network has no egress.
             # Native/core workload evidence must never imply live AI qualification.
             (secret/'processing-disclosure.json').write_text('{}\n')
+            # Match a read-only projected secret, not just a regular bind-mounted
+            # file. The Java loader must still receive a canonical regular file.
+            projection=secret/'.disclosure-v1';projection.mkdir(mode=0o755)
+            (secret/'processing-disclosure.json').rename(projection/'processing-disclosure.json')
+            (secret/'..data').symlink_to('.disclosure-v1',target_is_directory=True)
+            (secret/'processing-disclosure.json').symlink_to('..data/processing-disclosure.json')
             # Instantiate the actual SDK/client and enabled worker beans so the
             # memory measurement includes them. This fake key cannot authorize
             # a real provider; the isolated network has no external egress.
@@ -308,6 +314,12 @@ def main():
                 containers.append(identifier)
                 run('docker','start',identifier)
                 return identifier
+            def verify_disclosure_projection():
+                if full:
+                    run('docker','exec',app,'/bin/sh','-c',
+                        'test -L /etc/secrets/processing-disclosure.json && '
+                        'test -f /etc/secrets/.disclosure-v1/processing-disclosure.json && '
+                        'test ! -w /etc/secrets/.disclosure-v1/processing-disclosure.json')
             started=time.monotonic();app=start_app()
             opener=urllib.request.build_opener(NoRedirect(),urllib.request.ProxyHandler({}))
             auth='Basic '+base64.b64encode(b'preview:synthetic-preview-perimeter-only').decode()
@@ -359,6 +371,7 @@ def main():
                     if authenticated:authenticated_seconds.append(round(time.monotonic()-request_started,3))
                     return response.status,response.headers,body
             await_readiness(request,timeout=900 if full else 600);first=round(time.monotonic()-started,2)
+            verify_disclosure_projection()
             if request('/login',authenticated=False)[0]!=401:raise ValueError('Missing perimeter accepted')
             if request('/login',extra={'Authorization':'Basic '+base64.b64encode(b'preview:incorrect').decode()})[0]!=401:raise ValueError('Wrong perimeter accepted')
             boundaries=[('/login',200),('/api/auth/session',200),('/api/notes',401),('/actuator/health',404)]
@@ -625,6 +638,7 @@ def main():
             run('docker','rm',app);app=None
             run('docker','stop',pg);run('docker','rm',pg);pg=None
             pg=start_postgres();started=time.monotonic();app=start_app();await_readiness(request,timeout=900 if full else 600);second=round(time.monotonic()-started,2)
+            verify_disclosure_projection()
             code,headers,_=request('/api/auth/csrf',cookie=cookie)
             if code!=200 or headers.get('Set-Cookie'):raise ValueError('Session did not survive recreation')
             code,headers,body=request(note_path,cookie=owner_cookie)
@@ -674,6 +688,7 @@ def main():
                     passwordAuthenticationWithLiveMediaParser=True,
                     primaryOidcRecentAuthDenialAndIndependentPasswordProof=True,
                     immutableParserClasspathVerified=True,
+                    projectedDisclosureSnapshotQualified=True,projectedDisclosureColdStarts=2,
                     events=[dict(step='production_startup',nativePreflight=True),
                         dict(step='authorized_storage',crossOwnerDenied=True,csrfRequired=True),
                         dict(step='public_private_separation',privateResourceDenied=True)])
