@@ -113,12 +113,17 @@ def main():
         'systemdJournald':'/usr/lib/systemd/systemd-journald','nscd':'/usr/sbin/nscd',
         'systemdGptAutoGenerator':'/usr/lib/systemd/system-generators/systemd-gpt-auto-generator',
         'systemdGptAutoGeneratorLegacy':'/lib/systemd/system-generators/systemd-gpt-auto-generator',
+        'xmlwf':'/usr/bin/xmlwf','xmlwfLocal':'/usr/local/bin/xmlwf',
         'pngimage':'/usr/bin/pngimage','pnm2png':'/usr/bin/pnm2png','bzip2recover':'/usr/bin/bzip2recover'}
     for name,path in probes.items():
         # Paths are the fixed developer-owned constants above, never caller input.
         value=inspect(f"if test -e {path} || test -L {path}; then printf present; else printf absent; fi")
         require(value in ('present','absent'),'unexpected_component_fact')
         components[name]=dict(path=path,absent=value=='absent')
+    # Expat's affected CLI is disabled in our library build. Check the final
+    # artifact as well, including alternate paths and dangling symbolic links.
+    xmlwf=inspect("find /usr /opt /jdk -xdev -name 'xmlwf*' -print -quit")
+    components['xmlwfInventory']=dict(scope=['/usr','/opt','/jdk'],absent=not xmlwf)
     privileged=inspect("find /usr /opt /jdk -xdev -type f -perm /6000 -print -quit")
     fonts=inspect("find /etc/fonts /usr/share/fonts /usr/share/fontconfig -type f \\( ! -uid 0 -o -perm /022 \\) -print -quit")
     font_sizes=[int(value) for value in inspect('find /etc/fonts /usr/share/fontconfig -type f -exec stat -c %s {} +').splitlines()]

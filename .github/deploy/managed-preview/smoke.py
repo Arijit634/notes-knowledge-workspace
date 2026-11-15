@@ -79,6 +79,20 @@ def safe_container_state(metadata):
     return dict(running=state['Running'] is True,oomKilled=state['OOMKilled'] is True,
         exitCode=int(state['ExitCode']),restarts=int(metadata['RestartCount']))
 
+def saved_note_observation(status, body):
+    """Fixed failure vocabulary only; never copy response content into evidence."""
+    try:
+        value=json.loads(body)
+    except (ValueError,UnicodeError):
+        value=None
+    matches=isinstance(value,dict) and value.get('markdown')=='budgetmarker explicitly saved'
+    codes={'service_unavailable','rate_limit_exceeded','invalid_input','precondition_failed',
+        'precondition_required','authentication_required','access_denied','resource_not_found','domain_conflict'}
+    code=value.get('code') if isinstance(value,dict) else None
+    return dict(status=status,savedContentMatches=matches,
+        problemCode=code if isinstance(code,str) and code in codes else 'unclassified')
+
+
 def managed_process_protected(text):
     """Only fixed proc fields; never return process/environment/credential data."""
     if not isinstance(text,str) or len(text)>65536:return False
@@ -404,7 +418,19 @@ def main():
             if code!=201:raise ValueError('Authenticated Note creation failed')
             note=json.loads(body);note_path='/api/notes/'+note['id'];old_etag=require_core_validator(headers)
             code,headers,body=json_request(note_path,{'title':'Budget fixture saved','markdown':'budgetmarker explicitly saved'},method='PUT',if_match=old_etag)
-            if code!=200 or json.loads(body)['markdown']!='budgetmarker explicitly saved':raise ValueError('Explicit Note Save failed')
+            saved=saved_note_observation(code,body)
+            if code!=200 or not saved['savedContentMatches']:
+                metadata=json.loads(run('docker','inspect',app))[0]
+                logs=subprocess.run(['docker','logs','--tail','200',app],capture_output=True,text=True,timeout=15)
+                resources=subprocess.run(['docker','exec',app,'/bin/sh','-c',
+                    'cat /sys/fs/cgroup/memory.current /sys/fs/cgroup/memory.peak; '
+                    'cat /sys/fs/cgroup/memory.events /sys/fs/cgroup/cpu.stat'],
+                    capture_output=True,text=True,timeout=10)
+                print(json.dumps(dict(explicitSaveFailed=True,**saved,
+                    container=safe_container_state(metadata),
+                    resources=safe_resource_observation(resources.stdout),
+                    safeDiagnostics=safe_startup_diagnostics(logs.stdout+logs.stderr))),flush=True)
+                raise ValueError('Explicit Note Save failed')
             saved_etag=require_core_validator(headers)
             if saved_etag==old_etag:raise ValueError('Saved Note validator did not advance')
             code,headers,body=request(note_path,cookie=owner_cookie,extra={'Accept-Encoding':'gzip, br'})
