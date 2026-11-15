@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parent
 
 
 class FullBundleSupervisorTests(unittest.TestCase):
-    def run_supervisor(self, missing=None, origin='https://preview.example.test', port='10000'):
+    def run_supervisor(self, missing=None, origin='https://preview.example.test', port='10000', resolver_exit=0):
         bash = os.environ.get('BASH_FOR_TESTS') or shutil.which('bash')
         self.assertIsNotNone(bash)
         with tempfile.TemporaryDirectory() as temporary:
@@ -29,6 +29,7 @@ class FullBundleSupervisorTests(unittest.TestCase):
                 'nginx': 'case "$*" in *" -t "*) exit 0 ;; esac\nexec sleep 60',
                 'redis-server': 'exec sleep 60',
                 'java': 'printf "%s\\n" "$@" > "$FIXTURE_ARGS"\nexit 0',
+                'resolve-disclosure': 'printf "%s\\n" "$FIXTURE_DISCLOSURE"\nexit '+str(resolver_exit),
             }.items():
                 path = fake / name
                 path.write_text('#!/bin/bash\n' + body + '\n', newline='\n')
@@ -42,6 +43,7 @@ class FullBundleSupervisorTests(unittest.TestCase):
                 ('/tmp/nkw-video-recovery', './video-recovery'),
                 ('/tmp/nkw-video-scratch', './video-scratch'),
                 ('/jdk/bin/java', './bin/java'),
+                ('/app/resolve-disclosure.sh', './bin/resolve-disclosure'),
             ):
                 script = script.replace(original, replacement)
             executable = root / 'supervisor.sh'
@@ -49,6 +51,7 @@ class FullBundleSupervisorTests(unittest.TestCase):
             env = os.environ.copy()
             bash_dir = Path(bash).resolve().parent
             env.update(PORT=port, FIXTURE_ARGS=(root / 'args').as_posix(),
+                       FIXTURE_DISCLOSURE=(secret / 'processing-disclosure.json').resolve().as_posix(),
                        PATH=os.pathsep.join(str(p) for p in (fake, bash_dir, bash_dir.parent / 'usr/bin')))
             result = subprocess.run([bash, '--noprofile', '--norc', executable.as_posix()],
                                     cwd=root, env=env, capture_output=True, text=True, timeout=15)
@@ -78,6 +81,11 @@ class FullBundleSupervisorTests(unittest.TestCase):
 
     def test_external_port_cannot_expand_listener_surface(self):
         result, args = self.run_supervisor(port='8080')
+        self.assertEqual(2, result.returncode)
+        self.assertEqual('', args)
+
+    def test_disclosure_admission_failure_stops_before_application_launch(self):
+        result, args = self.run_supervisor(resolver_exit=2)
         self.assertEqual(2, result.returncode)
         self.assertEqual('', args)
 

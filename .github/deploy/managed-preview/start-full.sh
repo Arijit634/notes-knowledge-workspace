@@ -6,6 +6,7 @@ umask 077
 for name in runtime.properties processing-disclosure.json preview-origin preview-password-hash redis.conf; do
     [[ -f "/etc/secrets/$name" && -r "/etc/secrets/$name" ]] || { echo 'preview_configuration_unavailable' >&2; exit 2; }
 done
+disclosure_path=$(/app/resolve-disclosure.sh /etc/secrets) || exit 2
 PREVIEW_ORIGIN=$(cat /etc/secrets/preview-origin)
 [[ "$PREVIEW_ORIGIN" =~ ^https://[a-z0-9][a-z0-9.-]+\.[a-z]{2,}$ ]] || { echo 'preview_origin_invalid' >&2; exit 2; }
 PREVIEW_HOST=${PREVIEW_ORIGIN#https://}
@@ -57,8 +58,8 @@ nginx -e /dev/null -c /tmp/nkw-edge/nginx.conf & edge_pid=$!
     --notes.media-runtime.pdf.recovery-directory=/tmp/nkw-pdf-recovery \
     --notes.media-runtime.video.recovery-directory=/tmp/nkw-video-recovery \
     --notes.media-runtime.video.scratch-directory=/tmp/nkw-video-scratch \
-    --knowledge.processing-disclosure.path=/etc/secrets/processing-disclosure.json & java_pid=$!
-unset PREVIEW_HOST PREVIEW_ORIGIN
+    "--knowledge.processing-disclosure.path=$disclosure_path" & java_pid=$!
+unset PREVIEW_HOST PREVIEW_ORIGIN disclosure_path
 # Any unexpected constituent exit invalidates the entire instance. The hosting
 # platform may restart it; no child is silently replaced or reported healthy.
 set +e
