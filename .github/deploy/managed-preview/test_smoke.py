@@ -14,7 +14,7 @@ smoke=importlib.util.module_from_spec(spec);spec.loader.exec_module(smoke)
 class PublicAccessTests(unittest.TestCase):
     def verify(self, override=None):
         calls=[]
-        def request(path, *, authenticated, method='GET', cookie=None, csrf=None, extra=None):
+        def request(path, *, authenticated, method='GET', cookie=None, csrf=None, extra=None, data=None):
             self.assertFalse(authenticated)
             calls.append((path,method,cookie))
             extra=extra or {}
@@ -27,6 +27,7 @@ class PublicAccessTests(unittest.TestCase):
             if path=='/api/auth/logout':code=403
             if path in ('/actuator/health','/management','/debug','/v3/api-docs'):code=404
             if path=='/_preview/ready' and method=='POST':code=405
+            if path=='/api/notes' and method=='OPTIONS':code=403
             value=(code,headers,body)
             return override(path,method,cookie,csrf,extra,value) if override else value
         result=smoke.verify_public_access(request,'/api/notes/fixture','/api/notes/fixture/attachments/fixture','owner','valid-proof','other')
@@ -47,6 +48,7 @@ class PublicAccessTests(unittest.TestCase):
                lambda p,m,c,s,e:p=='/api/auth/logout' and s is None,
                lambda p,m,c,s,e:p=='/api/auth/logout' and s=='synthetic-invalid-proof',
                lambda p,m,c,s,e:p=='/api/auth/logout' and 'Origin' in e,
+               lambda p,m,c,s,e:p=='/api/notes' and m=='OPTIONS',
                lambda p,m,c,s,e:p=='/actuator/health',
                lambda p,m,c,s,e:p=='/login' and 'Host' in e,
                lambda p,m,c,s,e:p=='/_preview/ready']

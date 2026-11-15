@@ -132,6 +132,11 @@ def verify_public_access(request, note_path, attachment_path, owner_cookie, owne
     checked('/api/auth/logout', 403, method='POST', cookie=owner_cookie, csrf='synthetic-invalid-proof')
     checked('/api/auth/logout', 403, method='POST', cookie=owner_cookie, csrf=owner_csrf,
         extra={'Origin': 'https://evil.invalid'})
+    checked('/api/notes', 403, method='OPTIONS', extra={'Origin':'https://evil.invalid',
+        'Access-Control-Request-Method':'POST'})
+    checked('/api/notes/search',200,method='POST',cookie=owner_cookie,csrf=owner_csrf,
+        extra={'Origin':'https://preview.example.test','Content-Type':'application/json'},
+        data=json.dumps({'query':'budgetmarker'}).encode())
     for path in ('/actuator/health', '/management', '/debug', '/v3/api-docs'):
         checked(path, 404)
     checked('/_preview/ready', 405, method='POST')
