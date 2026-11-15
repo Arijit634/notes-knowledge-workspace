@@ -101,6 +101,38 @@ def managed_process_protected(text):
     patterns += [r'(?m)^'+name+r':\s*0{16}\s*$' for name in ('CapInh','CapPrm','CapEff','CapAmb')]
     return all(re.search(pattern,text) for pattern in patterns)
 
+def verify_public_access(request, note_path, attachment_path, owner_cookie, owner_csrf, other_cookie):
+    """Public entry must reach the application without granting private authority."""
+    def checked(path, status, **kwargs):
+        code, headers, body = request(path, authenticated=False, **kwargs)
+        if code != status:
+            raise ValueError('Public entry security boundary failed')
+        return headers, body
+    headers, _ = checked('/login', 200)
+    if headers.get('WWW-Authenticate'):
+        raise ValueError('Public entry retained the extra gate')
+    checked('/login', 200, extra={'Authorization': 'Basic '+base64.b64encode(b'preview:incorrect').decode()})
+    checked('/login', 400, extra={'Host': 'evil.invalid'})
+    checked('/login', 200, extra={'Forwarded': 'host=evil.invalid;proto=http',
+        'X-Forwarded-Host': 'evil.invalid', 'X-Forwarded-Proto': 'http'})
+    checked('/api/auth/session', 200)
+    for path in (note_path, attachment_path+'/content'):
+        _, body = checked(path, 401)
+        if json.loads(body).get('status') != 401:
+            raise ValueError('Public private-resource denial was not an application problem')
+        checked(path, 404, cookie=other_cookie)
+    headers, _ = checked(note_path, 200, cookie=owner_cookie)
+    require_core_validator(headers)
+    checked('/api/auth/logout', 403, method='POST', cookie=owner_cookie)
+    checked('/api/auth/logout', 403, method='POST', cookie=owner_cookie, csrf='synthetic-invalid-proof')
+    checked('/api/auth/logout', 403, method='POST', cookie=owner_cookie, csrf=owner_csrf,
+        extra={'Origin': 'https://evil.invalid'})
+    for path in ('/actuator/health', '/management', '/debug', '/v3/api-docs'):
+        checked(path, 404)
+    checked('/_preview/ready', 405, method='POST')
+    return dict(publicEntryWithoutSharedPassword=True,privateOwnershipAndCsrfRetained=True,
+        publicModeStrongValidatorPreserved=True,untrustedForwardingAndManagementDenied=True)
+
 def synthetic_pdf():
     """One fictional text page, with byte-accurate xref offsets for real validation."""
     stream=b'BT /F1 12 Tf 10 60 Td (Synthetic full runtime fixture) Tj ET\n'
@@ -299,12 +331,13 @@ def main():
                 rejected=subprocess.run(migration+additional+command+[configuration],capture_output=True,timeout=60)
                 if rejected.returncode!=2:raise ValueError('Untrusted certificate or wrong hostname accepted')
             run(*migration,'-e','JAVA_TOOL_OPTIONS='+trust,*command,'/fixture/migration.properties')
-            def start_app():
+            def start_app(access_mode=None):
                 # Reproduce the actual managed-host root/process settings. The
                 # full image must install its own inherited kernel boundary.
                 filesystem=[] if full else ['--read-only']
                 temporary='uid=0,gid=0,mode=1777' if full else 'uid=65533,gid=65533,mode=700'
-                identifier=run('docker','create','--network',network,*filesystem,
+                mode=[] if access_mode is None else ['-e','NKW_HOSTED_ACCESS_MODE='+access_mode]
+                identifier=run('docker','create','--network',network,*filesystem,*mode,
                     '--memory','512m' if full else '448m','--memory-swap','512m' if full else '448m','--cpus','0.1','--pids-limit','34583' if full else '512',
                     '--cap-drop','ALL','--security-opt','no-new-privileges',
                     '--tmpfs',f'/tmp:rw,noexec,nosuid,nodev,size={256 if full else 32}m,'+temporary,
@@ -637,8 +670,14 @@ def main():
             if shutdown>=30 or metadata['State']['ExitCode']!=0:raise ValueError('Graceful bounded shutdown failed')
             run('docker','rm',app);app=None
             run('docker','stop',pg);run('docker','rm',pg);pg=None
-            pg=start_postgres();started=time.monotonic();app=start_app();await_readiness(request,timeout=900 if full else 600);second=round(time.monotonic()-started,2)
+            pg=start_postgres();started=time.monotonic();app=start_app('public' if full else None);await_readiness(request,timeout=900 if full else 600);second=round(time.monotonic()-started,2)
             verify_disclosure_projection()
+            public_access={}
+            if full:
+                public_access=verify_public_access(request,note_path,attachments[0][0],owner_cookie,owner_csrf,other_cookie)
+                # Unpublish remains authoritative after removing only the gate.
+                if request(public_path,authenticated=False)[0]!=404 or request(public_media,authenticated=False)[0]!=404:
+                    raise ValueError('Public mode revived an unavailable publication')
             code,headers,_=request('/api/auth/csrf',cookie=cookie)
             if code!=200 or headers.get('Set-Cookie'):raise ValueError('Session did not survive recreation')
             code,headers,body=request(note_path,cookie=owner_cookie)
@@ -689,6 +728,8 @@ def main():
                     primaryOidcRecentAuthDenialAndIndependentPasswordProof=True,
                     immutableParserClasspathVerified=True,
                     projectedDisclosureSnapshotQualified=True,projectedDisclosureColdStarts=2,
+                    publicAccessModeQualified=True,defaultPrivateGateQualified=True,
+                    publicModeRecreatedSessionAndDataPreserved=True,publicAccessChecks=public_access,
                     events=[dict(step='production_startup',nativePreflight=True),
                         dict(step='authorized_storage',crossOwnerDenied=True,csrfRequired=True),
                         dict(step='public_private_separation',privateResourceDenied=True)])

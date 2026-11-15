@@ -11,6 +11,55 @@ from email.message import Message
 spec=importlib.util.spec_from_file_location('managed_smoke',Path(__file__).with_name('smoke.py'))
 smoke=importlib.util.module_from_spec(spec);spec.loader.exec_module(smoke)
 
+class PublicAccessTests(unittest.TestCase):
+    def verify(self, override=None):
+        calls=[]
+        def request(path, *, authenticated, method='GET', cookie=None, csrf=None, extra=None):
+            self.assertFalse(authenticated)
+            calls.append((path,method,cookie))
+            extra=extra or {}
+            code=200;headers={};body=b'{}'
+            if path=='/login' and extra.get('Host')=='evil.invalid':code=400
+            if path in ('/api/notes/fixture','/api/notes/fixture/attachments/fixture/content'):
+                code=200 if cookie=='owner' else 404 if cookie=='other' else 401
+                body=json.dumps({'status':code}).encode()
+                headers={'ETag':'"fixture_current"','Cache-Control':'no-store, no-transform'}
+            if path=='/api/auth/logout':code=403
+            if path in ('/actuator/health','/management','/debug','/v3/api-docs'):code=404
+            if path=='/_preview/ready' and method=='POST':code=405
+            value=(code,headers,body)
+            return override(path,method,cookie,csrf,extra,value) if override else value
+        result=smoke.verify_public_access(request,'/api/notes/fixture','/api/notes/fixture/attachments/fixture','owner','valid-proof','other')
+        return result,calls
+
+    def test_public_entry_keeps_all_private_boundaries(self):
+        result,calls=self.verify()
+        self.assertTrue(all(result.values()))
+        self.assertTrue(calls)
+
+    def test_remaining_password_gate_or_anonymous_leak_fails(self):
+        for path in ('/login','/api/notes/fixture','/api/notes/fixture/attachments/fixture/content'):
+            with self.subTest(path=path),self.assertRaises(ValueError):
+                self.verify(lambda p,m,c,s,e,v: (401 if p=='/login' else 200,v[1],v[2]) if p==path and c is None and not e else v)
+
+    def test_other_owner_csrf_management_and_host_bypass_fail(self):
+        cases=[lambda p,m,c,s,e:p.startswith('/api/notes/') and c=='other',
+               lambda p,m,c,s,e:p=='/api/auth/logout' and s is None,
+               lambda p,m,c,s,e:p=='/api/auth/logout' and s=='synthetic-invalid-proof',
+               lambda p,m,c,s,e:p=='/api/auth/logout' and 'Origin' in e,
+               lambda p,m,c,s,e:p=='/actuator/health',
+               lambda p,m,c,s,e:p=='/login' and 'Host' in e,
+               lambda p,m,c,s,e:p=='/_preview/ready']
+        for predicate in cases:
+            with self.subTest(predicate=cases.index(predicate)),self.assertRaises(ValueError):
+                self.verify(lambda p,m,c,s,e,v:(200,v[1],v[2]) if predicate(p,m,c,s,e) else v)
+
+    def test_weak_mutation_validator_or_html_denial_fails(self):
+        with self.assertRaises(ValueError):
+            self.verify(lambda p,m,c,s,e,v:(v[0],{'ETag':'W/"fixture"','Cache-Control':'no-store, no-transform'},v[2]) if p=='/api/notes/fixture' and c=='owner' else v)
+        with self.assertRaises(ValueError):
+            self.verify(lambda p,m,c,s,e,v:(v[0],v[1],b'{}') if p=='/api/notes/fixture' and c is None else v)
+
 class ReadinessTests(unittest.TestCase):
     def test_save_observation_preserves_status_without_private_response_data(self):
         result=smoke.saved_note_observation(503,b'{"code":"service_unavailable","detail":"private-marker","traceId":"private-marker"}')
