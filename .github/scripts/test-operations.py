@@ -156,7 +156,8 @@ class ImageReconciliationContracts(unittest.TestCase):
         audit=dict(image=self.image,architecture='arm64',selectedRuntimeAndLinkageInspected=True,
             vulnerableLibcPresent=True,inspectedElfFiles=20,copiedNativeCodeExecuted=False,
             runtimeCredentialsUsed=False,glibcDeclaredFixed=False,inventorySha256='d'*64,
-            regexConsumers=[],wideScanfConsumers=[],supervisorScriptMatchesSource=False)
+            regexConsumers=[],wideScanfConsumers=[],supervisorScriptMatchesSource=False,
+            cxxImportAuditVersion=1,libstdcxxPresent=True,libstdcxxDeclaredFixed=False,cxxFileStreamConsumers=[])
         self.facts['glibcInputAudit']=audit
         self.assertTrue(self.run_policy()['releaseSecurityReconciled'])
         audit['wideScanfConsumers']=[dict(path='BOOT-INF/lib/example.jar!/native.so',wideScanf=['__isoc99_vswscanf'])]
@@ -169,6 +170,23 @@ class ImageReconciliationContracts(unittest.TestCase):
         self.assertTrue(self.run_policy()['releaseSecurityReconciled'])
         audit['inventorySha256']=''
         with self.assertRaisesRegex(ValueError,'unreviewed_glibc_input_path'):self.run_policy()
+
+    def test_cpp_file_stream_assessment_rejects_missing_or_new_native_consumers(self):
+        audit=dict(image=self.image,architecture='arm64',selectedRuntimeAndLinkageInspected=True,
+            vulnerableLibcPresent=True,inspectedElfFiles=20,copiedNativeCodeExecuted=False,
+            runtimeCredentialsUsed=False,glibcDeclaredFixed=False,inventorySha256='d'*64,
+            regexConsumers=[],wideScanfConsumers=[],supervisorScriptMatchesSource=False,
+            cxxImportAuditVersion=1,libstdcxxPresent=True,libstdcxxDeclaredFixed=False,cxxFileStreamConsumers=[])
+        self.facts['glibcInputAudit']=audit
+        self.assertTrue(self.run_policy()['releaseSecurityReconciled'])
+        for field in ('cxxImportAuditVersion','libstdcxxPresent','libstdcxxDeclaredFixed','cxxFileStreamConsumers'):
+            original=audit.pop(field)
+            with self.subTest(missing=field),self.assertRaisesRegex(ValueError,'unreviewed_libstdcxx_file_stream_path'):self.run_policy()
+            audit[field]=original
+        audit['cxxFileStreamConsumers']=[dict(path='/opt/example.so',cxxFileStreams=['_ZNSt8ios_base15sync_with_stdioEb'])]
+        with self.assertRaisesRegex(ValueError,'unreviewed_libstdcxx_file_stream_path'):self.run_policy()
+        audit['cxxFileStreamConsumers']=[];audit['libstdcxxDeclaredFixed']=True
+        with self.assertRaisesRegex(ValueError,'unreviewed_libstdcxx_file_stream_path'):self.run_policy()
 
     def test_exact_non_shipped_component_retains_the_original_failed_scan(self):
         before=copy.deepcopy(self.scan)

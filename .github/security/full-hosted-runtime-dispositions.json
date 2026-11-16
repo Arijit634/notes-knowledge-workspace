@@ -4,7 +4,7 @@
   "architectures": [
     "amd64"
   ],
-  "productionSourceSha256": "6051b508f9db2e051e76e47fd5b9e1781212a5cc2a4b3070589b040786ab6fd6",
+  "productionSourceSha256": "75f780cbff9310c37b65eb98c13df016d8d72bc6e8b9610cf5382725fe72ac7c",
   "findings": [
     {
       "VulnerabilityID": "CVE-2026-76642",
