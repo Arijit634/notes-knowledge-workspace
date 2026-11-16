@@ -7,12 +7,6 @@ import { noteKeys } from './NotesKeys'
 export function AttachmentMediaViewer({ auth, noteId, attachmentId, sourceLocation }: { auth: AuthRuntime; noteId: string; attachmentId: string; sourceLocation?: unknown }) {
   const [failed, setFailed] = useState(false)
   const [selectedPage, setSelectedPage] = useState<number | null>(null), [zoom, setZoom] = useState(false)
-  const nativeMediaRef = useCallback((media: HTMLMediaElement | null) => {
-    if (!media) return
-    // React's ref cleanup also runs when an error/authority change removes the
-    // player. Detaching alone does not stop native playback or release its bytes.
-    return () => { media.pause(); media.removeAttribute('src'); media.load() }
-  }, [])
   useEffect(() => { setFailed(false); setSelectedPage(null); setZoom(false) }, [noteId, attachmentId])
   const detail = useQuery({ queryKey: noteKeys.attachment(auth.session.viewerScope, noteId, attachmentId),
     queryFn: ({ signal }) => attachmentsApi.detail(auth, noteId, attachmentId, signal), retry: false, staleTime: 0 }, auth.queries)
@@ -21,6 +15,13 @@ export function AttachmentMediaViewer({ auth, noteId, attachmentId, sourceLocati
   const page = typeof location.page === 'number' && Number.isSafeInteger(location.page) && location.page > 0 && location.page <= (file?.pageCount ?? 0) ? location.page : null
   const time = typeof location.timeStart === 'number' && Number.isFinite(location.timeStart) && location.timeStart >= 0 && location.timeStart <= (file?.durationSeconds ?? 0) ? location.timeStart : null
   const mediaUrl = time !== null ? `${url}#t=${time}` : url
+  const nativeMediaRef = useCallback((media: HTMLMediaElement | null) => {
+    if (!media) return
+    // Ref replay must restore the accepted source after cleanup. Actual removal
+    // must still stop playback and release its private bytes immediately.
+    if (media.getAttribute('src') !== mediaUrl) media.setAttribute('src', mediaUrl)
+    return () => { media.pause(); media.removeAttribute('src'); media.load() }
+  }, [mediaUrl])
   const activePage = Math.min(Math.max(selectedPage ?? page ?? 1, 1), file?.pageCount ?? 1)
   return <>
     <h2 id="attachment-viewer-title">{file && !detail.isError ? file.displayFilename : 'Attachment'}</h2>

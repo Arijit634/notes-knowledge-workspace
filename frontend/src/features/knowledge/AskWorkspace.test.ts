@@ -81,4 +81,16 @@ describe('Retained search workflow and bounded status checks', () => {
     auth.ask.resume({ ...entry, operation }); auth.ask.observe({ ...operation, status: 'completed', result }); expect(auth.ask.snapshot().result).toBe(result)
     auth.ask.observe({ ...operation, status: 'obsolete', result: null }); expect(auth.ask.snapshot().result).toBeNull(); auth.queries.clear()
   })
+  it('keeps a newly typed question when an earlier history recheck finishes late', async () => {
+    const auth = new AuthRuntime(), entry: SearchHistory = { id, query: 'Earlier saved question', status: 'completed', submittedAt: operation.submittedAt, expiresAt: operation.expiresAt!, result, operation: null }
+    let complete!: (entry: SearchHistory) => void
+    vi.spyOn(knowledgeApi, 'historyDetail').mockImplementation(() => new Promise(resolve => { complete = resolve }))
+    auth.ask.resume(entry)
+    const pending = auth.ask.revalidate(new AbortController().signal)
+    auth.ask.input('My newly typed question')
+    complete(entry); await pending
+    expect(auth.ask.snapshot().input).toBe('My newly typed question')
+    expect(auth.ask.snapshot().result).toBeNull()
+    auth.queries.clear()
+  })
 })

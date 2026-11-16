@@ -5,7 +5,7 @@
     "amd64",
     "arm64"
   ],
-  "productionSourceSha256": "e7a3e31a6edea265560ec9a7857b174cd3fd36bcf9eb530bf38dcc74c87be6d7",
+  "productionSourceSha256": "75f780cbff9310c37b65eb98c13df016d8d72bc6e8b9610cf5382725fe72ac7c",
   "findings": [
     {
       "VulnerabilityID": "CVE-2011-3374",
@@ -5944,6 +5944,93 @@
       "compensatingControls": "Retain the raw UNKNOWN-severity scanner finding and require fresh exact-image absence, source/package binding and all existing runtime/authorization controls. Missing or present tool evidence blocks release.",
       "remediationTarget": "Re-evaluate the upstream stable release or vendor package by 2026-11-18; do not extend an existing review automatically.",
       "vendorEvidenceSha256": "c6652571986f5da71820eb8dfb58e5e51aab3a0ddcdf2c31b8b766c6842b728e"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-125709",
+      "PkgName": "gcc-14-base",
+      "InstalledVersion": "14.2.0-19",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-125709",
+      "kind": "unreachable-precondition",
+      "rationale": "PR118099 requires a caller of C++ filebuf/fstreams, or desynchronization of standard C++ streams, followed by repeated single-character writes after an I/O failure. Require an exact-image inventory of the selected runtime ELF/linkage closure and same-architecture nested JNI assets with zero imports of those file-stream families and sync_with_stdio. The library remains shipped and is not declared fixed. Any new or missing caller evidence blocks qualification; the Java product exposes no arbitrary native-code or symbol-invocation interface.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "libstdcxxFileStreamsNotReferenced"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-125709",
+        "https://github.com/gcc-mirror/gcc/commit/2d296e9f024edbb49cad1f3ebb5ae34c71ea5f7a"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-16",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Retain all raw scanner findings and severities. Bind the complete source/package/image and measured ELF/JNI inventory. Require positive native compiled parser controls, zero affected callers and every existing confinement, authorization and privacy gate. No copied native code is executed by the audit and no runtime credentials are provided.",
+      "remediationTarget": "Re-evaluate the stable vendor package or a qualified upstream backport by 2026-11-18. This does not renew or extend any existing review.",
+      "vendorEvidenceSha256": "cd0066d7ced39b154f618493ec795366d07a9f388f7025bb9848b3bb9d856e95"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-125709",
+      "PkgName": "libgcc-s1",
+      "InstalledVersion": "14.2.0-19",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-125709",
+      "kind": "unreachable-precondition",
+      "rationale": "PR118099 requires a caller of C++ filebuf/fstreams, or desynchronization of standard C++ streams, followed by repeated single-character writes after an I/O failure. Require an exact-image inventory of the selected runtime ELF/linkage closure and same-architecture nested JNI assets with zero imports of those file-stream families and sync_with_stdio. The library remains shipped and is not declared fixed. Any new or missing caller evidence blocks qualification; the Java product exposes no arbitrary native-code or symbol-invocation interface.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "libstdcxxFileStreamsNotReferenced"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-125709",
+        "https://github.com/gcc-mirror/gcc/commit/2d296e9f024edbb49cad1f3ebb5ae34c71ea5f7a"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-16",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Retain all raw scanner findings and severities. Bind the complete source/package/image and measured ELF/JNI inventory. Require positive native compiled parser controls, zero affected callers and every existing confinement, authorization and privacy gate. No copied native code is executed by the audit and no runtime credentials are provided.",
+      "remediationTarget": "Re-evaluate the stable vendor package or a qualified upstream backport by 2026-11-18. This does not renew or extend any existing review.",
+      "vendorEvidenceSha256": "cd0066d7ced39b154f618493ec795366d07a9f388f7025bb9848b3bb9d856e95"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-125709",
+      "PkgName": "libstdc++6",
+      "InstalledVersion": "14.2.0-19",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-125709",
+      "kind": "unreachable-precondition",
+      "rationale": "PR118099 requires a caller of C++ filebuf/fstreams, or desynchronization of standard C++ streams, followed by repeated single-character writes after an I/O failure. Require an exact-image inventory of the selected runtime ELF/linkage closure and same-architecture nested JNI assets with zero imports of those file-stream families and sync_with_stdio. The library remains shipped and is not declared fixed. Any new or missing caller evidence blocks qualification; the Java product exposes no arbitrary native-code or symbol-invocation interface.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "libstdcxxFileStreamsNotReferenced"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-125709",
+        "https://github.com/gcc-mirror/gcc/commit/2d296e9f024edbb49cad1f3ebb5ae34c71ea5f7a"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-16",
+      "expiresOn": "2026-11-18",
+      "compensatingControls": "Retain all raw scanner findings and severities. Bind the complete source/package/image and measured ELF/JNI inventory. Require positive native compiled parser controls, zero affected callers and every existing confinement, authorization and privacy gate. No copied native code is executed by the audit and no runtime credentials are provided.",
+      "remediationTarget": "Re-evaluate the stable vendor package or a qualified upstream backport by 2026-11-18. This does not renew or extend any existing review.",
+      "vendorEvidenceSha256": "cd0066d7ced39b154f618493ec795366d07a9f388f7025bb9848b3bb9d856e95"
     }
   ],
   "limits": [

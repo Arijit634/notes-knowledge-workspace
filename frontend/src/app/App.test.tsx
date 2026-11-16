@@ -15,7 +15,7 @@ beforeEach(() => {
 })
 
 function mount(path: string, state: 'anonymous' | 'mfaRequired' | 'authenticated' = 'anonymous',
-  handler?: (method: string, path: string, body: unknown) => Response,
+  handler?: (method: string, path: string, body: unknown) => Response | Promise<Response>,
   sessionBody?: object, securityBody: object = { email: 'person@example.test', passwordConfigured: true,
     mfaState: 'disabled', oidcLinks: [] }, csrfHandler?: () => Response | Promise<Response>) {
   window.history.replaceState(null, '', path)
@@ -43,6 +43,79 @@ afterEach(() => {
 })
 
 describe('authentication browser journey', () => {
+  for (const initial of ['authenticated', 'mfaRequired'] as const) {
+    for (const flow of [
+      { path: '/forgot-password', endpoint: '/api/auth/password-reset/requests', button: 'Request reset link' },
+      { path: '/verify-email', endpoint: '/api/auth/email-verification/requests', button: 'Request a new link' },
+    ]) it(`${initial} must complete logout before ${flow.endpoint}`, async () => {
+      let release!: () => void
+      const pending = new Promise<void>(resolve => { release = resolve })
+      const session: { state: 'anonymous' | typeof initial; challengeId?: string } = { state: initial,
+        ...(initial === 'mfaRequired' ? { challengeId: challenge } : {}) }
+      const { auth, calls } = mount(flow.path, initial, async (_method, path) => {
+        if (path === '/api/auth/logout') { await pending; session.state = 'anonymous'; return noContent() }
+        if (path === flow.endpoint) return json({}, 202)
+        return noContent()
+      }, session)
+      const signOut = await screen.findByRole('button', { name: 'Sign out and continue' })
+      expect(screen.queryByLabelText('Email')).toBeNull()
+      fireEvent.click(signOut)
+      await waitFor(() => expect(calls.filter(c => c.path === '/api/auth/logout')).toHaveLength(1))
+      expect(calls.some(c => c.path === flow.endpoint)).toBe(false)
+      expect(screen.queryByLabelText('Email')).toBeNull()
+      release()
+      const email = await screen.findByLabelText('Email')
+      expect(auth.state).toBe('anonymous')
+      fireEvent.change(email, { target: { value: 'person@example.test' } })
+      fireEvent.click(screen.getByRole('button', { name: flow.button }))
+      await screen.findByText(/If the details can be used/)
+      expect(calls.filter(c => c.path === flow.endpoint)).toHaveLength(1)
+    })
+  }
+
+  for (const link of [
+    { path: '/reset-password#token=synthetic.reset-token', title: 'Choose a new password', token: 'resetToken' as const,
+      endpoint: '/api/auth/password-reset/confirmations' },
+    { path: '/verify-email#token=synthetic.verify-token', title: 'Verify your email', token: 'verificationToken' as const,
+      endpoint: '/api/auth/email-verification/confirmations' },
+  ]) it(`requires reopening ${link.token} after signing out rather than carrying its capability across logout`, async () => {
+    const { auth, calls } = mount(link.path, 'authenticated')
+    await screen.findByRole('heading', { name: link.title })
+    expect(window.location.hash).toBe('')
+    expect(screen.queryByLabelText('New password')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Confirm email' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }))
+    await screen.findByText('You are signed out. Reopen the link from your email to continue.')
+    expect(auth.continuation[link.token]).toBeNull()
+    expect(calls.some(c => c.path === link.endpoint)).toBe(false)
+    expect(screen.queryByLabelText('New password')).toBeNull()
+    expect(window.localStorage.length).toBe(0); expect(window.sessionStorage.length).toBe(0)
+  })
+
+  it('takes a Google-only account from recent authentication to signed-out first-password setup', async () => {
+    const { auth, calls } = mount('/reauth', 'authenticated', (_method, path) =>
+      path === '/api/auth/password-reset/requests' ? json({}, 202) : noContent(), undefined,
+      { email: 'person@example.test', passwordConfigured: false, mfaState: 'disabled', oidcLinks: [] })
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign out and set password' }))
+    await screen.findByRole('heading', { name: 'Set an app password' })
+    expect(auth.state).toBe('anonymous')
+    expect(calls.filter(c => c.path === '/api/auth/logout')).toHaveLength(1)
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'person@example.test' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send password link' }))
+    await screen.findByText(/If the details can be used/)
+    expect(calls.filter(c => c.path === '/api/auth/password-reset/requests')).toHaveLength(1)
+    expect(calls.some(c => c.path === '/api/me/security/password')).toBe(false)
+  })
+
+  it('keeps recovery requests inaccessible when logout fails', async () => {
+    const { auth, calls } = mount('/forgot-password', 'authenticated', () => new Response('', { status: 503 }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign out and continue' }))
+    await screen.findByRole('alert')
+    expect(auth.state).toBe('authenticated')
+    expect(screen.queryByLabelText('Email')).toBeNull()
+    expect(calls.some(c => c.path === '/api/auth/password-reset/requests')).toBe(false)
+  })
+
   it('presents Google-only login in the isolated preview without promising email delivery', async () => {
     document.querySelector('meta[name="nkw-presentation"]')!.setAttribute('content', 'google=enabled;email=disabled;preview=private')
     const { calls } = mount('/login')
@@ -268,11 +341,30 @@ describe('authentication browser journey', () => {
     await waitFor(() => expect(calls.filter(call => call.path === '/api/auth/csrf')).toHaveLength(2))
     expect(auth.state).toBe('anonymous')
     fireEvent.popState(window)
-    expect(screen.getByRole('button', { name: 'Set new password' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Set new password' })).toBeNull()
+    expect(screen.getByText('Completing password change…')).toBeTruthy()
     releaseProof(json({ csrfToken: 'synthetic-reset-proof' }))
     await screen.findByText(/password was reset/i)
     expect(auth.state).toBe('anonymous')
     expect(calls.find(call => call.path === '/api/auth/password-reset/confirmations')?.body).toEqual({ token, newPassword: 'New-synthetic-password-123' })
+  })
+
+  it('does not retry a completed password reset when protection bootstrap fails', async () => {
+    let confirmed = false
+    const { auth, calls } = mount('/reset-password#token=synthetic.reset-token', 'anonymous', () => {
+      confirmed = true
+      return noContent()
+    }, undefined, undefined, () => confirmed
+      ? json({ type: 'about:blank', title: 'Unavailable', status: 503 }, 503)
+      : json({ csrfToken: 'synthetic-proof' }))
+    fireEvent.change(await screen.findByLabelText('New password'), { target: { value: 'New-synthetic-password-123' } })
+    fireEvent.change(screen.getByLabelText('Confirm new password'), { target: { value: 'New-synthetic-password-123' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Set new password' }))
+    await screen.findByText('Your password was reset. Refresh this page before signing in with your new password.')
+    expect(auth.state).toBe('anonymous')
+    expect(auth.continuation.resetToken).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Set new password' })).toBeNull()
+    expect(calls.filter(call => call.path === '/api/auth/password-reset/confirmations')).toHaveLength(1)
   })
 
   it('sends no email in password recent authentication', async () => {
@@ -288,9 +380,7 @@ describe('authentication browser journey', () => {
     const { calls } = mount('/reauth', 'authenticated', undefined, undefined,
       { email: 'person@example.test', passwordConfigured: false, mfaState: 'disabled', oidcLinks: [] })
     await screen.findByRole('heading', { name: 'Confirm your identity' })
-    await screen.findByText(/set an application password first/i)
-    expect(screen.getByRole('link', { name: 'Set an application password' }).getAttribute('href'))
-      .toBe('/forgot-password')
+    await screen.findByRole('button', { name: 'Sign out and set password' })
     expect(screen.queryByRole('button', { name: 'Confirm with Google' })).toBeNull()
     expect(screen.queryByLabelText('Password')).toBeNull()
     expect(calls.some(call => call.path.includes('/reauth/oidc/'))).toBe(false)

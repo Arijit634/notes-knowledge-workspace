@@ -22,14 +22,20 @@ export class AskWorkspace {
     if (operation.operationId !== this.value.operation?.operationId || operation === this.value.operation) return
     this.update({ operation, result: operation.status === 'completed' ? operation.result : null })
   }
-  resume(entry: SearchHistory) { this.clear(); this.update({ input: entry.query, period: filterForSavedPeriod(entry.savedDuring ?? null), submittedDuring: entry.savedDuring ?? null, historyId: entry.id, operation: entry.operation, result: entry.result }) }
+  private sameIntent(expected: Snapshot) {
+    return this.value.serial === expected.serial && this.value.input === expected.input && this.value.period === expected.period
+  }
+  resume(entry: SearchHistory, expected?: Snapshot) {
+    if (expected && !this.sameIntent(expected)) return
+    this.clear(); this.update({ input: entry.query, period: filterForSavedPeriod(entry.savedDuring ?? null), submittedDuring: entry.savedDuring ?? null, historyId: entry.id, operation: entry.operation, result: entry.result })
+  }
   async revalidate(signal: AbortSignal) {
-    const id = this.value.historyId, scope = this.auth.session.viewerScope
+    const id = this.value.historyId, scope = this.auth.session.viewerScope, expected = this.value
     if (!id) return
     this.update({ result: null })
     try { const entry = await knowledgeApi.historyDetail(this.auth, id, signal)
-      if (!signal.aborted && this.value.historyId === id && scope === this.auth.session.viewerScope) this.resume(entry)
-    } catch (e) { if (!signal.aborted && this.value.historyId === id && scope === this.auth.session.viewerScope) this.update({ result: null, operation: null, error: featureError(e) }) }
+      if (!signal.aborted && this.value.historyId === id && scope === this.auth.session.viewerScope) this.resume(entry, expected)
+    } catch (e) { if (!signal.aborted && this.value.historyId === id && scope === this.auth.session.viewerScope && this.sameIntent(expected)) this.update({ result: null, operation: null, error: featureError(e) }) }
   }
   async submit() {
     if (this.value.busy || !this.value.input.trim()) return

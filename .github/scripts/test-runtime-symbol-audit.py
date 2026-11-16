@@ -11,10 +11,30 @@ class RuntimeSymbolImports(unittest.TestCase):
         data='\n'.join(' 12: 0 0 FUNC GLOBAL DEFAULT UND '+n+'@GLIBC_2.2.5 (2)' for n in names)
         self.assertEqual(sorted(names),audit.references(data)['wideScanf'])
     def test_definitions_are_not_mistaken_for_call_sites(self):
-        self.assertEqual(dict(regex=[],wideScanf=[]),audit.references(' 12: 123 4 FUNC GLOBAL DEFAULT 12 regexec@@GLIBC_2.2.5'))
+        self.assertEqual(dict(regex=[],wideScanf=[],cxxFileStreams=[]),audit.references(' 12: 123 4 FUNC GLOBAL DEFAULT 12 regexec@@GLIBC_2.2.5'))
     def test_narrow_scanf_and_java_or_pcre_regex_are_distinct(self):
         data='\n'.join(' 12: 0 0 FUNC GLOBAL DEFAULT UND '+n for n in ['scanf','__isoc99_sscanf','fscanf','pcre2_compile_8','JavaPattern'])
-        self.assertEqual(dict(regex=[],wideScanf=[]),audit.references(data))
+        self.assertEqual(dict(regex=[],wideScanf=[],cxxFileStreams=[]),audit.references(data))
+    def test_file_stream_abi_names_and_stdio_desynchronization_are_detected(self):
+        names=['_ZNSt13basic_filebufIcSt11char_traitsIcEEC1Ev',
+            '_ZTVNSt7__cxx1113basic_filebufIwSt11char_traitsIwEEE',
+            '_ZNSt14basic_ofstreamIcSt11char_traitsIcEED1Ev',
+            '_ZNSt8ios_base15sync_with_stdioEb']
+        data='\n'.join(' 12: 0 0 FUNC GLOBAL DEFAULT UND '+name+'@GLIBCXX_3.4 (2)' for name in names)
+        self.assertEqual(sorted(names),audit.references(data)['cxxFileStreams'])
+        definition=' 12: 123 4 FUNC GLOBAL DEFAULT 12 '+names[0]
+        self.assertEqual([],audit.references(definition)['cxxFileStreams'])
+    @unittest.skipUnless(sys.platform=='linux','Native Linux ELF metadata qualification')
+    def test_real_cpp_file_stream_and_desynchronization_imports_without_execution(self):
+        sources={
+            'file':'#include <fstream>\nint main(){std::ofstream f("unused-synthetic-path");f.put(\'x\');}\n',
+            'stdio':'#include <iostream>\nint main(){std::ios_base::sync_with_stdio(false);std::cout.put(\'x\');}\n'}
+        with tempfile.TemporaryDirectory() as directory:
+            for name,source in sources.items():
+                code=pathlib.Path(directory,name+'.cc');binary=pathlib.Path(directory,name);code.write_text(source)
+                subprocess.run(['g++','-O0',str(code),'-o',str(binary)],check=True,capture_output=True)
+                result=audit.references(subprocess.check_output(['readelf','--dyn-syms','--wide',str(binary)],text=True))
+                self.assertTrue(result['cxxFileStreams'])
     @unittest.skipUnless(sys.platform=='linux','Native Linux ELF metadata qualification')
     def test_real_elf_imports_detect_both_affected_families_without_execution(self):
         sources={

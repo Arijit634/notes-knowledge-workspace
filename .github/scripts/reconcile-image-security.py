@@ -38,9 +38,13 @@ def controls(facts, smoke):
     restricted_regex=(isinstance(regex,list) and (not regex or
         audit.get('supervisorScriptMatchesSource') is True and bool(facts.get('fullHostedBundle'))
         and all(r.get('path')=='/bin/bash' and r.get('regex') for r in regex)))
+    file_streams=audit.get('cxxFileStreamConsumers')
     return {
         'glibcWideScanfNotReferenced':audited and isinstance(wide,list) and not wide,
         'glibcRegexInputsRestricted':audited and restricted_regex,
+        'libstdcxxFileStreamsNotReferenced':audited and audit.get('cxxImportAuditVersion')==1
+            and audit.get('libstdcxxPresent') is True and audit.get('libstdcxxDeclaredFixed') is False
+            and isinstance(file_streams,list) and not file_streams,
         'numericUnprivilegedImage':facts['imageUser']=='65533:65533',
         'setuidSetgidAbsent':facts['setuidSetgidFilesAbsent'] is True,
         'trustedFontConfiguration':facts['fontConfigurationRootOwnedAndNotWritable'] is True,
@@ -114,6 +118,7 @@ def reconcile(scan,facts,smoke,policy,today=None):
     if 'glibcInputAudit' in facts:
         require(active['glibcWideScanfNotReferenced'] and active['glibcRegexInputsRestricted'],
             'unreviewed_glibc_input_path')
+        require(active['libstdcxxFileStreamsNotReferenced'],'unreviewed_libstdcxx_file_stream_path')
     if 'serviceBoundaryArtifactSha256' in facts.get('fullHostedBundle',{}):
         require(active['managedServiceBoundaryQualified'],'managed_service_boundary_evidence_missing')
     findings=scan['vulnerabilities']

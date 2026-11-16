@@ -3,7 +3,7 @@ import { sourceEditor, openTools } from './editor-support'
 
 const noteId = '01990a55-9e12-7ac4-8f5b-31aa4a91d401', first = '01990a55-9e12-7ac4-8f5b-31aa4a91d402', second = '01990a55-9e12-7ac4-8f5b-31aa4a91d403'
 // Reserved synthetic pixel; no personal or provider media is used by the browser double.
-const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jR1sAAAAASUVORK5CYII=', 'base64')
+const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGPoTH7xHwAGIQLUOE9m5AAAAABJRU5ErkJggg==', 'base64')
 async function backend(page: Page, pdf = false) {
   let markdown = 'Saved body', uploaded = false, removed = false
   const mutations: string[] = []

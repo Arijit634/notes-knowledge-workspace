@@ -44,8 +44,9 @@ const AskKnowledgePage = lazy(() => import('../features/knowledge/AskKnowledgePa
 const ProfileSettingsPage = lazy(() => import('../features/profile/ProfileSettingsPage').then(m => ({ default: m.ProfileSettingsPage })))
 const PrivacySettingsPage = lazy(() => import('../features/knowledge/PrivacySettingsPage').then(m => ({ default: m.PrivacySettingsPage })))
 import { NotesWorkspace } from '../features/notes/NotesWorkspace'
+type RecoveryNavigationState = { passwordSetup: boolean; reopenSecurityLink: boolean }
 const Context = createContext<{ auth: AuthRuntime; version: number;
-  completeNavigation: (destination: string, from?: string) => Promise<void> } | null>(null)
+  completeNavigation: (destination: string, from?: string, recoveryState?: RecoveryNavigationState) => Promise<void> } | null>(null)
 const useAuth = () => {
   const value = useContext(Context)
   if (!value) throw new Error('Auth runtime unavailable')
@@ -135,17 +136,54 @@ function Signup() {
     <p className="footnote">Already have an account? <Link to="/login">Log in</Link></p>
   </Shell>
 }
+type RecoveryPath = '/forgot-password' | '/reset-password' | '/verify-email'
+function RecoverySignOut({ to, reopenLink = false, passwordSetup = false }: {
+  to: RecoveryPath; reopenLink?: boolean; passwordSetup?: boolean
+}) {
+  const auth = useAuth(), navigate = useSignInNavigation()
+  const [busy, setBusy] = useState(false), [error, setError] = useState('')
+  async function continueSignedOut() {
+    setBusy(true); setError('')
+    try {
+      // Logout clears private state and capability material. A security link must
+      // be reopened; never stash its token across that authority transition.
+      await auth.logout()
+      await navigate(to, undefined, { passwordSetup, reopenSecurityLink: reopenLink })
+    } catch (cause) { setError(message(cause)) }
+    finally { setBusy(false) }
+  }
+  return <section>
+    <p>{passwordSetup ? 'Set an app password by email. This signs you out. Then sign in with that password to continue.'
+      : reopenLink ? 'Sign out, then reopen the link from your email to continue.'
+        : 'Sign out before requesting a password or verification link.'}</p>
+    {error && <Alert>{error}</Alert>}
+    <button type="button" onClick={continueSignedOut} disabled={busy}>
+      {passwordSetup ? 'Sign out and set password' : reopenLink ? 'Sign out' : 'Sign out and continue'}
+    </button>
+  </section>
+}
+function AnonymousRecovery({ to, reopenLink, children }: {
+  to: RecoveryPath; reopenLink: boolean; children: ReactNode
+}) {
+  const auth = useAuth()
+  if (auth.state === 'unknown') return <p role="status">Checking your session…</p>
+  return auth.state === 'anonymous' ? children : <RecoverySignOut to={to} reopenLink={reopenLink} />
+}
 function BlindRequest({ kind }: { kind: 'verification' | 'reset' }) {
   const auth = useAuth()
+  const location = useLocation()
+  const passwordSetup = kind === 'reset' && location.state?.passwordSetup === true
   const [email, setEmail] = useState(''), [accepted, setAccepted] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('')
   const path = kind === 'verification' ? '/api/auth/email-verification/requests' : '/api/auth/password-reset/requests'
   async function submit(event: FormEvent) { event.preventDefault(); setBusy(true); setError(''); try { await auth.api.request('POST', path, { json: { email } }); setAccepted(true) } catch (e) { setError(message(e)) } finally { setBusy(false) } }
   if (auth.presentation.privatePreview) return <p>Email delivery is not enabled in this private preview. <Link to="/login">Continue with Google</Link></p>
+  if (auth.state !== 'anonymous') return <RecoverySignOut to={kind === 'reset' ? '/forgot-password' : '/verify-email'} />
   return accepted ? <BlindAcceptedPanel /> : <form onSubmit={submit}><label htmlFor="email">Email</label><input id="email" type="email" autoComplete="email" required maxLength={254} value={email} onChange={e => setEmail(e.target.value)} />
-    {error && <Alert>{error}</Alert>}<button disabled={busy}>{kind === 'verification' ? 'Request a new link' : 'Request reset link'}</button></form>
+    {error && <Alert>{error}</Alert>}<button disabled={busy}>{kind === 'verification' ? 'Request a new link' : passwordSetup ? 'Send password link' : 'Request reset link'}</button></form>
 }
 function VerifyEmail() {
   const auth = useAuth()
+  const location = useLocation()
   const [state, setState] = useState<'ready' | 'success' | 'invalid'>(auth.continuation.verificationToken ? 'ready' : 'invalid')
   const [busy, setBusy] = useState(false), [error, setError] = useState('')
   async function confirm() {
@@ -156,10 +194,12 @@ function VerifyEmail() {
     finally { setBusy(false) }
   }
   return <Shell title="Verify your email" eyebrow="Account verification">
-    {state === 'ready' && <><p>Your link is ready to confirm.</p><button onClick={confirm} disabled={busy}>Confirm email</button></>}
+    <AnonymousRecovery to="/verify-email" reopenLink={!!auth.continuation.verificationToken}>
+    {state === 'ready' && auth.continuation.verificationToken && <><p>Your link is ready to confirm.</p><button onClick={confirm} disabled={busy}>Confirm email</button></>}
     {state === 'success' && <><p role="status">Email confirmed. You can now log in.</p><Link to="/login">Log in</Link></>}
-    {state === 'invalid' && <><p role="status">This link is missing, expired, or unavailable. You can request another.</p><BlindRequest kind="verification" /></>}
+    {(state === 'invalid' || (state === 'ready' && !auth.continuation.verificationToken)) && <><p role="status">{location.state?.reopenSecurityLink ? 'You are signed out. Reopen the link from your email to continue.' : 'This link is missing, expired, or unavailable. You can request another.'}</p><BlindRequest kind="verification" /></>}
     {error && <Alert>{error}</Alert>}
+    </AnonymousRecovery>
   </Shell>
 }
 function Login() {
@@ -211,21 +251,36 @@ function Mfa() {
       {error && <Alert>{error}</Alert>}<button disabled={busy}>Verify and continue</button></form><button className="text-button" onClick={restart}>Restart sign in</button>
   </Shell>
 }
-function ForgotPassword() { return <Shell title="Reset your password" eyebrow="Account recovery"><p>Enter your email to request a reset link.</p><BlindRequest kind="reset" /><p className="footnote"><Link to="/login">Back to log in</Link></p></Shell> }
+function ForgotPassword() {
+  const location = useLocation(), setup = location.state?.passwordSetup === true
+  return <Shell title={setup ? 'Set an app password' : 'Reset your password'} eyebrow="Account recovery">
+    <p>{setup ? 'Enter your email to get a link for your app password.' : 'Enter your email to request a reset link.'}</p>
+    <BlindRequest kind="reset" /><p className="footnote"><Link to="/login">Back to log in</Link></p>
+  </Shell>
+}
 function ResetPassword() {
   const auth = useAuth()
-  const [state, setState] = useState<'ready' | 'success' | 'invalid'>(auth.continuation.resetToken ? 'ready' : 'invalid')
+  const location = useLocation()
+  const [state, setState] = useState<'ready' | 'completing' | 'success' | 'protectionUnavailable' | 'invalid'>(auth.continuation.resetToken ? 'ready' : 'invalid')
   const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<{ password: string; confirmation: string }>()
   const [error, setError] = useState('')
   const submit = handleSubmit(async values => {
     if (values.password !== values.confirmation) { setError('Passwords do not match.'); return }
     const token = auth.continuation.resetToken; if (!token) return
     setError('')
-    try { await auth.api.request('POST', '/api/auth/password-reset/confirmations', { json: { token, newPassword: values.password } }); reset(); auth.continuation.clear(); await auth.establish('anonymous'); setState('success') }
+    try {
+      await auth.api.request('POST', '/api/auth/password-reset/confirmations', { json: { token, newPassword: values.password } })
+      reset(); auth.continuation.clear(); setState('completing')
+      // The password has already changed. A subsequent protection bootstrap
+      // failure must never invite resubmission of the consumed email link.
+      try { await auth.establish('anonymous'); setState('success') }
+      catch { setState('protectionUnavailable') }
+    }
     catch (e) { if (e instanceof ApiProblemError && [404, 409, 410].includes(e.problem.status)) { reset(); auth.continuation.clear(); setState('invalid') } else setError(message(e)) }
   })
   return <Shell title="Choose a new password" eyebrow="Account recovery">
-    {state === 'ready' && <form onSubmit={submit} noValidate><label htmlFor="new-password">New password</label><input id="new-password" type="password" autoComplete="new-password" aria-invalid={!!errors.password} aria-describedby={errors.password ? 'new-password-error' : undefined}
+    <AnonymousRecovery to="/reset-password" reopenLink={!!auth.continuation.resetToken}>
+    {state === 'ready' && auth.continuation.resetToken && <form onSubmit={submit} noValidate><label htmlFor="new-password">New password</label><input id="new-password" type="password" autoComplete="new-password" aria-invalid={!!errors.password} aria-describedby={errors.password ? 'new-password-error' : undefined}
       {...register('password', { required: 'Enter a new password.', minLength: { value: 12, message: 'Use at least 12 characters.' }, maxLength: { value: 256, message: 'Use no more than 256 characters.' } })} />
       <p className="field-help">12–256 characters. Choose a unique password.</p>
       {errors.password && <span id="new-password-error" className="field-error">{errors.password.message}</span>}
@@ -234,7 +289,10 @@ function ResetPassword() {
       {errors.confirmation && <span id="confirm-password-error" className="field-error">{errors.confirmation.message}</span>}
       {error && <Alert>{error}</Alert>}<button disabled={isSubmitting}>Set new password</button></form>}
     {state === 'success' && <><p role="status">Your password was reset. Sign in with your new password.</p><Link to="/login">Log in</Link></>}
-    {state === 'invalid' && <><p role="status">This link is missing, expired, or unavailable.</p><Link to="/forgot-password">Request another link</Link></>}
+    {state === 'completing' && <p role="status">Completing password change…</p>}
+    {state === 'protectionUnavailable' && <p role="alert">Your password was reset. Refresh this page before signing in with your new password.</p>}
+    {(state === 'invalid' || (state === 'ready' && !auth.continuation.resetToken)) && <><p role="status">{location.state?.reopenSecurityLink ? 'You are signed out. Reopen the link from your email to continue.' : 'This link is missing, expired, or unavailable.'}</p><Link to="/forgot-password">Request another link</Link></>}
+    </AnonymousRecovery>
   </Shell>
 }
 function AuthComplete() {
@@ -260,7 +318,7 @@ function RecentAuth() {
       : summary.isPending ? <p role="status">Checking available confirmation method…</p>
         : summary.isError ? <Alert>{message(summary.error)}</Alert>
           : summary.data.passwordConfigured ? <form onSubmit={submit}><label htmlFor="reauth-password">Password</label><input id="reauth-password" type="password" autoComplete="current-password" required maxLength={1024} value={password} onChange={e => setPassword(e.target.value)} />{error && <Alert>{error}</Alert>}<button disabled={busy}>Confirm with password</button></form>
-            : <><p>To confirm sensitive changes, set an application password first.</p><Link to="/forgot-password">Set an application password</Link></>}
+            : <RecoverySignOut to="/forgot-password" passwordSetup />}
     <p className="footnote"><Link to="/">Back to home</Link></p></Shell>
 }
 function AuthRoutes() {
@@ -316,5 +374,5 @@ export function App({ auth = defaultRuntime }: { auth?: AuthRuntime }) {
   const [router] = useState(() => createBrowserRouter([{ path: '*', element: <AuthRoutes />, errorElement: <SafeRouteError /> }]))
   useEffect(() => auth.subscribe(() => rerender(value => value + 1)), [auth])
   useEffect(() => { auth.bootstrap().catch(() => setStartupError(true)) }, [auth])
-  return <Context.Provider value={{ auth, version, completeNavigation: (destination, from) => router.navigate(destination, { replace: true, flushSync: true, state: from ? { from } : undefined }) }}><AppearanceRoot />{startupError ? <Shell title="Session unavailable"><Alert>We could not check your session safely. Refresh to try again.</Alert></Shell> : <RouterProvider router={router} onError={() => { /* Never report raw route errors or private props. */ }} />}</Context.Provider>
+  return <Context.Provider value={{ auth, version, completeNavigation: (destination, from, recoveryState) => router.navigate(destination, { replace: true, flushSync: true, state: recoveryState ?? (from ? { from } : undefined) }) }}><AppearanceRoot />{startupError ? <Shell title="Session unavailable"><Alert>We could not check your session safely. Refresh to try again.</Alert></Shell> : <RouterProvider router={router} onError={() => { /* Never report raw route errors or private props. */ }} />}</Context.Provider>
 }

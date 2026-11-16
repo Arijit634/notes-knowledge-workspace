@@ -4,11 +4,30 @@ import { App, PRODUCT_ROUTES } from '../../app/App'
 import { AuthRuntime } from '../auth/AuthRuntime'
 import { publicationKeys } from './PublicationCache'
 import * as f from './PublicFixtures.test-support'
+import { PublicMediaView } from '../discovery/PublicUi'
+import type { PublicMedia } from './PublishingApi'
+import { StrictMode } from 'react'
 
 type Call = { path: string; method: string; body: unknown; headers: Headers }
 const json = (body: unknown, status = 200, headers = {}) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...headers } })
 const problem = (status: number, code = 'access_denied') => json({ type: 'about:blank', title: 'Request rejected', status, code, instance: '/api/public/publications', traceId: `tr_${'a'.repeat(32)}` }, status, { 'Content-Type': 'application/problem+json' })
 const runtimes: AuthRuntime[] = []
+
+describe('public media lifecycle', () => {
+  it.each(['audio', 'video'] as const)('releases %s playback when leaving the public reader', kind => {
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {})
+    const load = vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {})
+    const media: PublicMedia = { ...f.media, mediaKind: kind, mediaType: kind === 'audio' ? 'audio/wav' : 'video/mp4' }
+    const view = render(<StrictMode><PublicMediaView media={media} /></StrictMode>)
+    const player = view.container.querySelector(kind)!
+    expect(player.getAttribute('src')).toBe(media.contentUrl)
+    const pauses = pause.mock.calls.length, loads = load.mock.calls.length
+    view.unmount()
+    expect(pause).toHaveBeenCalledTimes(pauses + 1)
+    expect(player.getAttribute('src')).toBeNull()
+    expect(load).toHaveBeenCalledTimes(loads + 1)
+  })
+})
 function mount(path: string, state = 'anonymous', handler: (c: Call) => Response | Promise<Response> | undefined = () => undefined) {
   const calls: Call[] = []; window.history.replaceState(null, '', path)
   vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {

@@ -11,14 +11,19 @@ REGEX={'regcomp','regexec','regfree','re_compile_pattern','re_compile_fastmap',
 WIDE=re.compile(r'^(?:__[^ ]*)?(?:v?swscanf|v?fwscanf|v?wscanf)(?:_chk)?$')
 
 def references(output):
-    regex=set();wide=set()
+    regex=set();wide=set();file_streams=set()
     for line in output.splitlines():
         found=re.search(r'\bUND\s+(\S+)',line)
         if not found:continue
         name=found[1].split('@',1)[0]
         if name in REGEX or name.removeprefix('__') in REGEX:regex.add(name)
         if WIDE.fullmatch(name):wide.add(name)
-    return dict(regex=sorted(regex),wideScanf=sorted(wide))
+        # Filebuf construction/vtables and desynchronizing standard streams can
+        # reach PR118099. Keep ABI namespaces/version suffixes conservative.
+        if name.startswith('_Z') and any(part in name for part in (
+                'basic_filebuf','basic_fstream','basic_ifstream','basic_ofstream',
+                'sync_with_stdio')):file_streams.add(name)
+    return dict(regex=sorted(regex),wideScanf=sorted(wide),cxxFileStreams=sorted(file_streams))
 
 def command(*args):
     result=subprocess.run(args,capture_output=True,timeout=90)
@@ -92,9 +97,12 @@ def audit(image,container,jar,directory,architecture,full,inspect):
                     before=len(records);record(target,entry.filename+'!/'+native.filename,True)
                     embedded+=int(len(records)>before);target.unlink()
     if not any(path.endswith('/libc.so.6') for path in paths) or len(records)<10:raise ValueError('runtime_symbol_coverage_incomplete')
+    libstdcxx_present=any('libstdc++.so.' in path for path in paths)
     return dict(schemaVersion=1,image=image,architecture=architecture,selectedRuntimeAndLinkageInspected=True,
         inspectedElfFiles=len(records),sameArchitectureJniFiles=embedded,vulnerableLibcPresent=True,
         regexConsumers=[r for r in records if r['regex']],wideScanfConsumers=[r for r in records if r['wideScanf']],
+        cxxImportAuditVersion=1,libstdcxxPresent=libstdcxx_present,libstdcxxDeclaredFixed=False,
+        cxxFileStreamConsumers=[r for r in records if r['cxxFileStreams']],
         supervisorScriptMatchesSource=supervisor_matches,
         absentOptionalDesktopDependencies=missing,
         inspectedSourceBytes=total,inventorySha256=hashlib.sha256(json.dumps(records,sort_keys=True,separators=(',',':')).encode()).hexdigest(),
