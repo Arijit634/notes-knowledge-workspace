@@ -496,8 +496,38 @@ class PasswordRecoveryIntegrationTest {
         assertThat(jdbc.queryForObject("""
                 select password_verifier is null from identity.account where user_id = ?
                 """, Boolean.class, userId)).isTrue();
-        request(bootstrap(), email);
-        recovery.confirm(resetToken(email), "NewSyntheticPassword-2026!");
+        Browser signedIn = bootstrap(sessionCookie(persistedSession(userId, "ROLE_USER", false)));
+        mvc.perform(post("/api/auth/password-reset/requests")
+                .cookie(signedIn.cookie()).header("X-CSRF-TOKEN", signedIn.csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"" + email + "\"}"))
+                .andExpect(status().isForbidden());
+        assertThat(resetCount(email)).isZero();
+        mvc.perform(post("/api/me/security/mfa/totp/enrollments")
+                .cookie(signedIn.cookie()).header("X-CSRF-TOKEN", signedIn.csrf()))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/auth/logout")
+                .cookie(signedIn.cookie()).header("X-CSRF-TOKEN", signedIn.csrf()))
+                .andExpect(status().isNoContent());
+        Browser anonymous = bootstrap();
+        request(anonymous, email);
+        String reset = resetToken(email);
+        mvc.perform(post("/api/auth/password-reset/confirmations")
+                .cookie(anonymous.cookie()).header("X-CSRF-TOKEN", anonymous.csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"token\":\"" + reset
+                        + "\",\"newPassword\":\"NewSyntheticPassword-2026!\"}"))
+                .andExpect(status().isNoContent());
+        var signedOut = mvc.perform(get("/api/auth/session").cookie(anonymous.cookie()))
+                .andExpect(status().isOk()).andReturn().getResponse();
+        assertThat(signedOut.getContentAsString()).contains("anonymous");
+        Browser passwordSession = bootstrap(login(bootstrap(), email, "NewSyntheticPassword-2026!"));
+        var summary = mvc.perform(get("/api/me/security").cookie(passwordSession.cookie()))
+                .andExpect(status().isOk()).andReturn().getResponse();
+        assertThat(summary.getContentAsString()).contains("\"passwordConfigured\":true");
+        mvc.perform(post("/api/me/security/mfa/totp/enrollments")
+                .cookie(passwordSession.cookie()).header("X-CSRF-TOKEN", passwordSession.csrf()))
+                .andExpect(status().isCreated());
         String verifier = jdbc.queryForObject("""
                 select password_verifier from identity.account where user_id = ?
                 """, String.class, userId);
@@ -869,10 +899,17 @@ class PasswordRecoveryIntegrationTest {
     }
 
     private Browser bootstrap() throws Exception {
-        var result = mvc.perform(get("/api/auth/csrf"))
+        return bootstrap(null);
+    }
+
+    private Browser bootstrap(Cookie cookie) throws Exception {
+        var request = get("/api/auth/csrf");
+        if (cookie != null) request.cookie(cookie);
+        var result = mvc.perform(request)
                 .andExpect(status().isOk()).andReturn();
         String json = result.getResponse().getContentAsString();
-        return new Browser(result.getResponse().getCookie("SESSION"),
+        Cookie updated = result.getResponse().getCookie("SESSION");
+        return new Browser(updated == null ? cookie : updated,
                 json.substring(json.indexOf(":\"") + 2, json.lastIndexOf('"')));
     }
 

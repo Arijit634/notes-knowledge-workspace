@@ -78,13 +78,21 @@ test('public media uses strict snapshot-owned URLs and native presentation', asy
   s.publicMedia = ['image', 'audio', 'video', 'pdf'].map((kind, i) => ({ ...f.media, id: f.mediaId.slice(0, -1) + (i + 3), mediaKind: kind, mediaType: ['image/png', 'audio/wav', 'video/mp4', 'application/pdf'][i], displayName: `Synthetic ${kind}`, contentUrl: `/api/public/publications/${f.pubId}/media/${f.mediaId.slice(0, -1) + (i + 3)}/content` })) as typeof s.publicMedia
   // Deterministically inspect the native player before releasing an unsupported
   // synthetic container. This is presenter/failure evidence, not codec qualification.
-  let releaseVideo!: () => void
-  const pendingVideo = new Promise<void>(resolve => { releaseVideo = resolve })
-  await page.route(`**${s.publicMedia[2].contentUrl}`, async route => { await pendingVideo; await route.fulfill({ status: 200, contentType: 'video/mp4', body: 'synthetic-unsupported-container' }) })
+  let releaseMedia!: () => void
+  const pendingMedia = new Promise<void>(resolve => { releaseMedia = resolve })
+  for (const media of s.publicMedia.filter(m => m.mediaKind === 'audio' || m.mediaKind === 'video')) {
+    await page.route(`**${media.contentUrl}`, async route => { await pendingMedia; await route.fulfill({ status: 200, contentType: media.mediaType, body: 'synthetic-unsupported-container' }) })
+  }
   await page.goto(`/publication/${f.pubId}`, { waitUntil: 'domcontentloaded' }); await expect(page.locator('.public-media')).toHaveCount(4)
   await expect(page.locator('audio')).toHaveAttribute('preload', 'none'); await expect(page.locator('video')).toHaveAttribute('controls', '')
   await expect(page.getByRole('link', { name: 'Open Synthetic pdf' })).toHaveAttribute('rel', 'noopener noreferrer')
-  releaseVideo(); await expect(page.getByText('This media is unavailable or this browser cannot decode it. It may have been removed.')).toBeVisible()
+  // preload is a browser hint, not a decoder guarantee. Inspect the intended
+  // attributes above, then explicitly load both controlled invalid sources.
+  await page.locator('audio,video').evaluateAll(players => players.forEach(element => {
+    const player = element as HTMLMediaElement; player.preload = 'auto'; player.load()
+  }))
+  releaseMedia()
+  await expect(page.getByText('This media is unavailable or this browser cannot decode it. It may have been removed.')).toHaveCount(2)
   expect(s.calls.some(c => c.path.startsWith('/api/notes/'))).toBe(false)
 })
 test('anonymous Like offers safe password sign-in continuation to the public article', async ({ page }) => {

@@ -14,28 +14,40 @@ function observeFragmentAtAuthRequests(page: Page) {
 async function fakeBackend(page: Page, initial: 'anonymous' | 'mfaRequired' | 'authenticated' = 'anonymous',
   passwordConfigured = true) {
   let state = initial
+  let passwordAvailable = passwordConfigured
   await page.route('**/api/notes', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [], nextCursor: null }) }))
   await page.route('**/api/me/security', route => route.fulfill({ status: 200,
     contentType: 'application/json', body: JSON.stringify({ email: 'person@example.test',
-      passwordConfigured, mfaState: 'disabled', oidcLinks: [] }) }))
+      passwordConfigured: passwordAvailable, mfaState: 'disabled', oidcLinks: [] }) }))
   await page.route('**/api/me/profile', route => route.fulfill({ json: { displayName: 'Synthetic writer', biography: '', handle: null, avatar: null, updatedAt: null } }))
   await page.route('**/api/auth/**', async route => {
     const request = route.request(), path = new URL(request.url()).pathname
     const method = request.method()
+    if (method === 'POST' && state !== 'anonymous' && [
+      '/api/auth/registrations', '/api/auth/login/password',
+      '/api/auth/password-reset/requests', '/api/auth/password-reset/confirmations',
+      '/api/auth/email-verification/requests', '/api/auth/email-verification/confirmations',
+    ].includes(path)) return route.fulfill({ status: 403, contentType: 'application/problem+json',
+      body: JSON.stringify({ type: 'about:blank', title: 'Request rejected', status: 403,
+        code: 'access_denied', instance: path, traceId: `tr_${'a'.repeat(32)}` }) })
     let status = 200, body: object | null = {}
     if (path === '/api/auth/session') body = state === 'mfaRequired' ? { state, challengeId: challenge } : { state }
     else if (path === '/api/auth/csrf') body = { csrfToken: 'synthetic-csrf-proof' }
     else if (path === '/api/auth/registrations' || path === '/api/auth/password-reset/requests'
         || path === '/api/auth/email-verification/requests') { status = 202; body = {} }
     else if (path === '/api/auth/login/password') {
+      if (!passwordAvailable) return route.fulfill({ status: 401,
+        contentType: 'application/problem+json', body: JSON.stringify({ type: 'about:blank',
+          title: 'Request rejected', status: 401, code: 'invalid_credentials', instance: path,
+          traceId: `tr_${'a'.repeat(32)}` }) })
       const data = request.postDataJSON() as { email?: string }
       state = data.email === 'mfa@example.test' ? 'mfaRequired' : 'authenticated'
       status = state === 'mfaRequired' ? 202 : 200
       body = state === 'mfaRequired' ? { state, challengeId: challenge } : { state }
     } else if (path.includes('/mfa/challenges/')) { state = 'authenticated'; body = { state } }
     else if (path === '/api/auth/logout') { state = 'anonymous'; status = 204; body = null }
+    else if (path === '/api/auth/password-reset/confirmations') { passwordAvailable = true; status = 204; body = null }
     else if (path === '/api/auth/email-verification/confirmations'
-        || path === '/api/auth/password-reset/confirmations'
         || path === '/api/auth/reauth/password') { status = 204; body = null }
     else throw new Error('Unexpected authentication request: ' + method + ' ' + path)
     await route.fulfill({ status, contentType: body === null ? undefined : 'application/json', body: body === null ? '' : JSON.stringify(body) })
@@ -137,10 +149,42 @@ test('recent authentication offers password proof only when configured', async (
 test('passwordless recent authentication guides to existing recovery', async ({ page }) => {
   await fakeBackend(page, 'authenticated', false)
   await page.goto('/reauth')
-  await expect(page.getByText(/set an application password first/i)).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Set an application password' }))
-    .toHaveAttribute('href', '/forgot-password')
+  await expect(page.getByRole('button', { name: 'Sign out and set password', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Confirm with Google' })).toHaveCount(0)
+})
+
+test('passwordless MFA prerequisite signs out before recovery and permits first-password login', async ({ page }) => {
+  await fakeBackend(page, 'authenticated', false)
+  await page.route('**/api/me/security/mfa/totp/enrollments', route => route.fulfill({
+    status: 403, contentType: 'application/problem+json', body: JSON.stringify({
+      type: 'about:blank', title: 'Confirm your identity', status: 403,
+      code: 'recent_authentication_required', instance: '/api/me/security/mfa/totp/enrollments',
+      traceId: `tr_${'a'.repeat(32)}`,
+    }),
+  }))
+  const recoveryStatuses: number[] = []
+  page.on('response', response => {
+    if (new URL(response.url()).pathname === '/api/auth/password-reset/requests') recoveryStatuses.push(response.status())
+  })
+  await page.goto('/settings/security/mfa')
+  await page.getByRole('button', { name: 'Set up MFA', exact: true }).click()
+  await expect(page).toHaveURL('/reauth')
+  await page.getByRole('button', { name: 'Sign out and set password', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Set an app password', exact: true })).toBeVisible()
+  await page.getByLabel('Email', { exact: true }).fill('person@example.test')
+  await page.getByRole('button', { name: 'Send password link', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Check your email', exact: true })).toBeVisible()
+  expect(recoveryStatuses).toEqual([202])
+  await page.goto('/reset-password#token=synthetic.reset-token')
+  await page.getByLabel('New password', { exact: true }).fill('New-synthetic-password-123!')
+  await page.getByLabel('Confirm new password', { exact: true }).fill('New-synthetic-password-123!')
+  await page.getByRole('button', { name: 'Set new password', exact: true }).click()
+  await expect(page.getByText(/Your password was reset/)).toBeVisible()
+  await page.getByRole('link', { name: 'Log in', exact: true }).click()
+  await page.getByLabel('Email', { exact: true }).fill('person@example.test')
+  await page.getByLabel('Password', { exact: true }).fill('New-synthetic-password-123!')
+  await page.getByRole('button', { name: 'Log in', exact: true }).click()
+  await expect(page).toHaveURL('/notes')
 })
 
 test('authenticated authority cannot remain on login', async ({ page }) => {

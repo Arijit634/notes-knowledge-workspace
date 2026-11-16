@@ -65,6 +65,14 @@ afterEach(() => {
 })
 
 describe('security settings browser journey', () => {
+  it('uses email setup for a first app password instead of an unusable change-password form', async () => {
+    const { calls } = mount('/settings/security', { summary: { ...summary, passwordConfigured: false } })
+    const setup = await screen.findByRole('link', { name: 'Set an app password by email' })
+    expect(setup.getAttribute('href')).toBe('/reauth')
+    expect(screen.queryByLabelText('New password')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Change password' })).toBeNull()
+    expect(calls.some(call => call.method === 'PUT' && call.path === '/api/me/security/password')).toBe(false)
+  })
   it('does not start Google linking when the deployment disables that provider', async () => {
     const { calls } = mount('/settings/security', { googleEnabled: false })
     const button = await screen.findByRole('button', { name: 'Link Google sign-in' })

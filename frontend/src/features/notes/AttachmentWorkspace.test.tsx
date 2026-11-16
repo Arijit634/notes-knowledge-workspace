@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
+import { StrictMode } from 'react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from '../../app/App'
 import { AuthRuntime } from '../auth/AuthRuntime'
@@ -332,14 +333,15 @@ describe('Attachment viewer and editor integration', () => {
   it.each(['audio', 'video'])('stops and releases %s on viewer removal', async mediaKind => {
     const { auth } = runtime(call => call.path.endsWith(`/${id}`)
       ? json({ ...file, mediaKind, mediaType: mediaKind === 'audio' ? 'audio/wav' : 'video/mp4' }, 200, { ETag: '"a1"' }) : undefined)
-    const view = render(<MemoryRouter><AttachmentMediaViewer auth={auth} noteId={noteId} attachmentId={id} /></MemoryRouter>)
+    const view = render(<StrictMode><MemoryRouter><AttachmentMediaViewer auth={auth} noteId={noteId} attachmentId={id} /></MemoryRouter></StrictMode>)
     await screen.findByRole('heading', { name: 'synthetic.png' })
     const media = view.container.querySelector<HTMLMediaElement>(mediaKind)!
     expect(media.hasAttribute('src')).toBe(true)
+    const pauses = vi.mocked(media.pause).mock.calls.length, loads = vi.mocked(media.load).mock.calls.length
     view.unmount()
-    expect(media.pause).toHaveBeenCalledTimes(1)
+    expect(media.pause).toHaveBeenCalledTimes(pauses + 1)
     expect(media.hasAttribute('src')).toBe(false)
-    expect(media.load).toHaveBeenCalledTimes(1)
+    expect(media.load).toHaveBeenCalledTimes(loads + 1)
   })
   it.each([[2, 2], [99, 1], [-1, 1]])('bounds cited PDF page %s to authorized metadata', async (cited, expected) => {
     const { auth } = runtime(call => call.path.endsWith(`/${id}`)

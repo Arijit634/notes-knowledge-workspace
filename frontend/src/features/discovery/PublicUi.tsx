@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useCallback, useState, type ReactNode } from 'react'
 import { Link, NavLink } from 'react-router'
 import type { AuthRuntime } from '../auth/AuthRuntime'
 import type { PublicAuthor, PublicMedia } from '../publishing/PublishingApi'
@@ -33,10 +33,16 @@ export function PublicFailure({ error, retry, unavailable = 'This public content
 }
 export function PublicMediaView({ media }: { media: PublicMedia }) {
   const [failed, setFailed] = useState(false)
+  const playerRef = useCallback((player: HTMLMediaElement | null) => {
+    if (!player) return
+    // Strict Mode replays refs after cleanup; restore this accepted source.
+    if (player.getAttribute('src') !== media.contentUrl) player.setAttribute('src', media.contentUrl)
+    return () => { player.pause(); player.removeAttribute('src'); player.load() }
+  }, [media.contentUrl])
   return <figure className="public-media"><figcaption><strong>{media.displayName}</strong><span>{media.mediaKind.toUpperCase()} · {sizeLabel(media.sizeBytes)}</span></figcaption>
     {failed ? <p role="status">This media is unavailable or this browser cannot decode it. It may have been removed.</p> : media.mediaKind === 'image' ? <img src={media.contentUrl} alt={media.displayName} loading="lazy" onError={() => setFailed(true)} />
-      : media.mediaKind === 'audio' ? <audio controls preload="none" src={media.contentUrl} onError={() => setFailed(true)} />
-        : media.mediaKind === 'video' ? <video controls preload="metadata" src={media.contentUrl} onError={() => setFailed(true)} />
+      : media.mediaKind === 'audio' ? <audio ref={playerRef} controls preload="none" src={media.contentUrl} onError={() => setFailed(true)} />
+        : media.mediaKind === 'video' ? <video ref={playerRef} controls preload="metadata" src={media.contentUrl} onError={() => setFailed(true)} />
           : <p>PDF document. <a href={media.contentUrl} target="_blank" rel="noopener noreferrer">Open {media.displayName}</a></p>}
     {(media.mediaKind === 'audio' || media.mediaKind === 'video') && <p className="notes-help">Playback depends on your browser’s supported codecs.</p>}</figure>
 }

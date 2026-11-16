@@ -42,6 +42,21 @@ beforeEach(() => { vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-20T
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); window.history.replaceState(null, '', '/') })
 
 describe('real private-workspace transport contracts', () => {
+  it('does not replace a new search with a late history selection', async () => {
+    let complete!: (response: Response) => void
+    const pending = new Promise<Response>(resolve => { complete = resolve })
+    const entry = { id, query: 'Earlier saved question', status: 'completed', submittedAt: '2026-10-20T00:00:00Z', expiresAt: '2026-10-21T00:00:00Z', operation: null, result }
+    const { auth } = mount('/ask', c => c.path === '/api/knowledge/history'
+      ? json({ items: [entry], nextCursor: null }) : c.path === `/api/knowledge/history/${id}`
+        ? pending : c.path === '/api/knowledge/query' ? json(result) : undefined)
+    fireEvent.click(await screen.findByRole('button', { name: 'Earlier saved question' }))
+    fireEvent.change(screen.getByLabelText('What would you like to find?'), { target: { value: 'My new question' } })
+    fireEvent.submit(screen.getByLabelText('What would you like to find?').closest('form')!)
+    await screen.findByText('A grounded synthetic answer.')
+    await act(async () => { complete(json(entry)); await pending })
+    expect(auth.ask.snapshot().input).toBe('My new question')
+    expect(auth.ask.snapshot().historyId).toBeNull()
+  })
   it('renders the AI answer and a whole-Note deterministic match without inventing a location', async () => {
     mount('/ask', c => c.path === '/api/knowledge/query' ? json({ ...result,
       deterministicResults: [{ kind: 'note', value: 'Synthetic whole-Note match', aiEnabled: false,

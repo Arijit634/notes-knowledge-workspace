@@ -61,7 +61,7 @@ export async function publicBackend(page: Page, authenticated = false) {
       else output = { ...f.article, title: state.publication.title, markdown: state.publication.markdown, media: state.publicMedia, author: state.author, ...(state.authenticated ? { viewerLiked: state.liked } : { viewerLiked: undefined }), engagement: { ...f.article.engagement, likeCount: state.liked ? 5 : 4 } }
     } else if (path.includes('/media/') && path.endsWith('/content')) {
       if (!state.active) { status = 404; code = 'resource_not_found' }
-      else { await route.fulfill({ status: 200, contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/a9sAAAAASUVORK5CYII=', 'base64') }); return }
+      else { await route.fulfill({ status: 200, contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGPoTH7xHwAGIQLUOE9m5AAAAABJRU5ErkJggg==', 'base64') }); return }
     } else if (path.endsWith('/like')) {
       state.likeStarted = true
       const admitted = state.authenticated
@@ -84,7 +84,7 @@ export async function publicBackend(page: Page, authenticated = false) {
       output = state.note; headers.ETag = `"n${state.noteRevision}"`
     } else if (path === `/api/notes/${f.noteId}/attachments/${f.attachment.id}/content`) {
       if (!state.authenticated || !state.eligible || !state.sourceUsable) { status = 404; code = 'resource_not_found' }
-      else { await route.fulfill({ status: 200, contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/a9sAAAAASUVORK5CYII=', 'base64') }); return }
+      else { await route.fulfill({ status: 200, contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGPoTH7xHwAGIQLUOE9m5AAAAABJRU5ErkJggg==', 'base64') }); return }
     } else if (path.endsWith('/attachments')) output = { items: state.attachments, nextCursor: null }
     else if (path.endsWith('/versions')) output = { items: [], nextCursor: null }
     else if (path.endsWith('/publication-preview')) {

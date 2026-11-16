@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { flagshipBackend, noteId, timestamp } from './flagship-fixture'
 
-const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jN1sAAAAASUVORK5CYII=', 'base64')
+const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGPoTH7xHwAGIQLUOE9m5AAAAABJRU5ErkJggg==', 'base64')
 for (const width of [1440, 390]) test(`file drops stage before Create and preserve saved-Note drafts at ${width}px`, async ({ page }, info) => {
   await page.setViewportSize({ width, height: 900 }); const state = await flagshipBackend(page)
   let uploads = 0

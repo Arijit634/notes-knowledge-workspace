@@ -166,7 +166,7 @@ export function SecuritySettingsPage({ auth }: Props) {
       </section>
       <section aria-labelledby="password-heading"><h2 id="password-heading">Password</h2>
         <p>{summary.data.passwordConfigured ? 'A password is configured.' : 'No password is configured.'}</p>
-        <form onSubmit={changePassword} noValidate>
+        {summary.data.passwordConfigured ? <form onSubmit={changePassword} noValidate>
           <label htmlFor="security-password">New password</label><input id="security-password"
             type="password" autoComplete="new-password" maxLength={256}
             aria-invalid={!!passwordForm.formState.errors.newPassword} aria-describedby="security-password-help"
@@ -179,6 +179,7 @@ export function SecuritySettingsPage({ auth }: Props) {
             {...passwordForm.register('confirmation', { required: 'Confirm the new password.' })} />
           {passwordForm.formState.errors.confirmation && <span className="field-error" role="alert">{passwordForm.formState.errors.confirmation.message}</span>}
           <button disabled={action.busy || passwordForm.formState.isSubmitting}>Change password</button></form>
+          : <Link to="/reauth">Set an app password by email</Link>}
       </section>
       <section aria-labelledby="google-heading"><h2 id="google-heading">Google sign-in</h2>
         {summary.data.oidcLinks.length === 0 ? <p>No Google sign-in is linked.</p>

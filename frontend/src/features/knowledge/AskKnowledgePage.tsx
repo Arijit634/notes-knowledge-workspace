@@ -81,8 +81,9 @@ function SearchHistoryPanel({ auth, serial }: { auth: AuthRuntime; serial: numbe
   const key = ['knowledge', auth.session.viewerScope, 'history', cursor, serial] as const
   const query = useQuery({ queryKey: key, queryFn: ({ signal }) => knowledgeApi.history(auth, cursor, signal), retry: false, gcTime: 0, staleTime: 0 }, auth.queries)
   async function open(id: string) {
+    const expected = auth.ask.snapshot()
     setBusy(true); setError('')
-    try { const entry = await knowledgeApi.historyDetail(auth, id, new AbortController().signal); if (current()) auth.ask.resume(entry) }
+    try { const entry = await knowledgeApi.historyDetail(auth, id, new AbortController().signal); if (current()) auth.ask.resume(entry, expected) }
     catch (e) { if (current()) setError(featureError(e)) } finally { if (current()) setBusy(false) }
   }
   async function erase() {
