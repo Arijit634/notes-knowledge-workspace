@@ -37,10 +37,25 @@ describe('ApiClient transport', () => {
       location: '/api/notes/synthetic', retryAfter: '4' })
     expect(fetcher).toHaveBeenCalledWith('/api/notes', expect.objectContaining({
       credentials: 'same-origin', mode: 'same-origin', redirect: 'error', cache: 'no-store',
+      referrerPolicy: 'no-referrer',
     }))
     const init = (fetcher.mock.calls as unknown as Array<[string, RequestInit]>)[0][1]
     expect(new Headers(init.headers).has('X-CSRF-TOKEN')).toBe(false)
   })
+
+  it.each(['POST', 'PUT', 'PATCH', 'DELETE'] as const)(
+    'keeps %s same-origin and CSRF-protected with an origin-only referrer policy', async method => {
+      const csrf = new CsrfManager(); csrf.set('synthetic-proof')
+      const fetcher = vi.fn(async () => new Response(null, { status: 204 }))
+      await new ApiClient(csrf, fetcher as typeof fetch).request(method, '/api/notes/synthetic', { json: {} })
+      expect(fetcher).toHaveBeenCalledTimes(1)
+      const [target, init] = (fetcher.mock.calls as unknown as Array<[string, RequestInit]>)[0]
+      expect(target).toBe('/api/notes/synthetic')
+      expect(init).toMatchObject({ credentials: 'same-origin', mode: 'same-origin',
+        redirect: 'error', cache: 'no-store', referrerPolicy: 'strict-origin' })
+      expect(new Headers(init.headers).get('X-CSRF-TOKEN')).toBe('synthetic-proof')
+    },
+  )
 
   it('sends If-Match and CSRF only on the unsafe request and does not replay ordinary conflicts', async () => {
     const csrf = new CsrfManager()

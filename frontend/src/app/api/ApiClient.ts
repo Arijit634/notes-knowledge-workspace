@@ -85,6 +85,10 @@ export class ApiClient {
         response = await this.fetcher.call(globalThis, target, {
           method, headers, body, signal: options.signal,
           credentials: 'same-origin', mode: 'same-origin', redirect: 'error', cache: 'no-store',
+          // Firefox otherwise sends Origin: null for unsafe same-origin fetches
+          // under the page's no-referrer policy. Send only the public origin,
+          // never the document path, query or fragment; keep read referrers off.
+          referrerPolicy: unsafe ? 'strict-origin' : 'no-referrer',
         })
       } catch {
         throw new ApiProtocolError()
