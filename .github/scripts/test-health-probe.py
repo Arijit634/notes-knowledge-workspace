@@ -30,9 +30,11 @@ class HealthProbeContracts(unittest.TestCase):
             try:result=subprocess.run([str(self.binary),*arguments],capture_output=True,timeout=5)
             finally:release.set();server.shutdown();thread.join(timeout=5)
         self.assertEqual(b'',result.stdout);self.assertEqual(b'',result.stderr)
+        if arguments==('--liveness',):self.assertTrue(requests[0].startswith(b'GET /actuator/health/liveness HTTP/1.1\r\nHost: localhost\r\n'))
         if not arguments:self.assertTrue(requests[0].startswith(b'GET /actuator/health/readiness HTTP/1.1\r\nHost: localhost\r\n'))
         return result.returncode
     def test_ready(self):self.assertEqual(0,self.result(b'HTTP/1.1 200 OK\r\n\r\n'))
+    def test_fixed_liveness_mode(self):self.assertEqual(0,self.result(b'HTTP/1.1 200 OK\r\n\r\n',arguments=('--liveness',)))
     def test_http10_ready(self):self.assertEqual(0,self.result(b'HTTP/1.0 200\r\n\r\n'))
     def test_down_and_auth_errors(self):
         for status in (401,403,404,500,503):

@@ -9,6 +9,13 @@ case "$access_mode" in
     *) echo 'preview_access_mode_invalid' >&2; exit 2 ;;
 esac
 unset NKW_HOSTED_ACCESS_MODE
+profiles=operations,private-preview,managed-preview,full-hosted
+case "${NKW_IDLE_DATABASE-false}" in
+    true) profiles+=,idle-hosted ;;
+    false) ;;
+    *) echo 'preview_idle_mode_invalid' >&2; exit 2 ;;
+esac
+unset NKW_IDLE_DATABASE
 for name in runtime.properties processing-disclosure.json preview-origin preview-password-hash redis.conf; do
     [[ -f "/etc/secrets/$name" && -r "/etc/secrets/$name" ]] || { echo 'preview_configuration_unavailable' >&2; exit 2; }
 done
@@ -65,7 +72,7 @@ nginx -e /dev/null -c /tmp/nkw-edge/nginx.conf & edge_pid=$!
     -Dnkw.attachment-parser.classpath-profile=immutable-image-v1 \
     -Dnkw.media.service-boundary=landlock-managed-v1 \
     -Duser.timezone=UTC -Djava.io.tmpdir=/tmp -jar /app/application.jar \
-    --spring.profiles.active=operations,private-preview,managed-preview,full-hosted \
+    "--spring.profiles.active=$profiles" \
     --spring.config.additional-location=file:/provenance/runtime-selection.properties \
     --notes.media-runtime.pdf.recovery-directory=/tmp/nkw-pdf-recovery \
     --notes.media-runtime.video.recovery-directory=/tmp/nkw-video-recovery \

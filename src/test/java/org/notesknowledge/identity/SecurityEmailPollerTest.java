@@ -25,6 +25,18 @@ import org.junit.jupiter.api.Test;
 @Tag("SECURITY")
 @org.junit.jupiter.api.extension.ExtendWith(org.springframework.boot.test.system.OutputCaptureExtension.class)
 class SecurityEmailPollerTest {
+    @Test void idleSkipsDatabasePollingButLogoutDoesNotCancelQueuedDelivery(){
+        var fixture=org.notesknowledge.DatabaseIdleTestFixture.create();
+        var repo=mock(SecurityEmailDeliveryRepository.class);var worker=mock(SecurityEmailWorker.class);
+        var poller=new SecurityEmailPoller(repo,worker,CLOCK,settings(1,1,1));poller.idleCoordinator(fixture.coordinator());
+        try{
+            fixture.quietBoundary();assertThat(fixture.coordinator().idle()).isTrue();
+            poller.poll();org.mockito.Mockito.verifyNoInteractions(repo,worker);
+            // A request completed; there is no logged-in flag in worker admission.
+            fixture.request();poller.poll();verify(repo).failExhausted(any(),anyInt());
+            verify(repo).claimReady(any(),any(),any(),anyInt());
+        }finally{poller.stop();}
+    }
     @Test void closingContextStopsNewClaimsBeforeExecutorDrain(){
         var repo=mock(SecurityEmailDeliveryRepository.class);var worker=mock(SecurityEmailWorker.class);
         var poller=new SecurityEmailPoller(repo,worker,CLOCK,settings(1,1,1));

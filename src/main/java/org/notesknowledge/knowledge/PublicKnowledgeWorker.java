@@ -10,6 +10,7 @@ class PublicKnowledgeWorker {
     private final io.micrometer.core.instrument.MeterRegistry meters;
     private java.util.UUID after;
     PublicKnowledgeWorker(PublicKnowledgeTransactions transactions,io.micrometer.core.instrument.MeterRegistry meters){this.transactions=transactions;this.meters=meters;}
+    boolean reconciliationComplete(){return after==null;}
     void poll() {
         after=transactions.reconcile(after);
         var owner=new LeaseOwner("public-knowledge-local");

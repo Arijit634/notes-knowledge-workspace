@@ -23,6 +23,9 @@ import org.springframework.stereotype.Component;
 @IdentityCoreEnabled
 @ConditionalOnProperty(prefix = "identity.delivery", name = "polling-enabled", havingValue = "true")
 final class SecurityEmailPoller {
+    private org.notesknowledge.DatabaseIdleCoordinator idleCoordinator;
+    @org.springframework.beans.factory.annotation.Autowired(required=false)
+    void idleCoordinator(org.notesknowledge.DatabaseIdleCoordinator value){this.idleCoordinator=value;}
     private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(SecurityEmailPoller.class);
     private final SecurityEmailDeliveryRepository delivery;
     private final SecurityEmailWorker worker;
@@ -58,13 +61,18 @@ final class SecurityEmailPoller {
 
     @Scheduled(fixedDelayString = "${identity.delivery.poll-delay}")
     synchronized void poll() {
-        if(stopping)return;
-        try {
-            pollAvailable();
-        } catch (org.springframework.dao.DataAccessException | org.springframework.transaction.TransactionException unavailable) {
-            // No claim/effect is reported successful. A later scheduled poll or
-            // PostgreSQL lease recovery owns progress when the database returns.
-            LOG.warn("security_email_poll_unavailable");
+        try(var idle=org.notesknowledge.DatabaseIdleCoordinator.background(idleCoordinator)){
+            if(!idle.allowed())return;
+
+            if(stopping)return;
+            try {
+                pollAvailable();
+            } catch (org.springframework.dao.DataAccessException | org.springframework.transaction.TransactionException unavailable) {
+                // No claim/effect is reported successful. A later scheduled poll or
+                // PostgreSQL lease recovery owns progress when the database returns.
+                LOG.warn("security_email_poll_unavailable");
+            }
+
         }
     }
 
@@ -99,7 +107,7 @@ final class SecurityEmailPoller {
             for (var claim : claims) {
                 try {
                     executor.execute(() -> {
-                        try { worker.process(claim); }
+                        try (var activity=org.notesknowledge.DatabaseIdleCoordinator.work(idleCoordinator)) { worker.process(claim); }
                         catch (org.springframework.dao.DataAccessException | org.springframework.transaction.TransactionException unavailable) {
                             LOG.warn("security_email_worker_deferred");
                         } catch (RuntimeException failed) {

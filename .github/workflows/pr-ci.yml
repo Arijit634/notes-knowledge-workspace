@@ -65,7 +65,7 @@ jobs:
           git diff --exit-code -- package.json package-lock.json
           git diff --exit-code
       - name: Verify packaging process boundaries
-        run: node --test .github/scripts/package-application.test.mjs
+        run: node --test .github/scripts/package-application.test.mjs .github/deploy/managed-preview/keepalive.test.mjs
 
   fast:
     name: PR / FAST

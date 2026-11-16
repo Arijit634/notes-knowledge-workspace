@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parent
 
 
 class FullBundleSupervisorTests(unittest.TestCase):
-    def run_supervisor(self, missing=None, origin='https://preview.example.test', port='10000', resolver_exit=0, access_mode=None):
+    def run_supervisor(self, missing=None, origin='https://preview.example.test', port='10000', resolver_exit=0, access_mode=None, idle_mode=None):
         bash = os.environ.get('BASH_FOR_TESTS') or shutil.which('bash')
         self.assertIsNotNone(bash)
         with tempfile.TemporaryDirectory() as temporary:
@@ -49,6 +49,8 @@ class FullBundleSupervisorTests(unittest.TestCase):
             executable = root / 'supervisor.sh'
             executable.write_text(script, newline='\n')
             env = os.environ.copy()
+            env.pop("NKW_IDLE_DATABASE", None)
+            if idle_mode is not None:env["NKW_IDLE_DATABASE"] = idle_mode
             env.pop('NKW_HOSTED_ACCESS_MODE', None)
             if access_mode is not None:
                 env['NKW_HOSTED_ACCESS_MODE'] = access_mode
@@ -121,6 +123,17 @@ class FullBundleSupervisorTests(unittest.TestCase):
         result, args = self.run_supervisor(resolver_exit=2)
         self.assertEqual(2, result.returncode)
         self.assertEqual('', args)
+
+    def test_idle_coordination_requires_exact_operator_selection(self):
+        result, args = self.run_supervisor(idle_mode='true')
+        self.assertEqual(1, result.returncode)
+        self.assertIn('--spring.profiles.active=operations,private-preview,managed-preview,full-hosted,idle-hosted\n', args)
+        for value in ('TRUE', '1', '', 'true,other'):
+            with self.subTest(value=value):
+                result, args = self.run_supervisor(idle_mode=value)
+                self.assertEqual(2, result.returncode)
+                self.assertEqual('preview_idle_mode_invalid\n', result.stderr)
+                self.assertEqual('', args)
 
     def test_explicit_full_profile_disclosure_and_fail_closed_constituent_exit(self):
         result, args = self.run_supervisor()

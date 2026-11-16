@@ -25,7 +25,10 @@ import static org.assertj.core.api.Assertions.*;
 @ActiveProfiles({"test","operations"})
 @SpringBootTest(webEnvironment=SpringBootTest.WebEnvironment.RANDOM_PORT,properties={
     "identity.core.enabled=false","knowledge.operations.scheduling-enabled=false","knowledge.derivation.scheduling-enabled=false",
-    "knowledge.public.scheduling-enabled=false","operations.telemetry.enabled=false"})
+    "knowledge.public.scheduling-enabled=false","operations.telemetry.enabled=false",
+    "spring.datasource.hikari.minimum-idle=0","spring.datasource.hikari.connection-timeout=1000",
+    "spring.datasource.hikari.data-source-properties.socketTimeout=2",
+    "management.endpoint.health.group.liveness.include=livenessState,coreSchema"})
 class OperationalRuntimeDatabaseTest {
     @Container static final PostgreSQLContainer DB=new PostgreSQLContainer("pgvector/pgvector:0.8.6-pg18-trixie");
     static final int MANAGEMENT=port();
@@ -52,6 +55,17 @@ class OperationalRuntimeDatabaseTest {
         assertThat(get(MANAGEMENT,"/api/notes").statusCode()).isIn(401,403,404);
         var unsafe=client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:"+MANAGEMENT+"/actuator/prometheus")).POST(HttpRequest.BodyPublishers.noBody()).build(),HttpResponse.BodyHandlers.discarding());
         assertThat(unsafe.statusCode()).isIn(401,403,404,405);
+    }
+    @Test void databaseFailureDoesNotTurnProcessLivenessIntoFalseReadiness()throws Exception{
+        assertThat(get(MANAGEMENT,"/actuator/health/readiness").statusCode()).isEqualTo(200);
+        var docker=org.testcontainers.DockerClientFactory.instance().client();
+        docker.pauseContainerCmd(DB.getContainerId()).exec();
+        try{
+            assertThat(get(MANAGEMENT,"/actuator/health/liveness").statusCode()).isEqualTo(200);
+            assertThat(get(MANAGEMENT,"/actuator/health/readiness").statusCode()).isEqualTo(503);
+            assertThat(get(MANAGEMENT,"/actuator/health/liveness").statusCode()).isEqualTo(200);
+        }finally{docker.unpauseContainerCmd(DB.getContainerId()).exec();}
+        assertThat(get(MANAGEMENT,"/actuator/health/readiness").statusCode()).isEqualTo(200);
     }
     @Test void restrictedRuntimeValidatesFlywayWithoutMigrationCredentialsAndCannotRewriteEvidence()throws Exception{
         assertThat(schema.health().getStatus().getCode()).isEqualTo("UP");OperationalDatabaseConfiguration.requireRuntimeRole(jdbc);
