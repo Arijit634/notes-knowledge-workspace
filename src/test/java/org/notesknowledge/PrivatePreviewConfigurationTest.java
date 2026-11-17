@@ -78,6 +78,33 @@ class PrivatePreviewConfigurationTest {
         e.getPropertySources().addBefore("managed",new PropertiesPropertySource("full",properties));
         e.setActiveProfiles("operations","private-preview","managed-preview","full-hosted");return e;
     }
+    private MockEnvironment idle() throws Exception {
+        var e=full();var properties=new Properties();
+        try(var input=getClass().getResourceAsStream("/application-idle-hosted.properties")){properties.load(input);}
+        e.getPropertySources().addBefore("full",new PropertiesPropertySource("idle",properties));
+        e.setActiveProfiles("operations","private-preview","managed-preview","full-hosted","idle-hosted");return e;
+    }
+    @Test void optionalIdleProfileRequiresTheCompleteHostedRuntimeAndExplicitMatchingFlag() throws Exception {
+        assertThat(new PrivatePreviewConfiguration().validate(idle(),"Linux","amd64").fullApplication()).isTrue();
+        assertThat(new PrivatePreviewConfiguration().validate(idle(),"Linux","aarch64").fullApplication()).isTrue();
+        var disabled=idle().withProperty("operations.database-idle.enabled","false");
+        var noProfile=full().withProperty("operations.database-idle.enabled","true");
+        var restricted=managed().withProperty("operations.database-idle.enabled","true");
+        restricted.setActiveProfiles("operations","private-preview","managed-preview","idle-hosted");
+        var extra=idle();extra.setActiveProfiles("operations","private-preview","managed-preview","full-hosted","idle-hosted","localhost");
+        for(var invalid:java.util.List.of(disabled,noProfile,restricted,extra))
+            assertThatThrownBy(()->new PrivatePreviewConfiguration().validate(invalid,"Linux","amd64"))
+                .hasMessage("Restricted private preview configuration required").hasNoCause();
+    }
+    @Test void idleProfilePreservesEveryHostedSecurityAndWorkerRestriction() throws Exception {
+        for(var entry:java.util.Map.of("server.address","0.0.0.0","nkw.preview.access","public",
+                "server.tomcat.remoteip.internal-proxies",".*","knowledge.derivation.tier","paid",
+                "identity.delivery.polling-enabled","false","spring.mail.properties.mail.smtp.starttls.required","false").entrySet()){
+            var invalid=idle().withProperty(entry.getKey(),entry.getValue());
+            assertThatThrownBy(()->new PrivatePreviewConfiguration().validate(invalid,"Linux","amd64"))
+                .hasMessage("Restricted private preview configuration required").hasNoCause();
+        }
+    }
     @Test void completeApplicationRequiresSeparateExplicitHostedSelection() throws Exception {
         assertThat(new PrivatePreviewConfiguration().validate(managed(),"Linux","amd64").fullApplication()).isFalse();
         assertThat(new PrivatePreviewConfiguration().validate(full(),"Linux","amd64").fullApplication()).isTrue();
