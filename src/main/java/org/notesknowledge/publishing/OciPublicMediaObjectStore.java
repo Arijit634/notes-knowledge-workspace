@@ -59,6 +59,7 @@ final class OciPublicMediaObjectStore implements PublicMediaObjectStore, AutoClo
     @Override public void write(String reference, InputStream source, long size) {
         require(reference); if(source==null||size<1||size>MAX_BYTES)throw unavailable(); enter();
         java.nio.file.Path directory=null;
+        String stage="source_spool";
         try {
             directory=privateDirectory();var file=directory.resolve("object.bin");
             var md5=java.security.MessageDigest.getInstance("MD5");var sha=java.security.MessageDigest.getInstance("SHA-256");
@@ -73,11 +74,19 @@ final class OciPublicMediaObjectStore implements PublicMediaObjectStore, AutoClo
                 if(source.read()!=-1)throw unavailable();
             }finally{java.util.Arrays.fill(buffer,(byte)0);}
             String checksum=Base64.getEncoder().encodeToString(md5.digest());
+            stage="object_put";
             var response=client.putObject(PutObjectRequest.builder().bucket(bucket).key(reference).ifNoneMatch("*")
                     .contentLength(size).contentType("application/octet-stream").contentMD5(checksum)
                     .metadata(Map.of("nkw-sha256",java.util.HexFormat.of().formatHex(sha.digest()))).build(),RequestBody.fromFile(file));
             if(response.sdkHttpResponse().statusCode()!=200)throw unavailable();
-        }catch(Exception failure){throw unavailable();}
+        }catch(Exception failure){
+            // Fixed categories only; never retain the exception, content or locator.
+            try {org.slf4j.LoggerFactory.getLogger(OciPublicMediaObjectStore.class).atWarn()
+                    .addKeyValue("writeStage",stage).addKeyValue("failureKind",writeFailureKind(failure))
+                    .log("public_media_write_unavailable");}
+            catch(RuntimeException ignored){/* Diagnostics cannot alter custody/error semantics. */}
+            throw unavailable();
+        }
         finally{try{if(directory!=null)removeDirectory(directory);}finally{admission.release();}}
         // An ambiguous response is failure, never permission to overwrite/retry.
         // The owning service's DB-aware cleanup/reconciliation handles orphans.
@@ -169,6 +178,20 @@ final class OciPublicMediaObjectStore implements PublicMediaObjectStore, AutoClo
     }
 
     private void enter(){outside();if(!admission.tryAcquire())throw unavailable();}
+    enum WriteFailureKind { TIMEOUT, PROVIDER_REJECTED, PROVIDER_UNAVAILABLE, SOURCE_IO, UNAVAILABLE }
+    static WriteFailureKind writeFailureKind(Throwable failure) {
+        var result=WriteFailureKind.UNAVAILABLE;
+        for(int depth=0;failure!=null&&depth<16;depth++) {
+            if(failure instanceof software.amazon.awssdk.core.exception.ApiCallTimeoutException
+                    ||failure instanceof software.amazon.awssdk.core.exception.ApiCallAttemptTimeoutException
+                    ||failure instanceof java.io.InterruptedIOException)return WriteFailureKind.TIMEOUT;
+            if(failure instanceof S3Exception provider)return provider.statusCode()>=400&&provider.statusCode()<500
+                    ?WriteFailureKind.PROVIDER_REJECTED:WriteFailureKind.PROVIDER_UNAVAILABLE;
+            if(failure instanceof IOException)result=WriteFailureKind.SOURCE_IO;
+            var next=failure.getCause();if(next==failure)break;failure=next;
+        }
+        return result;
+    }
     private static void require(String reference){outside();if(reference==null||!reference.matches("public-publication-media/[0-9a-f]{64}"))throw unavailable();}
     private static void outside(){if(TransactionSynchronizationManager.isActualTransactionActive())throw unavailable();}
     private static ApiFailureException unavailable(){return ApiFailureException.of(ApiFailureException.Kind.SERVICE_UNAVAILABLE);}

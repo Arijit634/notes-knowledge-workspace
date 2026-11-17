@@ -368,6 +368,11 @@ class GoogleDerivationAdaptersTest {
             assertThatThrownBy(()->GoogleDerivationAdapters.providerTimeout(new MockEnvironment().withProperty("knowledge.derivation.provider-timeout-ms",value))).isInstanceOf(IllegalArgumentException.class);
     }
     @Test void longerProviderDeadlineRequiresExplicitLeaseHeadroomAndStillHasAHardCeiling() {
+        var hosted=new MockEnvironment().withProperty("knowledge.derivation.lease-seconds","60")
+            .withProperty("knowledge.derivation.provider-timeout-ms","45000");
+        assertThat(GoogleDerivationAdapters.providerTimeout(hosted)).isEqualTo(45000);
+        assertThatThrownBy(()->GoogleDerivationAdapters.providerTimeout(hosted.withProperty("knowledge.derivation.lease-seconds","30")))
+            .isInstanceOf(IllegalArgumentException.class);
         var environment=new MockEnvironment().withProperty("knowledge.derivation.lease-seconds","90")
             .withProperty("knowledge.derivation.provider-timeout-ms","60000");
         assertThat(GoogleDerivationAdapters.providerTimeout(environment)).isEqualTo(60000);

@@ -72,6 +72,16 @@ class ReadinessTests(unittest.TestCase):
         for body in (b'{"code":"private-marker"}',b'[]',b'<html>private-marker</html>',b'{"code":["private-marker"]}'):
             self.assertEqual({'status':502,'problemCode':'unclassified'},smoke.publication_failure_observation(502,body))
 
+    def test_public_write_diagnostics_retain_only_fixed_bounded_categories(self):
+        line='public_media_write_unavailable writeStage=object_put failureKind=TIMEOUT private-marker'
+        self.assertEqual([{'stage':'object_put','kind':'TIMEOUT'}],smoke.safe_public_write_diagnostics(line))
+        self.assertEqual(8,len(smoke.safe_public_write_diagnostics('\n'.join([line]*20))))
+        self.assertNotIn('private-marker',json.dumps(smoke.safe_public_write_diagnostics(line)))
+        for value in ('public_media_write_unavailable writeStage=private-marker failureKind=TIMEOUT',
+                      'public_media_write_unavailable writeStage=object_put failureKind=private-marker',
+                      'private-marker writeStage=object_put failureKind=TIMEOUT'):
+            self.assertEqual([],smoke.safe_public_write_diagnostics(value))
+
     def test_save_observation_preserves_status_without_private_response_data(self):
         result=smoke.saved_note_observation(503,b'{"code":"service_unavailable","detail":"private-marker","traceId":"private-marker"}')
         self.assertEqual({'status':503,'savedContentMatches':False,'problemCode':'service_unavailable'},result)

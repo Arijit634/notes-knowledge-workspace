@@ -45,6 +45,41 @@ class OciPublicMediaObjectStoreTest {
             assertThat(transport.calls).hasValue(0);
         }
     }
+    @Test void failedWritesExposeOnlyFixedDiagnosticCategoriesAndNeverRetry()throws Exception {
+        var logger=(ch.qos.logback.classic.Logger)org.slf4j.LoggerFactory.getLogger(OciPublicMediaObjectStore.class);
+        var events=new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        events.start();logger.addAppender(events);
+        var transport=new ControlledS3Transport(directory);transport.denyAccess=true;
+        try(var store=store(transport)) {
+            var privateFailure=new InputStream(){public int read()throws IOException{throw new IOException("synthetic-private-body-and-credential");}};
+            assertThatThrownBy(()->store.write(key(1),privateFailure,1)).isInstanceOf(ApiFailureException.class).hasNoCause();
+            assertThat(transport.calls).hasValue(0);
+            assertThatThrownBy(()->store.write(key(2),new ByteArrayInputStream(new byte[]{1}),1))
+                    .isInstanceOf(ApiFailureException.class).hasNoCause();
+            assertThat(transport.calls).hasValue(1);
+            assertThat(events.list).hasSize(2).allSatisfy(event->{
+                assertThat(event.getFormattedMessage()).isEqualTo("public_media_write_unavailable");
+                assertThat(event.getThrowableProxy()).isNull();
+                assertThat(event.getKeyValuePairs()).hasSize(2);
+                assertThat(event.getKeyValuePairs()).extracting(pair->pair.key).containsExactly("writeStage","failureKind");
+            });
+            assertThat(events.list.get(0).getKeyValuePairs()).extracting(pair->pair.value)
+                    .containsExactly("source_spool",OciPublicMediaObjectStore.WriteFailureKind.SOURCE_IO);
+            assertThat(events.list.get(1).getKeyValuePairs()).extracting(pair->pair.value)
+                    .containsExactly("object_put",OciPublicMediaObjectStore.WriteFailureKind.PROVIDER_REJECTED);
+        }finally{logger.detachAppender(events);events.stop();}
+    }
+    @Test void diagnosticClassificationIsBoundedAndDoesNotRetainProviderExceptions() {
+        assertThat(OciPublicMediaObjectStore.writeFailureKind(
+            software.amazon.awssdk.core.exception.ApiCallAttemptTimeoutException.builder().message("synthetic-private").build()))
+            .isEqualTo(OciPublicMediaObjectStore.WriteFailureKind.TIMEOUT);
+        assertThat(OciPublicMediaObjectStore.writeFailureKind(new RuntimeException("synthetic-private",new java.net.SocketTimeoutException("synthetic-private"))))
+            .isEqualTo(OciPublicMediaObjectStore.WriteFailureKind.TIMEOUT);
+        assertThat(OciPublicMediaObjectStore.writeFailureKind(software.amazon.awssdk.services.s3.model.S3Exception.builder()
+            .statusCode(503).message("synthetic-private").build())).isEqualTo(OciPublicMediaObjectStore.WriteFailureKind.PROVIDER_UNAVAILABLE);
+        var cyclic=new RuntimeException("synthetic-private");cyclic.initCause(new RuntimeException(cyclic));
+        assertThat(OciPublicMediaObjectStore.writeFailureKind(cyclic)).isEqualTo(OciPublicMediaObjectStore.WriteFailureKind.UNAVAILABLE);
+    }
     @Test void rangeFramingAndPrematureEofAreStrictAndStreamsReleaseAdmission()throws Exception {
         var transport=new ControlledS3Transport(directory);
         try(var store=store(transport)){

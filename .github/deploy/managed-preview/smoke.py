@@ -98,6 +98,19 @@ def publication_failure_observation(status, body):
     return dict(status=value['status'],problemCode=value['problemCode'])
 
 
+def safe_public_write_diagnostics(logs):
+    """Only production-owned enums, never an SDK exception or stored locator."""
+    stages=('source_spool','object_put')
+    kinds=('TIMEOUT','PROVIDER_REJECTED','PROVIDER_UNAVAILABLE','SOURCE_IO','UNAVAILABLE')
+    rows=[]
+    for line in logs.splitlines():
+        if 'public_media_write_unavailable' not in line:continue
+        stage=re.search(r'\bwriteStage["\s]*[=:]["\s]*('+'|'.join(stages)+r')\b',line)
+        kind=re.search(r'\bfailureKind["\s]*[=:]["\s]*('+'|'.join(kinds)+r')\b',line)
+        if stage and kind:rows.append(dict(stage=stage[1],kind=kind[1]))
+    return rows[-8:]
+
+
 def managed_process_protected(text):
     """Only fixed proc fields; never return process/environment/credential data."""
     if not isinstance(text,str) or len(text)>65536:return False
@@ -656,7 +669,9 @@ def main():
                         'cat /sys/fs/cgroup/memory.events /sys/fs/cgroup/cpu.stat'],capture_output=True,text=True,timeout=10)
                     print(json.dumps(dict(publicationCreateFailed=True,**publication_failure_observation(code,body),
                         container=safe_container_state(metadata),resources=safe_resource_observation(counters.stdout),
-                        safeDiagnostics=safe_startup_diagnostics(logs.stdout+logs.stderr))),flush=True)
+                        safeDiagnostics=safe_startup_diagnostics(logs.stdout+logs.stderr),
+                        publicWriteDiagnostics=safe_public_write_diagnostics(logs.stdout+logs.stderr),
+                        controlledTransportCounts=provider_control('/counts'))),flush=True)
                     raise ValueError('Full workload publish failed')
                 publication=json.loads(body)['id'];public_path='/api/public/publications/'+publication
                 code,_,body=request(public_path)
