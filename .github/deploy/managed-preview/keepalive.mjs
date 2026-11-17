@@ -5,8 +5,9 @@ export function inWindow(milliseconds) {
   if (!Number.isFinite(milliseconds)) return false;
   const date = new Date(milliseconds + 330 * 60_000);
   const minute = date.getUTCHours() * 60 + date.getUTCMinutes();
-  return date.getUTCSeconds() === 0 && date.getUTCMilliseconds() === 0 &&
-    (minute === 530 || (minute >= 540 && minute <= 1430 && minute % 10 === 0));
+  // Cloudflare scheduledTime can carry seconds/milliseconds within the cron minute.
+  // Staleness is checked separately before dispatch; the approved window is minute-based.
+  return minute === 530 || (minute >= 540 && minute <= 1430 && minute % 10 === 0);
 }
 export async function heartbeat(event, env, fetcher = fetch, now = Date.now()) {
   if (env.ENABLED !== 'true' || !inWindow(event.scheduledTime) ||
