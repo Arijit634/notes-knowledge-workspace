@@ -8,9 +8,19 @@ record AiDerivationProperties(boolean enabled, boolean schedulingEnabled, String
         String mediaModel, String modelRevision, String region, String tier, String configurationId,
         String adapterVersion, Integer dimension, String operator, String normalization,
         String approvedPolicyFingerprint, boolean pdfPageChildren, String pdfTransformFingerprint,
-        boolean videoChildren,String videoTransformFingerprint,String videoSoundtrackModel,boolean directAudioSearch,boolean directVideoSoundtrackSearch) {
+        boolean videoChildren,String videoTransformFingerprint,String videoSoundtrackModel,boolean directAudioSearch,boolean directVideoSoundtrackSearch,
+        String generationModel) {
     @org.springframework.boot.context.properties.bind.ConstructorBinding
     AiDerivationProperties { }
+    AiDerivationProperties(boolean enabled,boolean schedulingEnabled,String provider,String embeddingModel,
+            String mediaModel,String modelRevision,String region,String tier,String configurationId,
+            String adapterVersion,Integer dimension,String operator,String normalization,String approvedPolicyFingerprint,
+            boolean pdfPageChildren,String pdfTransformFingerprint,boolean videoChildren,String videoTransformFingerprint,
+            String videoSoundtrackModel,boolean directAudioSearch,boolean directVideoSoundtrackSearch) {
+        this(enabled,schedulingEnabled,provider,embeddingModel,mediaModel,modelRevision,region,tier,configurationId,
+            adapterVersion,dimension,operator,normalization,approvedPolicyFingerprint,pdfPageChildren,pdfTransformFingerprint,
+            videoChildren,videoTransformFingerprint,videoSoundtrackModel,directAudioSearch,directVideoSoundtrackSearch,null);
+    }
     AiDerivationProperties(boolean enabled,boolean schedulingEnabled,String provider,String embeddingModel,
             String mediaModel,String modelRevision,String region,String tier,String configurationId,
             String adapterVersion,Integer dimension,String operator,String normalization,String approvedPolicyFingerprint,
@@ -36,6 +46,9 @@ record AiDerivationProperties(boolean enabled, boolean schedulingEnabled, String
             videoChildren,videoTransformFingerprint,null);
     }
     String soundtrackModel() { return videoSoundtrackModel==null?mediaModel:videoSoundtrackModel; }
+    // Grounded generation consumes existing evidence; it produces no stored
+    // embedding or media surrogate. Its explicit selection is not an index cutover.
+    String selectedGenerationModel() { return generationModel==null?mediaModel:generationModel; }
     AiDerivationProperties(boolean enabled,boolean schedulingEnabled,String provider,String embeddingModel,
             String mediaModel,String modelRevision,String region,String tier,String configurationId,
             String adapterVersion,Integer dimension,String operator,String normalization,String approvedPolicyFingerprint) {
@@ -51,6 +64,7 @@ record AiDerivationProperties(boolean enabled, boolean schedulingEnabled, String
     }
     boolean configured() {
         return enabled && (!(directAudioSearch||directVideoSoundtrackSearch)||"gemini".equals(provider)&&"gemini-embedding-2".equals(embeddingModel))
+            && (generationModel==null||"gemini".equals(provider)&&java.util.Set.of("gemini-3.8-flash","gemini-3.6-flash","gemini-3.5-flash-lite").contains(generationModel))
             && (videoSoundtrackModel==null||java.util.Set.of("gemini-3.6-flash","gemini-3.5-flash-lite").contains(videoSoundtrackModel))
             && (!pdfPageChildren||pdfTransformFingerprint!=null&&pdfTransformFingerprint.matches("[0-9a-f]{64}"))
             && (!videoChildren||videoTransformFingerprint!=null&&videoTransformFingerprint.matches("[0-9a-f]{64}"))

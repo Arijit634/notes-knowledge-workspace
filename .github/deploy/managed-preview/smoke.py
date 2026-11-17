@@ -243,6 +243,7 @@ def main():
                 'spring.ai.google.genai.api-key':'synthetic-provider-key-not-authority',
                 'knowledge.derivation.embedding-model':'gemini-embedding-2',
                 'knowledge.derivation.media-model':'gemini-3.6-flash',
+                'knowledge.derivation.generation-model':'gemini-3.5-flash-lite',
                 'knowledge.derivation.model-revision':'hosted-qualification-v1',
                 'knowledge.derivation.configuration-id':'hosted-qualification-v1',
                 'knowledge.derivation.adapter-version':'google-genai-sdk-1.65.0',

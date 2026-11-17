@@ -52,6 +52,65 @@ class GoogleDerivationAdaptersTest {
         return new AiDerivationProperties(true,false,"gemini","gemini-embedding-2","gemini-3.5-flash-lite","synthetic-v1","global","unpaid",
             "synthetic-qualification-v1","google-v2",2,"cosine","none","a".repeat(64),false,null,false,null,soundtrackModel);
     }
+    private AiDerivationProperties generationConfig(String model) {
+        var c=config("gemini-embedding-2","gemini-3.6-flash");
+        return new AiDerivationProperties(c.enabled(),c.schedulingEnabled(),c.provider(),c.embeddingModel(),c.mediaModel(),
+            c.modelRevision(),c.region(),c.tier(),c.configurationId(),c.adapterVersion(),c.dimension(),c.operator(),
+            c.normalization(),c.approvedPolicyFingerprint(),c.pdfPageChildren(),c.pdfTransformFingerprint(),
+            c.videoChildren(),c.videoTransformFingerprint(),c.videoSoundtrackModel(),c.directAudioSearch(),c.directVideoSoundtrackSearch(),model);
+    }
+    @Test void explicitGroundedModelPreservesSourceModelsAndEveryStoredVectorLineage() {
+        var base=generationConfig(null);var scoped=generationConfig("gemini-3.5-flash-lite");
+        var policy=new ProcessingPolicyService.AcknowledgedProcessingPolicy(new UUID(0,3),1,"a".repeat(64));
+        assertThat(base.selectedGenerationModel()).isEqualTo("gemini-3.6-flash");
+        assertThat(scoped.selectedGenerationModel()).isEqualTo("gemini-3.5-flash-lite");
+        assertThat(scoped.configured()).isTrue();
+        assertThat(scoped.mediaModel()).isEqualTo(base.mediaModel());
+        assertThat(scoped.soundtrackModel()).isEqualTo(base.soundtrackModel());
+        for(String modality:List.of("note","image","audio","video","pdf"))
+            assertThat(EmbeddingLineage.create(scoped,policy,modality)).isEqualTo(EmbeddingLineage.create(base,policy,modality));
+        assertThat(generationConfig("gemini-unqualified-model").configured()).isFalse();
+        assertThat(adapters.derivationGoogleClient(generationConfig("gemini-unqualified-model"),
+            new MockEnvironment().withProperty("spring.ai.google.genai.api-key","synthetic-no-authority"))).isNull();
+    }
+    @Test void explicitGroundedModelUsesTheRealSdkWithoutFallbackOrLosingDispatchVetoes() {
+        generated("{\"claims\":[{\"text\":\"Fictional answer\",\"evidenceIds\":[\"e0\"]}],\"conflicting\":false}");
+        var port=adapters.googleStructuredKnowledgePort(generationConfig("gemini-3.5-flash-lite"),clients,json);
+        var permit=mock(KnowledgeQueryGate.EvidencePermit.class);
+        var data=List.of(new StructuredKnowledgePort.Evidence("e0","Fictional source","note"));
+        assertThat(port.generate(permit,query,"answer",data).claims()).hasSize(1);
+        status=503;response="{\"error\":{\"code\":503,\"status\":\"UNAVAILABLE\",\"message\":\"synthetic-private-marker\"}}";
+        assertThatThrownBy(()->port.generate(permit,query,"answer",data)).isInstanceOf(DerivationFailure.class);
+        assertThat(requestPaths).hasSize(2).allMatch(p->p.endsWith("/models/gemini-3.5-flash-lite:generateContent"));
+        verify(permit,atLeast(2)).requireGoogle(query);
+        doThrow(new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE)).when(permit).requireGoogle(query);
+        assertThatThrownBy(()->port.generate(permit,query,"answer",data)).isInstanceOf(DerivationFailure.class);
+        assertThat(requestPaths).hasSize(2);
+    }
+    @Test void canonicalOperatorEnvironmentBindsTheExplicitGroundedModel() {
+        var environment=new org.springframework.core.env.StandardEnvironment();
+        environment.getPropertySources().addFirst(new org.springframework.core.env.SystemEnvironmentPropertySource(
+            "systemEnvironment",Map.of("KNOWLEDGE_DERIVATION_GENERATIONMODEL","gemini-3.5-flash-lite")));
+        environment.getPropertySources().addLast(new org.springframework.core.env.MapPropertySource("fixture",Map.of(
+            "knowledge.derivation.media-model","gemini-3.6-flash")));
+        var c=org.springframework.boot.context.properties.bind.Binder.get(environment)
+            .bind("knowledge.derivation",org.springframework.boot.context.properties.bind.Bindable.of(AiDerivationProperties.class)).get();
+        assertThat(c.selectedGenerationModel()).isEqualTo("gemini-3.5-flash-lite");
+        assertThat(c.mediaModel()).isEqualTo("gemini-3.6-flash");
+    }
+    @Test void groundedTextAcceptsOpaqueSdkSignatureMetadataWithoutUsingItAsEvidence() {
+        String output="{\"claims\":[{\"text\":\"Fictional answer\",\"evidenceIds\":[\"e0\"]}],\"conflicting\":false}";
+        String inertSignature=Base64.getEncoder().encodeToString("synthetic-signature-metadata".getBytes(StandardCharsets.UTF_8));
+        response=json.writeValueAsString(Map.of("modelVersion","gemini-3.5-flash-lite","candidates",List.of(Map.of("finishReason","STOP",
+            "content",Map.of("role","model","parts",List.of(Map.of("text",output,"thoughtSignature",inertSignature)))))));
+        var port=adapters.googleStructuredKnowledgePort(generationConfig("gemini-3.5-flash-lite"),clients,json);
+        var value=port.generate(mock(KnowledgeQueryGate.EvidencePermit.class),query,"answer",
+            List.of(new StructuredKnowledgePort.Evidence("e0","Fictional source","note")));
+        assertThat(value.claims()).extracting(StructuredKnowledgePort.Claim::text).containsExactly("Fictional answer");
+        assertThat(value.claims().getFirst().evidenceIds()).containsExactly("e0");
+        assertThat(json.writeValueAsString(value)).doesNotContain(inertSignature,"synthetic-signature-metadata");
+        assertThat(requestPaths).hasSize(1);
+    }
     @Test void invalidRequestDiagnosticsNeverRetainProviderTextOrArbitraryValues() {
         var fields=Map.of("thinking_level",ProviderFailureDiagnostic.Detail.REQUEST_THINKING_CONFIGURATION,
             "response_json_schema.enum",ProviderFailureDiagnostic.Detail.REQUEST_SCHEMA,
