@@ -5,7 +5,7 @@ const stamp = (time) => Date.parse(`2026-11-17T${time}:00+05:30`);
 test('IST boundaries and exact daily schedule', () => {
   for (const time of ['00:00', '08:40']) assert.equal(inWindow(stamp(time)), false);
   for (const time of ['08:50', '09:00', '23:50']) assert.equal(inWindow(stamp(time)), true);
-  assert.equal(inWindow(stamp('09:00') + 1), false);
+  assert.equal(inWindow(stamp('09:00') + 1), true);
   let count = 0;
   for (let minute = 0; minute < 1440; minute++) {
     if (inWindow(stamp('00:00') + minute * 60_000)) count++;
@@ -43,4 +43,24 @@ test('redirect and error responses never become successful checks', async () => 
 });
 test('worker has no public trigger and no retry loop or payload diagnostics', async () => {
   assert.equal(worker.fetch().status, 404);
+});
+
+test('real cron timestamps with seconds and milliseconds use the scheduled IST minute', async () => {
+  const observed = Date.parse('2026-11-17T09:30:55.714Z');
+  assert.equal(inWindow(observed), true);
+  let calls = 0;
+  assert.equal(await heartbeat({ scheduledTime: observed }, { ENABLED: 'true' }, async () => {
+    calls++;
+    return { status: 200, body: null };
+  }, observed + 654), 'checked');
+  assert.equal(calls, 1);
+  for (const time of ['08:50', '09:00', '23:50']) {
+    assert.equal(inWindow(stamp(time) + 59_999), true);
+  }
+  for (const time of ['00:00', '08:40', '08:51', '09:01', '23:51', '23:59']) {
+    assert.equal(inWindow(stamp(time) + 55_714), false);
+  }
+  const fail = () => { throw new Error('unexpected network'); };
+  assert.equal(await heartbeat({ scheduledTime: observed }, { ENABLED: 'true' }, fail, observed + 120_001), 'skipped');
+  assert.equal(await heartbeat({ scheduledTime: observed }, { ENABLED: 'true' }, fail, observed - 1), 'skipped');
 });
