@@ -29,9 +29,12 @@ class GoogleDerivationAdapters {
         thinkingLevel=level==null?null:org.springframework.ai.google.genai.common.GoogleGenAiThinkingLevel.valueOf(level);
     }
     private org.springframework.ai.google.genai.common.GoogleGenAiThinkingLevel modelThinking(AiDerivationProperties configuration){
-        if(thinkingLevel!=null&&!List.of("gemini-3.8-flash","gemini-3.6-flash","gemini-3.5-flash-lite").contains(configuration.mediaModel()))throw new IllegalArgumentException("Unqualified provider thinking configuration");
+        return modelThinking(configuration.mediaModel());
+    }
+    private org.springframework.ai.google.genai.common.GoogleGenAiThinkingLevel modelThinking(String model){
+        if(thinkingLevel!=null&&!List.of("gemini-3.8-flash","gemini-3.6-flash","gemini-3.5-flash-lite").contains(model))throw new IllegalArgumentException("Unqualified provider thinking configuration");
         if(thinkingLevel==org.springframework.ai.google.genai.common.GoogleGenAiThinkingLevel.MINIMAL
-                &&!"gemini-3.5-flash-lite".equals(configuration.mediaModel()))throw new IllegalArgumentException("Unqualified provider thinking configuration");
+                &&!"gemini-3.5-flash-lite".equals(model))throw new IllegalArgumentException("Unqualified provider thinking configuration");
         return thinkingLevel;
     }
     private <T>T observed(org.notesknowledge.BackendTelemetry.Operation operation,java.util.function.Supplier<T> action){
@@ -238,7 +241,7 @@ class GoogleDerivationAdapters {
     StructuredKnowledgePort googleStructuredKnowledgePort(AiDerivationProperties c,org.springframework.beans.factory.ObjectProvider<com.google.genai.Client> client,ObjectMapper json) {
         var sdk=client.getIfAvailable();
         var embedding=new GeminiTextEmbeddings(sdk,c,true);
-        var options=sdk==null?null:GoogleGenAiChatOptions.builder().model(c.mediaModel()).maxOutputTokens(8192).thinkingLevel(modelThinking(c))
+        var options=sdk==null?null:GoogleGenAiChatOptions.builder().model(c.selectedGenerationModel()).maxOutputTokens(8192).thinkingLevel(modelThinking(c.selectedGenerationModel()))
             .responseMimeType("application/json").responseSchema("""
                 {"type":"object","required":["claims","conflicting"],"properties":{
                 "claims":{"type":"array","maxItems":32,"items":{"type":"object","required":["text","evidenceIds"],"properties":{
