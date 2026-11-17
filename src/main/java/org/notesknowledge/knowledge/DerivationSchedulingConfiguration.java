@@ -13,6 +13,9 @@ import org.notesknowledge.knowledge.spi.PrivateDerivationSource;
 @EnableScheduling
 @ConditionalOnProperty(name="knowledge.derivation.scheduling-enabled",havingValue="true")
 class DerivationSchedulingConfiguration implements AutoCloseable {
+    private org.notesknowledge.DatabaseIdleCoordinator idleCoordinator;
+    @org.springframework.beans.factory.annotation.Autowired(required=false)
+    void idleCoordinator(org.notesknowledge.DatabaseIdleCoordinator value){this.idleCoordinator=value;}
     private static final org.slf4j.Logger LOG=org.slf4j.LoggerFactory.getLogger(DerivationSchedulingConfiguration.class);
     private final DerivationReconciler reconciler;
     private final KnowledgeWorkService work;
@@ -22,6 +25,8 @@ class DerivationSchedulingConfiguration implements AutoCloseable {
     private final ThreadPoolTaskExecutor pool=new ThreadPoolTaskExecutor();
     private PrivateDerivationSource.Cursor cursor;
     private boolean stopping;
+    private long cycleVersion=-1,completedVersion=-1;
+    synchronized boolean reconciled(long version){return embeddings==null||!embeddings.available()||completedVersion==version;}
     private java.util.function.LongSupplier ticker=System::nanoTime;
     private Long lastClaimStarted;
     private long claimPauseNanos;
@@ -41,15 +46,22 @@ class DerivationSchedulingConfiguration implements AutoCloseable {
     }
     @Scheduled(fixedDelayString="${knowledge.derivation.poll-delay-ms:5000}")
     synchronized void poll() {
-        if(stopping)return;
-        try {pollAvailable();}
-        catch(org.springframework.dao.DataAccessException|org.springframework.transaction.TransactionException|org.notesknowledge.websupport.ApiFailureException unavailable) {
-            unavailableMetric();
+        try(var idle=org.notesknowledge.DatabaseIdleCoordinator.background(idleCoordinator)){
+            if(!idle.allowed())return;
+
+            if(stopping)return;
+            try {pollAvailable();}
+            catch(org.springframework.dao.DataAccessException|org.springframework.transaction.TransactionException|org.notesknowledge.websupport.ApiFailureException unavailable) {
+                unavailableMetric();
+            }
+
         }
     }
     private void pollAvailable() {
         if(embeddings==null||!embeddings.available())return;
+        if(cursor==null)cycleVersion=idleCoordinator==null?0:idleCoordinator.activityVersion();
         cursor=reconciler.page(cursor);
+        if(cursor==null)completedVersion=cycleVersion;
         long now=ticker.getAsLong();
         if(lastClaimStarted!=null&&now-lastClaimStarted<claimPauseNanos)return;
         int capacity=2-pool.getActiveCount();if(capacity<=0)return;
@@ -59,7 +71,7 @@ class DerivationSchedulingConfiguration implements AutoCloseable {
         if(!claims.isEmpty())lastClaimStarted=now;
         for(var claim:claims) {
             try {pool.execute(()->{
-                try {executor.execute(claim);}
+                try (var activity=org.notesknowledge.DatabaseIdleCoordinator.work(idleCoordinator)) {executor.execute(claim);}
                 catch(org.springframework.dao.DataAccessException|org.springframework.transaction.TransactionException unavailable) {
                     unavailableMetric();
                 }

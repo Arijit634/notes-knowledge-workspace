@@ -347,6 +347,7 @@ def main():
                 filesystem=[] if full else ['--read-only']
                 temporary='uid=0,gid=0,mode=1777' if full else 'uid=65533,gid=65533,mode=700'
                 mode=[] if access_mode is None else ['-e','NKW_HOSTED_ACCESS_MODE='+access_mode]
+                if full:mode+=['-e','NKW_IDLE_DATABASE=true']
                 identifier=run('docker','create','--network',network,*filesystem,*mode,
                     '--memory','512m' if full else '448m','--memory-swap','512m' if full else '448m','--cpus','0.1','--pids-limit','34583' if full else '512',
                     '--cap-drop','ALL','--security-opt','no-new-privileges',
@@ -415,6 +416,8 @@ def main():
                     return response.status,response.headers,body
             await_readiness(request,timeout=900 if full else 600);first=round(time.monotonic()-started,2)
             verify_disclosure_projection()
+            if request('/_preview/live',authenticated=False)[0]!=200:raise ValueError('Process liveness unavailable')
+            if request('/_preview/live',authenticated=False,method='POST')[0]!=405:raise ValueError('Unsafe liveness accepted')
             if request('/login',authenticated=False)[0]!=401:raise ValueError('Missing perimeter accepted')
             if request('/login',extra={'Authorization':'Basic '+base64.b64encode(b'preview:incorrect').decode()})[0]!=401:raise ValueError('Wrong perimeter accepted')
             boundaries=[('/login',200),('/api/auth/session',200),('/api/notes',401),('/actuator/health',404)]
@@ -729,7 +732,7 @@ def main():
                 'managedWritableHostProfile':full,'managedServiceKernelBoundary':full,
                 'packagedPresentationMatchesProfile':True,
                 'providerProcessingQualified':False,'releaseEligible':False,
-                'firstBootSeconds':first,'recreatedBootSeconds':second,
+                'firstBootSeconds':first,'recreatedBootSeconds':second,'idleCoordinationEnabled':full,
                 'gracefulShutdownSeconds':shutdown,'privateListenersLoopbackOnly':True,'perimeterAndCsrfDenials':True,
                 'untrustedForwardingDiscarded':True,'sessionAndCsrfSurviveAppAndPgRecreation':True,
                 'isolatedLogicalRestoreQuarantine':True,'migrations':20,'databaseTlsVerifiedWithIsolatedFixtureCa':True,

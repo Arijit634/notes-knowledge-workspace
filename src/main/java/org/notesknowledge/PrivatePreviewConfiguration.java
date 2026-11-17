@@ -19,7 +19,11 @@ public class PrivatePreviewConfiguration {
         try {
             boolean managed=Set.of(environment.getActiveProfiles()).contains("managed-preview");
             boolean full=Set.of(environment.getActiveProfiles()).contains("full-hosted");
-            var profiles=full?Set.of("operations","private-preview","managed-preview","full-hosted"):
+            boolean idle=Set.of(environment.getActiveProfiles()).contains("idle-hosted");
+            if((idle&&!full)||idle!=environment.getProperty("operations.database-idle.enabled",Boolean.class,false))
+                throw new IllegalStateException();
+            var profiles=full?(idle?Set.of("operations","private-preview","managed-preview","full-hosted","idle-hosted"):
+                Set.of("operations","private-preview","managed-preview","full-hosted")):
                 managed?Set.of("operations","private-preview","managed-preview"):Set.of("operations","private-preview");
             var origin = URI.create(environment.getRequiredProperty("nkw.preview.origin"));
             if (!"Linux".equals(os) || !Set.of("amd64", "x86_64", "aarch64").contains(architecture)

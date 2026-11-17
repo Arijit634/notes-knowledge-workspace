@@ -26,8 +26,8 @@ static int wait_for(int fd,short events,int64_t deadline) {
     }
 }
 int main(int argc,char **argv) {
-    (void)argv;
-    if (argc!=1 || getuid()==0 || getuid()!=geteuid()) return 1;
+    int liveness=argc==2 && !strcmp(argv[1],"--liveness");
+    if ((argc!=1 && !liveness) || getuid()==0 || getuid()!=geteuid()) return 1;
     int64_t started=milliseconds();
     if (started<0) return 1;
     int64_t deadline=started+2500;
@@ -41,11 +41,14 @@ int main(int argc,char **argv) {
     if (!wait_for(fd,POLLOUT,deadline)) goto done;
     int error=0;socklen_t length=sizeof(error);
     if (getsockopt(fd,SOL_SOCKET,SO_ERROR,&error,&length)<0 || error) goto done;
-    static const char request[]="GET /actuator/health/readiness HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    const char *request=liveness
+        ? "GET /actuator/health/liveness HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+        : "GET /actuator/health/readiness HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    size_t request_length=strlen(request);
     size_t sent=0;
-    while (sent<sizeof(request)-1) {
+    while (sent<request_length) {
         if (!wait_for(fd,POLLOUT,deadline)) goto done;
-        ssize_t amount=send(fd,request+sent,sizeof(request)-1-sent,MSG_NOSIGNAL);
+        ssize_t amount=send(fd,request+sent,request_length-sent,MSG_NOSIGNAL);
         if (amount<0 && (errno==EINTR || errno==EAGAIN || errno==EWOULDBLOCK)) continue;
         if (amount<=0) goto done;
         sent+=(size_t)amount;

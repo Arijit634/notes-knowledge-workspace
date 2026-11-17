@@ -160,7 +160,7 @@ RUN ln -s /application.jar /app/application.jar && nginx -v && redis-server --ve
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC APP_ENVIRONMENT=private-preview
 EXPOSE 10000
 USER 65533:65533
-HEALTHCHECK --interval=30s --start-period=15m --start-interval=30s --timeout=4s --retries=3 CMD ["/opt/operations/health-probe"]
+HEALTHCHECK --interval=30s --start-period=15m --start-interval=30s --timeout=4s --retries=3 CMD ["/opt/operations/health-probe", "--liveness"]
 ENTRYPOINT ["/opt/operations/service-boundary"]
 # No registry publication is performed. A release must separately reconcile
 # redistribution, source availability/notice obligations AND codec patent rights.
