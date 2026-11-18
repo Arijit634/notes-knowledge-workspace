@@ -5,7 +5,7 @@
     "amd64",
     "arm64"
   ],
-  "productionSourceSha256": "d84bdb4e803e885afa8b0638d1da4b7818c3acb7147e8f0a36a1ccbbd4cf1718",
+  "productionSourceSha256": "cbd8894ecbfda53da2eaa0f5a9826337cdef612d201f0b1232c8f97853b2d0b1",
   "findings": [
     {
       "VulnerabilityID": "CVE-2011-3374",
@@ -6031,6 +6031,186 @@
       "compensatingControls": "Retain all raw scanner findings and severities. Bind the complete source/package/image and measured ELF/JNI inventory. Require positive native compiled parser controls, zero affected callers and every existing confinement, authorization and privacy gate. No copied native code is executed by the audit and no runtime credentials are provided.",
       "remediationTarget": "Re-evaluate the stable vendor package or a qualified upstream backport by 2026-11-18. This does not renew or extend any existing review.",
       "vendorEvidenceSha256": "cd0066d7ced39b154f618493ec795366d07a9f388f7025bb9848b3bb9d856e95"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-107493",
+      "PkgName": "libssl3t64",
+      "InstalledVersion": "3.5.7-1~deb13u3",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-107493",
+      "kind": "unreachable-precondition",
+      "rationale": "The PEM reader use-after-free requires an application to supply an existing non-NULL X509_INFO stack and reuse it after a failed read. No product path calls this OpenSSL API or exposes a caller-selected native certificate stack. OpenSSL own CA-loading callers pass NULL. The native media build disables OpenSSL and its linkage does not include libssl/libcrypto; neither library is loaded in the observed Java workload. Java TLS and product key handling are not reassigned to the affected API.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "opensslNotLinkedInMedia",
+        "opensslNotLoadedInWorkload"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-107493",
+        "https://openssl-library.org/news/secadv/20261117.txt"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-18",
+      "expiresOn": "2026-11-19",
+      "compensatingControls": "Require exact production-source/package/image binding and both measured OpenSSL absence controls; retain raw UNKNOWN findings; fail on missing controls, any changed or new finding, and expiry.",
+      "remediationTarget": "Recheck the stable vendor security backport and actual native reachability by 2026-11-19. OpenSSL fixes are scheduled for 2026-12-01; this is not a claim that the installed package is fixed.",
+      "vendorEvidenceSha256": "6f4219cd823c3472863cc592182ef571d7485ac2f8735845244dbc13e3e09f27"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-124709",
+      "PkgName": "libssl3t64",
+      "InstalledVersion": "3.5.7-1~deb13u3",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-124709",
+      "kind": "unreachable-precondition",
+      "rationale": "The retained-stream memory growth requires an OpenSSL QUIC server processing rejected peer streams. This image exposes no OpenSSL QUIC server or caller-selected native network protocol. The native media build disables OpenSSL and its linkage does not include libssl/libcrypto; neither library is loaded in the observed Java workload. The Servlet/JDK TLS boundary is unchanged, and this review does not claim a fix to OpenSSL itself.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "opensslNotLinkedInMedia",
+        "opensslNotLoadedInWorkload"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-124709",
+        "https://openssl-library.org/news/secadv/20261117.txt"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-18",
+      "expiresOn": "2026-11-19",
+      "compensatingControls": "Require exact production-source/package/image binding and both measured OpenSSL absence controls; retain raw UNKNOWN findings; fail on missing controls, any changed or new finding, and expiry.",
+      "remediationTarget": "Recheck the stable vendor security backport and actual native reachability by 2026-11-19. OpenSSL fixes are scheduled for 2026-12-01; this is not a claim that the installed package is fixed.",
+      "vendorEvidenceSha256": "6f4219cd823c3472863cc592182ef571d7485ac2f8735845244dbc13e3e09f27"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-35190",
+      "PkgName": "libssl3t64",
+      "InstalledVersion": "3.5.7-1~deb13u3",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-35190",
+      "kind": "unreachable-precondition",
+      "rationale": "The TLS 1.3 key-share read requires an OpenSSL server explicitly setting SSL_CERT_FLAG_SUITEB_128_LOS through SSL_CTX_set_cert_flags. No product path invokes that native API or exposes this server configuration. The native media build disables OpenSSL and its linkage does not include libssl/libcrypto; neither library is loaded in the observed Java workload. Default TLS configuration is not claimed as a substitute for the measured absence of this native execution path.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "opensslNotLinkedInMedia",
+        "opensslNotLoadedInWorkload"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-35190",
+        "https://openssl-library.org/news/secadv/20261117.txt"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-18",
+      "expiresOn": "2026-11-19",
+      "compensatingControls": "Require exact production-source/package/image binding and both measured OpenSSL absence controls; retain raw UNKNOWN findings; fail on missing controls, any changed or new finding, and expiry.",
+      "remediationTarget": "Recheck the stable vendor security backport and actual native reachability by 2026-11-19. OpenSSL fixes are scheduled for 2026-12-01; this is not a claim that the installed package is fixed.",
+      "vendorEvidenceSha256": "6f4219cd823c3472863cc592182ef571d7485ac2f8735845244dbc13e3e09f27"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-107493",
+      "PkgName": "openssl-provider-legacy",
+      "InstalledVersion": "3.5.7-1~deb13u3",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-107493",
+      "kind": "unreachable-precondition",
+      "rationale": "The PEM reader use-after-free requires an application to supply an existing non-NULL X509_INFO stack and reuse it after a failed read. No product path calls this OpenSSL API or exposes a caller-selected native certificate stack. OpenSSL own CA-loading callers pass NULL. The native media build disables OpenSSL and its linkage does not include libssl/libcrypto; neither library is loaded in the observed Java workload. Java TLS and product key handling are not reassigned to the affected API.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "opensslNotLinkedInMedia",
+        "opensslNotLoadedInWorkload"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-107493",
+        "https://openssl-library.org/news/secadv/20261117.txt"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-18",
+      "expiresOn": "2026-11-19",
+      "compensatingControls": "Require exact production-source/package/image binding and both measured OpenSSL absence controls; retain raw UNKNOWN findings; fail on missing controls, any changed or new finding, and expiry.",
+      "remediationTarget": "Recheck the stable vendor security backport and actual native reachability by 2026-11-19. OpenSSL fixes are scheduled for 2026-12-01; this is not a claim that the installed package is fixed.",
+      "vendorEvidenceSha256": "6f4219cd823c3472863cc592182ef571d7485ac2f8735845244dbc13e3e09f27"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-124709",
+      "PkgName": "openssl-provider-legacy",
+      "InstalledVersion": "3.5.7-1~deb13u3",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-124709",
+      "kind": "unreachable-precondition",
+      "rationale": "The retained-stream memory growth requires an OpenSSL QUIC server processing rejected peer streams. This image exposes no OpenSSL QUIC server or caller-selected native network protocol. The native media build disables OpenSSL and its linkage does not include libssl/libcrypto; neither library is loaded in the observed Java workload. The Servlet/JDK TLS boundary is unchanged, and this review does not claim a fix to OpenSSL itself.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "opensslNotLinkedInMedia",
+        "opensslNotLoadedInWorkload"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-124709",
+        "https://openssl-library.org/news/secadv/20261117.txt"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-18",
+      "expiresOn": "2026-11-19",
+      "compensatingControls": "Require exact production-source/package/image binding and both measured OpenSSL absence controls; retain raw UNKNOWN findings; fail on missing controls, any changed or new finding, and expiry.",
+      "remediationTarget": "Recheck the stable vendor security backport and actual native reachability by 2026-11-19. OpenSSL fixes are scheduled for 2026-12-01; this is not a claim that the installed package is fixed.",
+      "vendorEvidenceSha256": "6f4219cd823c3472863cc592182ef571d7485ac2f8735845244dbc13e3e09f27"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-35190",
+      "PkgName": "openssl-provider-legacy",
+      "InstalledVersion": "3.5.7-1~deb13u3",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-35190",
+      "kind": "unreachable-precondition",
+      "rationale": "The TLS 1.3 key-share read requires an OpenSSL server explicitly setting SSL_CERT_FLAG_SUITEB_128_LOS through SSL_CTX_set_cert_flags. No product path invokes that native API or exposes this server configuration. The native media build disables OpenSSL and its linkage does not include libssl/libcrypto; neither library is loaded in the observed Java workload. Default TLS configuration is not claimed as a substitute for the measured absence of this native execution path.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "opensslNotLinkedInMedia",
+        "opensslNotLoadedInWorkload"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-35190",
+        "https://openssl-library.org/news/secadv/20261117.txt"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-18",
+      "expiresOn": "2026-11-19",
+      "compensatingControls": "Require exact production-source/package/image binding and both measured OpenSSL absence controls; retain raw UNKNOWN findings; fail on missing controls, any changed or new finding, and expiry.",
+      "remediationTarget": "Recheck the stable vendor security backport and actual native reachability by 2026-11-19. OpenSSL fixes are scheduled for 2026-12-01; this is not a claim that the installed package is fixed.",
+      "vendorEvidenceSha256": "6f4219cd823c3472863cc592182ef571d7485ac2f8735845244dbc13e3e09f27"
     }
   ],
   "limits": [

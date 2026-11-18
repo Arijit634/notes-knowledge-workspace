@@ -114,6 +114,7 @@ def main():
         'systemdGptAutoGenerator':'/usr/lib/systemd/system-generators/systemd-gpt-auto-generator',
         'systemdGptAutoGeneratorLegacy':'/lib/systemd/system-generators/systemd-gpt-auto-generator',
         'xmlwf':'/usr/bin/xmlwf','xmlwfLocal':'/usr/local/bin/xmlwf',
+        'gpgtar':'/usr/bin/gpgtar','gpgtarLocal':'/usr/local/bin/gpgtar',
         'pngimage':'/usr/bin/pngimage','pnm2png':'/usr/bin/pnm2png','bzip2recover':'/usr/bin/bzip2recover'}
     for name,path in probes.items():
         # Paths are the fixed developer-owned constants above, never caller input.
@@ -124,6 +125,10 @@ def main():
     # artifact as well, including alternate paths and dangling symbolic links.
     xmlwf=inspect("find /usr /opt /jdk -xdev -name 'xmlwf*' -print -quit")
     components['xmlwfInventory']=dict(scope=['/usr','/opt','/jdk'],absent=not xmlwf)
+    # A source-package finding against gpgv can affect the separate gpgtar
+    # extractor. Package names alone cannot establish that the tool is absent.
+    gpgtar=inspect("find /usr /opt /jdk -xdev -name 'gpgtar*' -print -quit")
+    components['gpgtarInventory']=dict(scope=['/usr','/opt','/jdk'],absent=not gpgtar)
     privileged=inspect("find /usr /opt /jdk -xdev -type f -perm /6000 -print -quit")
     fonts=inspect("find /etc/fonts /usr/share/fonts /usr/share/fontconfig -type f \\( ! -uid 0 -o -perm /022 \\) -print -quit")
     font_sizes=[int(value) for value in inspect('find /etc/fonts /usr/share/fontconfig -type f -exec stat -c %s {} +').splitlines()]
