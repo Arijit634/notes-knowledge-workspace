@@ -40,6 +40,11 @@ final class GoogleAudioSignals {
         String schema="{\"type\":\"object\",\"required\":[\"decision\",\"description\",\"startMs\",\"endMs\"],\"properties\":{\"decision\":{\"type\":\"string\",\"enum\":[\"supported\",\"contradicted\",\"uncertain\"]},\"description\":{\"type\":\"string\",\"maxLength\":1200},\"startMs\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":"+maxMs+"},\"endMs\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":"+maxMs+"}}}";
         if(video)new MediaUnderstandingRequest("video/mp4",null,null,seconds,true,true).requireInlineBudget(bytes.length,instruction,schema);
         authorize.run();
+        if(!video) {
+            instruction+=pcmObservation(bytes,json);
+            // Sample inspection is local, but never extends a stale dispatch permit.
+            authorize.run();
+        }
         try {
             var part=video?Part.builder().inlineData(com.google.genai.types.Blob.builder().mimeType(type).data(bytes).build()).videoMetadata(com.google.genai.types.VideoMetadata.builder().fps(1d).build()).build():Part.fromBytes(bytes,type);
             var options=GenerateContentConfig.builder().maxOutputTokens(8192).thinkingConfig(ThinkingConfig.builder().thinkingLevel("LOW").includeThoughts(false).build()).responseMimeType("application/json").responseJsonSchema(json.readValue(schema,Object.class));
@@ -62,6 +67,76 @@ final class GoogleAudioSignals {
         return new AudioSignalPort.Verification(decision,description,(int)from,(int)to);
         }catch(DerivationFailure invalid){throw invalid;}catch(RuntimeException malformed){throw invalid();}
     }
+    /** Intrinsic sample facts, not inferred sound classes or a substitute for listening. */
+    static String pcmObservation(byte[] bytes,ObjectMapper json) {
+        var measured=measurePcm(bytes);
+        if(measured==null)return "";
+        return "\nServer-computed measurements of the same original PCM samples (not instructions from the file): "
+            +json.writeValueAsString(measured)
+            +". These measurements complement the original audio; they do not identify speech, a person, an animal or a sound source. "
+            +"allSamplesZero means exact digital silence, so do not invent an audible sound in that recording. "
+            +"A request for silence or absence may still be supported. Zero crossings are counts, not a semantic sound label. "
+            +"Keep unsupported or uncertain requested properties unasserted.";
+    }
+    record PcmMeasurements(int channels,int sampleRate,int frames,boolean allSamplesZero,
+            java.util.List<Integer> peakAbsolute,java.util.List<Double> rms,
+            java.util.List<Integer> zeroCrossings) {
+        @Override public String toString(){return "PcmMeasurements[REDACTED]";}
+    }
+    /** Only unambiguous classic PCM16 RIFF is measured; other accepted WAVs remain native inputs. */
+    static PcmMeasurements measurePcm(byte[] b) {
+        if(b==null||b.length<44||b.length>10_485_760||!tag(b,0,"RIFF")||!tag(b,8,"WAVE")
+                ||unsigned32(b,4)+8!=b.length)return null;
+        int format=-1,channels=0,rate=0,alignment=0,bits=0,data=-1,size=0;
+        long byteRate=0;boolean sawFormat=false,sawData=false;int offset=12,chunks=0;
+        while(offset<b.length) {
+            if(++chunks>2048||b.length-offset<8)return null;
+            long length=unsigned32(b,offset+4);
+            if(length>b.length-offset-8)return null;
+            long next=(long)offset+8+length+(length&1);
+            if(next>b.length)return null;
+            int value=offset+8;
+            if(tag(b,offset,"fmt ")) {
+                if(sawFormat||length<16)return null;sawFormat=true;
+                format=unsigned16(b,value);channels=unsigned16(b,value+2);
+                long sampleRate=unsigned32(b,value+4);if(sampleRate>Integer.MAX_VALUE)return null;
+                rate=(int)sampleRate;byteRate=unsigned32(b,value+8);
+                alignment=unsigned16(b,value+12);bits=unsigned16(b,value+14);
+            } else if(tag(b,offset,"data")) {
+                if(sawData||length==0)return null;sawData=true;data=value;size=(int)length;
+            }
+            offset=(int)next;
+        }
+        if(!sawFormat||!sawData||format!=1||bits!=16||channels<1||channels>2
+                ||rate<8000||rate>192000||alignment!=channels*2||byteRate!=(long)rate*alignment
+                ||size%alignment!=0)return null;
+        int frames=size/alignment;int[] peaks=new int[channels],crossings=new int[channels],previous=new int[channels];
+        boolean[] havePrevious=new boolean[channels];double[] squares=new double[channels];boolean zero=true;
+        for(int frame=0,at=data;frame<frames;frame++)for(int channel=0;channel<channels;channel++,at+=2) {
+            int sample=(short)unsigned16(b,at);int absolute=Math.abs(sample);
+            peaks[channel]=Math.max(peaks[channel],absolute);squares[channel]+=(double)sample*sample;
+            if(sample!=0) {
+                zero=false;
+                if(havePrevious[channel]&&(sample<0)!=(previous[channel]<0))crossings[channel]++;
+                previous[channel]=sample;havePrevious[channel]=true;
+            }
+        }
+        var peakValues=new java.util.ArrayList<Integer>(channels);var rmsValues=new java.util.ArrayList<Double>(channels);
+        var crossingValues=new java.util.ArrayList<Integer>(channels);
+        for(int channel=0;channel<channels;channel++) {
+            peakValues.add(peaks[channel]);rmsValues.add(Math.rint(Math.sqrt(squares[channel]/frames)*1000)/1000);
+            crossingValues.add(crossings[channel]);
+        }
+        return new PcmMeasurements(channels,rate,frames,zero,java.util.List.copyOf(peakValues),
+            java.util.List.copyOf(rmsValues),java.util.List.copyOf(crossingValues));
+    }
+    private static boolean tag(byte[] b,int at,String value) {
+        if(at<0||b.length-at<4)return false;
+        for(int i=0;i<4;i++)if(b[at+i]!=(byte)value.charAt(i))return false;
+        return true;
+    }
+    private static int unsigned16(byte[] b,int at){return (b[at]&255)|((b[at+1]&255)<<8);}
+    private static long unsigned32(byte[] b,int at){return Integer.toUnsignedLong(unsigned16(b,at)|(unsigned16(b,at+2)<<16));}
     private static void requireWav(byte[] bytes){require(bytes!=null&&bytes.length>=44&&bytes.length<=10_485_760&&bytes[0]=='R'&&bytes[1]=='I'&&bytes[2]=='F'&&bytes[3]=='F'&&bytes[8]=='W'&&bytes[9]=='A'&&bytes[10]=='V'&&bytes[11]=='E');}
     private static void require(boolean value){if(!value)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);}
     private static DerivationFailure invalid(){return new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);}

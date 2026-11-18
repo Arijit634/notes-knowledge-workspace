@@ -247,7 +247,7 @@ class MultimodalPipelineQualificationTest {
         UUID attachment=upload("tones");
         var expected=new Expected(owner,note,attachment,1,1,1L);
         var current=EmbeddingLineage.create(config,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,config.approvedPolicyFingerprint()),"audio");
-        String legacyConfiguration=current.configuration().replace("audio-layered-listening-low-language-surrogate-v5","media-scoped-coverage-surrogate-v2");
+        String legacyConfiguration=current.configuration().replace("audio-layered-listening-low-language-pcmfacts-surrogate-v6","media-scoped-coverage-surrogate-v2");
         var legacy=new EmbeddingLineage(java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
             .digest(legacyConfiguration.getBytes(StandardCharsets.UTF_8))),legacyConfiguration,"audio",8,"cosine",policy,"none");
         // Model an already-completed prior extraction, not a pending new upload.
