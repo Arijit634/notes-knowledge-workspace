@@ -277,10 +277,33 @@ class GoogleDerivationAdaptersTest {
         response="{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"{}\"}]}}]}";
         assertThatThrownBy(()->port.verify(audioEvidence(),query,wav,1)).isInstanceOf(DerivationFailure.class);
     }
+    @Test void nativeListeningCarriesOnlyAuthorizedOriginalPcmFactsAndKeepsSilenceQueriesLegitimate() {
+        byte[] wav=PcmMeasurementsTest.wav(new short[16000],1,16000),original=wav.clone();
+        String silenceQuestion="Find my silent recording";
+        var permit=gate(directAudioConfig(),true).evidence(owner,silenceQuestion,
+            List.of(new PrivateQuerySource.Source(new Expected(owner,note,new UUID(0,4),1,1,1L),"active",true,"audio",Instant.EPOCH,"")),mock(DispatchCoordinator.Handle.class));
+        generatedRaw("{\"decision\":\"supported\",\"description\":\"The requested silence is present\",\"startMs\":0,\"endMs\":1000}");
+        var result=adapters.googleAudioSignalPort(directAudioConfig(),clients,json).verify(permit,silenceQuestion,wav,1);
+        assertThat(result.supported()).isTrue();assertThat(requests).hasSize(1);
+        assertThat(requests.getFirst()).contains(Base64.getEncoder().encodeToString(original),"allSamplesZero","true",
+            "zeroCrossings","sampleRate","16000","frames","rms","request for silence or absence");
+        assertThat(wav).isEqualTo(original);
+        var veto=mock(KnowledgeQueryGate.EvidencePermit.class);doThrow(new DerivationFailure(KnowledgeWork.Failure.POLICY_BLOCKED)).when(veto).requireGoogleAudio(query);
+        assertThatThrownBy(()->adapters.googleAudioSignalPort(directAudioConfig(),clients,json).verify(veto,query,wav,1)).isInstanceOf(DerivationFailure.class);
+        assertThat(requests).hasSize(1);
+    }
+    @Test void aCurrentnessVetoAfterPcmInspectionStillStopsTheActualSdkRequest() {
+        var permit=mock(KnowledgeQueryGate.EvidencePermit.class);var checks=new AtomicInteger();
+        doAnswer(invocation->{if(checks.incrementAndGet()==3)throw new DerivationFailure(KnowledgeWork.Failure.LINEAGE_OBSOLETE);return null;})
+            .when(permit).requireGoogleAudio(query);
+        byte[] wav=PcmMeasurementsTest.wav(new short[16000],1,16000);
+        assertThatThrownBy(()->adapters.googleAudioSignalPort(directAudioConfig(),clients,json).verify(permit,query,wav,1)).isInstanceOf(DerivationFailure.class);
+        assertThat(checks).hasValue(3);assertThat(requests).isEmpty();
+    }
     @Test void directAudioModeChangesOnlyAudioLineageAndRejectsUnsupportedEmbeddingSpace() {
         var c=directAudioConfig();var p=new ProcessingPolicyService.AcknowledgedProcessingPolicy(new UUID(0,3),1,"a".repeat(64));
         for(String modality:List.of("note","image","pdf","video"))assertThat(EmbeddingLineage.create(c,p,modality)).isEqualTo(EmbeddingLineage.create(config("gemini-embedding-2","gemini-3.5-flash-lite"),p,modality));
-        assertThat(EmbeddingLineage.create(c,p,"audio").configuration()).contains("direct-audio-query/native-wav180-inline/verify-ms-low-v1");
+        assertThat(EmbeddingLineage.create(c,p,"audio").configuration()).contains("direct-audio-query/native-wav180-inline/verify-ms-low-pcmfacts-v2");
         var disabled=adapters.googleAudioSignalPort(config("gemini-embedding-2"),clients,json);assertThat(disabled.available()).isFalse();
         assertThatThrownBy(()->disabled.embed(audioEvidence(),query,DirectAudioQualificationCommand.control(true))).isInstanceOf(DerivationFailure.class);assertThat(requests).isEmpty();
     }
@@ -847,10 +870,29 @@ class GoogleDerivationAdaptersTest {
         assertThat(result.getFirst().timeEnd()).isEqualTo(4.);verify(permit,times(2)).requireGoogleDispatch();
         assertThat(requests).hasSize(1);
         var wire=json.readTree(requests.getFirst());var parts=wire.get("contents").get(0).get("parts");
-        assertThat(parts.get(0).get("text").asText()).contains("Acoustic description","not spoken words");
+        assertThat(parts.get(0).get("text").asText()).contains("Acoustic description","not spoken words",
+            "Server-computed measurements","allSamplesZero","zeroCrossings","sampleRate");
         assertThat(parts.get(1).get("inlineData").get("mimeType").asText()).isEqualTo("audio/wav");
         assertThat(Base64.getDecoder().decode(parts.get(1).get("inlineData").get("data").asText())).isEqualTo(wav);
         assertThat(wire.has("tools")).isFalse();assertThat(requests.getFirst()).doesNotContain("fileUri","cachedContent");
+    }
+    @Test void videoSoundtrackChildKeepsItsExistingPromptAndProvenanceRecipe()throws Exception {
+        byte[] original=getClass().getResourceAsStream("/attachments/synthetic-aac-video.mp4").readAllBytes();
+        short[] samples=new short[32000];for(int i=0;i<samples.length;i++)samples[i]=(short)(2000*Math.sin(2*Math.PI*440*i/16000));
+        byte[] wav=PcmMeasurementsTest.wav(samples,1,16000);
+        var child=new TransformedMediaIdentity(new Expected(owner,note,new UUID(0,4),1,1,1L),TransformedMediaIdentity.digest(original),
+            original.length,"video/mp4",org.notesknowledge.knowledge.spi.PrivateDerivationSource.VideoAudioChild.PROFILE,
+            "synthetic-v1","a".repeat(64),"b".repeat(64),TransformedMediaIdentity.digest(wav),wav.length,"audio/wav",
+            new TransformedMediaIdentity.Scope("video_audio",0,32000,16000,0,32000),"a".repeat(64),"gemini",
+            "gemini-3.5-flash-lite","media-understanding","a".repeat(64));
+        generated("{\"complete\":true,\"checkedPages\":[],\"noSpeech\":true,\"segments\":[{\"text\":\"A steady synthesized tone.\",\"kind\":\"transcript\",\"heading\":\"Acoustic description\",\"timeStart\":0,\"timeEnd\":2}]}");
+        var permit=sourcePermit();
+        var output=adapters.googleMediaUnderstandingPort(soundtrackConfig("gemini-3.5-flash-lite"),clients,json)
+            .describeChild(permit,child,original,wav,new MediaUnderstandingRequest("audio/wav",null,null,2.));
+        assertThat(output).hasSize(1);assertThat(requests).hasSize(1);
+        assertThat(requests.getFirst()).contains(Base64.getEncoder().encodeToString(wav))
+            .doesNotContain("Server-computed measurements","allSamplesZero");
+        verify(permit,times(2)).requireGoogleChildDispatch(child,original,wav);
     }
     @ParameterizedTest @ValueSource(strings={"missing","null","MAX_TOKENS","SAFETY","empty-candidates","missing-content","thought-only","tool-only"})
     void nativeVideoCompletionMustBeExplicitStopWithBoundedText(String mode) {
@@ -887,7 +929,7 @@ class GoogleDerivationAdaptersTest {
         for(String modality:List.of("note","image","audio","video","pdf")) {
             var lineage=EmbeddingLineage.create(config("gemini-embedding-2"),policy,modality);
             String legacy=lineage.configuration().replace("media-scoped-coverage-surrogate-v2","media-typed-bounded-v1")
-                .replace("audio-layered-listening-low-language-surrogate-v5","media-typed-bounded-v1")
+                .replace("audio-layered-listening-low-language-pcmfacts-surrogate-v6","media-typed-bounded-v1")
                 .replace("video-segments-only-audio1fps-low-millis-surrogate-v14","media-typed-bounded-v1");
             String hash=java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(legacy.getBytes(StandardCharsets.UTF_8)));
             if(modality.equals("note"))assertThat(lineage.id()).isEqualTo(hash);
@@ -903,7 +945,13 @@ class GoogleDerivationAdaptersTest {
         unchanged.forEach((modality,hash)->assertThat(EmbeddingLineage.create(config("gemini-embedding-2"),policy,modality).id()).isEqualTo(hash));
         var audio=EmbeddingLineage.create(config("gemini-embedding-2"),policy,"audio");
         assertThat(audio.id()).isNotEqualTo("517832f7fad262113cf18c388374cdd5b31045270e500308d9fb4ebbfc66b411");
-        assertThat(audio.configuration()).contains("audio-layered-listening-low-language-surrogate-v5");
+        assertThat(audio.configuration()).contains("audio-layered-listening-low-language-pcmfacts-surrogate-v6");
+        try {
+            String priorAudio=audio.configuration().replace("audio-layered-listening-low-language-pcmfacts-surrogate-v6",
+                "audio-layered-listening-low-language-surrogate-v5");
+            assertThat(audio.id()).isNotEqualTo(java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                .digest(priorAudio.getBytes(StandardCharsets.UTF_8))));
+        }catch(java.security.NoSuchAlgorithmException impossible){throw new AssertionError(impossible);}
         var video=EmbeddingLineage.create(config("gemini-embedding-2"),policy,"video");
         assertThat(video.id()).isNotEqualTo("9d979bbc5cfb02c7cacd73e249ada34577b7dab3e4c0245340e8271b24285365");
         assertThat(video.configuration()).contains("video-segments-only-audio1fps-low-millis-surrogate-v14");

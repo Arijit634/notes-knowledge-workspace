@@ -134,6 +134,8 @@ class GoogleDerivationAdapters {
                 if(model==null)throw new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE);
                 String instruction=mediaInstruction(request);
                 String schema=mediaSchema(request);
+                // Video soundtrack children retain their separately versioned input recipe.
+                if(request.mediaType().equals("audio/wav")&&!videoSoundtrack)instruction+=GoogleAudioSignals.pcmObservation(bytes,json);
                 request.requireInlineBudget(bytes.length,instruction,schema);
                 String selectedModel=videoSoundtrack?c.soundtrackModel():c.mediaModel();
                 var callOptions=GoogleGenAiChatOptions.builder().model(selectedModel).maxOutputTokens(8192)

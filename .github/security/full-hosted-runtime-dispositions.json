@@ -4,7 +4,7 @@
   "architectures": [
     "amd64"
   ],
-  "productionSourceSha256": "0c6ce617780206a3f0af823dbed548cf43d79264cb2999f4ee15eb65e5fd590a",
+  "productionSourceSha256": "cbd8894ecbfda53da2eaa0f5a9826337cdef612d201f0b1232c8f97853b2d0b1",
   "findings": [
     {
       "VulnerabilityID": "CVE-2026-76642",
@@ -807,6 +807,37 @@
         "https://github.com/canonical/ubuntu-security-notices/blob/dd17a57526859cf8505026729bf015fc2411a952/osv/cve/2026/UBUNTU-CVE-2026-121876.json"
       ],
       "vendorEvidenceSha256": "e2f27bf17f02780a725bfce7491bf006b9af973761ef2337a1ac9ec06d4f5b01"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-105712",
+      "PkgName": "gpgv",
+      "InstalledVersion": "2.4.4-2ubuntu17.6",
+      "FixedVersion": null,
+      "Severity": "LOW",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-105712",
+      "kind": "component-not-shipped",
+      "rationale": "This source-package advisory concerns gpgtar archive extraction into a directory containing a pre-existing symlink. gpgv signature verification is not the affected extractor. The application exposes no gpgtar extraction feature, and this exact runtime must independently prove both conventional gpgtar executable paths and the scoped runtime inventory absent. The installed gpgv package remains in the raw scanner and package inventories; the underlying source-package issue is not declared fixed.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "gpgtarAbsent",
+        "gpgtarLocalAbsent",
+        "gpgtarInventoryAbsent"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-105712",
+        "https://github.com/gpg/gnupg/commit/7a2692fe5e580ae3bbb2a47abc4baaf1af65aa88"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-18",
+      "expiresOn": "2026-11-19",
+      "compensatingControls": "Require exact source/package/image binding, both affected-tool path checks and the scoped inventory; retain the raw LOW finding and fail when a tool is present, evidence is missing, or the review expires.",
+      "remediationTarget": "Recheck the stable distribution fix and independently qualify affected-tool absence by 2026-11-19; no source-package vulnerability or unrelated archive extractor is waived.",
+      "vendorEvidenceSha256": "cba2f60f24ccdc97140b058839ed68cadab3d7538c032638cc687e755ed2ea3f"
     }
   ]
 }
