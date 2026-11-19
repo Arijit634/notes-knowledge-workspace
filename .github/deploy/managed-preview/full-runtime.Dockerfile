@@ -130,7 +130,7 @@ RUN sed -i -e 's|http://|https://|g' \
     && apt-get install -y --no-install-recommends ca-certificates bash \
        libstdc++6 libfreetype6 libexpat1 libfontconfig1 fonts-dejavu-core \
        libbrotli1 libbz2-1.0 libpng16-16t64 zlib1g \
-       nginx=1.24.0-2ubuntu7.19 nginx-common=1.24.0-2ubuntu7.19 \
+       nginx=1.24.0-2ubuntu7.20 nginx-common=1.24.0-2ubuntu7.20 \
     && rm /usr/sbin/policy-rc.d && rm -rf /var/lib/apt/lists/*
 COPY --from=build /openh264-build/libopenh264-8.deb /tmp/libopenh264-8.deb
 RUN dpkg -i /tmp/libopenh264-8.deb && ldconfig && rm /tmp/libopenh264-8.deb
