@@ -30,7 +30,8 @@ class GoogleDerivationAdaptersTest {
     private final ObjectMapper json=tools.jackson.databind.json.JsonMapper.builder()
         .enable(tools.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES).build();
     private final io.micrometer.core.instrument.simple.SimpleMeterRegistry metrics=new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
-    private final GoogleDerivationAdapters adapters=new GoogleDerivationAdapters(metrics);
+    private GoogleDerivationAdapters adapters;
+    private HttpOptions controlledOptions;
     private final UUID owner=new UUID(0,1),note=new UUID(0,2);
     private final Expected expected=new Expected(owner,note,null,1,1,null);
     private final String query="Where is the synthetic observatory?";
@@ -153,12 +154,13 @@ class GoogleDerivationAdaptersTest {
             exchange.getResponseHeaders().set("Content-Type","application/json");
             exchange.sendResponseHeaders(status,bytes.length);exchange.getResponseBody().write(bytes);exchange.close();
         });server.start();
-        sdk=Client.builder().apiKey("synthetic-not-a-provider-key").httpOptions(GoogleDerivationAdapters.providerHttpOptions(new MockEnvironment()).toBuilder()
+        sdk=Client.builder().apiKey("synthetic-not-a-provider-key").httpOptions(controlledOptions=GoogleDerivationAdapters.providerHttpOptions(new MockEnvironment()).toBuilder()
             // Status/parsing contracts use the production deadline, not an unrelated
             // two-second scheduling threshold on a resource-constrained test host.
             .baseUrl("http://127.0.0.1:"+server.getAddress().getPort()).timeout(10000)
             .retryOptions(HttpRetryOptions.builder().attempts(1).build()).build()).build();
         clients=mock(ObjectProvider.class);when(clients.getIfAvailable()).thenReturn(sdk);
+        adapters=new GoogleDerivationAdapters(metrics,null,controlledOptions);
     }
     @AfterEach void stop(){
         try{sdk.close();server.stop(0);
@@ -423,7 +425,7 @@ class GoogleDerivationAdaptersTest {
     }
     @ParameterizedTest @ValueSource(strings={"gemini-3.8-flash","gemini-3.6-flash","gemini-3.5-flash-lite"})
     void explicitLowThinkingIsSentThroughTheRealSdkAndUnknownConfigurationIsRejected(String mediaModel) {
-        var configured=new GoogleDerivationAdapters(metrics,new MockEnvironment().withProperty("knowledge.derivation.thinking-level","LOW"));
+        var configured=new GoogleDerivationAdapters(metrics,new MockEnvironment().withProperty("knowledge.derivation.thinking-level","LOW"),controlledOptions);
         generated("{\"complete\":true,\"checkedPages\":[],\"noSpeech\":false,\"segments\":[]}");
         configured.googleMediaUnderstandingPort(config("gemini-embedding-2",mediaModel),clients,json).describe(sourcePermit(),new byte[]{1},new MediaUnderstandingRequest("image/png",null,null,null));
         assertThat(json.readTree(requests.getFirst()).path("generationConfig").path("thinkingConfig").path("thinkingLevel").asString()).isEqualTo("LOW");
@@ -433,7 +435,7 @@ class GoogleDerivationAdaptersTest {
         for(String value:List.of("HIGH","arbitrary"))assertThatThrownBy(()->new GoogleDerivationAdapters(metrics,new MockEnvironment().withProperty("knowledge.derivation.thinking-level",value))).isInstanceOf(IllegalArgumentException.class);
     }
     @Test void explicitMinimalThinkingIsLimitedToTheQualifiedFlashLiteModel() {
-        var configured=new GoogleDerivationAdapters(metrics,new MockEnvironment().withProperty("knowledge.derivation.thinking-level","MINIMAL"));
+        var configured=new GoogleDerivationAdapters(metrics,new MockEnvironment().withProperty("knowledge.derivation.thinking-level","MINIMAL"),controlledOptions);
         generated("{\"complete\":true,\"checkedPages\":[],\"noSpeech\":false,\"segments\":[]}");
         configured.googleMediaUnderstandingPort(config("gemini-embedding-2","gemini-3.5-flash-lite"),clients,json)
             .describe(sourcePermit(),new byte[]{1},new MediaUnderstandingRequest("image/png",null,null,null));
@@ -503,13 +505,15 @@ class GoogleDerivationAdaptersTest {
                 .httpOptions(HttpOptions.builder().baseUrl("http://127.0.0.1:"+controlled.server.getAddress().getPort()).timeout(10000)
                     .retryOptions(HttpRetryOptions.builder().attempts(1).build()).build()).build()){
             ObjectProvider<Client> ownClients=mock(ObjectProvider.class);when(ownClients.getIfAvailable()).thenReturn(ownClient);
+            var ownAdapters=new GoogleDerivationAdapters(metrics,null,controlledOptions.toBuilder()
+                .baseUrl("http://127.0.0.1:"+controlled.server.getAddress().getPort()).build());
             var c=new AiDerivationProperties(true,false,"gemini","gemini-embedding-2","gemini-3.8-flash","synthetic-v1","global","unpaid","synthetic-qualification-v1","google-v2",8,"cosine","none","a".repeat(64));
             var vector=adapters.googleTextEmbeddingPort(c,ownClients).embed(sourcePermit(),List.of("Aster fictional fact"));
             assertThat(vector).hasSize(1);assertThat(vector.getFirst()).hasSize(8);
             byte[] bytes={1,2,3};var segment=new DerivedSegment("Aster synthetic caption","whole_image","",null,null,null,null,null,null,null,null,null);
             controlled.media(bytes,List.of(segment));
             try {
-                assertThat(adapters.googleMediaUnderstandingPort(c,ownClients,json).describe(sourcePermit(),bytes,new MediaUnderstandingRequest("image/png",null,null,null))).containsExactly(segment);
+                assertThat(ownAdapters.googleMediaUnderstandingPort(c,ownClients,json).describe(sourcePermit(),bytes,new MediaUnderstandingRequest("image/png",null,null,null))).containsExactly(segment);
             }catch(DerivationFailure failure){throw new AssertionError("controlled_media_contract_"+failure.category+"_"+(failure.diagnostic==null?"none":failure.diagnostic.kind())+"_"+controlled.failureCode);}
             assertThat(controlled.failureCode).isEqualTo("none");
         }
@@ -738,7 +742,7 @@ class GoogleDerivationAdaptersTest {
         var headings=wire.path("generationConfig").path("responseJsonSchema").path("properties").path("segments").path("items").path("properties").path("heading").path("enum");
         assertThat(headings.toString()).isEqualTo("[\"Transcript\",\"Acoustic description\"]");
         assertThat(output.getFirst().text()).startsWith("Audio description (model inference, not spoken words): ");
-        verify(permit,times(2)).requireGoogleDispatch();assertThat(requests).hasSize(1);
+        verify(permit,times(3)).requireGoogleDispatch();assertThat(requests).hasSize(1);
     }
     @Test void dedicatedListeningAcceptsSilenceButRejectsVisualOnlyOutputAndImpossibleScope() {
         var request=new MediaUnderstandingRequest("video/mp4",null,null,1.,true,true);
@@ -802,7 +806,7 @@ class GoogleDerivationAdaptersTest {
             assertThatThrownBy(()->port.describe(permit,png,request)).isInstanceOf(DerivationFailure.class);
             assertThat(requests).isEmpty();
             assertThat(port.describeChild(permit,child,original,png,request).getFirst().page()).isEqualTo(3);
-            verify(permit,times(2)).requireGoogleChildDispatch(child,original,png);
+            verify(permit,times(3)).requireGoogleChildDispatch(child,original,png);
             var parts=json.readTree(requests.getFirst()).get("contents").get(0).get("parts");
             assertThat(parts.size()).isEqualTo(2);assertThat(parts.get(0).get("text").asText()).contains("ONLY original PDF page 3");
             assertThat(parts.get(1).get("inlineData").get("mimeType").asText()).isEqualTo("image/png");
@@ -853,7 +857,7 @@ class GoogleDerivationAdaptersTest {
                 }).hasCause(null).hasMessage("Derivation unavailable");
             assertThat(generations.constructed()).hasSize(1);
         }
-        verify(permit,times(2)).requireGoogleDispatch();assertThat(requests).hasSize(1);
+        verify(permit,times(3)).requireGoogleDispatch();assertThat(requests).hasSize(1);
     }
     @Test void inlineByteAndVideoDurationBudgetRejectBeforeAnyHttpRequest() {
         var port=adapters.googleMediaUnderstandingPort(config("gemini-embedding-2"),clients,json);
@@ -867,7 +871,7 @@ class GoogleDerivationAdaptersTest {
         var port=adapters.googleMediaUnderstandingPort(config("gemini-embedding-2"),clients,json);
         var permit=sourcePermit();var result=port.describe(permit,wav,new MediaUnderstandingRequest("audio/wav",null,null,4.));
         assertThat(result).hasSize(1);assertThat(result.getFirst().text()).startsWith("Audio description (model inference, not spoken words): ");
-        assertThat(result.getFirst().timeEnd()).isEqualTo(4.);verify(permit,times(2)).requireGoogleDispatch();
+        assertThat(result.getFirst().timeEnd()).isEqualTo(4.);verify(permit,times(3)).requireGoogleDispatch();
         assertThat(requests).hasSize(1);
         var wire=json.readTree(requests.getFirst());var parts=wire.get("contents").get(0).get("parts");
         assertThat(parts.get(0).get("text").asText()).contains("Acoustic description","not spoken words",
@@ -892,7 +896,7 @@ class GoogleDerivationAdaptersTest {
         assertThat(output).hasSize(1);assertThat(requests).hasSize(1);
         assertThat(requests.getFirst()).contains(Base64.getEncoder().encodeToString(wav))
             .doesNotContain("Server-computed measurements","allSamplesZero");
-        verify(permit,times(2)).requireGoogleChildDispatch(child,original,wav);
+        verify(permit,times(3)).requireGoogleChildDispatch(child,original,wav);
     }
     @ParameterizedTest @ValueSource(strings={"missing","null","MAX_TOKENS","SAFETY","empty-candidates","missing-content","thought-only","tool-only"})
     void nativeVideoCompletionMustBeExplicitStopWithBoundedText(String mode) {
@@ -922,7 +926,7 @@ class GoogleDerivationAdaptersTest {
                     case "tool-only" -> ProviderFailureDiagnostic.Detail.RESPONSE_NON_TEXT_PART;
                     default -> ProviderFailureDiagnostic.Detail.COMPLETION;
                 });}).hasCause(null);
-        verify(permit,times(2)).requireGoogleDispatch();assertThat(requests).hasSize(1);
+        verify(permit,times(3)).requireGoogleDispatch();assertThat(requests).hasSize(1);
     }
     @Test void onlyMediaExtractorLineagesChangeAndTextLineageKeepsItsExactHash() throws Exception {
         var policy=new ProcessingPolicyService.AcknowledgedProcessingPolicy(new UUID(0,3),1,"a".repeat(64));

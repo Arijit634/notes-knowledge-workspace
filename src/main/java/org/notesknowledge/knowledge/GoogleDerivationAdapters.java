@@ -19,11 +19,16 @@ import tools.jackson.databind.ObjectMapper;
 class GoogleDerivationAdapters {
     private final io.micrometer.core.instrument.MeterRegistry meters;
     private final org.springframework.ai.google.genai.common.GoogleGenAiThinkingLevel thinkingLevel;
+    private final com.google.genai.types.HttpOptions mediaHttpOptions;
     GoogleDerivationAdapters(){this(null,null);}
     GoogleDerivationAdapters(io.micrometer.core.instrument.MeterRegistry meters){this(meters,null);}
     @org.springframework.beans.factory.annotation.Autowired
     GoogleDerivationAdapters(io.micrometer.core.instrument.MeterRegistry meters,Environment environment){
+        this(meters,environment,providerHttpOptions(environment));
+    }
+    GoogleDerivationAdapters(io.micrometer.core.instrument.MeterRegistry meters,Environment environment,com.google.genai.types.HttpOptions mediaHttpOptions){
         this.meters=meters;
+        this.mediaHttpOptions=mediaHttpOptions;
         String level=environment==null?null:environment.getProperty("knowledge.derivation.thinking-level");
         if(level!=null&&!List.of("LOW","MINIMAL").contains(level))throw new IllegalArgumentException("Unsupported provider thinking configuration");
         thinkingLevel=level==null?null:org.springframework.ai.google.genai.common.GoogleGenAiThinkingLevel.valueOf(level);
@@ -69,8 +74,8 @@ class GoogleDerivationAdapters {
             .retryOptions(com.google.genai.types.HttpRetryOptions.builder().attempts(1).build()).build();
     }
     static int providerTimeout(Environment environment) {
-        int timeout=environment.getProperty("knowledge.derivation.provider-timeout-ms",Integer.class,10000);
-        int leaseSeconds=environment.getProperty("knowledge.derivation.lease-seconds",Integer.class,30);
+        int timeout=environment==null?10000:environment.getProperty("knowledge.derivation.provider-timeout-ms",Integer.class,10000);
+        int leaseSeconds=environment==null?30:environment.getProperty("knowledge.derivation.lease-seconds",Integer.class,30);
         // A deliberately longer local provider deadline needs a matching bounded
         // lease. Defaults stay 10s/30s; every call leaves at least five seconds.
         if(leaseSeconds<30||leaseSeconds>120||timeout<1000||timeout>Math.min(60000,(leaseSeconds-5)*1000))
@@ -89,9 +94,13 @@ class GoogleDerivationAdapters {
             }
         };
     }
-    @Bean
+    @Bean GoogleInlineMedia googleInlineMedia(){return new GoogleInlineMedia(mediaHttpOptions);}
     AudioSignalPort googleAudioSignalPort(AiDerivationProperties c,org.springframework.beans.factory.ObjectProvider<com.google.genai.Client> client,ObjectMapper json) {
-        var sdk=client.getIfAvailable();var signals=new GoogleAudioSignals(sdk,c,json);
+        return googleAudioSignalPort(c,client,json,googleInlineMedia());
+    }
+    @Bean
+    AudioSignalPort googleAudioSignalPort(AiDerivationProperties c,org.springframework.beans.factory.ObjectProvider<com.google.genai.Client> client,ObjectMapper json,GoogleInlineMedia media) {
+        var sdk=client.getIfAvailable();var signals=new GoogleAudioSignals(sdk,c,json,media);
         return new AudioSignalPort() {
             public boolean available(){return (c.directAudioSearch()||c.directVideoSoundtrackSearch())&&sdk!=null&&GeminiTextEmbeddings.embedding2(c);}
             public float[] embed(KnowledgeQueryGate.EvidencePermit permit,String query,byte[] wav){
@@ -108,8 +117,11 @@ class GoogleDerivationAdapters {
             }
         };
     }
-    @Bean
     MediaUnderstandingPort googleMediaUnderstandingPort(AiDerivationProperties c,org.springframework.beans.factory.ObjectProvider<com.google.genai.Client> client,ObjectMapper json) {
+        return googleMediaUnderstandingPort(c,client,json,googleInlineMedia());
+    }
+    @Bean
+    MediaUnderstandingPort googleMediaUnderstandingPort(AiDerivationProperties c,org.springframework.beans.factory.ObjectProvider<com.google.genai.Client> client,ObjectMapper json,GoogleInlineMedia media) {
         var sdk=client.getIfAvailable();
         var options=sdk==null?null:GoogleGenAiChatOptions.builder().model(c.mediaModel()).maxOutputTokens(8192).thinkingLevel(modelThinking(c))
             .responseMimeType("application/json").responseSchema(mediaSchema()).googleSearchRetrieval(false).includeServerSideToolInvocations(false).useCachedContent(false).build();
@@ -147,10 +159,11 @@ class GoogleDerivationAdapters {
                 // NOT provider transport failures and must not be reclassified/retried.
                 if(!request.mediaType().equals("video/mp4"))authorize.run();
                 String videoOutput=null;
-                try {
-                    if(request.mediaType().equals("video/mp4"))videoOutput=videoOutput(sdk,c,selectedModel,bytes,instruction,schema,request.soundtrackOnly(),json,authorize,started);
-                    else response=model.call(new Prompt(UserMessage.builder().text(instruction)
-                        .media(new Media(MimeTypeUtils.parseMimeType(request.mediaType()),new org.springframework.core.io.ByteArrayResource(bytes))).build(),callOptions));
+                try(var inline=media.open(sdk,bytes,request.mediaType(),json,authorize)) {
+                    if(request.mediaType().equals("video/mp4"))videoOutput=videoOutput(inline,c,selectedModel,GoogleInlineMedia.placeholder(),instruction,schema,request.soundtrackOnly(),json,authorize,started);
+                    else response=GoogleGenAiChatModel.builder().genAiClient(inline).options(options).retryTemplate(noHiddenRetry()).build()
+                        .call(new Prompt(UserMessage.builder().text(instruction)
+                        .media(new Media(MimeTypeUtils.parseMimeType(request.mediaType()),new org.springframework.core.io.ByteArrayResource(GoogleInlineMedia.placeholder()))).build(),callOptions));
                 }
                 catch(DerivationFailure blocked){throw blocked;}
                 catch(RuntimeException providerFailure){throw providerFailure(providerFailure,ProviderFailureDiagnostic.Stage.MEDIA,started);}

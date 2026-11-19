@@ -13,11 +13,13 @@ final class GoogleAudioSignals {
     private final Client client;
     private final AiDerivationProperties configuration;
     private final ObjectMapper json;
-    GoogleAudioSignals(Client client,AiDerivationProperties configuration,ObjectMapper json){this.client=client;this.configuration=configuration;this.json=json;}
+    private final GoogleInlineMedia media;
+    GoogleAudioSignals(Client client,AiDerivationProperties configuration,ObjectMapper json){this(client,configuration,json,new GoogleInlineMedia(GoogleDerivationAdapters.providerHttpOptions(null)));}
+    GoogleAudioSignals(Client client,AiDerivationProperties configuration,ObjectMapper json,GoogleInlineMedia media){this.client=client;this.configuration=configuration;this.json=json;this.media=media;}
     float[] embed(byte[] wav,Runnable authorize) {
         requireWav(wav);authorize.run();
-        try {
-            var response=client.models.embedContent(configuration.embeddingModel(),Content.fromParts(Part.fromBytes(wav,"audio/wav")),EmbedContentConfig.builder().outputDimensionality(configuration.dimension()).build());
+        try(var inline=media.open(client,wav,"audio/wav",json,authorize)) {
+            var response=inline.models.embedContent(configuration.embeddingModel(),Content.fromParts(Part.fromBytes(GoogleInlineMedia.placeholder(),"audio/wav")),EmbedContentConfig.builder().outputDimensionality(configuration.dimension()).build());
             require(response!=null);var embeddings=response.embeddings().orElseThrow(GoogleAudioSignals::invalid);require(embeddings.size()==1);var values=embeddings.getFirst().values().orElseThrow(GoogleAudioSignals::invalid);require(values.size()==configuration.dimension());
             float[] vector=new float[values.size()];double norm=0;
             for(int i=0;i<vector.length;i++){require(values.get(i)!=null&&Float.isFinite(values.get(i)));vector[i]=values.get(i);norm+=(double)vector[i]*vector[i];}
@@ -45,11 +47,12 @@ final class GoogleAudioSignals {
             // Sample inspection is local, but never extends a stale dispatch permit.
             authorize.run();
         }
-        try {
-            var part=video?Part.builder().inlineData(com.google.genai.types.Blob.builder().mimeType(type).data(bytes).build()).videoMetadata(com.google.genai.types.VideoMetadata.builder().fps(1d).build()).build():Part.fromBytes(bytes,type);
+        try(var inline=media.open(client,bytes,type,json,authorize)) {
+            var placeholder=GoogleInlineMedia.placeholder();
+            var part=video?Part.builder().inlineData(com.google.genai.types.Blob.builder().mimeType(type).data(placeholder).build()).videoMetadata(com.google.genai.types.VideoMetadata.builder().fps(1d).build()).build():Part.fromBytes(placeholder,type);
             var options=GenerateContentConfig.builder().maxOutputTokens(8192).thinkingConfig(ThinkingConfig.builder().thinkingLevel("LOW").includeThoughts(false).build()).responseMimeType("application/json").responseJsonSchema(json.readValue(schema,Object.class));
             if(video)options.mediaResolution("MEDIA_RESOLUTION_LOW");
-            var result=client.models.generateContent(configuration.mediaModel(),Content.fromParts(part,Part.fromText(instruction)),options.build());
+            var result=inline.models.generateContent(configuration.mediaModel(),Content.fromParts(part,Part.fromText(instruction)),options.build());
             require(result!=null);var candidates=result.candidates().orElseThrow(GoogleAudioSignals::invalid);require(candidates.size()==1);var candidate=candidates.getFirst();require(candidate.finishReason().map(Object::toString).orElse("").equals("STOP"));
             var parts=candidate.content().orElseThrow(GoogleAudioSignals::invalid).parts().orElseThrow(GoogleAudioSignals::invalid);require(parts.size()==1&&parts.getFirst().text().isPresent()&&!parts.getFirst().thought().orElse(false));
             return decode(parts.getFirst().text().get(),seconds,json);
