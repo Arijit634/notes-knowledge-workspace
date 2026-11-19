@@ -120,9 +120,9 @@ ARG SOURCE_SHA=unbound
 LABEL org.opencontainers.image.source="https://github.com/Arijit634/notes-knowledge-workspace" \
       org.opencontainers.image.revision="$SOURCE_SHA"
 USER root
+# Keep the security pocket on Ubuntu's origin; release mirrors can lag backports.
 RUN sed -i -e 's|http://|https://|g' \
     -e 's|https://archive.ubuntu.com/ubuntu|https://mirrors.ocf.berkeley.edu/ubuntu|g' \
-    -e 's|https://security.ubuntu.com/ubuntu|https://mirrors.ocf.berkeley.edu/ubuntu|g' \
     -e 's|https://ports.ubuntu.com/ubuntu-ports|https://mirrors.ocf.berkeley.edu/ubuntu-ports|g' \
     /etc/apt/sources.list.d/ubuntu.sources \
     && apt-get -o Acquire::Retries=0 -o APT::Update::Error-Mode=any update && apt-get upgrade -y --no-install-recommends \
