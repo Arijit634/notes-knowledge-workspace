@@ -42,8 +42,19 @@ jobs:
         run: docker build --build-arg "SOURCE_SHA=$SOURCE_SHA" --iidfile "$RUNNER_TEMP/managed-preview-image" -f .github/deploy/managed-preview/Dockerfile .
       - name: Scan the actual candidate image
         run: |
+          set -euo pipefail
           image="$(cat "$RUNNER_TEMP/managed-preview-image")"
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock:ro ghcr.io/aquasecurity/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 "$image"
+          mkdir "$RUNNER_TEMP/managed-preview-security" "$RUNNER_TEMP/managed-preview-trivy"
+          status=0
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock:ro \
+            -v "$RUNNER_TEMP/managed-preview-security:/evidence" \
+            -v "$RUNNER_TEMP/managed-preview-trivy:/root/.cache/trivy" \
+            ghcr.io/aquasecurity/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa \
+            image --scanners vuln --severity HIGH,CRITICAL --list-all-pkgs --format json \
+            --output /evidence/raw-scan.json --exit-code 1 "$image" || status=$?
+          test "$status" = 0 || test "$status" = 1
+          printf '%s\n' "$status" > "$RUNNER_TEMP/managed-preview-security/scanner-exit.txt"
+          cp "$RUNNER_TEMP/managed-preview-trivy/db/metadata.json" "$RUNNER_TEMP/managed-preview-security/db-metadata.json"
       - name: Verify scanner-owned SBOM completion
         run: |
           set -euo pipefail
@@ -54,7 +65,25 @@ jobs:
           docker run --rm --network none --entrypoint redis-server "$image" --version | grep -F 'v=8.10.2'
           python3 .github/deploy/managed-preview/complete_sbom.py
       - name: Verify single-container budget, TLS, perimeter, sessions and recovery without providers
-        run: python3 .github/deploy/managed-preview/smoke.py "$(cat "$RUNNER_TEMP/managed-preview-image")"
+        run: |
+          set -euo pipefail
+          python3 .github/deploy/managed-preview/smoke.py "$(cat "$RUNNER_TEMP/managed-preview-image")" \
+            | tee "$RUNNER_TEMP/managed-preview-security/smoke.jsonl"
+          tail -n 1 "$RUNNER_TEMP/managed-preview-security/smoke.jsonl" > "$RUNNER_TEMP/managed-preview-security/smoke.json"
+      - name: Reconcile exact vendor fixes after runtime security qualification
+        run: |
+          python3 .github/deploy/managed-preview/reconcile_scan.py \
+            --image "$(cat "$RUNNER_TEMP/managed-preview-image")" --source "$SOURCE_SHA" \
+            --folder "$RUNNER_TEMP/managed-preview-security" \
+            --policy .github/security/managed-preview-upstream-fixes.json
+      - name: Retain the original scan and exact-image qualification evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: managed-preview-security-${{ env.SOURCE_SHA }}
+          path: ${{ runner.temp }}/managed-preview-security/
+          if-no-files-found: warn
+          retention-days: 3
   full-password-budget:
     name: Preview / full application password and memory budget
     runs-on: ubuntu-24.04
