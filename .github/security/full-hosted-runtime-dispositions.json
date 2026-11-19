@@ -4,7 +4,7 @@
   "architectures": [
     "amd64"
   ],
-  "productionSourceSha256": "8bedf861c574dd04c2703cc0ac17f5cc2146ac2c0436df873dec91e9a92a4338",
+  "productionSourceSha256": "e9641c5a8b34c5d21b916930c77fa79f112cc6f736d7e9890b9063f8a0e4693c",
   "findings": [
     {
       "VulnerabilityID": "CVE-2026-76642",
@@ -838,6 +838,426 @@
       "compensatingControls": "Require exact source/package/image binding, both affected-tool path checks and the scoped inventory; retain the raw LOW finding and fail when a tool is present, evidence is missing, or the review expires.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
       "vendorEvidenceSha256": "4a0481ddab16b27b8f9e0b97337dee510e163fd3bcf7623a4fe3dd779c81f75e"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-93990",
+      "PkgName": "libexpat1",
+      "InstalledVersion": "2.10.0-0nkw2",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-93990",
+      "kind": "upstream-fixed",
+      "rationale": "Upstream fixes malformed UTF-16 high-surrogate validation in Expat 2.8.5. This exact image ships source-built, checksum-pinned Expat 2.10.0 and its linked ABI is executed and verified. The Ubuntu package-name matcher retains an affected result against the distribution baseline; the source replacement is not hidden. Exact ABI, upstream source and security-backport provenance must remain verified.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "expat210BackportVerified"
+      ],
+      "references": [
+        "https://github.com/libexpat/libexpat/blob/R_2_8_5/expat/Changes"
+      ],
+      "vendorEvidenceSha256": "d524be92cf55121cb6cb7bc13625f0498f1d31b4990fb52c93a574edbb372939",
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Retain the exact raw scanner finding, source/package/image binding and every named measured control; changed versions, routing, missing evidence or expired review deny promotion.",
+      "remediationTarget": "Reassess current vendor fixes and scanner database alignment by 2026-11-26; require fresh artifact qualification before promotion."
+    },
+    {
+      "VulnerabilityID": "CVE-2026-113425",
+      "PkgName": "nginx",
+      "InstalledVersion": "1.24.0-2ubuntu7.20",
+      "FixedVersion": null,
+      "Severity": "HIGH",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-113425",
+      "kind": "upstream-fixed",
+      "rationale": "Ubuntu explicitly fixes CVE-2026-113425 in Noble nginx 1.24.0-2ubuntu7.20. Both nginx and nginx-common in this exact image are measured at that vendor security backport, installed through signed APT metadata and verified HTTPS. The scanner database still reports this exact revision as affected without a fixed version. Retain the original finding and require the exact vendor package/source identities; older or unreviewed packages fail this control.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "nginxUbuntuSecurityBackportVerified"
+      ],
+      "references": [
+        "https://ubuntu.com/security/CVE-2026-113425"
+      ],
+      "vendorEvidenceSha256": "68b695c8c3ea2a85de96703e80f2c77afb5bad4e8a2b112bc95a54b2332bb083",
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Retain the exact raw scanner finding, source/package/image binding and every named measured control; changed versions, routing, missing evidence or expired review deny promotion.",
+      "remediationTarget": "Reassess current vendor fixes and scanner database alignment by 2026-11-26; require fresh artifact qualification before promotion."
+    },
+    {
+      "VulnerabilityID": "CVE-2026-123007",
+      "PkgName": "nginx",
+      "InstalledVersion": "1.24.0-2ubuntu7.20",
+      "FixedVersion": null,
+      "Severity": "HIGH",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-123007",
+      "kind": "upstream-fixed",
+      "rationale": "Ubuntu explicitly fixes CVE-2026-123007 in Noble nginx 1.24.0-2ubuntu7.20. Both nginx and nginx-common in this exact image are measured at that vendor security backport, installed through signed APT metadata and verified HTTPS. The scanner database still reports this exact revision as affected without a fixed version. Retain the original finding and require the exact vendor package/source identities; older or unreviewed packages fail this control.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "nginxUbuntuSecurityBackportVerified"
+      ],
+      "references": [
+        "https://ubuntu.com/security/CVE-2026-123007"
+      ],
+      "vendorEvidenceSha256": "6b1e73f1fcd6dc7f3040e92d936055bf8a35266d7995487ee17acdd74426857c",
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Retain the exact raw scanner finding, source/package/image binding and every named measured control; changed versions, routing, missing evidence or expired review deny promotion.",
+      "remediationTarget": "Reassess current vendor fixes and scanner database alignment by 2026-11-26; require fresh artifact qualification before promotion."
+    },
+    {
+      "VulnerabilityID": "CVE-2026-123633",
+      "PkgName": "nginx",
+      "InstalledVersion": "1.24.0-2ubuntu7.20",
+      "FixedVersion": null,
+      "Severity": "HIGH",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-123633",
+      "kind": "upstream-fixed",
+      "rationale": "Ubuntu explicitly fixes CVE-2026-123633 in Noble nginx 1.24.0-2ubuntu7.20. Both nginx and nginx-common in this exact image are measured at that vendor security backport, installed through signed APT metadata and verified HTTPS. The scanner database still reports this exact revision as affected without a fixed version. Retain the original finding and require the exact vendor package/source identities; older or unreviewed packages fail this control.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "nginxUbuntuSecurityBackportVerified"
+      ],
+      "references": [
+        "https://ubuntu.com/security/CVE-2026-123633"
+      ],
+      "vendorEvidenceSha256": "f42f6fc8da0f06dc79f17287d3982e1c8aaae5861e5d0b12190a89367bc3290f",
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Retain the exact raw scanner finding, source/package/image binding and every named measured control; changed versions, routing, missing evidence or expired review deny promotion.",
+      "remediationTarget": "Reassess current vendor fixes and scanner database alignment by 2026-11-26; require fresh artifact qualification before promotion."
+    },
+    {
+      "VulnerabilityID": "CVE-2026-123634",
+      "PkgName": "nginx",
+      "InstalledVersion": "1.24.0-2ubuntu7.20",
+      "FixedVersion": null,
+      "Severity": "HIGH",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-123634",
+      "kind": "upstream-fixed",
+      "rationale": "Ubuntu explicitly fixes CVE-2026-123634 in Noble nginx 1.24.0-2ubuntu7.20. Both nginx and nginx-common in this exact image are measured at that vendor security backport, installed through signed APT metadata and verified HTTPS. The scanner database still reports this exact revision as affected without a fixed version. Retain the original finding and require the exact vendor package/source identities; older or unreviewed packages fail this control.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "nginxUbuntuSecurityBackportVerified"
+      ],
+      "references": [
+        "https://ubuntu.com/security/CVE-2026-123634"
+      ],
+      "vendorEvidenceSha256": "9ea58ff6c5128dbb9240bab97025701a3ea835e8f63601e23a38abd8cd05a94f",
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Retain the exact raw scanner finding, source/package/image binding and every named measured control; changed versions, routing, missing evidence or expired review deny promotion.",
+      "remediationTarget": "Reassess current vendor fixes and scanner database alignment by 2026-11-26; require fresh artifact qualification before promotion."
+    },
+    {
+      "VulnerabilityID": "CVE-2026-118899",
+      "PkgName": "nginx",
+      "InstalledVersion": "1.24.0-2ubuntu7.20",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-118899",
+      "kind": "upstream-fixed",
+      "rationale": "Ubuntu explicitly fixes CVE-2026-118899 in Noble nginx 1.24.0-2ubuntu7.20. Both nginx and nginx-common in this exact image are measured at that vendor security backport, installed through signed APT metadata and verified HTTPS. The scanner database still reports this exact revision as affected without a fixed version. Retain the original finding and require the exact vendor package/source identities; older or unreviewed packages fail this control.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "nginxUbuntuSecurityBackportVerified"
+      ],
+      "references": [
+        "https://ubuntu.com/security/CVE-2026-118899"
+      ],
+      "vendorEvidenceSha256": "1cfb5819e75cf341a9f01fafa1d29b62e1eb9b85926e80e5b978f789351562f0",
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Retain the exact raw scanner finding, source/package/image binding and every named measured control; changed versions, routing, missing evidence or expired review deny promotion.",
+      "remediationTarget": "Reassess current vendor fixes and scanner database alignment by 2026-11-26; require fresh artifact qualification before promotion."
+    },
+    {
+      "VulnerabilityID": "CVE-2026-123640",
+      "PkgName": "nginx",
+      "InstalledVersion": "1.24.0-2ubuntu7.20",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-123640",
+      "kind": "unreachable-precondition",
+      "rationale": "The forged stream preread routing issue requires ngx_stream_ssl_preread_module configuration. The image uses one fixed HTTP reverse-proxy template with no stream, mail, ssl_preread, alias, try_files, include or dynamic module directive. The exact root-owned template and source-bound supervisor are mandatory measured controls, and the operator hostname substitution cannot introduce syntax. The affected package remains present; this is not a vendor-fix claim.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "nginxRestrictedRoutingVerified"
+      ],
+      "references": [
+        "https://ubuntu.com/security/CVE-2026-123640"
+      ],
+      "vendorEvidenceSha256": "d7441a2f73266041189a27f11f8d878e8fa04c099f44b674b58bee7f50ca5f30",
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Retain the exact raw scanner finding, source/package/image binding and every named measured control; changed versions, routing, missing evidence or expired review deny promotion.",
+      "remediationTarget": "Reassess current vendor fixes and scanner database alignment by 2026-11-26; require fresh artifact qualification before promotion."
+    },
+    {
+      "VulnerabilityID": "CVE-2026-125283",
+      "PkgName": "nginx",
+      "InstalledVersion": "1.24.0-2ubuntu7.20",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-125283",
+      "kind": "unreachable-precondition",
+      "rationale": "The map/try_files alias capture crash requires alias and try_files routing. The image uses one fixed HTTP reverse-proxy template with no stream, mail, ssl_preread, alias, try_files, include or dynamic module directive. The exact root-owned template and source-bound supervisor are mandatory measured controls, and the operator hostname substitution cannot introduce syntax. The affected package remains present; this is not a vendor-fix claim.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "nginxRestrictedRoutingVerified"
+      ],
+      "references": [
+        "https://ubuntu.com/security/CVE-2026-125283"
+      ],
+      "vendorEvidenceSha256": "78c7d5862a7150a270cb08db6daaf32aafb01e3928fb2192a48854ff3bfd4ea1",
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Retain the exact raw scanner finding, source/package/image binding and every named measured control; changed versions, routing, missing evidence or expired review deny promotion.",
+      "remediationTarget": "Reassess current vendor fixes and scanner database alignment by 2026-11-26; require fresh artifact qualification before promotion."
+    },
+    {
+      "VulnerabilityID": "CVE-2026-113425",
+      "PkgName": "nginx-common",
+      "InstalledVersion": "1.24.0-2ubuntu7.20",
+      "FixedVersion": null,
+      "Severity": "HIGH",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-113425",
+      "kind": "upstream-fixed",
+      "rationale": "Ubuntu explicitly fixes CVE-2026-113425 in Noble nginx 1.24.0-2ubuntu7.20. Both nginx and nginx-common in this exact image are measured at that vendor security backport, installed through signed APT metadata and verified HTTPS. The scanner database still reports this exact revision as affected without a fixed version. Retain the original finding and require the exact vendor package/source identities; older or unreviewed packages fail this control.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "nginxUbuntuSecurityBackportVerified"
+      ],
+      "references": [
+        "https://ubuntu.com/security/CVE-2026-113425"
+      ],
+      "vendorEvidenceSha256": "68b695c8c3ea2a85de96703e80f2c77afb5bad4e8a2b112bc95a54b2332bb083",
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Retain the exact raw scanner finding, source/package/image binding and every named measured control; changed versions, routing, missing evidence or expired review deny promotion.",
+      "remediationTarget": "Reassess current vendor fixes and scanner database alignment by 2026-11-26; require fresh artifact qualification before promotion."
+    },
+    {
+      "VulnerabilityID": "CVE-2026-123007",
+      "PkgName": "nginx-common",
+      "InstalledVersion": "1.24.0-2ubuntu7.20",
+      "FixedVersion": null,
+      "Severity": "HIGH",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-123007",
+      "kind": "upstream-fixed",
+      "rationale": "Ubuntu explicitly fixes CVE-2026-123007 in Noble nginx 1.24.0-2ubuntu7.20. Both nginx and nginx-common in this exact image are measured at that vendor security backport, installed through signed APT metadata and verified HTTPS. The scanner database still reports this exact revision as affected without a fixed version. Retain the original finding and require the exact vendor package/source identities; older or unreviewed packages fail this control.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "nginxUbuntuSecurityBackportVerified"
+      ],
+      "references": [
+        "https://ubuntu.com/security/CVE-2026-123007"
+      ],
+      "vendorEvidenceSha256": "6b1e73f1fcd6dc7f3040e92d936055bf8a35266d7995487ee17acdd74426857c",
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Retain the exact raw scanner finding, source/package/image binding and every named measured control; changed versions, routing, missing evidence or expired review deny promotion.",
+      "remediationTarget": "Reassess current vendor fixes and scanner database alignment by 2026-11-26; require fresh artifact qualification before promotion."
+    },
+    {
+      "VulnerabilityID": "CVE-2026-123633",
+      "PkgName": "nginx-common",
+      "InstalledVersion": "1.24.0-2ubuntu7.20",
+      "FixedVersion": null,
+      "Severity": "HIGH",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-123633",
+      "kind": "upstream-fixed",
+      "rationale": "Ubuntu explicitly fixes CVE-2026-123633 in Noble nginx 1.24.0-2ubuntu7.20. Both nginx and nginx-common in this exact image are measured at that vendor security backport, installed through signed APT metadata and verified HTTPS. The scanner database still reports this exact revision as affected without a fixed version. Retain the original finding and require the exact vendor package/source identities; older or unreviewed packages fail this control.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "nginxUbuntuSecurityBackportVerified"
+      ],
+      "references": [
+        "https://ubuntu.com/security/CVE-2026-123633"
+      ],
+      "vendorEvidenceSha256": "f42f6fc8da0f06dc79f17287d3982e1c8aaae5861e5d0b12190a89367bc3290f",
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Retain the exact raw scanner finding, source/package/image binding and every named measured control; changed versions, routing, missing evidence or expired review deny promotion.",
+      "remediationTarget": "Reassess current vendor fixes and scanner database alignment by 2026-11-26; require fresh artifact qualification before promotion."
+    },
+    {
+      "VulnerabilityID": "CVE-2026-123634",
+      "PkgName": "nginx-common",
+      "InstalledVersion": "1.24.0-2ubuntu7.20",
+      "FixedVersion": null,
+      "Severity": "HIGH",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-123634",
+      "kind": "upstream-fixed",
+      "rationale": "Ubuntu explicitly fixes CVE-2026-123634 in Noble nginx 1.24.0-2ubuntu7.20. Both nginx and nginx-common in this exact image are measured at that vendor security backport, installed through signed APT metadata and verified HTTPS. The scanner database still reports this exact revision as affected without a fixed version. Retain the original finding and require the exact vendor package/source identities; older or unreviewed packages fail this control.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "nginxUbuntuSecurityBackportVerified"
+      ],
+      "references": [
+        "https://ubuntu.com/security/CVE-2026-123634"
+      ],
+      "vendorEvidenceSha256": "9ea58ff6c5128dbb9240bab97025701a3ea835e8f63601e23a38abd8cd05a94f",
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Retain the exact raw scanner finding, source/package/image binding and every named measured control; changed versions, routing, missing evidence or expired review deny promotion.",
+      "remediationTarget": "Reassess current vendor fixes and scanner database alignment by 2026-11-26; require fresh artifact qualification before promotion."
+    },
+    {
+      "VulnerabilityID": "CVE-2026-118899",
+      "PkgName": "nginx-common",
+      "InstalledVersion": "1.24.0-2ubuntu7.20",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-118899",
+      "kind": "upstream-fixed",
+      "rationale": "Ubuntu explicitly fixes CVE-2026-118899 in Noble nginx 1.24.0-2ubuntu7.20. Both nginx and nginx-common in this exact image are measured at that vendor security backport, installed through signed APT metadata and verified HTTPS. The scanner database still reports this exact revision as affected without a fixed version. Retain the original finding and require the exact vendor package/source identities; older or unreviewed packages fail this control.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "nginxUbuntuSecurityBackportVerified"
+      ],
+      "references": [
+        "https://ubuntu.com/security/CVE-2026-118899"
+      ],
+      "vendorEvidenceSha256": "1cfb5819e75cf341a9f01fafa1d29b62e1eb9b85926e80e5b978f789351562f0",
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Retain the exact raw scanner finding, source/package/image binding and every named measured control; changed versions, routing, missing evidence or expired review deny promotion.",
+      "remediationTarget": "Reassess current vendor fixes and scanner database alignment by 2026-11-26; require fresh artifact qualification before promotion."
+    },
+    {
+      "VulnerabilityID": "CVE-2026-123640",
+      "PkgName": "nginx-common",
+      "InstalledVersion": "1.24.0-2ubuntu7.20",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-123640",
+      "kind": "unreachable-precondition",
+      "rationale": "The forged stream preread routing issue requires ngx_stream_ssl_preread_module configuration. The image uses one fixed HTTP reverse-proxy template with no stream, mail, ssl_preread, alias, try_files, include or dynamic module directive. The exact root-owned template and source-bound supervisor are mandatory measured controls, and the operator hostname substitution cannot introduce syntax. The affected package remains present; this is not a vendor-fix claim.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "nginxRestrictedRoutingVerified"
+      ],
+      "references": [
+        "https://ubuntu.com/security/CVE-2026-123640"
+      ],
+      "vendorEvidenceSha256": "d7441a2f73266041189a27f11f8d878e8fa04c099f44b674b58bee7f50ca5f30",
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Retain the exact raw scanner finding, source/package/image binding and every named measured control; changed versions, routing, missing evidence or expired review deny promotion.",
+      "remediationTarget": "Reassess current vendor fixes and scanner database alignment by 2026-11-26; require fresh artifact qualification before promotion."
+    },
+    {
+      "VulnerabilityID": "CVE-2026-125283",
+      "PkgName": "nginx-common",
+      "InstalledVersion": "1.24.0-2ubuntu7.20",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-125283",
+      "kind": "unreachable-precondition",
+      "rationale": "The map/try_files alias capture crash requires alias and try_files routing. The image uses one fixed HTTP reverse-proxy template with no stream, mail, ssl_preread, alias, try_files, include or dynamic module directive. The exact root-owned template and source-bound supervisor are mandatory measured controls, and the operator hostname substitution cannot introduce syntax. The affected package remains present; this is not a vendor-fix claim.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "nginxRestrictedRoutingVerified"
+      ],
+      "references": [
+        "https://ubuntu.com/security/CVE-2026-125283"
+      ],
+      "vendorEvidenceSha256": "78c7d5862a7150a270cb08db6daaf32aafb01e3928fb2192a48854ff3bfd4ea1",
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-19",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Retain the exact raw scanner finding, source/package/image binding and every named measured control; changed versions, routing, missing evidence or expired review deny promotion.",
+      "remediationTarget": "Reassess current vendor fixes and scanner database alignment by 2026-11-26; require fresh artifact qualification before promotion."
     }
   ]
 }

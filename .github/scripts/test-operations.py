@@ -153,6 +153,107 @@ class ImageReconciliationContracts(unittest.TestCase):
         self.assertFalse(active['opensslNotLoadedInWorkload'])
         self.assertFalse(active['sqliteNotLoadedInWorkload'])
 
+    def test_native_charset_review_requires_each_conversion_boundary(self):
+        self.rule['requiredControls']=['ffmpegIconvDisabled','restrictedLocaleInputs',
+            'trustedFontConfiguration','boundedFontConfiguration']
+        values=dict(ffmpegIconvDisabled=True,defaultLocaleInputsRestricted=True,
+            fontConfigurationRootOwnedAndNotWritable=True,
+            fontConfigurationLargestBytes=1024,fontConfigurationTotalBytes=2048)
+        self.facts.update(values)
+        self.assertTrue(self.run_policy()['releaseSecurityReconciled'])
+        for name,value in values.items():
+            with self.subTest(control=name):
+                del self.facts[name]
+                # Missing older mandatory facts may reject before reconciliation.
+                with self.assertRaises((ValueError,KeyError)):self.run_policy()
+                self.facts[name]=False if isinstance(value,bool) else 0
+                with self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
+                self.facts[name]=value
+        for name,value in [('fontConfigurationLargestBytes',65537),
+                           ('fontConfigurationTotalBytes',1048577)]:
+            self.facts[name]=value
+            with self.subTest(bound=name),self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
+            self.facts[name]=values[name]
+
+    def test_nginx_backport_review_requires_both_exact_vendor_packages(self):
+        self.rule['requiredControls']=['nginxUbuntuSecurityBackportVerified']
+        for name in ('nginx','nginx-common'):
+            self.facts['packages'][name]=dict(version='1.24.0-2ubuntu7.20',source='nginx')
+        self.assertTrue(self.run_policy()['releaseSecurityReconciled'])
+        for name in ('nginx','nginx-common'):
+            original=self.facts['packages'].pop(name)
+            with self.subTest(missing=name),self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
+            for change in (dict(version='1.24.0-2ubuntu7.19',source='nginx'),
+                           dict(version='1.24.0-2ubuntu7.20',source='unreviewed')):
+                self.facts['packages'][name]=change
+                with self.subTest(package=name,change=change),self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
+            self.facts['packages'][name]=original
+
+    def test_nginx_routing_review_requires_exact_config_custody_and_supervisor(self):
+        self.rule['requiredControls']=['nginxRestrictedRoutingVerified']
+        config=dict(nginxConfigurationMatchesSource=True,nginxConfigurationRootOwned=True,
+            nginxRestrictedRouting=True,nginxConfigurationSha256=__import__('hashlib').sha256(
+                (facts.ROOT/'.github/deploy/managed-preview/nginx.conf').read_bytes().replace(b'\r\n',b'\n').rstrip(b'\n')).hexdigest())
+        self.facts['fullHostedBundle']=dict(config)
+        self.facts['glibcInputAudit']=dict(supervisorScriptMatchesSource=True)
+        # Test this control directly: an otherwise incomplete libc audit must
+        # still fail the separate mandatory libc reconciliation checks.
+        self.assertTrue(reconciliation.controls(self.facts,self.smoke)['nginxRestrictedRoutingVerified'])
+        for field,value in config.items():
+            del self.facts['fullHostedBundle'][field]
+            with self.subTest(missing=field):self.assertFalse(reconciliation.controls(self.facts,self.smoke)['nginxRestrictedRoutingVerified'])
+            self.facts['fullHostedBundle'][field]=False if isinstance(value,bool) else '0'*64
+            with self.subTest(changed=field):self.assertFalse(reconciliation.controls(self.facts,self.smoke)['nginxRestrictedRoutingVerified'])
+            self.facts['fullHostedBundle'][field]=value
+        self.facts['glibcInputAudit']['supervisorScriptMatchesSource']=False
+        self.assertFalse(reconciliation.controls(self.facts,self.smoke)['nginxRestrictedRoutingVerified'])
+
+    def test_nginx_fact_rejects_added_routing_features_includes_and_writable_config(self):
+        source=(facts.ROOT/'.github/deploy/managed-preview/nginx.conf').read_bytes()
+        actual=source.rstrip(b'\n')
+        self.assertTrue(facts.validate_nginx_configuration(actual,source,'0:0:644')['nginxRestrictedRouting'])
+        with self.assertRaisesRegex(ValueError,'source_mismatch'):
+            facts.validate_nginx_configuration(actual+b'\nserver {}',source,'0:0:644')
+        for custody in ('65533:65533:644','0:0:664','0:0:666',''):
+            with self.subTest(custody=custody),self.assertRaisesRegex(ValueError,'custody_mismatch'):
+                facts.validate_nginx_configuration(actual,source,custody)
+        for directive in ('stream {}','mail {}','ssl_preread on;','alias /tmp;','try_files $uri /x;',
+                          'include /tmp/extra.conf;','load_module /tmp/module.so;'):
+            modified=b'http { '+directive.encode()+b' }'
+            with self.subTest(directive=directive),self.assertRaisesRegex(ValueError,'routing_directive'):
+                facts.validate_nginx_configuration(modified,modified,'0:0:644')
+
+    def test_ubuntu_vendor_evidence_allows_only_security_record_paths(self):
+        for url in ('https://ubuntu.com/security/CVE-2026-118899',
+                    'https://ubuntu.com/security/notices/USN-9159-1'):
+            self.rule['references']=[url]
+            with self.subTest(url=url):self.assertTrue(self.run_policy()['releaseSecurityReconciled'])
+        for url in ('https://ubuntu.com.evil.example/security/CVE-2026-118899',
+                    'https://ubuntu.com/security/CVE-2026-118899?redirect=example.test',
+                    'http://ubuntu.com/security/CVE-2026-118899',
+                    'https://ubuntu.com/other/CVE-2026-118899',
+                    'https://ubuntu.com/security/notices/USN-9159-1/extra'):
+            self.rule['references']=[url]
+            with self.subTest(url=url),self.assertRaisesRegex(ValueError,'primary_evidence_required'):self.run_policy()
+
+    def test_dtls_review_requires_both_linkage_and_observed_process_absence(self):
+        self.rule['requiredControls']=['opensslNotLinkedInMedia','opensslNotLoadedInWorkload']
+        self.facts.update(ffmpegOpenSslDisabled=True,nativeLinkageMentionsOpenSsl=False)
+        self.smoke['resourceMeasurements']=[dict(javaProcessesInspected=1,opensslLoaded=False)]
+        self.assertTrue(self.run_policy()['releaseSecurityReconciled'])
+        for name,value in [('ffmpegOpenSslDisabled',False),('nativeLinkageMentionsOpenSsl',True)]:
+            original=self.facts.pop(name)
+            with self.subTest(missing=name),self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
+            self.facts[name]=value
+            with self.subTest(changed=name),self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
+            self.facts[name]=original
+        for observation in [[],[dict(javaProcessesInspected=1)],
+                            [dict(javaProcessesInspected=0,opensslLoaded=False)],
+                            [dict(javaProcessesInspected=1,opensslLoaded=True)],
+                            [dict(javaProcessesInspected=1,opensslLoaded=False),dict(javaProcessesInspected=1,opensslLoaded=True)]]:
+            self.smoke['resourceMeasurements']=observation
+            with self.subTest(observation=observation),self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
+
     def test_managed_boundary_requires_artifact_entrypoint_and_measured_processes(self):
         self.facts['fullHostedBundle']=dict(serviceBoundaryArtifactSha256='d'*64,serviceBoundaryEntryPoint=True)
         with self.assertRaisesRegex(ValueError,'managed_service_boundary_evidence_missing'):self.run_policy()
