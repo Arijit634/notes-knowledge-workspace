@@ -12,6 +12,8 @@ import json
 import pathlib
 import re
 
+ROOT=pathlib.Path(__file__).resolve().parents[2]
+
 
 def require(value, code):
     if not value:
@@ -41,6 +43,8 @@ def controls(facts, smoke):
     file_streams=audit.get('cxxFileStreamConsumers')
     return {
         'glibcWideScanfNotReferenced':audited and isinstance(wide,list) and not wide,
+        'glibcGlobNotReferenced':audited and audit.get('globImportAuditVersion')==1
+            and isinstance(audit.get('globConsumers'),list) and not audit['globConsumers'],
         'glibcRegexInputsRestricted':audited and restricted_regex,
         'libstdcxxFileStreamsNotReferenced':audited and audit.get('cxxImportAuditVersion')==1
             and audit.get('libstdcxxPresent') is True and audit.get('libstdcxxDeclaredFixed') is False
@@ -79,6 +83,15 @@ def controls(facts, smoke):
         'gnutlsNotLinkedInFullBundle':facts.get('fullHostedBundle',{}).get('gnutlsNotLinked') is True,
         'elfBpfNotLinkedInFullBundle':facts.get('fullHostedBundle',{}).get('elfBpfNotLinked') is True,
         'native64BitAbi':facts.get('fullHostedBundle',{}).get('native64BitAbi') is True,
+        'nginxUbuntuSecurityBackportVerified':all(
+            facts.get('packages',{}).get(name)==dict(version='1.24.0-2ubuntu7.20',source='nginx')
+            for name in ('nginx','nginx-common')),
+        'nginxRestrictedRoutingVerified':facts.get('fullHostedBundle',{}).get('nginxConfigurationMatchesSource') is True
+            and facts['fullHostedBundle'].get('nginxConfigurationRootOwned') is True
+            and facts['fullHostedBundle'].get('nginxRestrictedRouting') is True
+            and facts['fullHostedBundle'].get('nginxConfigurationSha256')==hashlib.sha256(
+                (ROOT/'.github/deploy/managed-preview/nginx.conf').read_bytes().replace(b'\r\n',b'\n').rstrip(b'\n')).hexdigest()
+            and audit.get('supervisorScriptMatchesSource') is True,
         'managedServiceBoundaryQualified':facts.get('fullHostedBundle',{}).get('serviceBoundaryEntryPoint') is True
             and bool(re.fullmatch('[0-9a-f]{64}',facts.get('fullHostedBundle',{}).get('serviceBoundaryArtifactSha256','')))
             and smoke.get('managedWritableHostProfile') is True and smoke.get('managedServiceKernelBoundary') is True
@@ -135,7 +148,7 @@ def reconcile(scan,facts,smoke,policy,today=None):
             'unsupported_disposition')
         require(all(isinstance(row.get(field),str) and len(row[field])>=12
             for field in ('rationale','compensatingControls','owner','remediationTarget')),'incomplete_disposition')
-        require(row['references'] and all(re.fullmatch(r'https://(?:security-tracker\.debian\.org|github\.com|freetype\.org|openssl-library\.org)/[^\s]+',url)
+        require(row['references'] and all(re.fullmatch(r'https://(?:security-tracker\.debian\.org|github\.com|freetype\.org|openssl-library\.org)/[^\s]+|https://ubuntu\.com/security/(?:CVE-\d{4}-\d+|notices/USN-\d+-\d+)',url)
             for url in row['references']),'primary_evidence_required')
         require(row['requiredControls'] and all(active.get(name) is True for name in row['requiredControls']),
             'required_control_missing')

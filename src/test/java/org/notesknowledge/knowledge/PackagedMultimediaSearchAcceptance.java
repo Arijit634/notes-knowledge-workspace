@@ -369,6 +369,7 @@ public final class PackagedMultimediaSearchAcceptance {
 
     @TestConfiguration(proxyBeanMethods=false)
     static class ExternalServices {
+        @Bean @Primary GoogleInlineMedia controlledInlineMedia(){return new GoogleInlineMedia(HttpOptions.builder().baseUrl("http://127.0.0.1:"+provider.server.getAddress().getPort()).timeout(10000).retryOptions(HttpRetryOptions.builder().attempts(1).build()).build());}
         @Bean @Primary Client controlledGoogleClient(){return Client.builder().apiKey("synthetic-not-a-provider-key").httpOptions(HttpOptions.builder().baseUrl("http://127.0.0.1:"+provider.server.getAddress().getPort()).timeout(10000).retryOptions(HttpRetryOptions.builder().attempts(1).build()).build()).build();}
         @Bean @Primary org.notesknowledge.security.RateLimitPort controlledExternalRateStore(){return request->new org.notesknowledge.security.RateLimitPort.Allowed();}
     }

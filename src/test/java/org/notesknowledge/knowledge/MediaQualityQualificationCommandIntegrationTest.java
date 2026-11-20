@@ -157,6 +157,7 @@ class MediaQualityQualificationCommandIntegrationTest {
     private static void require(boolean value){if(!value)throw new AssertionError("Controlled wire invariant failed");}
     @TestConfiguration(proxyBeanMethods=false)
     static class ControlledProvider {
+        @Bean @Primary GoogleInlineMedia controlledInlineMedia(){return new GoogleInlineMedia(HttpOptions.builder().baseUrl("http://127.0.0.1:"+server.getAddress().getPort()).timeout(2000).retryOptions(HttpRetryOptions.builder().attempts(1).build()).build());}
         @Bean @Primary Client controlledQualificationClient(){return Client.builder().apiKey("synthetic-not-a-provider-key")
             .httpOptions(HttpOptions.builder().baseUrl("http://127.0.0.1:"+server.getAddress().getPort()).timeout(2000)
                 .retryOptions(HttpRetryOptions.builder().attempts(1).build()).build()).build();}

@@ -35,6 +35,7 @@ public final class DirectAudioQualificationCommand {
     private final ObjectMapper json=new ObjectMapper();
     private final Client client;
     private final AiDerivationProperties configuration;
+    private final GoogleInlineMedia media;
     private final KnowledgeQueryGate gate;
     private final PrivateQuerySource queries;
     private final PrivateDerivationSource sources;
@@ -48,6 +49,7 @@ public final class DirectAudioQualificationCommand {
 
     DirectAudioQualificationCommand(org.springframework.context.ConfigurableApplicationContext context,Plan plan) {
         this.plan=plan;client=context.getBean(Client.class);configuration=context.getBean(AiDerivationProperties.class);
+        media=context.getBean(GoogleInlineMedia.class);
         gate=context.getBean(KnowledgeQueryGate.class);queries=context.getBean(PrivateQuerySource.class);
         sources=context.getBean(PrivateDerivationSource.class);coordination=context.getBean(DispatchCoordinator.class);
         transactions=new TransactionTemplate(context.getBean(PlatformTransactionManager.class));transactions.setTimeout(3);
@@ -94,7 +96,7 @@ public final class DirectAudioQualificationCommand {
         }
     }
     private void runVideo(Map<String,Object> output)throws java.io.IOException {
-        var signals=new GoogleAudioSignals(client,configuration,json);var verification=new ArrayList<Map<String,Object>>();output.put("verification",verification);
+        var signals=new GoogleAudioSignals(client,configuration,json,media);var verification=new ArrayList<Map<String,Object>>();output.put("verification",verification);
         boolean passed=true;
         for(int i=0;i<plan.queries().size();i++) {
             String query=plan.queries().get(i);

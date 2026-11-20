@@ -120,9 +120,9 @@ ARG SOURCE_SHA=unbound
 LABEL org.opencontainers.image.source="https://github.com/Arijit634/notes-knowledge-workspace" \
       org.opencontainers.image.revision="$SOURCE_SHA"
 USER root
+# Keep the security pocket on Ubuntu's origin; release mirrors can lag backports.
 RUN sed -i -e 's|http://|https://|g' \
     -e 's|https://archive.ubuntu.com/ubuntu|https://mirrors.ocf.berkeley.edu/ubuntu|g' \
-    -e 's|https://security.ubuntu.com/ubuntu|https://mirrors.ocf.berkeley.edu/ubuntu|g' \
     -e 's|https://ports.ubuntu.com/ubuntu-ports|https://mirrors.ocf.berkeley.edu/ubuntu-ports|g' \
     /etc/apt/sources.list.d/ubuntu.sources \
     && apt-get -o Acquire::Retries=0 -o APT::Update::Error-Mode=any update && apt-get upgrade -y --no-install-recommends \
@@ -130,7 +130,7 @@ RUN sed -i -e 's|http://|https://|g' \
     && apt-get install -y --no-install-recommends ca-certificates bash \
        libstdc++6 libfreetype6 libexpat1 libfontconfig1 fonts-dejavu-core \
        libbrotli1 libbz2-1.0 libpng16-16t64 zlib1g \
-       nginx=1.24.0-2ubuntu7.19 nginx-common=1.24.0-2ubuntu7.19 \
+       nginx=1.24.0-2ubuntu7.20 nginx-common=1.24.0-2ubuntu7.20 \
     && rm /usr/sbin/policy-rc.d && rm -rf /var/lib/apt/lists/*
 COPY --from=build /openh264-build/libopenh264-8.deb /tmp/libopenh264-8.deb
 RUN dpkg -i /tmp/libopenh264-8.deb && ldconfig && rm /tmp/libopenh264-8.deb

@@ -15,6 +15,17 @@ FFMPEG_SECURITY_PATCHES={
 def require(condition,code):
     if not condition:raise ValueError(code)
 
+def validate_nginx_configuration(edge,source,custody):
+    require(edge==source.rstrip(b'\n'),'nginx_configuration_source_mismatch')
+    require(custody=='0:0:644','nginx_configuration_custody_mismatch')
+    # Source equality prevents an unreviewed include or dynamically rendered
+    # feature from being treated as the fixed, restricted HTTP proxy.
+    directives=re.sub(r'(?m)#.*$','',edge.decode('utf-8'))
+    require(not re.search(r'(?:^|[;{}])\s*(?:stream|mail|ssl_preread|alias|try_files|include|load_module)\b',
+        directives),'unreviewed_nginx_routing_directive')
+    return dict(nginxConfigurationMatchesSource=True,nginxConfigurationRootOwned=True,
+        nginxConfigurationSha256=hashlib.sha256(edge).hexdigest(),nginxRestrictedRouting=True)
+
 def validate_ffmpeg_security(patches,negative,regression,upstream,config):
     require(patches==FFMPEG_SECURITY_PATCHES,'ffmpeg_security_patch_identity_mismatch')
     require(negative==dict(unpatchedCleanupExit=139,expectedStackExhaustion=True,coreDumpEnabled=False),
@@ -164,6 +175,10 @@ def main():
             native64BitAbi=bitness=='64',
             openh264SourceSha256=codec_source,
             openh264SourceCopiesMatch=True)
+        edge=inspect('cat /app/nginx.conf').encode()
+        edge_source=(ROOT/'.github/deploy/managed-preview/nginx.conf').read_bytes()
+        full_bundle.update(validate_nginx_configuration(edge,edge_source,
+            inspect('stat -c %u:%g:%a /app/nginx.conf')))
         service_boundary=inspect('sha256sum /opt/operations/service-boundary').split()[0]
         require(re.fullmatch('[0-9a-f]{64}',service_boundary)
             and metadata[0]['Config']['Entrypoint']==['/opt/operations/service-boundary'],

@@ -37,14 +37,14 @@ ARG SOURCE_SHA
 LABEL org.opencontainers.image.source="https://github.com/Arijit634/notes-knowledge-workspace" \
       org.opencontainers.image.revision="$SOURCE_SHA"
 # CVE-2026-109518. HTTPS + no retries also protects the bootstrap update itself.
+# Keep the security pocket on Ubuntu's origin; release mirrors can lag backports.
 RUN sed -i -e 's|http://|https://|g' \
     -e 's|https://archive.ubuntu.com/ubuntu|https://mirrors.ocf.berkeley.edu/ubuntu|g' \
-    -e 's|https://security.ubuntu.com/ubuntu|https://mirrors.ocf.berkeley.edu/ubuntu|g' \
     -e 's|https://ports.ubuntu.com/ubuntu-ports|https://mirrors.ocf.berkeley.edu/ubuntu-ports|g' \
     /etc/apt/sources.list.d/ubuntu.sources \
     && apt-get -o Acquire::Retries=0 -o APT::Update::Error-Mode=any update \
     && printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && chmod 755 /usr/sbin/policy-rc.d \
-    && apt-get -o Acquire::Retries=0 install --no-install-recommends -y apt=2.8.4ubuntu0.1 libapt-pkg6.0t64=2.8.4ubuntu0.1 nginx=1.24.0-2ubuntu7.19 nginx-common=1.24.0-2ubuntu7.19 \
+    && apt-get -o Acquire::Retries=0 install --no-install-recommends -y apt=2.8.4ubuntu0.1 libapt-pkg6.0t64=2.8.4ubuntu0.1 nginx=1.24.0-2ubuntu7.20 nginx-common=1.24.0-2ubuntu7.20 \
     && rm /usr/sbin/policy-rc.d \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
