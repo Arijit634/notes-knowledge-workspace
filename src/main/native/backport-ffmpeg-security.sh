@@ -20,8 +20,9 @@ for pin in \
   71403a21b02a92b925e26e609e9bd3e48df451cf:af4bf01465777b2b8d159e8cd8a2185f155a0db39baa7fc2c0e6acf4d5f734b8; do
   commit=${pin%%:*}; digest=${pin#*:}
   file="/provenance/ffmpeg-security/$commit.patch"
-  curl --fail --location --retry 0 --max-time 90 --max-filesize 200000 --proto '=https' --tlsv1.2 \
-    "https://github.com/FFmpeg/FFmpeg/commit/$commit.patch" -o "$file"
+  # Exact upstream patch bytes are reviewed inputs, not a build-time network
+  # dependency. Keep the same pins and provenance in the resulting image.
+  cp "/native/upstream/ffmpeg-$commit.patch" "$file"
   printf '%s  %s\n' "$digest" "$file" | sha256sum --check --strict -
   # Keep every functional and test hunk. Only main-branch release bookkeeping
   # is excluded: this is a security backport, not a new shared-library API release.

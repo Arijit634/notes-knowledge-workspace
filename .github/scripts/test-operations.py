@@ -35,6 +35,21 @@ class ImageReconciliationContracts(unittest.TestCase):
             self.assertLess(len(data),65536)
             self.assertEqual(digest,__import__('hashlib').sha256(data).hexdigest())
             self.assertTrue(data.startswith(('From '+commit+' ').encode()))
+    def test_checked_in_ffmpeg_patches_are_the_exact_reviewed_source_inputs(self):
+        for commit,digest in facts.FFMPEG_SECURITY_PATCHES.items():
+            path=facts.ROOT/'src/main/native/upstream'/('ffmpeg-'+commit+'.patch')
+            data=path.read_bytes()
+            self.assertLessEqual(len(data),200000)
+            self.assertEqual(digest,__import__('hashlib').sha256(data).hexdigest())
+            self.assertTrue(data.startswith(('From '+commit+' ').encode()))
+        script=(facts.ROOT/'src/main/native/backport-ffmpeg-security.sh').read_text()
+        self.assertIn('cp "/native/upstream/ffmpeg-$commit.patch" "$file"',script)
+        self.assertNotIn('curl ',script)
+        self.assertNotIn('wget ',script)
+        self.assertLess(script.index('sha256sum --check --strict'),script.index('patch --batch --fuzz=0'))
+        for context in ('qualify-media.sh','qualify-full-hosted.sh','multimedia-search-acceptance.sh','probe-native-budget.sh'):
+            self.assertIn('cp -a src/main/native/upstream "$context/native/"',
+                (facts.ROOT/'.github/scripts'/context).read_text())
     def test_ffmpeg_backport_requires_all_exact_controls(self):
         values=[dict(facts.FFMPEG_SECURITY_PATCHES),
             dict(unpatchedCleanupExit=139,expectedStackExhaustion=True,coreDumpEnabled=False),
