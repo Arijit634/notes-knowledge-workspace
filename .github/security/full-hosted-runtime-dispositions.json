@@ -494,7 +494,7 @@
     {
       "VulnerabilityID": "CVE-2026-40228",
       "PkgName": "libsystemd0",
-      "InstalledVersion": "255.4-1ubuntu8.18",
+      "InstalledVersion": "255.4-1ubuntu8.19",
       "FixedVersion": null,
       "Severity": "LOW",
       "Status": "affected",
@@ -510,7 +510,7 @@
         "systemdJournaldAbsent"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-20",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
@@ -522,7 +522,7 @@
     {
       "VulnerabilityID": "CVE-2026-40228",
       "PkgName": "libudev1",
-      "InstalledVersion": "255.4-1ubuntu8.18",
+      "InstalledVersion": "255.4-1ubuntu8.19",
       "FixedVersion": null,
       "Severity": "LOW",
       "Status": "affected",
@@ -538,7 +538,7 @@
         "systemdJournaldAbsent"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-20",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
@@ -749,7 +749,7 @@
     {
       "VulnerabilityID": "CVE-2026-121876",
       "PkgName": "libsystemd0",
-      "InstalledVersion": "255.4-1ubuntu8.18",
+      "InstalledVersion": "255.4-1ubuntu8.19",
       "FixedVersion": null,
       "Severity": "MEDIUM",
       "Status": "affected",
@@ -768,7 +768,7 @@
         "systemdGptAutoGeneratorLegacyAbsent"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-20",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact source/image/package/raw scan and both measured generator absences; reject missing, present, changed or expired evidence. Preserve all raw scanner findings.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
@@ -780,7 +780,7 @@
     {
       "VulnerabilityID": "CVE-2026-121876",
       "PkgName": "libudev1",
-      "InstalledVersion": "255.4-1ubuntu8.18",
+      "InstalledVersion": "255.4-1ubuntu8.19",
       "FixedVersion": null,
       "Severity": "MEDIUM",
       "Status": "affected",
@@ -799,7 +799,7 @@
         "systemdGptAutoGeneratorLegacyAbsent"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-20",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact source/image/package/raw scan and both measured generator absences; reject missing, present, changed or expired evidence. Preserve all raw scanner findings.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
