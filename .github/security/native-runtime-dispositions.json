@@ -5,7 +5,7 @@
     "amd64",
     "arm64"
   ],
-  "productionSourceSha256": "428a0c4b218ee971da484c311569951e9b9d4b1dc9db0801dc787a12d74b4d29",
+  "productionSourceSha256": "adf85d463332697b59d9ab5953c2bd0b61fce5fc14054334d34a5fe43aff8817",
   "findings": [
     {
       "VulnerabilityID": "CVE-2011-3374",
@@ -6413,7 +6413,7 @@
       "PkgName": "libssl3t64",
       "InstalledVersion": "3.5.7-1~deb13u3",
       "FixedVersion": null,
-      "Severity": "UNKNOWN",
+      "Severity": "MEDIUM",
       "Status": "affected",
       "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-95690",
       "kind": "unreachable-precondition",
@@ -6443,7 +6443,7 @@
       "PkgName": "openssl-provider-legacy",
       "InstalledVersion": "3.5.7-1~deb13u3",
       "FixedVersion": null,
-      "Severity": "UNKNOWN",
+      "Severity": "MEDIUM",
       "Status": "affected",
       "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-95690",
       "kind": "unreachable-precondition",
@@ -6467,6 +6467,116 @@
       "expiresOn": "2026-11-26",
       "compensatingControls": "Exact source/package/image binding, unchanged raw scanner classification and all named measured input/linkage controls are mandatory. Missing controls, changed findings and expired review fail closed.",
       "remediationTarget": "Reassess stable vendor fixes and exact shipped applicability by 2026-11-26; no promotion without a fresh scan and current measured controls."
+    },
+    {
+      "VulnerabilityID": "CVE-2026-84786",
+      "PkgName": "libssl3t64",
+      "InstalledVersion": "3.5.7-1~deb13u3",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-84786",
+      "kind": "unreachable-precondition",
+      "rationale": "The DANE TLS client NULL dereference requires an OpenSSL client with DANE/TLSA validation enabled. Product outbound TLS uses Java rather than this native DANE path. OpenSSL/TLS is disabled in the media build, measured media linkage excludes libssl/libcrypto, and neither is loaded in the observed Java workload. Installed vulnerable packages and the raw scanner finding remain visible; no vendor fix is claimed.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "opensslNotLinkedInMedia",
+        "opensslNotLoadedInWorkload"
+      ],
+      "references": [
+        "https://github.com/CVEProject/cvelistV5/blob/9cbdca2b505944a99de1f2a5acddd755cefc4713/cves/2026/84xxx/CVE-2026-84786.json"
+      ],
+      "vendorEvidenceSha256": "8122f4d06ce8e8056dad356baede2ab9f37ce6b7823dcd2bc08c17254a41fb17",
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-20",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Exact source/package/image binding and every named measured control are mandatory. Preserve raw findings/severities; changed or unreviewed findings, missing controls and expired reviews block promotion.",
+      "remediationTarget": "Reassess supported vendor fixes, scanner data and exact image applicability by2026-11-26; no promotion without current artifact proof."
+    },
+    {
+      "VulnerabilityID": "CVE-2026-84786",
+      "PkgName": "openssl-provider-legacy",
+      "InstalledVersion": "3.5.7-1~deb13u3",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-84786",
+      "kind": "unreachable-precondition",
+      "rationale": "The DANE TLS client NULL dereference requires an OpenSSL client with DANE/TLSA validation enabled. Product outbound TLS uses Java rather than this native DANE path. OpenSSL/TLS is disabled in the media build, measured media linkage excludes libssl/libcrypto, and neither is loaded in the observed Java workload. Installed vulnerable packages and the raw scanner finding remain visible; no vendor fix is claimed.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "opensslNotLinkedInMedia",
+        "opensslNotLoadedInWorkload"
+      ],
+      "references": [
+        "https://github.com/CVEProject/cvelistV5/blob/9cbdca2b505944a99de1f2a5acddd755cefc4713/cves/2026/84xxx/CVE-2026-84786.json"
+      ],
+      "vendorEvidenceSha256": "8122f4d06ce8e8056dad356baede2ab9f37ce6b7823dcd2bc08c17254a41fb17",
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-20",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Exact source/package/image binding and every named measured control are mandatory. Preserve raw findings/severities; changed or unreviewed findings, missing controls and expired reviews block promotion.",
+      "remediationTarget": "Reassess supported vendor fixes, scanner data and exact image applicability by2026-11-26; no promotion without current artifact proof."
+    },
+    {
+      "VulnerabilityID": "CVE-2026-126765",
+      "PkgName": "libc-bin",
+      "InstalledVersion": "2.41-12+deb13u4",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-126765",
+      "kind": "unreachable-precondition",
+      "rationale": "The libc glob double-free requires caller-controlled matching that creates a large result and an allocation failure while rewriting those results. Require a same-architecture selected-runtime and embedded-JNI import audit showing no glob/glob64/globfree/globfree64 consumer. A missing audit or any imported consumer denies this assessment. The affected libc package and raw UNKNOWN finding remain present; neither a vendor fix nor memory-limit immunity is claimed.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "glibcGlobNotReferenced"
+      ],
+      "references": [
+        "https://github.com/CVEProject/cvelistV5/blob/9cbdca2b505944a99de1f2a5acddd755cefc4713/cves/2026/126xxx/CVE-2026-126765.json"
+      ],
+      "vendorEvidenceSha256": "c8a6bf1ae10a1dbd8db06f7297417b2f586c0ac39256f08a954a8325ee838b24",
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-20",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Exact source, package and image binding, current rootless/owner/CSRF qualification and mandatory ELF/JNI import evidence; no execution of copied native code. Unknown consumers, missing observations and expired review fail closed.",
+      "remediationTarget": "Reassess supported vendor fixes and the exact shipped glob reachability by2026-11-26; fresh image and audit evidence required for promotion."
+    },
+    {
+      "VulnerabilityID": "CVE-2026-126765",
+      "PkgName": "libc6",
+      "InstalledVersion": "2.41-12+deb13u4",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-126765",
+      "kind": "unreachable-precondition",
+      "rationale": "The libc glob double-free requires caller-controlled matching that creates a large result and an allocation failure while rewriting those results. Require a same-architecture selected-runtime and embedded-JNI import audit showing no glob/glob64/globfree/globfree64 consumer. A missing audit or any imported consumer denies this assessment. The affected libc package and raw UNKNOWN finding remain present; neither a vendor fix nor memory-limit immunity is claimed.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "glibcGlobNotReferenced"
+      ],
+      "references": [
+        "https://github.com/CVEProject/cvelistV5/blob/9cbdca2b505944a99de1f2a5acddd755cefc4713/cves/2026/126xxx/CVE-2026-126765.json"
+      ],
+      "vendorEvidenceSha256": "c8a6bf1ae10a1dbd8db06f7297417b2f586c0ac39256f08a954a8325ee838b24",
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-20",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Exact source, package and image binding, current rootless/owner/CSRF qualification and mandatory ELF/JNI import evidence; no execution of copied native code. Unknown consumers, missing observations and expired review fail closed.",
+      "remediationTarget": "Reassess supported vendor fixes and the exact shipped glob reachability by2026-11-26; fresh image and audit evidence required for promotion."
     }
   ],
   "limits": [

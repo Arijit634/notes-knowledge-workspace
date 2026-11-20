@@ -43,6 +43,8 @@ def controls(facts, smoke):
     file_streams=audit.get('cxxFileStreamConsumers')
     return {
         'glibcWideScanfNotReferenced':audited and isinstance(wide,list) and not wide,
+        'glibcGlobNotReferenced':audited and audit.get('globImportAuditVersion')==1
+            and isinstance(audit.get('globConsumers'),list) and not audit['globConsumers'],
         'glibcRegexInputsRestricted':audited and restricted_regex,
         'libstdcxxFileStreamsNotReferenced':audited and audit.get('cxxImportAuditVersion')==1
             and audit.get('libstdcxxPresent') is True and audit.get('libstdcxxDeclaredFixed') is False

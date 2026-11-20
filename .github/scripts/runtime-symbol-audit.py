@@ -11,19 +11,20 @@ REGEX={'regcomp','regexec','regfree','re_compile_pattern','re_compile_fastmap',
 WIDE=re.compile(r'^(?:__[^ ]*)?(?:v?swscanf|v?fwscanf|v?wscanf)(?:_chk)?$')
 
 def references(output):
-    regex=set();wide=set();file_streams=set()
+    regex=set();wide=set();file_streams=set();glob=set()
     for line in output.splitlines():
         found=re.search(r'\bUND\s+(\S+)',line)
         if not found:continue
         name=found[1].split('@',1)[0]
         if name in REGEX or name.removeprefix('__') in REGEX:regex.add(name)
         if WIDE.fullmatch(name):wide.add(name)
+        if name in ('glob','glob64','globfree','globfree64'):glob.add(name)
         # Filebuf construction/vtables and desynchronizing standard streams can
         # reach PR118099. Keep ABI namespaces/version suffixes conservative.
         if name.startswith('_Z') and any(part in name for part in (
                 'basic_filebuf','basic_fstream','basic_ifstream','basic_ofstream',
                 'sync_with_stdio')):file_streams.add(name)
-    return dict(regex=sorted(regex),wideScanf=sorted(wide),cxxFileStreams=sorted(file_streams))
+    return dict(regex=sorted(regex),wideScanf=sorted(wide),cxxFileStreams=sorted(file_streams),glob=sorted(glob))
 
 def command(*args):
     result=subprocess.run(args,capture_output=True,timeout=90)
@@ -103,6 +104,7 @@ def audit(image,container,jar,directory,architecture,full,inspect):
         regexConsumers=[r for r in records if r['regex']],wideScanfConsumers=[r for r in records if r['wideScanf']],
         cxxImportAuditVersion=1,libstdcxxPresent=libstdcxx_present,libstdcxxDeclaredFixed=False,
         cxxFileStreamConsumers=[r for r in records if r['cxxFileStreams']],
+        globImportAuditVersion=1,globConsumers=[r for r in records if r['glob']],
         supervisorScriptMatchesSource=supervisor_matches,
         absentOptionalDesktopDependencies=missing,
         inspectedSourceBytes=total,inventorySha256=hashlib.sha256(json.dumps(records,sort_keys=True,separators=(',',':')).encode()).hexdigest(),

@@ -285,6 +285,26 @@ class ImageReconciliationContracts(unittest.TestCase):
         audit['inventorySha256']=''
         with self.assertRaisesRegex(ValueError,'unreviewed_glibc_input_path'):self.run_policy()
 
+    def test_glob_assessment_requires_current_complete_audit_without_consumers(self):
+        self.rule['requiredControls']=['glibcGlobNotReferenced']
+        audit=dict(image=self.image,architecture='arm64',selectedRuntimeAndLinkageInspected=True,
+            vulnerableLibcPresent=True,inspectedElfFiles=20,copiedNativeCodeExecuted=False,
+            runtimeCredentialsUsed=False,glibcDeclaredFixed=False,inventorySha256='d'*64,
+            regexConsumers=[],wideScanfConsumers=[],supervisorScriptMatchesSource=False,
+            cxxImportAuditVersion=1,libstdcxxPresent=True,libstdcxxDeclaredFixed=False,cxxFileStreamConsumers=[],
+            globImportAuditVersion=1,globConsumers=[])
+        self.facts['glibcInputAudit']=audit
+        self.assertTrue(self.run_policy()['releaseSecurityReconciled'])
+        for name in ('globImportAuditVersion','globConsumers'):
+            original=audit.pop(name)
+            with self.subTest(missing=name),self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
+            audit[name]=original
+        for consumer in ('/opt/video/tools/bin/ffmpeg','BOOT-INF/lib/example.jar!/native.so'):
+            audit['globConsumers']=[dict(path=consumer,glob=['glob64'])]
+            with self.subTest(consumer=consumer),self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
+        audit['globConsumers']=[];audit['image']='sha256:'+'e'*64
+        with self.assertRaisesRegex(ValueError,'unreviewed_glibc_input_path'):self.run_policy()
+
     def test_cpp_file_stream_assessment_rejects_missing_or_new_native_consumers(self):
         audit=dict(image=self.image,architecture='arm64',selectedRuntimeAndLinkageInspected=True,
             vulnerableLibcPresent=True,inspectedElfFiles=20,copiedNativeCodeExecuted=False,
