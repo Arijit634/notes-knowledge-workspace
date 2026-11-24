@@ -4,7 +4,7 @@
   "architectures": [
     "amd64"
   ],
-  "productionSourceSha256": "851f870a61edc392ed6587d70fa2df1039e41f022cca59cb345a529bfa73e1b5",
+  "productionSourceSha256": "6fa8eeb89a1618cacfd855c0109c58b8637c18674dd306243e406cf55b561c03",
   "findings": [
     {
       "VulnerabilityID": "CVE-2026-76642",
@@ -920,6 +920,37 @@
       "expiresOn": "2026-11-26",
       "compensatingControls": "Exact source/package/image binding and every named measured control are mandatory. Preserve raw findings/severities; changed or unreviewed findings, missing controls and expired reviews block promotion.",
       "remediationTarget": "Reassess supported vendor fixes, scanner data and exact image applicability by2026-11-26; no promotion without current artifact proof."
+    },
+    {
+      "VulnerabilityID": "CVE-2026-117610",
+      "PkgName": "libexpat1",
+      "InstalledVersion": "2.10.0-0nkw2",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-117610",
+      "kind": "upstream-fixed",
+      "rationale": "The external-entity empty-chunk null dereference is fixed by upstream bfc28346 and its regression cedb704d. Both commits are ancestors of pinned R_2_10_0, as independently checked against the upstream commit graph. The shipped accurately versioned custom Expat2.10.0 includes that fix despite the distribution source-package match. Require the actual target-architecture library ABI, pinned source/backport provenance and unchanged confinement controls; keep the raw MEDIUM finding without claiming the distribution package database is fixed.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "expat210BackportVerified"
+      ],
+      "references": [
+        "https://ubuntu.com/security/CVE-2026-117610",
+        "https://security-tracker.debian.org/tracker/CVE-2026-117610",
+        "https://github.com/libexpat/libexpat/commit/bfc28346fa3efeb8ca56c17437d24a7344e5feab",
+        "https://github.com/libexpat/libexpat/commit/cedb704d2cad9d6ef77f8f172104d3e751eccfd2"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-24",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "67e594a1d4cb195ff5c5bb668289e88ae26dbc562d77d494e655133b7385ad85"
     }
   ]
 }

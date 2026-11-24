@@ -45,6 +45,11 @@ def controls(facts, smoke):
         'glibcWideScanfNotReferenced':audited and isinstance(wide,list) and not wide,
         'glibcGlobNotReferenced':audited and audit.get('globImportAuditVersion')==1
             and isinstance(audit.get('globConsumers'),list) and not audit['globConsumers'],
+        'libseccompNotReferenced':audited and audit.get('seccompImportAuditVersion')==1
+            and audit.get('seccompConsumers')==[] and audit.get('linkageMentionsLibseccomp') is False,
+        'expatNarrowOutputVerified':facts.get('mediaLibraryAbi',{}).get('abiProbePassed') is True
+            and facts['mediaLibraryAbi'].get('expatXmlCharBytes')==1
+            and facts['mediaLibraryAbi'].get('expatUnicodeOutput') is False,
         'glibcRegexInputsRestricted':audited and restricted_regex,
         'libstdcxxFileStreamsNotReferenced':audited and audit.get('cxxImportAuditVersion')==1
             and audit.get('libstdcxxPresent') is True and audit.get('libstdcxxDeclaredFixed') is False

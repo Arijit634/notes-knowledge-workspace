@@ -5,7 +5,7 @@
     "amd64",
     "arm64"
   ],
-  "productionSourceSha256": "851f870a61edc392ed6587d70fa2df1039e41f022cca59cb345a529bfa73e1b5",
+  "productionSourceSha256": "6fa8eeb89a1618cacfd855c0109c58b8637c18674dd306243e406cf55b561c03",
   "findings": [
     {
       "VulnerabilityID": "CVE-2011-3374",
@@ -907,268 +907,9 @@
       "vendorEvidenceSha256": "bc8816582b1e3f9450fa0f1dcad2831cfa4c7742b61e8c9790ec1e35d027bfd0"
     },
     {
-      "VulnerabilityID": "CVE-2026-18374",
-      "PkgName": "libc-bin",
-      "InstalledVersion": "2.41-12+deb13u4",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-18374",
-      "kind": "unreachable-precondition",
-      "rationale": "The vulnerable fopen mode extension requires attacker-selected mode text. The product and fixed native workers select read/write modes internally; an upload name, Note, query or provider response is never used as a libc mode argument.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "restrictedLocaleInputs"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-18374"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "b6a0713b6dea477ae1636d75ee22fd5aff1bfa96297d01a694d48a10c4795ea5"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-19499",
-      "PkgName": "libc-bin",
-      "InstalledVersion": "2.41-12+deb13u4",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-19499",
-      "kind": "unreachable-precondition",
-      "rationale": "The vulnerable strfmon format/width combination is not an application interface. The Java service does not use libc monetary formatting for user input, and the fixed media workers do not render monetary formats from a request.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "restrictedLocaleInputs"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-19499"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "6f835fc63206f2aec1366625a2a94ab94f0e83dfdd444571bd1d325a4784f111"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-19542",
-      "PkgName": "libc-bin",
-      "InstalledVersion": "2.41-12+deb13u4",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-19542",
-      "kind": "bounded-nonblocker",
-      "rationale": "The reported tdelete defect requires an unusually deep libc search tree after very large insertion/deletion workloads; the vendor identifies no common affected application. No product tree-management API is exposed. Font resources are immutable/bounded and untrusted PDF/video work has mandatory memory, CPU and wall-clock termination limits. Residual worker denial-of-service risk is retained until a vendor fix is available.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "trustedFontConfiguration",
-        "boundedFontConfiguration"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-19542"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "b7aa50488d222143af44d3793c5efe52bb57a1fb117380c815148b56a735a339"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-5435",
-      "PkgName": "libc-bin",
-      "InstalledVersion": "2.41-12+deb13u4",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-5435",
-      "kind": "unreachable-precondition",
-      "rationale": "The defects concern deprecated DNS record printing APIs, not ordinary hostname resolution. The service uses fixed provider/database hosts and does not expose ns_printrrf, ns_printrr or fp_nquery, arbitrary DNS record printing, or caller-supplied output-buffer sizes.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "restrictedLocaleInputs"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-5435"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "93314d7c9565d9ad00d79a5d1a703e49c62ce9d49ac404d83fd44b25422ffeed"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-6238",
-      "PkgName": "libc-bin",
-      "InstalledVersion": "2.41-12+deb13u4",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-6238",
-      "kind": "unreachable-precondition",
-      "rationale": "The defects concern deprecated DNS record printing APIs, not ordinary hostname resolution. The service uses fixed provider/database hosts and does not expose ns_printrrf, ns_printrr or fp_nquery, arbitrary DNS record printing, or caller-supplied output-buffer sizes.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "restrictedLocaleInputs"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-6238"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "7f0e48f01eacdd5195c099eda9e523b1a8263f036bd316acb7425bd86c147bc8"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-6368",
-      "PkgName": "libc-bin",
-      "InstalledVersion": "2.41-12+deb13u4",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-6368",
-      "kind": "unreachable-precondition",
-      "rationale": "No request is routed to libc glob/wordexp/POSIX-regex command evaluation. Product patterns use Java/PostgreSQL implementations; native worker argument lists and operational grep patterns are fixed. No caller-controlled tilde expansion, WRDE_APPEND sequence, shell glob or POSIX-regex input is exposed.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "restrictedLocaleInputs"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-6368"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "31883fddecfefc1c4d2231a0e161241842d47fb18471a19cbd9d7596fbc47a49"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-6791",
-      "PkgName": "libc-bin",
-      "InstalledVersion": "2.41-12+deb13u4",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-6791",
-      "kind": "unreachable-precondition",
-      "rationale": "No request is routed to libc glob/wordexp/POSIX-regex command evaluation. Product patterns use Java/PostgreSQL implementations; native worker argument lists and operational grep patterns are fixed. No caller-controlled tilde expansion, WRDE_APPEND sequence, shell glob or POSIX-regex input is exposed.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "restrictedLocaleInputs"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-6791"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "dc8313229587845def2e2c123e6e1ec8c85a63aacb13aaf24e17188f915be63c"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-77117",
-      "PkgName": "libc-bin",
-      "InstalledVersion": "2.41-12+deb13u4",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-77117",
-      "kind": "unreachable-precondition",
-      "rationale": "The affected Shift-JISX0213/EUC-JISX0213 libc conversion loops are not an accepted media conversion mode. Explicitly disable FFmpeg iconv; fixed workers inherit no caller locale/encoding environment. Java text decoding uses the JDK charset path, and native Fontconfig configuration is trusted bounded UTF-8, not uploaded XML.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "ffmpegIconvDisabled",
-        "restrictedLocaleInputs",
-        "trustedFontConfiguration",
-        "boundedFontConfiguration"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-77117"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "aae3a8d5dcd9a62948d40441dd911e0346ee103fef6b48478faa187e5edd2e1e"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-80489",
-      "PkgName": "libc-bin",
-      "InstalledVersion": "2.41-12+deb13u4",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-80489",
-      "kind": "unreachable-precondition",
-      "rationale": "The affected Shift-JISX0213/EUC-JISX0213 libc conversion loops are not an accepted media conversion mode. Explicitly disable FFmpeg iconv; fixed workers inherit no caller locale/encoding environment. Java text decoding uses the JDK charset path, and native Fontconfig configuration is trusted bounded UTF-8, not uploaded XML.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "ffmpegIconvDisabled",
-        "restrictedLocaleInputs",
-        "trustedFontConfiguration",
-        "boundedFontConfiguration"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-80489"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "2d2afb4db52a4b939c708042f2a695528df73dac5ac25e06f871e530ca9aed5e"
-    },
-    {
       "VulnerabilityID": "CVE-2026-84243",
       "PkgName": "libc-bin",
-      "InstalledVersion": "2.41-12+deb13u4",
+      "InstalledVersion": "2.41-12+deb13u5",
       "FixedVersion": null,
       "Severity": "MEDIUM",
       "Status": "affected",
@@ -1187,127 +928,16 @@
         "https://security-tracker.debian.org/tracker/CVE-2026-84243"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "888ab4e5d34eed2f5cdf660c534baa9ba3e94cec340478057d9ff9efd1098a57"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-8674",
-      "PkgName": "libc-bin",
-      "InstalledVersion": "2.41-12+deb13u4",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-8674",
-      "kind": "unreachable-precondition",
-      "rationale": "The resolver failure requires a malformed long host search domain or LOCALDOMAIN input. Require measured bounded resolver search domains in the qualified environment and no LOCALDOMAIN override; there is no HTTP DNS/DHCP/VPN configuration interface. A new hosting environment must independently revalidate its actual DNS configuration before activation.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "restrictedLocaleInputs",
-        "resolverSearchDomainsBounded"
-      ],
-      "references": [
-        "https://github.com/CVEProject/cvelistV5/blob/e4abd85c31fbf972b849028f011f2abcd68d9c4b/cves/2026/8xxx/CVE-2026-8674.json"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "27214d64bcde3794b62e0f154c29a4522cd3ccec2c163d8a4af50b42abcd4673"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-86805",
-      "PkgName": "libc-bin",
-      "InstalledVersion": "2.41-12+deb13u4",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-86805",
-      "kind": "unreachable-precondition",
-      "rationale": "These loader escalation defects require setuid/setgid AT_SECURE execution and specific attacker-controlled link/path conditions. All such privilege bits are removed; the container and workers start as the fixed unprivileged identity with no-new-privileges and immutable trusted library/executable roots.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-86805"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "19022ad6b456560edb63f10d45dfff995ede0e94dc911c7a2c877827909a1318"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-89092",
-      "PkgName": "libc-bin",
-      "InstalledVersion": "2.41-12+deb13u4",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-89092",
-      "kind": "component-not-shipped",
-      "rationale": "The affected nscd daemon is absent and is not an application dependency. DNS resolution does not use an nscd service in this container; no cache daemon or nscd IPC endpoint is added.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "nscdAbsent"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-89092"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "90138e5058c33b72f840bcc98ab8cf4c60e72740b90db0645becfbc78b6ba07b"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-95818",
-      "PkgName": "libc-bin",
-      "InstalledVersion": "2.41-12+deb13u4",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-95818",
-      "kind": "unreachable-precondition",
-      "rationale": "These loader escalation defects require setuid/setgid AT_SECURE execution and specific attacker-controlled link/path conditions. All such privilege bits are removed; the container and workers start as the fixed unprivileged identity with no-new-privileges and immutable trusted library/executable roots.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-95818"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "351880ddd4cff33982d6d29778dd4274d588bc6bcbf633303c705e6493d14815"
+      "vendorEvidenceSha256": "d82305e228f84aac1a1e25c7fbad38a5d05d55f987a4c8ce430d10a4d737d90f"
     },
     {
       "VulnerabilityID": "CVE-2010-4756",
       "PkgName": "libc-bin",
-      "InstalledVersion": "2.41-12+deb13u4",
+      "InstalledVersion": "2.41-12+deb13u5",
       "FixedVersion": null,
       "Severity": "LOW",
       "Status": "affected",
@@ -1326,16 +956,16 @@
         "https://security-tracker.debian.org/tracker/CVE-2010-4756"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "80aac46a1334ad68f6c74c2903cd8a091c6d2be112a195f6aee8bbf4f7c737fb"
+      "vendorEvidenceSha256": "715f7234b331aeae9e193759316b31db343085469e1ebdaf84f317c7b18d0495"
     },
     {
       "VulnerabilityID": "CVE-2018-20796",
       "PkgName": "libc-bin",
-      "InstalledVersion": "2.41-12+deb13u4",
+      "InstalledVersion": "2.41-12+deb13u5",
       "FixedVersion": null,
       "Severity": "LOW",
       "Status": "affected",
@@ -1354,16 +984,16 @@
         "https://security-tracker.debian.org/tracker/CVE-2018-20796"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "3d438a50366e4cf008dfd4f03d188a272b7be9373f8826592bb0eccbb34eab49"
+      "vendorEvidenceSha256": "a43a408090188a6a7fa13313f093aace91eb973083407183a5bb14bdd5ac8c3d"
     },
     {
       "VulnerabilityID": "CVE-2019-1010022",
       "PkgName": "libc-bin",
-      "InstalledVersion": "2.41-12+deb13u4",
+      "InstalledVersion": "2.41-12+deb13u5",
       "FixedVersion": null,
       "Severity": "LOW",
       "Status": "affected",
@@ -1382,16 +1012,16 @@
         "https://security-tracker.debian.org/tracker/CVE-2019-1010022"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "c4f3c3f0e16ba8acc1ef1abf651b7709b3f2622ca237beacbef87357d339827f"
+      "vendorEvidenceSha256": "f5b6b07a74ca8733c1b484812192d2f87c37735cf4a4b1fd861492598c4a532b"
     },
     {
       "VulnerabilityID": "CVE-2019-1010023",
       "PkgName": "libc-bin",
-      "InstalledVersion": "2.41-12+deb13u4",
+      "InstalledVersion": "2.41-12+deb13u5",
       "FixedVersion": null,
       "Severity": "LOW",
       "Status": "affected",
@@ -1410,16 +1040,16 @@
         "https://security-tracker.debian.org/tracker/CVE-2019-1010023"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "f226dc73e8fc65fd3940146cf59f13d96d7b853a16c8e42357014d9e745eb004"
+      "vendorEvidenceSha256": "21658019c2774cc8ca34d95a952cf962f6f2826168fad117bcfca4f1a75fe166"
     },
     {
       "VulnerabilityID": "CVE-2019-1010024",
       "PkgName": "libc-bin",
-      "InstalledVersion": "2.41-12+deb13u4",
+      "InstalledVersion": "2.41-12+deb13u5",
       "FixedVersion": null,
       "Severity": "LOW",
       "Status": "affected",
@@ -1438,16 +1068,16 @@
         "https://security-tracker.debian.org/tracker/CVE-2019-1010024"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "21c3c0af11c6f208d9980c8354c41428acb5f0f52ba612e4b81f72fb8d4ca344"
+      "vendorEvidenceSha256": "7f48373c782d56ff32c47c889d3563cf7d18b7aabd0f792a532a256e9384d8b8"
     },
     {
       "VulnerabilityID": "CVE-2019-1010025",
       "PkgName": "libc-bin",
-      "InstalledVersion": "2.41-12+deb13u4",
+      "InstalledVersion": "2.41-12+deb13u5",
       "FixedVersion": null,
       "Severity": "LOW",
       "Status": "affected",
@@ -1466,16 +1096,16 @@
         "https://security-tracker.debian.org/tracker/CVE-2019-1010025"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "8bb7fa3b049a2a7d33830e736f67c6126e9253c8cb7f040cd7d419c70b1a8bd8"
+      "vendorEvidenceSha256": "5ca3418ec7d9eb7bac23dfaa57fda434e64e560a66e85fb31f7dfdd0ff34dcea"
     },
     {
       "VulnerabilityID": "CVE-2019-9192",
       "PkgName": "libc-bin",
-      "InstalledVersion": "2.41-12+deb13u4",
+      "InstalledVersion": "2.41-12+deb13u5",
       "FixedVersion": null,
       "Severity": "LOW",
       "Status": "affected",
@@ -1494,302 +1124,16 @@
         "https://security-tracker.debian.org/tracker/CVE-2019-9192"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "d90fcc9f384e7859140c7092c263eb3dc87de6af95151667b41f6b10b8b33f4a"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-97399",
-      "PkgName": "libc-bin",
-      "InstalledVersion": "2.41-12+deb13u4",
-      "FixedVersion": null,
-      "Severity": "LOW",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-97399",
-      "kind": "unreachable-precondition",
-      "rationale": "The report concerns the Power8-specific strncasecmp implementation. The qualified image and worker architectures are native Linux amd64 or arm64, never Power8 or emulation. The policy rejects every other architecture.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-97399"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "d01edd6393659c1af369782505457ff6b7aebb464d885786a3ba684510794a64"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-18374",
-      "PkgName": "libc6",
-      "InstalledVersion": "2.41-12+deb13u4",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-18374",
-      "kind": "unreachable-precondition",
-      "rationale": "The vulnerable fopen mode extension requires attacker-selected mode text. The product and fixed native workers select read/write modes internally; an upload name, Note, query or provider response is never used as a libc mode argument.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "restrictedLocaleInputs"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-18374"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "b6a0713b6dea477ae1636d75ee22fd5aff1bfa96297d01a694d48a10c4795ea5"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-19499",
-      "PkgName": "libc6",
-      "InstalledVersion": "2.41-12+deb13u4",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-19499",
-      "kind": "unreachable-precondition",
-      "rationale": "The vulnerable strfmon format/width combination is not an application interface. The Java service does not use libc monetary formatting for user input, and the fixed media workers do not render monetary formats from a request.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "restrictedLocaleInputs"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-19499"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "6f835fc63206f2aec1366625a2a94ab94f0e83dfdd444571bd1d325a4784f111"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-19542",
-      "PkgName": "libc6",
-      "InstalledVersion": "2.41-12+deb13u4",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-19542",
-      "kind": "bounded-nonblocker",
-      "rationale": "The reported tdelete defect requires an unusually deep libc search tree after very large insertion/deletion workloads; the vendor identifies no common affected application. No product tree-management API is exposed. Font resources are immutable/bounded and untrusted PDF/video work has mandatory memory, CPU and wall-clock termination limits. Residual worker denial-of-service risk is retained until a vendor fix is available.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "trustedFontConfiguration",
-        "boundedFontConfiguration"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-19542"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "b7aa50488d222143af44d3793c5efe52bb57a1fb117380c815148b56a735a339"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-5435",
-      "PkgName": "libc6",
-      "InstalledVersion": "2.41-12+deb13u4",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-5435",
-      "kind": "unreachable-precondition",
-      "rationale": "The defects concern deprecated DNS record printing APIs, not ordinary hostname resolution. The service uses fixed provider/database hosts and does not expose ns_printrrf, ns_printrr or fp_nquery, arbitrary DNS record printing, or caller-supplied output-buffer sizes.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "restrictedLocaleInputs"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-5435"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "93314d7c9565d9ad00d79a5d1a703e49c62ce9d49ac404d83fd44b25422ffeed"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-6238",
-      "PkgName": "libc6",
-      "InstalledVersion": "2.41-12+deb13u4",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-6238",
-      "kind": "unreachable-precondition",
-      "rationale": "The defects concern deprecated DNS record printing APIs, not ordinary hostname resolution. The service uses fixed provider/database hosts and does not expose ns_printrrf, ns_printrr or fp_nquery, arbitrary DNS record printing, or caller-supplied output-buffer sizes.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "restrictedLocaleInputs"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-6238"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "7f0e48f01eacdd5195c099eda9e523b1a8263f036bd316acb7425bd86c147bc8"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-6368",
-      "PkgName": "libc6",
-      "InstalledVersion": "2.41-12+deb13u4",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-6368",
-      "kind": "unreachable-precondition",
-      "rationale": "No request is routed to libc glob/wordexp/POSIX-regex command evaluation. Product patterns use Java/PostgreSQL implementations; native worker argument lists and operational grep patterns are fixed. No caller-controlled tilde expansion, WRDE_APPEND sequence, shell glob or POSIX-regex input is exposed.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "restrictedLocaleInputs"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-6368"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "31883fddecfefc1c4d2231a0e161241842d47fb18471a19cbd9d7596fbc47a49"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-6791",
-      "PkgName": "libc6",
-      "InstalledVersion": "2.41-12+deb13u4",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-6791",
-      "kind": "unreachable-precondition",
-      "rationale": "No request is routed to libc glob/wordexp/POSIX-regex command evaluation. Product patterns use Java/PostgreSQL implementations; native worker argument lists and operational grep patterns are fixed. No caller-controlled tilde expansion, WRDE_APPEND sequence, shell glob or POSIX-regex input is exposed.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "restrictedLocaleInputs"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-6791"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "dc8313229587845def2e2c123e6e1ec8c85a63aacb13aaf24e17188f915be63c"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-77117",
-      "PkgName": "libc6",
-      "InstalledVersion": "2.41-12+deb13u4",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-77117",
-      "kind": "unreachable-precondition",
-      "rationale": "The affected Shift-JISX0213/EUC-JISX0213 libc conversion loops are not an accepted media conversion mode. Explicitly disable FFmpeg iconv; fixed workers inherit no caller locale/encoding environment. Java text decoding uses the JDK charset path, and native Fontconfig configuration is trusted bounded UTF-8, not uploaded XML.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "ffmpegIconvDisabled",
-        "restrictedLocaleInputs",
-        "trustedFontConfiguration",
-        "boundedFontConfiguration"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-77117"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "aae3a8d5dcd9a62948d40441dd911e0346ee103fef6b48478faa187e5edd2e1e"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-80489",
-      "PkgName": "libc6",
-      "InstalledVersion": "2.41-12+deb13u4",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-80489",
-      "kind": "unreachable-precondition",
-      "rationale": "The affected Shift-JISX0213/EUC-JISX0213 libc conversion loops are not an accepted media conversion mode. Explicitly disable FFmpeg iconv; fixed workers inherit no caller locale/encoding environment. Java text decoding uses the JDK charset path, and native Fontconfig configuration is trusted bounded UTF-8, not uploaded XML.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "ffmpegIconvDisabled",
-        "restrictedLocaleInputs",
-        "trustedFontConfiguration",
-        "boundedFontConfiguration"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-80489"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "2d2afb4db52a4b939c708042f2a695528df73dac5ac25e06f871e530ca9aed5e"
+      "vendorEvidenceSha256": "12c531cb62e9852dca281cf1f4fdbd4757ec1dfb3c0ea8ae412f8ce35f1c577e"
     },
     {
       "VulnerabilityID": "CVE-2026-84243",
       "PkgName": "libc6",
-      "InstalledVersion": "2.41-12+deb13u4",
+      "InstalledVersion": "2.41-12+deb13u5",
       "FixedVersion": null,
       "Severity": "MEDIUM",
       "Status": "affected",
@@ -1808,127 +1152,16 @@
         "https://security-tracker.debian.org/tracker/CVE-2026-84243"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "888ab4e5d34eed2f5cdf660c534baa9ba3e94cec340478057d9ff9efd1098a57"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-8674",
-      "PkgName": "libc6",
-      "InstalledVersion": "2.41-12+deb13u4",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-8674",
-      "kind": "unreachable-precondition",
-      "rationale": "The resolver failure requires a malformed long host search domain or LOCALDOMAIN input. Require measured bounded resolver search domains in the qualified environment and no LOCALDOMAIN override; there is no HTTP DNS/DHCP/VPN configuration interface. A new hosting environment must independently revalidate its actual DNS configuration before activation.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "restrictedLocaleInputs",
-        "resolverSearchDomainsBounded"
-      ],
-      "references": [
-        "https://github.com/CVEProject/cvelistV5/blob/e4abd85c31fbf972b849028f011f2abcd68d9c4b/cves/2026/8xxx/CVE-2026-8674.json"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "27214d64bcde3794b62e0f154c29a4522cd3ccec2c163d8a4af50b42abcd4673"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-86805",
-      "PkgName": "libc6",
-      "InstalledVersion": "2.41-12+deb13u4",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-86805",
-      "kind": "unreachable-precondition",
-      "rationale": "These loader escalation defects require setuid/setgid AT_SECURE execution and specific attacker-controlled link/path conditions. All such privilege bits are removed; the container and workers start as the fixed unprivileged identity with no-new-privileges and immutable trusted library/executable roots.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-86805"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "19022ad6b456560edb63f10d45dfff995ede0e94dc911c7a2c877827909a1318"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-89092",
-      "PkgName": "libc6",
-      "InstalledVersion": "2.41-12+deb13u4",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-89092",
-      "kind": "component-not-shipped",
-      "rationale": "The affected nscd daemon is absent and is not an application dependency. DNS resolution does not use an nscd service in this container; no cache daemon or nscd IPC endpoint is added.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "nscdAbsent"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-89092"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "90138e5058c33b72f840bcc98ab8cf4c60e72740b90db0645becfbc78b6ba07b"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-95818",
-      "PkgName": "libc6",
-      "InstalledVersion": "2.41-12+deb13u4",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-95818",
-      "kind": "unreachable-precondition",
-      "rationale": "These loader escalation defects require setuid/setgid AT_SECURE execution and specific attacker-controlled link/path conditions. All such privilege bits are removed; the container and workers start as the fixed unprivileged identity with no-new-privileges and immutable trusted library/executable roots.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-95818"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "351880ddd4cff33982d6d29778dd4274d588bc6bcbf633303c705e6493d14815"
+      "vendorEvidenceSha256": "d82305e228f84aac1a1e25c7fbad38a5d05d55f987a4c8ce430d10a4d737d90f"
     },
     {
       "VulnerabilityID": "CVE-2010-4756",
       "PkgName": "libc6",
-      "InstalledVersion": "2.41-12+deb13u4",
+      "InstalledVersion": "2.41-12+deb13u5",
       "FixedVersion": null,
       "Severity": "LOW",
       "Status": "affected",
@@ -1947,16 +1180,16 @@
         "https://security-tracker.debian.org/tracker/CVE-2010-4756"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "80aac46a1334ad68f6c74c2903cd8a091c6d2be112a195f6aee8bbf4f7c737fb"
+      "vendorEvidenceSha256": "715f7234b331aeae9e193759316b31db343085469e1ebdaf84f317c7b18d0495"
     },
     {
       "VulnerabilityID": "CVE-2018-20796",
       "PkgName": "libc6",
-      "InstalledVersion": "2.41-12+deb13u4",
+      "InstalledVersion": "2.41-12+deb13u5",
       "FixedVersion": null,
       "Severity": "LOW",
       "Status": "affected",
@@ -1975,16 +1208,16 @@
         "https://security-tracker.debian.org/tracker/CVE-2018-20796"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "3d438a50366e4cf008dfd4f03d188a272b7be9373f8826592bb0eccbb34eab49"
+      "vendorEvidenceSha256": "a43a408090188a6a7fa13313f093aace91eb973083407183a5bb14bdd5ac8c3d"
     },
     {
       "VulnerabilityID": "CVE-2019-1010022",
       "PkgName": "libc6",
-      "InstalledVersion": "2.41-12+deb13u4",
+      "InstalledVersion": "2.41-12+deb13u5",
       "FixedVersion": null,
       "Severity": "LOW",
       "Status": "affected",
@@ -2003,16 +1236,16 @@
         "https://security-tracker.debian.org/tracker/CVE-2019-1010022"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "c4f3c3f0e16ba8acc1ef1abf651b7709b3f2622ca237beacbef87357d339827f"
+      "vendorEvidenceSha256": "f5b6b07a74ca8733c1b484812192d2f87c37735cf4a4b1fd861492598c4a532b"
     },
     {
       "VulnerabilityID": "CVE-2019-1010023",
       "PkgName": "libc6",
-      "InstalledVersion": "2.41-12+deb13u4",
+      "InstalledVersion": "2.41-12+deb13u5",
       "FixedVersion": null,
       "Severity": "LOW",
       "Status": "affected",
@@ -2031,16 +1264,16 @@
         "https://security-tracker.debian.org/tracker/CVE-2019-1010023"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "f226dc73e8fc65fd3940146cf59f13d96d7b853a16c8e42357014d9e745eb004"
+      "vendorEvidenceSha256": "21658019c2774cc8ca34d95a952cf962f6f2826168fad117bcfca4f1a75fe166"
     },
     {
       "VulnerabilityID": "CVE-2019-1010024",
       "PkgName": "libc6",
-      "InstalledVersion": "2.41-12+deb13u4",
+      "InstalledVersion": "2.41-12+deb13u5",
       "FixedVersion": null,
       "Severity": "LOW",
       "Status": "affected",
@@ -2059,16 +1292,16 @@
         "https://security-tracker.debian.org/tracker/CVE-2019-1010024"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "21c3c0af11c6f208d9980c8354c41428acb5f0f52ba612e4b81f72fb8d4ca344"
+      "vendorEvidenceSha256": "7f48373c782d56ff32c47c889d3563cf7d18b7aabd0f792a532a256e9384d8b8"
     },
     {
       "VulnerabilityID": "CVE-2019-1010025",
       "PkgName": "libc6",
-      "InstalledVersion": "2.41-12+deb13u4",
+      "InstalledVersion": "2.41-12+deb13u5",
       "FixedVersion": null,
       "Severity": "LOW",
       "Status": "affected",
@@ -2087,16 +1320,16 @@
         "https://security-tracker.debian.org/tracker/CVE-2019-1010025"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "8bb7fa3b049a2a7d33830e736f67c6126e9253c8cb7f040cd7d419c70b1a8bd8"
+      "vendorEvidenceSha256": "5ca3418ec7d9eb7bac23dfaa57fda434e64e560a66e85fb31f7dfdd0ff34dcea"
     },
     {
       "VulnerabilityID": "CVE-2019-9192",
       "PkgName": "libc6",
-      "InstalledVersion": "2.41-12+deb13u4",
+      "InstalledVersion": "2.41-12+deb13u5",
       "FixedVersion": null,
       "Severity": "LOW",
       "Status": "affected",
@@ -2115,38 +1348,11 @@
         "https://security-tracker.debian.org/tracker/CVE-2019-9192"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "d90fcc9f384e7859140c7092c263eb3dc87de6af95151667b41f6b10b8b33f4a"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-97399",
-      "PkgName": "libc6",
-      "InstalledVersion": "2.41-12+deb13u4",
-      "FixedVersion": null,
-      "Severity": "LOW",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-97399",
-      "kind": "unreachable-precondition",
-      "rationale": "The report concerns the Power8-specific strncasecmp implementation. The qualified image and worker architectures are native Linux amd64 or arm64, never Power8 or emulation. The policy rejects every other architecture.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-97399"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "d01edd6393659c1af369782505457ff6b7aebb464d885786a3ba684510794a64"
+      "vendorEvidenceSha256": "12c531cb62e9852dca281cf1f4fdbd4757ec1dfb3c0ea8ae412f8ce35f1c577e"
     },
     {
       "VulnerabilityID": "CVE-2026-113351",
@@ -2322,35 +1528,6 @@
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
       "vendorEvidenceSha256": "cb0fdc0a814a5f768df9a709291c593d45b5eb8b7b159d00b0d730bab85cee6a"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-95512",
-      "PkgName": "libfreetype6",
-      "InstalledVersion": "2.15.0-0nkw1",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-95512",
-      "kind": "upstream-fixed",
-      "rationale": "Replace the affected FreeType library with upstream 2.15.0 containing the CID-loader fix. The actual loaded target-architecture version is checked through the C ABI and exact binary/source inventory. Keep the raw distribution finding visible.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "freetype215Verified"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-95512",
-        "https://freetype.org/index.html"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "1148c5c45b2ef02964a01116caf65d4bf50a1cba57e8bf7ef1352046b207be41"
     },
     {
       "VulnerabilityID": "CVE-2026-102010",
@@ -3608,7 +2785,7 @@
     {
       "VulnerabilityID": "CVE-2026-107496",
       "PkgName": "libssl3t64",
-      "InstalledVersion": "3.5.7-1~deb13u3",
+      "InstalledVersion": "3.5.9-1~deb13u1",
       "FixedVersion": null,
       "Severity": "MEDIUM",
       "Status": "affected",
@@ -3629,18 +2806,18 @@
         "https://openssl-library.org/news/secadv/20261110.txt"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "547cbc2983be25afad07ad89ba03bec8a40c3c37da4004d160d9ab5976fdfe72"
+      "vendorEvidenceSha256": "f79a88247eba9afb861075067ce8655a2d6624fb3e9a2c962db386937674124e"
     },
     {
       "VulnerabilityID": "CVE-2026-88822",
       "PkgName": "libssl3t64",
-      "InstalledVersion": "3.5.7-1~deb13u3",
+      "InstalledVersion": "3.5.9-1~deb13u1",
       "FixedVersion": null,
-      "Severity": "MEDIUM",
+      "Severity": "LOW",
       "Status": "affected",
       "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-88822",
       "kind": "unreachable-precondition",
@@ -3659,18 +2836,18 @@
         "https://openssl-library.org/news/secadv/20261110.txt"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "22878f2384f0cfc5c1f3da374207cbde3a18426a590fcb5821cefa78dfdc8d85"
+      "vendorEvidenceSha256": "b27248ae33af0e534bab1ced9ab1c0895018e07230285a450d85ea1647312dc8"
     },
     {
       "VulnerabilityID": "CVE-2026-88823",
       "PkgName": "libssl3t64",
-      "InstalledVersion": "3.5.7-1~deb13u3",
+      "InstalledVersion": "3.5.9-1~deb13u1",
       "FixedVersion": null,
-      "Severity": "MEDIUM",
+      "Severity": "LOW",
       "Status": "affected",
       "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-88823",
       "kind": "unreachable-precondition",
@@ -3689,16 +2866,16 @@
         "https://openssl-library.org/news/secadv/20261110.txt"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "d4373a034186b7116f8baf97f52836a5a661748a58dc2a0d50485ad461795d32"
+      "vendorEvidenceSha256": "eb623dc9d8b0a95cba5c7dcb1031aa8f423c53109d88d08772c030ecc21d2425"
     },
     {
       "VulnerabilityID": "CVE-2026-95691",
       "PkgName": "libssl3t64",
-      "InstalledVersion": "3.5.7-1~deb13u3",
+      "InstalledVersion": "3.5.9-1~deb13u1",
       "FixedVersion": null,
       "Severity": "MEDIUM",
       "Status": "affected",
@@ -3719,16 +2896,16 @@
         "https://openssl-library.org/news/secadv/20261110.txt"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "72852182b9ca8a6b593a79c60495dd7fc085f52b082919ef5dac31d68288412d"
+      "vendorEvidenceSha256": "38834566419ac509d06655867409f41301445487fbdb83df9b9cc484109a5f7e"
     },
     {
       "VulnerabilityID": "CVE-2026-95692",
       "PkgName": "libssl3t64",
-      "InstalledVersion": "3.5.7-1~deb13u3",
+      "InstalledVersion": "3.5.9-1~deb13u1",
       "FixedVersion": null,
       "Severity": "MEDIUM",
       "Status": "affected",
@@ -3749,11 +2926,11 @@
         "https://openssl-library.org/news/secadv/20261110.txt"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "3217d97da111a2fae91bc7ee1324668a02071969ae7c8127c5a99bf7d673bdc1"
+      "vendorEvidenceSha256": "50f9edb6c8b63aa1b35938c7f2c2cfa430a4920db8428399fb8b148e5a1e7bec"
     },
     {
       "VulnerabilityID": "CVE-2026-102010",
@@ -5097,7 +4274,7 @@
     {
       "VulnerabilityID": "CVE-2026-107496",
       "PkgName": "openssl-provider-legacy",
-      "InstalledVersion": "3.5.7-1~deb13u3",
+      "InstalledVersion": "3.5.9-1~deb13u1",
       "FixedVersion": null,
       "Severity": "MEDIUM",
       "Status": "affected",
@@ -5118,18 +4295,18 @@
         "https://openssl-library.org/news/secadv/20261110.txt"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "547cbc2983be25afad07ad89ba03bec8a40c3c37da4004d160d9ab5976fdfe72"
+      "vendorEvidenceSha256": "f79a88247eba9afb861075067ce8655a2d6624fb3e9a2c962db386937674124e"
     },
     {
       "VulnerabilityID": "CVE-2026-88822",
       "PkgName": "openssl-provider-legacy",
-      "InstalledVersion": "3.5.7-1~deb13u3",
+      "InstalledVersion": "3.5.9-1~deb13u1",
       "FixedVersion": null,
-      "Severity": "MEDIUM",
+      "Severity": "LOW",
       "Status": "affected",
       "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-88822",
       "kind": "unreachable-precondition",
@@ -5148,18 +4325,18 @@
         "https://openssl-library.org/news/secadv/20261110.txt"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "22878f2384f0cfc5c1f3da374207cbde3a18426a590fcb5821cefa78dfdc8d85"
+      "vendorEvidenceSha256": "b27248ae33af0e534bab1ced9ab1c0895018e07230285a450d85ea1647312dc8"
     },
     {
       "VulnerabilityID": "CVE-2026-88823",
       "PkgName": "openssl-provider-legacy",
-      "InstalledVersion": "3.5.7-1~deb13u3",
+      "InstalledVersion": "3.5.9-1~deb13u1",
       "FixedVersion": null,
-      "Severity": "MEDIUM",
+      "Severity": "LOW",
       "Status": "affected",
       "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-88823",
       "kind": "unreachable-precondition",
@@ -5178,16 +4355,16 @@
         "https://openssl-library.org/news/secadv/20261110.txt"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "d4373a034186b7116f8baf97f52836a5a661748a58dc2a0d50485ad461795d32"
+      "vendorEvidenceSha256": "eb623dc9d8b0a95cba5c7dcb1031aa8f423c53109d88d08772c030ecc21d2425"
     },
     {
       "VulnerabilityID": "CVE-2026-95691",
       "PkgName": "openssl-provider-legacy",
-      "InstalledVersion": "3.5.7-1~deb13u3",
+      "InstalledVersion": "3.5.9-1~deb13u1",
       "FixedVersion": null,
       "Severity": "MEDIUM",
       "Status": "affected",
@@ -5208,16 +4385,16 @@
         "https://openssl-library.org/news/secadv/20261110.txt"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "72852182b9ca8a6b593a79c60495dd7fc085f52b082919ef5dac31d68288412d"
+      "vendorEvidenceSha256": "38834566419ac509d06655867409f41301445487fbdb83df9b9cc484109a5f7e"
     },
     {
       "VulnerabilityID": "CVE-2026-95692",
       "PkgName": "openssl-provider-legacy",
-      "InstalledVersion": "3.5.7-1~deb13u3",
+      "InstalledVersion": "3.5.9-1~deb13u1",
       "FixedVersion": null,
       "Severity": "MEDIUM",
       "Status": "affected",
@@ -5238,11 +4415,11 @@
         "https://openssl-library.org/news/secadv/20261110.txt"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "3217d97da111a2fae91bc7ee1324668a02071969ae7c8127c5a99bf7d673bdc1"
+      "vendorEvidenceSha256": "50f9edb6c8b63aa1b35938c7f2c2cfa430a4920db8428399fb8b148e5a1e7bec"
     },
     {
       "VulnerabilityID": "CVE-2007-5686",
@@ -5781,13 +4958,13 @@
     {
       "VulnerabilityID": "CVE-2026-100290",
       "PkgName": "libc-bin",
-      "InstalledVersion": "2.41-12+deb13u4",
+      "InstalledVersion": "2.41-12+deb13u5",
       "FixedVersion": null,
       "Severity": "LOW",
       "Status": "affected",
       "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-100290",
       "kind": "unreachable-precondition",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "rationale": "Client patterns and subjects do not reach libc regex through the selected native/JNI runtime. The measured consumer list must be empty, except for a source-bound full-profile Bash supervisor whose fixed operator-only checks finish before application startup. Java and PCRE regex are separate engines. The affected libc package and original scanner finding remain visible; this is not a vendor-fix claim.",
       "compensatingControls": "Exact image/source/package binding, bounded rootless workers, current owner/CSRF checks and a mandatory same-architecture ELF/JNI consumer audit.",
@@ -5803,18 +4980,18 @@
       "references": [
         "https://security-tracker.debian.org/tracker/CVE-2026-100290"
       ],
-      "vendorEvidenceSha256": "c55777e729abce758b9090c381430801dcc30b43cd5fa1525e199f54cd6b9ffc"
+      "vendorEvidenceSha256": "22883fc9682f5cb719a5dd1f11f565449fcb1bcf9d52dce7984bba8ebc9ab83e"
     },
     {
       "VulnerabilityID": "CVE-2026-115819",
       "PkgName": "libc-bin",
-      "InstalledVersion": "2.41-12+deb13u4",
+      "InstalledVersion": "2.41-12+deb13u5",
       "FixedVersion": null,
       "Severity": "MEDIUM",
       "Status": "affected",
       "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-115819",
       "kind": "unreachable-precondition",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "rationale": "The exact selected runtime and same-architecture JNI import audit must show no consumer of the affected wide scanf family, including ISO and variadic aliases. Narrow scanf is distinct. An unexpected consumer blocks promotion. The affected libc package and original scanner finding remain visible; this is not a vendor-fix claim.",
       "compensatingControls": "Exact image/source/package binding, bounded rootless workers, current owner/CSRF checks and a mandatory same-architecture ELF/JNI consumer audit.",
@@ -5830,18 +5007,18 @@
       "references": [
         "https://security-tracker.debian.org/tracker/CVE-2026-115819"
       ],
-      "vendorEvidenceSha256": "1763e32152cb572b2aaf2e7feb156e437fffe0c46b49388803f9f568b4a79ad8"
+      "vendorEvidenceSha256": "da4add6f7c7b6d864673b1b426d1a4bcbdb9893e5ccbf160555ab2e59df83bdb"
     },
     {
       "VulnerabilityID": "CVE-2026-100290",
       "PkgName": "libc6",
-      "InstalledVersion": "2.41-12+deb13u4",
+      "InstalledVersion": "2.41-12+deb13u5",
       "FixedVersion": null,
       "Severity": "LOW",
       "Status": "affected",
       "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-100290",
       "kind": "unreachable-precondition",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "rationale": "Client patterns and subjects do not reach libc regex through the selected native/JNI runtime. The measured consumer list must be empty, except for a source-bound full-profile Bash supervisor whose fixed operator-only checks finish before application startup. Java and PCRE regex are separate engines. The affected libc package and original scanner finding remain visible; this is not a vendor-fix claim.",
       "compensatingControls": "Exact image/source/package binding, bounded rootless workers, current owner/CSRF checks and a mandatory same-architecture ELF/JNI consumer audit.",
@@ -5857,18 +5034,18 @@
       "references": [
         "https://security-tracker.debian.org/tracker/CVE-2026-100290"
       ],
-      "vendorEvidenceSha256": "c55777e729abce758b9090c381430801dcc30b43cd5fa1525e199f54cd6b9ffc"
+      "vendorEvidenceSha256": "22883fc9682f5cb719a5dd1f11f565449fcb1bcf9d52dce7984bba8ebc9ab83e"
     },
     {
       "VulnerabilityID": "CVE-2026-115819",
       "PkgName": "libc6",
-      "InstalledVersion": "2.41-12+deb13u4",
+      "InstalledVersion": "2.41-12+deb13u5",
       "FixedVersion": null,
       "Severity": "MEDIUM",
       "Status": "affected",
       "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-115819",
       "kind": "unreachable-precondition",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "rationale": "The exact selected runtime and same-architecture JNI import audit must show no consumer of the affected wide scanf family, including ISO and variadic aliases. Narrow scanf is distinct. An unexpected consumer blocks promotion. The affected libc package and original scanner finding remain visible; this is not a vendor-fix claim.",
       "compensatingControls": "Exact image/source/package binding, bounded rootless workers, current owner/CSRF checks and a mandatory same-architecture ELF/JNI consumer audit.",
@@ -5884,7 +5061,7 @@
       "references": [
         "https://security-tracker.debian.org/tracker/CVE-2026-115819"
       ],
-      "vendorEvidenceSha256": "1763e32152cb572b2aaf2e7feb156e437fffe0c46b49388803f9f568b4a79ad8"
+      "vendorEvidenceSha256": "da4add6f7c7b6d864673b1b426d1a4bcbdb9893e5ccbf160555ab2e59df83bdb"
     },
     {
       "VulnerabilityID": "CVE-2026-91094",
@@ -6039,9 +5216,9 @@
     {
       "VulnerabilityID": "CVE-2026-107493",
       "PkgName": "libssl3t64",
-      "InstalledVersion": "3.5.7-1~deb13u3",
+      "InstalledVersion": "3.5.9-1~deb13u1",
       "FixedVersion": null,
-      "Severity": "MEDIUM",
+      "Severity": "LOW",
       "Status": "affected",
       "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-107493",
       "kind": "unreachable-precondition",
@@ -6060,18 +5237,18 @@
         "https://openssl-library.org/news/secadv/20261117.txt"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and both measured OpenSSL absence controls; retain raw scanner findings; fail on missing controls, any changed or new finding, and expiry.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "ca836c513b708f6ad6f7e9dde128fbe3d5a2543a6fef5689d13e7c8cd484da73"
+      "vendorEvidenceSha256": "c90caa8b8dfadfa597ec18ad5ed3b0e522144b97b1ce954df76746b09f7be491"
     },
     {
       "VulnerabilityID": "CVE-2026-124709",
       "PkgName": "libssl3t64",
-      "InstalledVersion": "3.5.7-1~deb13u3",
+      "InstalledVersion": "3.5.9-1~deb13u1",
       "FixedVersion": null,
-      "Severity": "MEDIUM",
+      "Severity": "HIGH",
       "Status": "affected",
       "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-124709",
       "kind": "unreachable-precondition",
@@ -6090,16 +5267,16 @@
         "https://openssl-library.org/news/secadv/20261117.txt"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and both measured OpenSSL absence controls; retain raw scanner findings; fail on missing controls, any changed or new finding, and expiry.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "1e9741eba956678dfd465f0dafed8b769cd58d258629a3653745cbe82cdee52d"
+      "vendorEvidenceSha256": "a0a17b8fc37206409f084e69440196f8be35c83b3a3c84d99a607a6f36f2ec12"
     },
     {
       "VulnerabilityID": "CVE-2026-35190",
       "PkgName": "libssl3t64",
-      "InstalledVersion": "3.5.7-1~deb13u3",
+      "InstalledVersion": "3.5.9-1~deb13u1",
       "FixedVersion": null,
       "Severity": "MEDIUM",
       "Status": "affected",
@@ -6120,18 +5297,18 @@
         "https://openssl-library.org/news/secadv/20261117.txt"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and both measured OpenSSL absence controls; retain raw scanner findings; fail on missing controls, any changed or new finding, and expiry.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "4a5b0652cdc5a29ac4899ad3015603d10a592e3d674d4e7cc7ccd1bf16229551"
+      "vendorEvidenceSha256": "00ea7818f853f2c69c5371fa39c7e13c0b7ee0e99e01413f922045549f530380"
     },
     {
       "VulnerabilityID": "CVE-2026-107493",
       "PkgName": "openssl-provider-legacy",
-      "InstalledVersion": "3.5.7-1~deb13u3",
+      "InstalledVersion": "3.5.9-1~deb13u1",
       "FixedVersion": null,
-      "Severity": "MEDIUM",
+      "Severity": "LOW",
       "Status": "affected",
       "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-107493",
       "kind": "unreachable-precondition",
@@ -6150,18 +5327,18 @@
         "https://openssl-library.org/news/secadv/20261117.txt"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and both measured OpenSSL absence controls; retain raw scanner findings; fail on missing controls, any changed or new finding, and expiry.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "ca836c513b708f6ad6f7e9dde128fbe3d5a2543a6fef5689d13e7c8cd484da73"
+      "vendorEvidenceSha256": "c90caa8b8dfadfa597ec18ad5ed3b0e522144b97b1ce954df76746b09f7be491"
     },
     {
       "VulnerabilityID": "CVE-2026-124709",
       "PkgName": "openssl-provider-legacy",
-      "InstalledVersion": "3.5.7-1~deb13u3",
+      "InstalledVersion": "3.5.9-1~deb13u1",
       "FixedVersion": null,
-      "Severity": "MEDIUM",
+      "Severity": "HIGH",
       "Status": "affected",
       "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-124709",
       "kind": "unreachable-precondition",
@@ -6180,16 +5357,16 @@
         "https://openssl-library.org/news/secadv/20261117.txt"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and both measured OpenSSL absence controls; retain raw scanner findings; fail on missing controls, any changed or new finding, and expiry.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "1e9741eba956678dfd465f0dafed8b769cd58d258629a3653745cbe82cdee52d"
+      "vendorEvidenceSha256": "a0a17b8fc37206409f084e69440196f8be35c83b3a3c84d99a607a6f36f2ec12"
     },
     {
       "VulnerabilityID": "CVE-2026-35190",
       "PkgName": "openssl-provider-legacy",
-      "InstalledVersion": "3.5.7-1~deb13u3",
+      "InstalledVersion": "3.5.9-1~deb13u1",
       "FixedVersion": null,
       "Severity": "MEDIUM",
       "Status": "affected",
@@ -6210,18 +5387,18 @@
         "https://openssl-library.org/news/secadv/20261117.txt"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact production-source/package/image binding and both measured OpenSSL absence controls; retain raw scanner findings; fail on missing controls, any changed or new finding, and expiry.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "4a5b0652cdc5a29ac4899ad3015603d10a592e3d674d4e7cc7ccd1bf16229551"
+      "vendorEvidenceSha256": "00ea7818f853f2c69c5371fa39c7e13c0b7ee0e99e01413f922045549f530380"
     },
     {
       "VulnerabilityID": "CVE-2026-121757",
       "PkgName": "libc-bin",
-      "InstalledVersion": "2.41-12+deb13u4",
+      "InstalledVersion": "2.41-12+deb13u5",
       "FixedVersion": null,
-      "Severity": "UNKNOWN",
+      "Severity": "MEDIUM",
       "Status": "affected",
       "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-121757",
       "kind": "unreachable-precondition",
@@ -6241,9 +5418,9 @@
         "https://security-tracker.debian.org/tracker/CVE-2026-121757",
         "https://github.com/CVEProject/cvelistV5/blob/b053cb926d86d1e346459e6767bd4c1a91d3d24e/cves/2026/121xxx/CVE-2026-121757.json"
       ],
-      "vendorEvidenceSha256": "5e66d65f03cf13f4e8ba7e67cb153828e297518bdeba0f8ca316a1dd363506c9",
+      "vendorEvidenceSha256": "bbce2be3eb8b8f4739c3e79b06790af42c44ea3975cf69e39812d2c5825fbf2f",
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Exact source/package/image binding, unchanged raw scanner classification and all named measured input/linkage controls are mandatory. Missing controls, changed findings and expired review fail closed.",
       "remediationTarget": "Reassess stable vendor fixes and exact shipped applicability by 2026-11-26; no promotion without a fresh scan and current measured controls."
@@ -6251,7 +5428,7 @@
     {
       "VulnerabilityID": "CVE-2026-121758",
       "PkgName": "libc-bin",
-      "InstalledVersion": "2.41-12+deb13u4",
+      "InstalledVersion": "2.41-12+deb13u5",
       "FixedVersion": null,
       "Severity": "UNKNOWN",
       "Status": "affected",
@@ -6273,9 +5450,9 @@
         "https://security-tracker.debian.org/tracker/CVE-2026-121758",
         "https://github.com/CVEProject/cvelistV5/blob/b053cb926d86d1e346459e6767bd4c1a91d3d24e/cves/2026/121xxx/CVE-2026-121758.json"
       ],
-      "vendorEvidenceSha256": "3afc5eb151729deb6122991db0a7b0e4dc531a3287be803b9527d0bbf7c2c305",
+      "vendorEvidenceSha256": "bde9483ec7f98b26d0d156b96d0870e36dd91639f9f4ccabc85d9ab8bf4223e4",
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Exact source/package/image binding, unchanged raw scanner classification and all named measured input/linkage controls are mandatory. Missing controls, changed findings and expired review fail closed.",
       "remediationTarget": "Reassess stable vendor fixes and exact shipped applicability by 2026-11-26; no promotion without a fresh scan and current measured controls."
@@ -6283,7 +5460,7 @@
     {
       "VulnerabilityID": "CVE-2026-124024",
       "PkgName": "libc-bin",
-      "InstalledVersion": "2.41-12+deb13u4",
+      "InstalledVersion": "2.41-12+deb13u5",
       "FixedVersion": null,
       "Severity": "UNKNOWN",
       "Status": "affected",
@@ -6305,9 +5482,9 @@
         "https://security-tracker.debian.org/tracker/CVE-2026-124024",
         "https://github.com/CVEProject/cvelistV5/blob/b053cb926d86d1e346459e6767bd4c1a91d3d24e/cves/2026/124xxx/CVE-2026-124024.json"
       ],
-      "vendorEvidenceSha256": "7a32ff416021332f90774a309d976af3f28cdb6c2b4c62c783cd298e0bb74450",
+      "vendorEvidenceSha256": "6f6cb4bfcd6cb9e0e286c6e3deacf01f6c0f2311242123995e241860dc8140ce",
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Exact source/package/image binding, unchanged raw scanner classification and all named measured input/linkage controls are mandatory. Missing controls, changed findings and expired review fail closed.",
       "remediationTarget": "Reassess stable vendor fixes and exact shipped applicability by 2026-11-26; no promotion without a fresh scan and current measured controls."
@@ -6315,9 +5492,9 @@
     {
       "VulnerabilityID": "CVE-2026-121757",
       "PkgName": "libc6",
-      "InstalledVersion": "2.41-12+deb13u4",
+      "InstalledVersion": "2.41-12+deb13u5",
       "FixedVersion": null,
-      "Severity": "UNKNOWN",
+      "Severity": "MEDIUM",
       "Status": "affected",
       "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-121757",
       "kind": "unreachable-precondition",
@@ -6337,9 +5514,9 @@
         "https://security-tracker.debian.org/tracker/CVE-2026-121757",
         "https://github.com/CVEProject/cvelistV5/blob/b053cb926d86d1e346459e6767bd4c1a91d3d24e/cves/2026/121xxx/CVE-2026-121757.json"
       ],
-      "vendorEvidenceSha256": "5e66d65f03cf13f4e8ba7e67cb153828e297518bdeba0f8ca316a1dd363506c9",
+      "vendorEvidenceSha256": "bbce2be3eb8b8f4739c3e79b06790af42c44ea3975cf69e39812d2c5825fbf2f",
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Exact source/package/image binding, unchanged raw scanner classification and all named measured input/linkage controls are mandatory. Missing controls, changed findings and expired review fail closed.",
       "remediationTarget": "Reassess stable vendor fixes and exact shipped applicability by 2026-11-26; no promotion without a fresh scan and current measured controls."
@@ -6347,7 +5524,7 @@
     {
       "VulnerabilityID": "CVE-2026-121758",
       "PkgName": "libc6",
-      "InstalledVersion": "2.41-12+deb13u4",
+      "InstalledVersion": "2.41-12+deb13u5",
       "FixedVersion": null,
       "Severity": "UNKNOWN",
       "Status": "affected",
@@ -6369,9 +5546,9 @@
         "https://security-tracker.debian.org/tracker/CVE-2026-121758",
         "https://github.com/CVEProject/cvelistV5/blob/b053cb926d86d1e346459e6767bd4c1a91d3d24e/cves/2026/121xxx/CVE-2026-121758.json"
       ],
-      "vendorEvidenceSha256": "3afc5eb151729deb6122991db0a7b0e4dc531a3287be803b9527d0bbf7c2c305",
+      "vendorEvidenceSha256": "bde9483ec7f98b26d0d156b96d0870e36dd91639f9f4ccabc85d9ab8bf4223e4",
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Exact source/package/image binding, unchanged raw scanner classification and all named measured input/linkage controls are mandatory. Missing controls, changed findings and expired review fail closed.",
       "remediationTarget": "Reassess stable vendor fixes and exact shipped applicability by 2026-11-26; no promotion without a fresh scan and current measured controls."
@@ -6379,7 +5556,7 @@
     {
       "VulnerabilityID": "CVE-2026-124024",
       "PkgName": "libc6",
-      "InstalledVersion": "2.41-12+deb13u4",
+      "InstalledVersion": "2.41-12+deb13u5",
       "FixedVersion": null,
       "Severity": "UNKNOWN",
       "Status": "affected",
@@ -6401,9 +5578,9 @@
         "https://security-tracker.debian.org/tracker/CVE-2026-124024",
         "https://github.com/CVEProject/cvelistV5/blob/b053cb926d86d1e346459e6767bd4c1a91d3d24e/cves/2026/124xxx/CVE-2026-124024.json"
       ],
-      "vendorEvidenceSha256": "7a32ff416021332f90774a309d976af3f28cdb6c2b4c62c783cd298e0bb74450",
+      "vendorEvidenceSha256": "6f6cb4bfcd6cb9e0e286c6e3deacf01f6c0f2311242123995e241860dc8140ce",
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Exact source/package/image binding, unchanged raw scanner classification and all named measured input/linkage controls are mandatory. Missing controls, changed findings and expired review fail closed.",
       "remediationTarget": "Reassess stable vendor fixes and exact shipped applicability by 2026-11-26; no promotion without a fresh scan and current measured controls."
@@ -6411,7 +5588,7 @@
     {
       "VulnerabilityID": "CVE-2026-95690",
       "PkgName": "libssl3t64",
-      "InstalledVersion": "3.5.7-1~deb13u3",
+      "InstalledVersion": "3.5.9-1~deb13u1",
       "FixedVersion": null,
       "Severity": "MEDIUM",
       "Status": "affected",
@@ -6431,9 +5608,9 @@
         "https://security-tracker.debian.org/tracker/CVE-2026-95690",
         "https://github.com/CVEProject/cvelistV5/blob/b053cb926d86d1e346459e6767bd4c1a91d3d24e/cves/2026/95xxx/CVE-2026-95690.json"
       ],
-      "vendorEvidenceSha256": "e3cdb2291f10bc468ec8cef3926b23561883581b3d057351b00bd78367e66155",
+      "vendorEvidenceSha256": "5e0ec4f34d45784967f1a83c9e08249926f1a0e365260b8a3ec1c2fb231993a5",
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Exact source/package/image binding, unchanged raw scanner classification and all named measured input/linkage controls are mandatory. Missing controls, changed findings and expired review fail closed.",
       "remediationTarget": "Reassess stable vendor fixes and exact shipped applicability by 2026-11-26; no promotion without a fresh scan and current measured controls."
@@ -6441,7 +5618,7 @@
     {
       "VulnerabilityID": "CVE-2026-95690",
       "PkgName": "openssl-provider-legacy",
-      "InstalledVersion": "3.5.7-1~deb13u3",
+      "InstalledVersion": "3.5.9-1~deb13u1",
       "FixedVersion": null,
       "Severity": "MEDIUM",
       "Status": "affected",
@@ -6461,9 +5638,9 @@
         "https://security-tracker.debian.org/tracker/CVE-2026-95690",
         "https://github.com/CVEProject/cvelistV5/blob/b053cb926d86d1e346459e6767bd4c1a91d3d24e/cves/2026/95xxx/CVE-2026-95690.json"
       ],
-      "vendorEvidenceSha256": "e3cdb2291f10bc468ec8cef3926b23561883581b3d057351b00bd78367e66155",
+      "vendorEvidenceSha256": "5e0ec4f34d45784967f1a83c9e08249926f1a0e365260b8a3ec1c2fb231993a5",
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Exact source/package/image binding, unchanged raw scanner classification and all named measured input/linkage controls are mandatory. Missing controls, changed findings and expired review fail closed.",
       "remediationTarget": "Reassess stable vendor fixes and exact shipped applicability by 2026-11-26; no promotion without a fresh scan and current measured controls."
@@ -6471,7 +5648,7 @@
     {
       "VulnerabilityID": "CVE-2026-84786",
       "PkgName": "libssl3t64",
-      "InstalledVersion": "3.5.7-1~deb13u3",
+      "InstalledVersion": "3.5.9-1~deb13u1",
       "FixedVersion": null,
       "Severity": "MEDIUM",
       "Status": "affected",
@@ -6487,11 +5664,12 @@
         "opensslNotLoadedInWorkload"
       ],
       "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-84786",
         "https://github.com/CVEProject/cvelistV5/blob/9cbdca2b505944a99de1f2a5acddd755cefc4713/cves/2026/84xxx/CVE-2026-84786.json"
       ],
-      "vendorEvidenceSha256": "8122f4d06ce8e8056dad356baede2ab9f37ce6b7823dcd2bc08c17254a41fb17",
+      "vendorEvidenceSha256": "3e0f5f6671e51f2584bd48e8463a44c616e36caf402de7c87da7d15237d0ae1d",
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-20",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Exact source/package/image binding and every named measured control are mandatory. Preserve raw findings/severities; changed or unreviewed findings, missing controls and expired reviews block promotion.",
       "remediationTarget": "Reassess supported vendor fixes, scanner data and exact image applicability by2026-11-26; no promotion without current artifact proof."
@@ -6499,7 +5677,7 @@
     {
       "VulnerabilityID": "CVE-2026-84786",
       "PkgName": "openssl-provider-legacy",
-      "InstalledVersion": "3.5.7-1~deb13u3",
+      "InstalledVersion": "3.5.9-1~deb13u1",
       "FixedVersion": null,
       "Severity": "MEDIUM",
       "Status": "affected",
@@ -6515,11 +5693,12 @@
         "opensslNotLoadedInWorkload"
       ],
       "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-84786",
         "https://github.com/CVEProject/cvelistV5/blob/9cbdca2b505944a99de1f2a5acddd755cefc4713/cves/2026/84xxx/CVE-2026-84786.json"
       ],
-      "vendorEvidenceSha256": "8122f4d06ce8e8056dad356baede2ab9f37ce6b7823dcd2bc08c17254a41fb17",
+      "vendorEvidenceSha256": "3e0f5f6671e51f2584bd48e8463a44c616e36caf402de7c87da7d15237d0ae1d",
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-20",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Exact source/package/image binding and every named measured control are mandatory. Preserve raw findings/severities; changed or unreviewed findings, missing controls and expired reviews block promotion.",
       "remediationTarget": "Reassess supported vendor fixes, scanner data and exact image applicability by2026-11-26; no promotion without current artifact proof."
@@ -6527,13 +5706,13 @@
     {
       "VulnerabilityID": "CVE-2026-126765",
       "PkgName": "libc-bin",
-      "InstalledVersion": "2.41-12+deb13u4",
+      "InstalledVersion": "2.41-12+deb13u5",
       "FixedVersion": null,
-      "Severity": "UNKNOWN",
+      "Severity": "LOW",
       "Status": "affected",
       "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-126765",
       "kind": "unreachable-precondition",
-      "rationale": "The libc glob double-free requires caller-controlled matching that creates a large result and an allocation failure while rewriting those results. Require a same-architecture selected-runtime and embedded-JNI import audit showing no glob/glob64/globfree/globfree64 consumer. A missing audit or any imported consumer denies this assessment. The affected libc package and raw UNKNOWN finding remain present; neither a vendor fix nor memory-limit immunity is claimed.",
+      "rationale": "The libc glob double-free requires caller-controlled matching that creates a large result and an allocation failure while rewriting those results. Require a same-architecture selected-runtime and embedded-JNI import audit showing no glob/glob64/globfree/globfree64 consumer. A missing audit or any imported consumer denies this assessment. The affected libc package and raw finding remain present; neither a vendor fix nor memory-limit immunity is claimed.",
       "requiredControls": [
         "numericUnprivilegedImage",
         "setuidSetgidAbsent",
@@ -6542,11 +5721,12 @@
         "glibcGlobNotReferenced"
       ],
       "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-126765",
         "https://github.com/CVEProject/cvelistV5/blob/9cbdca2b505944a99de1f2a5acddd755cefc4713/cves/2026/126xxx/CVE-2026-126765.json"
       ],
-      "vendorEvidenceSha256": "c8a6bf1ae10a1dbd8db06f7297417b2f586c0ac39256f08a954a8325ee838b24",
+      "vendorEvidenceSha256": "335afe8b0d980e7a9512e70d61b6eca6824d05bcd0845893ae3e94d560783986",
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-20",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Exact source, package and image binding, current rootless/owner/CSRF qualification and mandatory ELF/JNI import evidence; no execution of copied native code. Unknown consumers, missing observations and expired review fail closed.",
       "remediationTarget": "Reassess supported vendor fixes and the exact shipped glob reachability by2026-11-26; fresh image and audit evidence required for promotion."
@@ -6554,13 +5734,13 @@
     {
       "VulnerabilityID": "CVE-2026-126765",
       "PkgName": "libc6",
-      "InstalledVersion": "2.41-12+deb13u4",
+      "InstalledVersion": "2.41-12+deb13u5",
       "FixedVersion": null,
-      "Severity": "UNKNOWN",
+      "Severity": "LOW",
       "Status": "affected",
       "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-126765",
       "kind": "unreachable-precondition",
-      "rationale": "The libc glob double-free requires caller-controlled matching that creates a large result and an allocation failure while rewriting those results. Require a same-architecture selected-runtime and embedded-JNI import audit showing no glob/glob64/globfree/globfree64 consumer. A missing audit or any imported consumer denies this assessment. The affected libc package and raw UNKNOWN finding remain present; neither a vendor fix nor memory-limit immunity is claimed.",
+      "rationale": "The libc glob double-free requires caller-controlled matching that creates a large result and an allocation failure while rewriting those results. Require a same-architecture selected-runtime and embedded-JNI import audit showing no glob/glob64/globfree/globfree64 consumer. A missing audit or any imported consumer denies this assessment. The affected libc package and raw finding remain present; neither a vendor fix nor memory-limit immunity is claimed.",
       "requiredControls": [
         "numericUnprivilegedImage",
         "setuidSetgidAbsent",
@@ -6569,14 +5749,472 @@
         "glibcGlobNotReferenced"
       ],
       "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-126765",
         "https://github.com/CVEProject/cvelistV5/blob/9cbdca2b505944a99de1f2a5acddd755cefc4713/cves/2026/126xxx/CVE-2026-126765.json"
       ],
-      "vendorEvidenceSha256": "c8a6bf1ae10a1dbd8db06f7297417b2f586c0ac39256f08a954a8325ee838b24",
+      "vendorEvidenceSha256": "335afe8b0d980e7a9512e70d61b6eca6824d05bcd0845893ae3e94d560783986",
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-20",
+      "reviewedOn": "2026-11-24",
       "expiresOn": "2026-11-26",
       "compensatingControls": "Exact source, package and image binding, current rootless/owner/CSRF qualification and mandatory ELF/JNI import evidence; no execution of copied native code. Unknown consumers, missing observations and expired review fail closed.",
       "remediationTarget": "Reassess supported vendor fixes and the exact shipped glob reachability by2026-11-26; fresh image and audit evidence required for promotion."
+    },
+    {
+      "VulnerabilityID": "CVE-2026-134703",
+      "PkgName": "libexpat1",
+      "InstalledVersion": "2.10.0-0nkw2",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-134703",
+      "kind": "unreachable-precondition",
+      "rationale": "The surrogate-pair split requires Expat XML_UNICODE output with non-native-endian UTF-16 input. The existing library is built with narrow output. Require the actual loaded target-architecture library XML_GetFeatureList to show sizeof(XML_Char)==1 and absence of XML_UNICODE/XML_UNICODE_WCHAR_T, plus ABI/backport provenance. No Unicode feature is removed by this assessment, no upstream fix is claimed, and the raw advisory remains visible.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "expat210BackportVerified",
+        "expatNarrowOutputVerified"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-134703"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-24",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Require exact production-source/package/image binding and both measured OpenSSL absence controls; retain raw scanner findings; fail on missing controls, any changed or new finding, and expiry.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "b6a9115e2405412fb604a31c42ff43cc012f769a109dac9330b200323d1b6dd2"
+    },
+    {
+      "VulnerabilityID": "TEMP-0000000-402D17",
+      "PkgName": "libseccomp2",
+      "InstalledVersion": "2.6.0-2",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://security-tracker.debian.org/tracker/TEMP-0000000-402D17",
+      "kind": "unreachable-precondition",
+      "rationale": "This advisory affects libseccomp user-space rule construction/optimization or transaction handling, not the kernel BPF interpreter. The source-owned PDF/video helper installs fixed classic BPF through prctl with no libseccomp API. Require a current complete same-architecture selected-runtime and embedded-JNI import audit with no seccomp_* consumer and no libseccomp linkage. Any missing audit or consumer blocks. The library package and raw advisory remain visible; no kernel confinement or filter restriction is weakened.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "libseccompNotReferenced"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/TEMP-0000000-402D17"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-24",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Require exact production-source/package/image binding and both measured OpenSSL absence controls; retain raw scanner findings; fail on missing controls, any changed or new finding, and expiry.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "b56d767f795898c10f14323f1b5773915a09b3aa54d2c540048ef0a64130e5a5"
+    },
+    {
+      "VulnerabilityID": "TEMP-0000000-414660",
+      "PkgName": "libseccomp2",
+      "InstalledVersion": "2.6.0-2",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://security-tracker.debian.org/tracker/TEMP-0000000-414660",
+      "kind": "unreachable-precondition",
+      "rationale": "This advisory affects libseccomp user-space rule construction/optimization or transaction handling, not the kernel BPF interpreter. The source-owned PDF/video helper installs fixed classic BPF through prctl with no libseccomp API. Require a current complete same-architecture selected-runtime and embedded-JNI import audit with no seccomp_* consumer and no libseccomp linkage. Any missing audit or consumer blocks. The library package and raw advisory remain visible; no kernel confinement or filter restriction is weakened.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "libseccompNotReferenced"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/TEMP-0000000-414660"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-24",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Require exact production-source/package/image binding and both measured OpenSSL absence controls; retain raw scanner findings; fail on missing controls, any changed or new finding, and expiry.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "4b5b982e4232959a0006d391e79f9b54d0a4bdadad0aee94f333963125c13e5d"
+    },
+    {
+      "VulnerabilityID": "TEMP-0000000-43231F",
+      "PkgName": "libseccomp2",
+      "InstalledVersion": "2.6.0-2",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://security-tracker.debian.org/tracker/TEMP-0000000-43231F",
+      "kind": "unreachable-precondition",
+      "rationale": "This advisory affects libseccomp user-space rule construction/optimization or transaction handling, not the kernel BPF interpreter. The source-owned PDF/video helper installs fixed classic BPF through prctl with no libseccomp API. Require a current complete same-architecture selected-runtime and embedded-JNI import audit with no seccomp_* consumer and no libseccomp linkage. Any missing audit or consumer blocks. The library package and raw advisory remain visible; no kernel confinement or filter restriction is weakened.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "libseccompNotReferenced"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/TEMP-0000000-43231F"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-24",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Require exact production-source/package/image binding and both measured OpenSSL absence controls; retain raw scanner findings; fail on missing controls, any changed or new finding, and expiry.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "3207e1284a55c6904b75e9ef2301a12289852d690a9287f0d554fa46dcca6012"
+    },
+    {
+      "VulnerabilityID": "TEMP-0000000-AE2C66",
+      "PkgName": "libseccomp2",
+      "InstalledVersion": "2.6.0-2",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://security-tracker.debian.org/tracker/TEMP-0000000-AE2C66",
+      "kind": "unreachable-precondition",
+      "rationale": "This advisory affects libseccomp user-space rule construction/optimization or transaction handling, not the kernel BPF interpreter. The source-owned PDF/video helper installs fixed classic BPF through prctl with no libseccomp API. Require a current complete same-architecture selected-runtime and embedded-JNI import audit with no seccomp_* consumer and no libseccomp linkage. Any missing audit or consumer blocks. The library package and raw advisory remain visible; no kernel confinement or filter restriction is weakened.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "libseccompNotReferenced"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/TEMP-0000000-AE2C66"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-24",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Require exact production-source/package/image binding and both measured OpenSSL absence controls; retain raw scanner findings; fail on missing controls, any changed or new finding, and expiry.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "1b1b8201a5ac53b318efd2fc0224fcf0ee81bfc678f70520c9e5d0eb901c768d"
+    },
+    {
+      "VulnerabilityID": "TEMP-0000000-ED49F3",
+      "PkgName": "libseccomp2",
+      "InstalledVersion": "2.6.0-2",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://security-tracker.debian.org/tracker/TEMP-0000000-ED49F3",
+      "kind": "unreachable-precondition",
+      "rationale": "This advisory affects libseccomp user-space rule construction/optimization or transaction handling, not the kernel BPF interpreter. The source-owned PDF/video helper installs fixed classic BPF through prctl with no libseccomp API. Require a current complete same-architecture selected-runtime and embedded-JNI import audit with no seccomp_* consumer and no libseccomp linkage. Any missing audit or consumer blocks. The library package and raw advisory remain visible; no kernel confinement or filter restriction is weakened.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "libseccompNotReferenced"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/TEMP-0000000-ED49F3"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-24",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Require exact production-source/package/image binding and both measured OpenSSL absence controls; retain raw scanner findings; fail on missing controls, any changed or new finding, and expiry.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "4b6a8128f00e93ca7cb151c3ef70356f9033814054cb6fbb95ddba0ad2fd66ef"
+    },
+    {
+      "VulnerabilityID": "TEMP-0000000-F88C7E",
+      "PkgName": "libseccomp2",
+      "InstalledVersion": "2.6.0-2",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://security-tracker.debian.org/tracker/TEMP-0000000-F88C7E",
+      "kind": "unreachable-precondition",
+      "rationale": "This advisory affects libseccomp user-space rule construction/optimization or transaction handling, not the kernel BPF interpreter. The source-owned PDF/video helper installs fixed classic BPF through prctl with no libseccomp API. Require a current complete same-architecture selected-runtime and embedded-JNI import audit with no seccomp_* consumer and no libseccomp linkage. Any missing audit or consumer blocks. The library package and raw advisory remain visible; no kernel confinement or filter restriction is weakened.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "libseccompNotReferenced"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/TEMP-0000000-F88C7E"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-24",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Require exact production-source/package/image binding and both measured OpenSSL absence controls; retain raw scanner findings; fail on missing controls, any changed or new finding, and expiry.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "3f72d5bc5306e7fcb975738432fa96d9a8e211466c4a8b665a81e238d1de4fc0"
+    },
+    {
+      "VulnerabilityID": "TEMP-0000000-FCA4C0",
+      "PkgName": "libseccomp2",
+      "InstalledVersion": "2.6.0-2",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://security-tracker.debian.org/tracker/TEMP-0000000-FCA4C0",
+      "kind": "unreachable-precondition",
+      "rationale": "This advisory affects libseccomp user-space rule construction/optimization or transaction handling, not the kernel BPF interpreter. The source-owned PDF/video helper installs fixed classic BPF through prctl with no libseccomp API. Require a current complete same-architecture selected-runtime and embedded-JNI import audit with no seccomp_* consumer and no libseccomp linkage. Any missing audit or consumer blocks. The library package and raw advisory remain visible; no kernel confinement or filter restriction is weakened.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "libseccompNotReferenced"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/TEMP-0000000-FCA4C0"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-24",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Require exact production-source/package/image binding and both measured OpenSSL absence controls; retain raw scanner findings; fail on missing controls, any changed or new finding, and expiry.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "2a5a16b195b73a3d9f4cdcf9aed0662df8461708deda81fb34ab6ba4fe4e5cbc"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-107494",
+      "PkgName": "libssl3t64",
+      "InstalledVersion": "3.5.9-1~deb13u1",
+      "FixedVersion": null,
+      "Severity": "HIGH",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-107494",
+      "kind": "unreachable-precondition",
+      "rationale": "The incomplete QUIC connection-ID retirement fix requires a native OpenSSL QUIC peer. Native media disables OpenSSL/TLS/network support, the selected media linkage has no libssl/libcrypto and neither is loaded in the measured Java workload. This server exposes Servlet/JDK TLS, not OpenSSL QUIC. Require those exact artifact/workload controls; the raw HIGH finding and vulnerable OS package remain visible.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "opensslNotLinkedInMedia",
+        "opensslNotLoadedInWorkload"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-107494"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-24",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Require exact production-source/package/image binding and both measured OpenSSL absence controls; retain raw scanner findings; fail on missing controls, any changed or new finding, and expiry.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "1e6ba6d0c5751b6a122e1a50f16f5a49ec2798602ecfbe375aec1c6b71ff9126"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-121482",
+      "PkgName": "libssl3t64",
+      "InstalledVersion": "3.5.9-1~deb13u1",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-121482",
+      "kind": "unreachable-precondition",
+      "rationale": "The quadratic CPU path requires OpenSSL CMS/PKCS7 SignedData verification with CRL checking. No such OpenSSL API is exposed by this application. Native media disables OpenSSL and its selected linkage omits libssl/libcrypto; neither library is loaded in the observed Java workload. JDK cryptography/TLS is distinct. Require both artifact and workload measurements without claiming the retained OS package is fixed.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "opensslNotLinkedInMedia",
+        "opensslNotLoadedInWorkload"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-121482"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-24",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Require exact production-source/package/image binding and both measured OpenSSL absence controls; retain raw scanner findings; fail on missing controls, any changed or new finding, and expiry.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "708e8ff0027468510e97b652bcc813d02a07e431683d8d55c5b8476ecc6bc6b6"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-121481",
+      "PkgName": "libssl3t64",
+      "InstalledVersion": "3.5.9-1~deb13u1",
+      "FixedVersion": null,
+      "Severity": "LOW",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-121481",
+      "kind": "unreachable-precondition",
+      "rationale": "EVP_EncodeBlock output-size overflow requires an application-supplied near-INT_MAX input length. No such OpenSSL API is exposed by this application. Native media disables OpenSSL and its selected linkage omits libssl/libcrypto; neither library is loaded in the observed Java workload. JDK cryptography/TLS is distinct. Require both artifact and workload measurements without claiming the retained OS package is fixed.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "opensslNotLinkedInMedia",
+        "opensslNotLoadedInWorkload"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-121481"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-24",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Require exact production-source/package/image binding and both measured OpenSSL absence controls; retain raw scanner findings; fail on missing controls, any changed or new finding, and expiry.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "1a59ea75ebe848d9d4c82c740b2fe4eb4b366bbbe1103e745c59301ce0546ebe"
+    },
+    {
+      "VulnerabilityID": "TEMP-1154946-473926",
+      "PkgName": "login.defs",
+      "InstalledVersion": "1:4.17.4-2",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://security-tracker.debian.org/tracker/TEMP-1154946-473926",
+      "kind": "component-not-shipped",
+      "rationale": "The shadow issue targets the separate newgidmap executable. Require both conventional executable paths measured absent in the exact image, fixed unprivileged runtime identity and no setuid/setgid files. The server offers no user/group mapping or OS account management workflow. Retain the source-package match and fail if either binary is present or evidence is missing.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "newgidmapAbsent",
+        "newgidmapSbinAbsent"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/TEMP-1154946-473926"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-24",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Require exact production-source/package/image binding and both measured OpenSSL absence controls; retain raw scanner findings; fail on missing controls, any changed or new finding, and expiry.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "19198b10716be442fe82d2d87f4b2e3037fc2f803e2ea233b36b28038beddfb4"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-107494",
+      "PkgName": "openssl-provider-legacy",
+      "InstalledVersion": "3.5.9-1~deb13u1",
+      "FixedVersion": null,
+      "Severity": "HIGH",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-107494",
+      "kind": "unreachable-precondition",
+      "rationale": "The incomplete QUIC connection-ID retirement fix requires a native OpenSSL QUIC peer. Native media disables OpenSSL/TLS/network support, the selected media linkage has no libssl/libcrypto and neither is loaded in the measured Java workload. This server exposes Servlet/JDK TLS, not OpenSSL QUIC. Require those exact artifact/workload controls; the raw HIGH finding and vulnerable OS package remain visible.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "opensslNotLinkedInMedia",
+        "opensslNotLoadedInWorkload"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-107494"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-24",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Require exact production-source/package/image binding and both measured OpenSSL absence controls; retain raw scanner findings; fail on missing controls, any changed or new finding, and expiry.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "1e6ba6d0c5751b6a122e1a50f16f5a49ec2798602ecfbe375aec1c6b71ff9126"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-121482",
+      "PkgName": "openssl-provider-legacy",
+      "InstalledVersion": "3.5.9-1~deb13u1",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-121482",
+      "kind": "unreachable-precondition",
+      "rationale": "The quadratic CPU path requires OpenSSL CMS/PKCS7 SignedData verification with CRL checking. No such OpenSSL API is exposed by this application. Native media disables OpenSSL and its selected linkage omits libssl/libcrypto; neither library is loaded in the observed Java workload. JDK cryptography/TLS is distinct. Require both artifact and workload measurements without claiming the retained OS package is fixed.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "opensslNotLinkedInMedia",
+        "opensslNotLoadedInWorkload"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-121482"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-24",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Require exact production-source/package/image binding and both measured OpenSSL absence controls; retain raw scanner findings; fail on missing controls, any changed or new finding, and expiry.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "708e8ff0027468510e97b652bcc813d02a07e431683d8d55c5b8476ecc6bc6b6"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-121481",
+      "PkgName": "openssl-provider-legacy",
+      "InstalledVersion": "3.5.9-1~deb13u1",
+      "FixedVersion": null,
+      "Severity": "LOW",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-121481",
+      "kind": "unreachable-precondition",
+      "rationale": "EVP_EncodeBlock output-size overflow requires an application-supplied near-INT_MAX input length. No such OpenSSL API is exposed by this application. Native media disables OpenSSL and its selected linkage omits libssl/libcrypto; neither library is loaded in the observed Java workload. JDK cryptography/TLS is distinct. Require both artifact and workload measurements without claiming the retained OS package is fixed.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "opensslNotLinkedInMedia",
+        "opensslNotLoadedInWorkload"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-121481"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-24",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Require exact production-source/package/image binding and both measured OpenSSL absence controls; retain raw scanner findings; fail on missing controls, any changed or new finding, and expiry.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "1a59ea75ebe848d9d4c82c740b2fe4eb4b366bbbe1103e745c59301ce0546ebe"
+    },
+    {
+      "VulnerabilityID": "TEMP-1154946-473926",
+      "PkgName": "passwd",
+      "InstalledVersion": "1:4.17.4-2",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://security-tracker.debian.org/tracker/TEMP-1154946-473926",
+      "kind": "component-not-shipped",
+      "rationale": "The shadow issue targets the separate newgidmap executable. Require both conventional executable paths measured absent in the exact image, fixed unprivileged runtime identity and no setuid/setgid files. The server offers no user/group mapping or OS account management workflow. Retain the source-package match and fail if either binary is present or evidence is missing.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "newgidmapAbsent",
+        "newgidmapSbinAbsent"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/TEMP-1154946-473926"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-24",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Require exact production-source/package/image binding and both measured OpenSSL absence controls; retain raw scanner findings; fail on missing controls, any changed or new finding, and expiry.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "19198b10716be442fe82d2d87f4b2e3037fc2f803e2ea233b36b28038beddfb4"
     }
   ],
   "limits": [

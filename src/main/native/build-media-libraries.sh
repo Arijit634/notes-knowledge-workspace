@@ -82,12 +82,25 @@ int main(void) {
     FT_Library_Version(library,&major,&minor,&patch);
     FT_Done_FreeType(library);
     if (major!=2 || minor!=15 || patch!=0 || strcmp(XML_ExpatVersion(),"expat_2.10.0")) return 1;
+    /* CVE-2026-134703 requires XML_UNICODE's UTF-16 output conversion.
+     * Inspect the loaded library, not only this probe's compile-time headers. */
+    const XML_Feature *features=XML_GetFeatureList();
+    if (!features || sizeof(XML_Char)!=1) return 1;
+    int char_size_verified=0;
+    for (; features->feature!=XML_FEATURE_END; ++features) {
+        if (features->feature==XML_FEATURE_UNICODE || features->feature==XML_FEATURE_UNICODE_WCHAR_T) return 1;
+        if (features->feature==XML_FEATURE_SIZEOF_XML_CHAR) {
+            if (features->value!=1) return 1;
+            char_size_verified=1;
+        }
+    }
+    if (!char_size_verified) return 1;
     XML_Parser parser=XML_ParserCreate(NULL);
     if (!parser) return 1;
     int ok=XML_Parse(parser,"<nkw/>",6,1)==XML_STATUS_OK;
     XML_ParserFree(parser);
     if (!ok) return 1;
-    puts("{\"mediaLibraryVersions\":true,\"freetype\":\"2.15.0\",\"expat\":\"2.10.0\",\"abiProbePassed\":true}");
+    puts("{\"mediaLibraryVersions\":true,\"freetype\":\"2.15.0\",\"expat\":\"2.10.0\",\"expatXmlCharBytes\":1,\"expatUnicodeOutput\":false,\"abiProbePassed\":true}");
     return 0;
 }
 C

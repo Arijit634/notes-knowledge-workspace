@@ -62,6 +62,12 @@ def validate_images(metadata,source):
         for m in metadata),'artifact_binding_failed')
     return architecture
 
+def validate_media_library_abi(abi):
+    require(abi==dict(mediaLibraryVersions=True,freetype='2.15.0',expat='2.10.0',
+        expatXmlCharBytes=1,expatUnicodeOutput=False,abiProbePassed=True),'actual_library_abi_failed')
+    return abi
+
+
 def production_fingerprint():
     paths=['src/main','pom.xml','frontend','.github/scripts','.github/deploy','.github/workflows']
     rows=command('git','ls-tree','-r','-z','HEAD','--',*paths).split(b'\0')
@@ -102,7 +108,7 @@ def main():
     packages=inspect("dpkg-query -W -f='${binary:Package}\\t${Version}\\t${source:Package}\\n'")
     versions=package_inventory(packages)
     abi=json.loads(command(*common,'--entrypoint','/qualification/media-library-versions',args.qualification))
-    require(abi==dict(mediaLibraryVersions=True,freetype='2.15.0',expat='2.10.0',abiProbePassed=True),'actual_library_abi_failed')
+    validate_media_library_abi(abi)
     allocation=json.loads(command(*common,'--entrypoint','/qualification/allocation-overflow-probe',args.qualification))
     require(allocation==dict(alignedAllocationOverflowRejected=True,cases=30),'aligned_allocation_check_failed')
     backport=EXPAT_SECURITY_PATCHES
@@ -118,7 +124,8 @@ def main():
         'dpkgSourceV2':'/usr/share/perl5/Dpkg/Source/Package/V2.pm',
         'infocmp':'/usr/bin/infocmp','tic':'/usr/bin/tic','aptKey':'/usr/bin/apt-key',
         'perl':'/usr/bin/perl','tar':'/usr/bin/tar','mount':'/usr/bin/mount','nsenter':'/usr/bin/nsenter',
-        'login':'/usr/bin/login','chown':'/usr/bin/chown','chgrp':'/usr/bin/chgrp','diff3':'/usr/bin/diff3',
+        'login':'/usr/bin/login','newgidmap':'/usr/bin/newgidmap','newgidmapSbin':'/usr/sbin/newgidmap',
+        'chown':'/usr/bin/chown','chgrp':'/usr/bin/chgrp','diff3':'/usr/bin/diff3',
         'sort':'/usr/bin/sort','uniq':'/usr/bin/uniq','unexpand':'/usr/bin/unexpand',
         'systemdHomed':'/usr/lib/systemd/systemd-homed','systemdOomd':'/usr/lib/systemd/systemd-oomd',
         'systemdJournald':'/usr/lib/systemd/systemd-journald','nscd':'/usr/sbin/nscd',

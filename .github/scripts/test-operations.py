@@ -27,6 +27,16 @@ reconciliation = load('image_reconciliation', 'reconcile-image-security.py')
 
 
 class ImageReconciliationContracts(unittest.TestCase):
+    def test_loaded_expat_abi_requires_narrow_output_and_complete_feature_evidence(self):
+        abi=dict(mediaLibraryVersions=True,freetype='2.15.0',expat='2.10.0',
+            expatXmlCharBytes=1,expatUnicodeOutput=False,abiProbePassed=True)
+        self.assertEqual(abi,facts.validate_media_library_abi(abi))
+        for key,bad in [('expatXmlCharBytes',2),('expatUnicodeOutput',True),('abiProbePassed',False)]:
+            for value in (bad,None):
+                changed=dict(abi);changed[key]=value
+                with self.subTest(field=key,value=value),self.assertRaisesRegex(ValueError,'actual_library_abi_failed'):
+                    facts.validate_media_library_abi(changed)
+
     def test_checked_in_expat_patches_are_the_exact_reviewed_source_inputs(self):
         for commit,digest in facts.EXPAT_SECURITY_PATCHES.items():
             path=facts.ROOT/'src/main/native/upstream'/('expat-'+commit+'.patch')
@@ -111,6 +121,26 @@ class ImageReconciliationContracts(unittest.TestCase):
                 del self.facts['components'][name]
                 with self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
                 self.facts['components'][name]=dict(absent=True)
+
+    def test_expat_wide_output_missing_or_enabled_blocks_assessment(self):
+        self.rule['requiredControls']=['expatNarrowOutputVerified']
+        self.facts['mediaLibraryAbi']=dict(abiProbePassed=True,freetype="2.15.0",expat="2.10.0",expatXmlCharBytes=1,expatUnicodeOutput=False)
+        self.assertTrue(self.run_policy()['releaseSecurityReconciled'])
+        for field,bad in [('abiProbePassed',False),('expatXmlCharBytes',2),('expatUnicodeOutput',True)]:
+            original=self.facts['mediaLibraryAbi'][field]
+            for value in (bad,None):
+                self.facts['mediaLibraryAbi'][field]=value
+                with self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
+            self.facts['mediaLibraryAbi'][field]=original
+
+    def test_newgidmap_review_requires_both_paths_measured_absent(self):
+        self.rule['requiredControls']=['newgidmapAbsent','newgidmapSbinAbsent']
+        for name in ('newgidmap','newgidmapSbin'):self.facts['components'][name]=dict(absent=True)
+        self.assertTrue(self.run_policy()['releaseSecurityReconciled'])
+        for name in ('newgidmap','newgidmapSbin'):
+            self.facts['components'][name]['absent']=False
+            with self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
+            self.facts['components'][name]['absent']=True
 
     def test_xmlwf_review_requires_both_paths_and_inventory_measured_absent(self):
         names=('xmlwf','xmlwfLocal','xmlwfInventory')
@@ -299,6 +329,26 @@ class ImageReconciliationContracts(unittest.TestCase):
         self.assertTrue(self.run_policy()['releaseSecurityReconciled'])
         audit['inventorySha256']=''
         with self.assertRaisesRegex(ValueError,'unreviewed_glibc_input_path'):self.run_policy()
+
+    def test_seccomp_assessment_rejects_missing_audit_or_any_library_consumer(self):
+        self.rule['requiredControls']=['libseccompNotReferenced']
+        audit=dict(image=self.image,architecture='arm64',selectedRuntimeAndLinkageInspected=True,
+            vulnerableLibcPresent=True,inspectedElfFiles=20,copiedNativeCodeExecuted=False,
+            runtimeCredentialsUsed=False,glibcDeclaredFixed=False,inventorySha256='d'*64,
+            regexConsumers=[],wideScanfConsumers=[],seccompImportAuditVersion=1,
+            seccompConsumers=[],linkageMentionsLibseccomp=False,
+            cxxImportAuditVersion=1,libstdcxxPresent=True,libstdcxxDeclaredFixed=False,cxxFileStreamConsumers=[])
+        self.facts['glibcInputAudit']=audit
+        self.assertTrue(self.run_policy()['releaseSecurityReconciled'])
+        for name in ('seccompImportAuditVersion','seccompConsumers','linkageMentionsLibseccomp'):
+            original=audit.pop(name)
+            with self.subTest(missing=name),self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
+            audit[name]=original
+        for consumer in ('/opt/pdf/helper','BOOT-INF/lib/example.jar!/native.so'):
+            audit['seccompConsumers']=[dict(path=consumer,seccomp=['seccomp_load'])]
+            with self.subTest(consumer=consumer),self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
+        audit['seccompConsumers']=[];audit['linkageMentionsLibseccomp']=True
+        with self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
 
     def test_glob_assessment_requires_current_complete_audit_without_consumers(self):
         self.rule['requiredControls']=['glibcGlobNotReferenced']
