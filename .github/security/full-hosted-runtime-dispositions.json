@@ -4,7 +4,7 @@
   "architectures": [
     "amd64"
   ],
-  "productionSourceSha256": "73dbfb7986e9fe75ec168d3334eac3f91fb7d9fed1a0bba06649716d2d06111f",
+  "productionSourceSha256": "6fa8eeb89a1618cacfd855c0109c58b8637c18674dd306243e406cf55b561c03",
   "findings": [
     {
       "VulnerabilityID": "CVE-2026-76642",
@@ -868,118 +868,6 @@
       "remediationTarget": "Reassess current vendor fixes and scanner database alignment by 2026-11-26; require fresh artifact qualification before promotion."
     },
     {
-      "VulnerabilityID": "CVE-2026-123640",
-      "PkgName": "nginx",
-      "InstalledVersion": "1.24.0-2ubuntu7.20",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-123640",
-      "kind": "unreachable-precondition",
-      "rationale": "The forged stream preread routing issue requires ngx_stream_ssl_preread_module configuration. The image uses one fixed HTTP reverse-proxy template with no stream, mail, ssl_preread, alias, try_files, include or dynamic module directive. The exact root-owned template and source-bound supervisor are mandatory measured controls, and the operator hostname substitution cannot introduce syntax. The affected package remains present; this is not a vendor-fix claim.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicPrivateSeparationQualified",
-        "nginxRestrictedRoutingVerified"
-      ],
-      "references": [
-        "https://ubuntu.com/security/CVE-2026-123640"
-      ],
-      "vendorEvidenceSha256": "d7441a2f73266041189a27f11f8d878e8fa04c099f44b674b58bee7f50ca5f30",
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Retain the exact raw scanner finding, source/package/image binding and every named measured control; changed versions, routing, missing evidence or expired review deny promotion.",
-      "remediationTarget": "Reassess current vendor fixes and scanner database alignment by 2026-11-26; require fresh artifact qualification before promotion."
-    },
-    {
-      "VulnerabilityID": "CVE-2026-125283",
-      "PkgName": "nginx",
-      "InstalledVersion": "1.24.0-2ubuntu7.20",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-125283",
-      "kind": "unreachable-precondition",
-      "rationale": "The map/try_files alias capture crash requires alias and try_files routing. The image uses one fixed HTTP reverse-proxy template with no stream, mail, ssl_preread, alias, try_files, include or dynamic module directive. The exact root-owned template and source-bound supervisor are mandatory measured controls, and the operator hostname substitution cannot introduce syntax. The affected package remains present; this is not a vendor-fix claim.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicPrivateSeparationQualified",
-        "nginxRestrictedRoutingVerified"
-      ],
-      "references": [
-        "https://ubuntu.com/security/CVE-2026-125283"
-      ],
-      "vendorEvidenceSha256": "78c7d5862a7150a270cb08db6daaf32aafb01e3928fb2192a48854ff3bfd4ea1",
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Retain the exact raw scanner finding, source/package/image binding and every named measured control; changed versions, routing, missing evidence or expired review deny promotion.",
-      "remediationTarget": "Reassess current vendor fixes and scanner database alignment by 2026-11-26; require fresh artifact qualification before promotion."
-    },
-    {
-      "VulnerabilityID": "CVE-2026-123640",
-      "PkgName": "nginx-common",
-      "InstalledVersion": "1.24.0-2ubuntu7.20",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-123640",
-      "kind": "unreachable-precondition",
-      "rationale": "The forged stream preread routing issue requires ngx_stream_ssl_preread_module configuration. The image uses one fixed HTTP reverse-proxy template with no stream, mail, ssl_preread, alias, try_files, include or dynamic module directive. The exact root-owned template and source-bound supervisor are mandatory measured controls, and the operator hostname substitution cannot introduce syntax. The affected package remains present; this is not a vendor-fix claim.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicPrivateSeparationQualified",
-        "nginxRestrictedRoutingVerified"
-      ],
-      "references": [
-        "https://ubuntu.com/security/CVE-2026-123640"
-      ],
-      "vendorEvidenceSha256": "d7441a2f73266041189a27f11f8d878e8fa04c099f44b674b58bee7f50ca5f30",
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Retain the exact raw scanner finding, source/package/image binding and every named measured control; changed versions, routing, missing evidence or expired review deny promotion.",
-      "remediationTarget": "Reassess current vendor fixes and scanner database alignment by 2026-11-26; require fresh artifact qualification before promotion."
-    },
-    {
-      "VulnerabilityID": "CVE-2026-125283",
-      "PkgName": "nginx-common",
-      "InstalledVersion": "1.24.0-2ubuntu7.20",
-      "FixedVersion": null,
-      "Severity": "MEDIUM",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-125283",
-      "kind": "unreachable-precondition",
-      "rationale": "The map/try_files alias capture crash requires alias and try_files routing. The image uses one fixed HTTP reverse-proxy template with no stream, mail, ssl_preread, alias, try_files, include or dynamic module directive. The exact root-owned template and source-bound supervisor are mandatory measured controls, and the operator hostname substitution cannot introduce syntax. The affected package remains present; this is not a vendor-fix claim.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicPrivateSeparationQualified",
-        "nginxRestrictedRoutingVerified"
-      ],
-      "references": [
-        "https://ubuntu.com/security/CVE-2026-125283"
-      ],
-      "vendorEvidenceSha256": "78c7d5862a7150a270cb08db6daaf32aafb01e3928fb2192a48854ff3bfd4ea1",
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Retain the exact raw scanner finding, source/package/image binding and every named measured control; changed versions, routing, missing evidence or expired review deny promotion.",
-      "remediationTarget": "Reassess current vendor fixes and scanner database alignment by 2026-11-26; require fresh artifact qualification before promotion."
-    },
-    {
       "VulnerabilityID": "CVE-2026-113351",
       "PkgName": "libexpat1",
       "InstalledVersion": "2.10.0-0nkw2",
@@ -1032,6 +920,37 @@
       "expiresOn": "2026-11-26",
       "compensatingControls": "Exact source/package/image binding and every named measured control are mandatory. Preserve raw findings/severities; changed or unreviewed findings, missing controls and expired reviews block promotion.",
       "remediationTarget": "Reassess supported vendor fixes, scanner data and exact image applicability by2026-11-26; no promotion without current artifact proof."
+    },
+    {
+      "VulnerabilityID": "CVE-2026-117610",
+      "PkgName": "libexpat1",
+      "InstalledVersion": "2.10.0-0nkw2",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-117610",
+      "kind": "upstream-fixed",
+      "rationale": "The external-entity empty-chunk null dereference is fixed by upstream bfc28346 and its regression cedb704d. Both commits are ancestors of pinned R_2_10_0, as independently checked against the upstream commit graph. The shipped accurately versioned custom Expat2.10.0 includes that fix despite the distribution source-package match. Require the actual target-architecture library ABI, pinned source/backport provenance and unchanged confinement controls; keep the raw MEDIUM finding without claiming the distribution package database is fixed.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "expat210BackportVerified"
+      ],
+      "references": [
+        "https://ubuntu.com/security/CVE-2026-117610",
+        "https://security-tracker.debian.org/tracker/CVE-2026-117610",
+        "https://github.com/libexpat/libexpat/commit/bfc28346fa3efeb8ca56c17437d24a7344e5feab",
+        "https://github.com/libexpat/libexpat/commit/cedb704d2cad9d6ef77f8f172104d3e751eccfd2"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-24",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "67e594a1d4cb195ff5c5bb668289e88ae26dbc562d77d494e655133b7385ad85"
     }
   ]
 }

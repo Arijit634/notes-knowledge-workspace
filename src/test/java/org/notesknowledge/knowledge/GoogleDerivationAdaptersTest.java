@@ -225,6 +225,24 @@ class GoogleDerivationAdaptersTest {
         var c=directAudioConfig();return new AiDerivationProperties(c.enabled(),c.schedulingEnabled(),c.provider(),c.embeddingModel(),c.mediaModel(),c.modelRevision(),c.region(),c.tier(),c.configurationId(),c.adapterVersion(),c.dimension(),c.operator(),c.normalization(),c.approvedPolicyFingerprint(),false,null,false,null,null,true,true);
     }
     private KnowledgeQueryGate.EvidencePermit videoEvidence(){return gate(true).evidence(owner,query,List.of(new PrivateQuerySource.Source(new Expected(owner,note,new UUID(0,4),1,1,1L),"active",true,"video",Instant.EPOCH,"")),mock(DispatchCoordinator.Handle.class));}
+    @org.junit.jupiter.params.ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(strings={"audio","video"})
+    void acoustic503HasSanitizedMediaDiagnosticsAndTheSdkDoesNotRetry(String modality)throws Exception {
+        status=503;response="{\"error\":{\"code\":503,\"status\":\"UNAVAILABLE\",\"message\":\"synthetic-private-marker\"}}";
+        var port=adapters.googleAudioSignalPort(directVideoConfig(),clients,json);
+        byte[] bytes=modality.equals("audio")?DirectAudioQualificationCommand.control(true):getClass().getResourceAsStream("/attachments/synthetic-aac-video.mp4").readAllBytes();
+        var failure=catchThrowableOfType(()->{if(modality.equals("audio"))port.verify(audioEvidence(),query,bytes,1);else port.verifyVideo(videoEvidence(),query,bytes,2);},DerivationFailure.class);
+        assertThat(failure.diagnostic.stage()).isEqualTo(ProviderFailureDiagnostic.Stage.MEDIA);
+        assertThat(failure.diagnostic.httpStatus()).isEqualTo(503);assertThat(failure.diagnostic.kind()).isEqualTo(ProviderFailureDiagnostic.Kind.HTTP);
+        assertThat(failure.diagnostic.elapsed()).isNotEqualTo(ProviderFailureDiagnostic.Elapsed.UNKNOWN);
+        assertThat(failure.diagnostic.toString()).doesNotContain("synthetic-private-marker");assertThat(requests).hasSize(1);
+    }
+    @Test void acousticQueryRecipesBindHistoryWithoutChangingTheStoredAudioIndex(){
+        var config=directAudioConfig();var policy=new ProcessingPolicyService.AcknowledgedProcessingPolicy(new UUID(0,3),1,"a".repeat(64));
+        var index=EmbeddingLineage.create(config,policy,"audio");String binding=KnowledgeQueryGate.audioQueryHistoryBinding(index.id());
+        assertThat(binding).isNotEqualTo(index.id());assertThat(gate(config,true).query(owner,query).matchesStoredLineage("audio",binding)).isTrue();
+        assertThat(gate(config,true).query(owner,query).matchesStoredLineage("audio",KnowledgeQueryGate.videoQueryHistoryBinding(index.id()))).isFalse();
+        assertThat(EmbeddingLineage.create(config,policy,"audio")).isEqualTo(index);
+    }
     @Test void soundtrackVerificationUsesActualMp4AndNeverAReinterpretedAudioEmbedding()throws Exception {
         generatedRaw("{\"decision\":\"supported\",\"description\":\"Possibly synthetic chattering-like sounds\",\"startMs\":100,\"endMs\":900}");
         byte[] mp4=getClass().getResourceAsStream("/attachments/synthetic-aac-video.mp4").readAllBytes();

@@ -10,8 +10,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 class KnowledgeQueryGate {
-    static final String VIDEO_QUERY_RECIPE=TransformedMediaIdentity.digest("direct-mp4-soundtrack-query/inline30-audio1fps-low/retrieved3-verify-ms-v2".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    static final String VIDEO_QUERY_RECIPE=TransformedMediaIdentity.digest("direct-mp4-soundtrack-query/inline30-audio1fps-low/retrieved3-verify-ms-503once-v3".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    static final String AUDIO_QUERY_RECIPE=TransformedMediaIdentity.digest("direct-wav-query/native180-verify-ms-low-pcmfacts-503once-v3".getBytes(java.nio.charset.StandardCharsets.UTF_8));
     static String videoQueryHistoryBinding(String indexLineage){return TransformedMediaIdentity.digest((indexLineage+"\n"+VIDEO_QUERY_RECIPE).getBytes(java.nio.charset.StandardCharsets.UTF_8));}
+    static String audioQueryHistoryBinding(String indexLineage){return TransformedMediaIdentity.digest((indexLineage+"\n"+AUDIO_QUERY_RECIPE).getBytes(java.nio.charset.StandardCharsets.UTF_8));}
     private final ProcessingPolicyService policies;
     private final AiDerivationProperties configuration;
     private final ProviderDispatchPolicy dispatch;
@@ -29,7 +31,8 @@ class KnowledgeQueryGate {
         boolean matchesStoredLineage(String key,String value){
             if(key==null||value==null||!java.util.Set.of("note","image","audio","video","pdf").contains(key))return false;
             String current=lineage(key).id();
-            return current.equals(value)||key.equals("video")&&configuration.directVideoSoundtrackSearch()&&videoQueryHistoryBinding(current).equals(value);
+            return current.equals(value)||key.equals("video")&&configuration.directVideoSoundtrackSearch()&&videoQueryHistoryBinding(current).equals(value)
+                ||key.equals("audio")&&configuration.directAudioSearch()&&audioQueryHistoryBinding(current).equals(value);
         }
         void requireDispatch(){
             if(Instant.now().isAfter(expires)||org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()||!configuration.configured())throw new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE);

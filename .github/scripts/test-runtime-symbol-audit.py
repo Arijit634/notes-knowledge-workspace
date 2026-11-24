@@ -11,16 +11,22 @@ class RuntimeSymbolImports(unittest.TestCase):
         data='\n'.join(' 12: 0 0 FUNC GLOBAL DEFAULT UND '+n+'@GLIBC_2.2.5 (2)' for n in names)
         self.assertEqual(sorted(names),audit.references(data)['wideScanf'])
     def test_definitions_are_not_mistaken_for_call_sites(self):
-        self.assertEqual(dict(regex=[],wideScanf=[],cxxFileStreams=[],glob=[]),audit.references(' 12: 123 4 FUNC GLOBAL DEFAULT 12 regexec@@GLIBC_2.2.5'))
+        self.assertEqual(dict(regex=[],wideScanf=[],cxxFileStreams=[],glob=[],seccomp=[]),audit.references(' 12: 123 4 FUNC GLOBAL DEFAULT 12 regexec@@GLIBC_2.2.5'))
     def test_narrow_scanf_and_java_or_pcre_regex_are_distinct(self):
         data='\n'.join(' 12: 0 0 FUNC GLOBAL DEFAULT UND '+n for n in ['scanf','__isoc99_sscanf','fscanf','pcre2_compile_8','JavaPattern'])
-        self.assertEqual(dict(regex=[],wideScanf=[],cxxFileStreams=[],glob=[]),audit.references(data))
+        self.assertEqual(dict(regex=[],wideScanf=[],cxxFileStreams=[],glob=[],seccomp=[]),audit.references(data))
     def test_glob_imports_are_distinct_from_definitions_and_fnmatch(self):
         names=['glob','glob64','globfree','globfree64']
         data='\n'.join(' 12: 0 0 FUNC GLOBAL DEFAULT UND '+n+'@GLIBC_2.2.5 (2)' for n in names)
         self.assertEqual(names,audit.references(data)['glob'])
         self.assertEqual([],audit.references(' 12: 123 4 FUNC GLOBAL DEFAULT 12 glob@@GLIBC_2.2.5')['glob'])
         self.assertEqual([],audit.references(' 12: 0 0 FUNC GLOBAL DEFAULT UND fnmatch@GLIBC_2.2.5')['glob'])
+    def test_libseccomp_imports_are_distinct_from_raw_kernel_seccomp(self):
+        names=['seccomp_init','seccomp_rule_add','seccomp_load','seccomp_export_bpf']
+        data='\n'.join(' 12: 0 0 FUNC GLOBAL DEFAULT UND '+n+'@LIBSECCOMP_2.0' for n in names)
+        self.assertEqual(sorted(names),audit.references(data)['seccomp'])
+        self.assertEqual([],audit.references(' 12: 123 4 FUNC GLOBAL DEFAULT 12 seccomp_init')['seccomp'])
+        self.assertEqual([],audit.references(' 12: 0 0 FUNC GLOBAL DEFAULT UND prctl@GLIBC_2.2.5')['seccomp'])
     def test_file_stream_abi_names_and_stdio_desynchronization_are_detected(self):
         names=['_ZNSt13basic_filebufIcSt11char_traitsIcEEC1Ev',
             '_ZTVNSt7__cxx1113basic_filebufIwSt11char_traitsIwEEE',
