@@ -47,6 +47,7 @@ final class GoogleAudioSignals {
             // Sample inspection is local, but never extends a stale dispatch permit.
             authorize.run();
         }
+        long started=System.nanoTime();
         try(var inline=media.open(client,bytes,type,json,authorize)) {
             var placeholder=GoogleInlineMedia.placeholder();
             var part=video?Part.builder().inlineData(com.google.genai.types.Blob.builder().mimeType(type).data(placeholder).build()).videoMetadata(com.google.genai.types.VideoMetadata.builder().fps(1d).build()).build():Part.fromBytes(placeholder,type);
@@ -56,7 +57,7 @@ final class GoogleAudioSignals {
             require(result!=null);var candidates=result.candidates().orElseThrow(GoogleAudioSignals::invalid);require(candidates.size()==1);var candidate=candidates.getFirst();require(candidate.finishReason().map(Object::toString).orElse("").equals("STOP"));
             var parts=candidate.content().orElseThrow(GoogleAudioSignals::invalid).parts().orElseThrow(GoogleAudioSignals::invalid);require(parts.size()==1&&parts.getFirst().text().isPresent()&&!parts.getFirst().thought().orElse(false));
             return decode(parts.getFirst().text().get(),seconds,json);
-        }catch(DerivationFailure rejected){throw rejected;}catch(RuntimeException failed){throw GoogleDerivationAdapters.providerFailure(failed);}
+        }catch(DerivationFailure rejected){throw rejected;}catch(RuntimeException failed){throw GoogleDerivationAdapters.providerFailure(failed,ProviderFailureDiagnostic.Stage.MEDIA,started);}
     }
     static AudioSignalPort.Verification decode(String text,double seconds,ObjectMapper json) {
         try {

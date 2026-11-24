@@ -84,7 +84,7 @@ def controls(facts, smoke):
         'elfBpfNotLinkedInFullBundle':facts.get('fullHostedBundle',{}).get('elfBpfNotLinked') is True,
         'native64BitAbi':facts.get('fullHostedBundle',{}).get('native64BitAbi') is True,
         'nginxUbuntuSecurityBackportVerified':all(
-            facts.get('packages',{}).get(name)==dict(version='1.24.0-2ubuntu7.20',source='nginx')
+            facts.get('packages',{}).get(name)==dict(version='1.24.0-2ubuntu7.21',source='nginx')
             for name in ('nginx','nginx-common')),
         'nginxRestrictedRoutingVerified':facts.get('fullHostedBundle',{}).get('nginxConfigurationMatchesSource') is True
             and facts['fullHostedBundle'].get('nginxConfigurationRootOwned') is True

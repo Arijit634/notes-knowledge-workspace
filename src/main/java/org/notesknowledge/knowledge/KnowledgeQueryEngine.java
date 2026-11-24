@@ -124,9 +124,9 @@ class KnowledgeQueryEngine {
                 if(selected.size()==12)break;
             }
         }
-        boolean videoVerificationUsed=false;
+        boolean videoVerificationUsed=false,audioVerificationUsed=false;
         if(degraded==null&&audioSearch!=null&&queryVector!=null&&audioSearch.applies(request.query()))try {
-            var refined=audioSearch.refine(owner,request.query(),queryVector,selected,verificationCandidates);selected.clear();selected.addAll(refined.evidence());videoVerificationUsed=refined.videoVerified();
+            var refined=audioSearch.refine(owner,request.query(),queryVector,selected,verificationCandidates);selected.clear();selected.addAll(refined.evidence());videoVerificationUsed=refined.videoVerified();audioVerificationUsed=refined.audioVerified();
         }catch(DerivationFailure blocked){selected.removeIf(e->audioSearch.excludesOnFailure(e.modality(),request.query()));degraded=safeReason(blocked);}
         catch(org.notesknowledge.websupport.ApiFailureException blocked){selected.removeIf(e->audioSearch.excludesOnFailure(e.modality(),request.query()));degraded="coordinationUnavailable";}
         // Fusion orders model candidates; it does not establish an ordinary-search
@@ -138,6 +138,7 @@ class KnowledgeQueryEngine {
             telemetry.preGeneration(request.plan(),System.nanoTime()-started);}
         Generated answer=selected.isEmpty()?empty(List.of(),degraded,degraded==null&&request.plan()==KnowledgeQueryRequest.Plan.FOCUSED):generate(owner,request.query(),"answer",selected,()->true);
         if(videoVerificationUsed&&answer.lineages().containsKey("video")){var bindings=new LinkedHashMap<>(answer.lineages());bindings.put("video",KnowledgeQueryGate.videoQueryHistoryBinding(bindings.get("video")));answer=new Generated(answer.result(),answer.provenance(),java.util.Map.copyOf(bindings));}
+        if(audioVerificationUsed&&answer.lineages().containsKey("audio")){var bindings=new LinkedHashMap<>(answer.lineages());bindings.put("audio",KnowledgeQueryGate.audioQueryHistoryBinding(bindings.get("audio")));answer=new Generated(answer.result(),answer.provenance(),java.util.Map.copyOf(bindings));}
         var retained=new ArrayList<>(answer.provenance());
         for(var item:deterministic)for(var occurrence:item.occurrences()){var source=sourceMap.get(occurrence.noteId());if(source!=null)retained.add(referenceOnly(source));}
         var r=answer.result();return new Generated(new KnowledgeQueryResult(deterministic,r.aiAnswer(),r.citations(),new KnowledgeQueryResult.Coverage("bounded",sourceMap.size(),false,false,false,false,false),degraded!=null?degraded:r.degraded(),r.insufficientEvidence()),retained.stream().distinct().toList(),answer.lineages());

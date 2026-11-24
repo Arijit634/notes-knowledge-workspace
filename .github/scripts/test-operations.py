@@ -193,13 +193,13 @@ class ImageReconciliationContracts(unittest.TestCase):
     def test_nginx_backport_review_requires_both_exact_vendor_packages(self):
         self.rule['requiredControls']=['nginxUbuntuSecurityBackportVerified']
         for name in ('nginx','nginx-common'):
-            self.facts['packages'][name]=dict(version='1.24.0-2ubuntu7.20',source='nginx')
+            self.facts['packages'][name]=dict(version='1.24.0-2ubuntu7.21',source='nginx')
         self.assertTrue(self.run_policy()['releaseSecurityReconciled'])
         for name in ('nginx','nginx-common'):
             original=self.facts['packages'].pop(name)
             with self.subTest(missing=name),self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
             for change in (dict(version='1.24.0-2ubuntu7.19',source='nginx'),
-                           dict(version='1.24.0-2ubuntu7.20',source='unreviewed')):
+                           dict(version='1.24.0-2ubuntu7.21',source='unreviewed')):
                 self.facts['packages'][name]=change
                 with self.subTest(package=name,change=change),self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
             self.facts['packages'][name]=original

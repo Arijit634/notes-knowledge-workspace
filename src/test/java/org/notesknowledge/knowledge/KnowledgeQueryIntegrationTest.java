@@ -58,18 +58,20 @@ class KnowledgeQueryIntegrationTest {
     @Autowired SessionRepository<? extends Session> sessions; @Autowired PlatformTransactionManager transactions;
     @Autowired KnowledgeOperationService operations; @MockitoSpyBean KnowledgeOperationRepository operationRows;
     @Autowired PrivateRepresentationRepository representations; @MockitoSpyBean PrivateQuerySource sources;
-    @Autowired KnowledgeOperationMaterialCipher cipher; @Autowired org.notesknowledge.DispatchCoordinator coordination;
+    @Autowired KnowledgeOperationMaterialCipher cipher; @MockitoSpyBean org.notesknowledge.DispatchCoordinator coordination;
     @Autowired ExactPrivateVectorSearch vectors;
     @MockitoSpyBean PrivateAiSourceCurrentness currentSources;
     @MockitoBean AiDerivationProperties configuration; @MockitoBean ProviderDispatchProperties dispatch;
     @MockitoBean KnowledgePolicyProperties policyConfiguration; @MockitoBean StructuredKnowledgePort provider;
     @MockitoBean AudioSignalPort audioSignals;
+    @MockitoSpyBean DirectAudioSearch audioSearch;
     @MockitoSpyBean QueryEvidenceRepository evidenceRows;
     @MockitoBean RateLimitPort rates;
     @MockitoBean ProcessingDisclosureResolver disclosures;
     UUID owner,note,policy; Browser browser;
     @BeforeEach void prepare() throws Exception {
-        reset(configuration,dispatch,policyConfiguration,provider,audioSignals,evidenceRows,rates,operationRows,sources,currentSources);
+        reset(configuration,dispatch,policyConfiguration,provider,audioSignals,evidenceRows,rates,operationRows,sources,currentSources,audioSearch,coordination);
+        doNothing().when(audioSearch).waitForVerificationRecovery();
         when(configuration.configured()).thenReturn(true);when(configuration.provider()).thenReturn("synthetic");
         when(configuration.embeddingModel()).thenReturn("synthetic-embedding");when(configuration.mediaModel()).thenReturn("synthetic-media");
         when(configuration.modelRevision()).thenReturn("v1");when(configuration.configurationId()).thenReturn("synthetic-v1");
@@ -247,6 +249,108 @@ class KnowledgeQueryIntegrationTest {
             return new StructuredKnowledgePort.Output(List.of(new StructuredKnowledgePort.Claim(items.getFirst().text(),List.of(items.getFirst().id()))),false);
         }).when(provider).generate(any(),any(),any(),any());
         return attachment;
+    }
+    private static DerivationFailure acoustic503(){return new DerivationFailure(KnowledgeWork.Failure.TRANSIENT_DEPENDENCY,
+        new ProviderFailureDiagnostic(ProviderFailureDiagnostic.Stage.MEDIA,ProviderFailureDiagnostic.Kind.HTTP,503,
+            ProviderFailureDiagnostic.Elapsed.ONE_TO_FIVE_SECONDS,ProviderFailureDiagnostic.Reach.HTTP_RESPONSE_RECEIVED,false));}
+    @ParameterizedTest @ValueSource(strings={"audio","video"})
+    void acoustic503RecoveryReleasesItsHandleAndReacquiresFreshBytesAndAuthority(String modality)throws Exception {
+        String question="find synthetic "+modality+" with background noise";UUID attachment=directMediaFixture(question,modality);
+        var calls=new java.util.concurrent.atomic.AtomicInteger();var firstBytes=new java.util.concurrent.atomic.AtomicReference<byte[]>();
+        org.mockito.stubbing.Answer<AudioSignalPort.Verification> effect=call->{
+            var permit=(KnowledgeQueryGate.EvidencePermit)call.getArgument(0);if(modality.equals("audio"))permit.requireGoogleAudio(question);else permit.requireGoogleVideo(question);
+            assertOutsideTransaction();byte[] bytes=call.getArgument(2);
+            if(calls.incrementAndGet()==1){firstBytes.set(bytes);throw acoustic503();}
+            assertThat(bytes).isNotSameAs(firstBytes.get());assertThat(firstBytes.get()).containsOnly((byte)0);
+            return new AudioSignalPort.Verification("supported","Synthetic matching sounds",100,900);
+        };
+        if(modality.equals("audio"))when(audioSignals.verify(any(),eq(question),any(),eq(1d))).thenAnswer(effect);
+        else when(audioSignals.verifyVideo(any(),eq(question),any(),eq(1d))).thenAnswer(effect);
+        doAnswer(call->{
+            assertOutsideTransaction();assertThat(firstBytes.get()).containsOnly((byte)0);
+            try(var executor=Executors.newSingleThreadExecutor()){
+                assertThat(executor.submit(()->{var handle=coordination.noteMutation(owner,note);try(handle){handle.requireActive();}return handle.safelyReleased();}).get(8,TimeUnit.SECONDS)).isTrue();
+            }
+            return null;
+        }).when(audioSearch).waitForVerificationRecovery();
+        var response=query(question).andExpect(status().isOk()).andReturn().getResponse();var result=json.readTree(response.getContentAsString());
+        assertThat(result.get("degraded").isNull()).isTrue();assertThat(result.get("citations").get(0).get("attachmentId").asText()).isEqualTo(attachment.toString());
+        assertThat(calls).hasValue(2);verify(audioSearch,times(1)).waitForVerificationRecovery();
+        var history=json.readTree(mvc.perform(get(response.getHeader("Content-Location")).cookie(browser.cookie)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(history.get("status").asText()).isEqualTo("completed");
+    }
+    @ParameterizedTest @ValueSource(strings={"audio","video"})
+    void repeatedAcoustic503DoesNotCreateAThirdAttemptOrAnUnverifiedAnswer(String modality)throws Exception {
+        String question="find synthetic "+modality+" with background noise";directMediaFixture(question,modality);
+        if(modality.equals("audio"))when(audioSignals.verify(any(),eq(question),any(),eq(1d))).thenThrow(acoustic503());
+        else when(audioSignals.verifyVideo(any(),eq(question),any(),eq(1d))).thenThrow(acoustic503());
+        var result=json.readTree(query(question).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(result.get("degraded").asText()).isEqualTo("providerUnavailable");assertThat(result.get("aiAnswer").isNull()).isTrue();
+        if(modality.equals("audio"))verify(audioSignals,times(2)).verify(any(),eq(question),any(),eq(1d));
+        else verify(audioSignals,times(2)).verifyVideo(any(),eq(question),any(),eq(1d));
+        verify(audioSearch,times(1)).waitForVerificationRecovery();verify(provider,never()).generate(any(),any(),any(),any());
+    }
+    @ParameterizedTest @ValueSource(ints={400,401,403,408,429,500,502,504})
+    void otherAcousticHttpFailuresDoNotRetry(int statusCode)throws Exception {
+        String question="find synthetic audio";directAudioFixture(question);
+        var failed=new DerivationFailure(KnowledgeWork.Failure.TRANSIENT_DEPENDENCY,new ProviderFailureDiagnostic(ProviderFailureDiagnostic.Stage.MEDIA,
+            ProviderFailureDiagnostic.Kind.HTTP,statusCode,ProviderFailureDiagnostic.Elapsed.UNDER_ONE_SECOND,ProviderFailureDiagnostic.Reach.HTTP_RESPONSE_RECEIVED,false));
+        when(audioSignals.verify(any(),eq(question),any(),eq(1d))).thenThrow(failed);
+        var result=json.readTree(query(question).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(result.get("aiAnswer").isNull()).isTrue();verify(audioSignals,times(1)).verify(any(),eq(question),any(),eq(1d));
+        verify(audioSearch,never()).waitForVerificationRecovery();verify(provider,never()).generate(any(),any(),any(),any());
+    }
+    @ParameterizedTest @ValueSource(strings={"aiOff","revision","deleted","policy","account"})
+    void acousticRecoveryRevalidatesEverySourceAfterWaiting(String change)throws Exception {
+        String question="find synthetic audio";directAudioFixture(question);
+        when(audioSignals.verify(any(),eq(question),any(),eq(1d))).thenThrow(acoustic503());
+        doAnswer(call->{
+            assertOutsideTransaction();
+            switch(change){
+                case "aiOff"->jdbc.update("update notes.note set ai_enabled=false,ai_generation=ai_generation+1 where note_id=?",note);
+                case "revision"->jdbc.update("update notes.note set revision=revision+1,ai_generation=ai_generation+1 where note_id=?",note);
+                case "deleted"->jdbc.update("update notes.note set lifecycle_state='logically_deleted',deleted_at=now(),ai_generation=ai_generation+1 where note_id=?",note);
+                case "policy"->jdbc.update("delete from knowledge.processing_policy_acknowledgement where user_id=?",owner);
+                case "account"->jdbc.update("update identity.account set account_state='suspended' where user_id=?",owner);
+                default->throw new AssertionError();
+            }
+            return null;
+        }).when(audioSearch).waitForVerificationRecovery();
+        int expectedStatus=change.equals("policy")?503:change.equals("account")?401:200;
+        var result=json.readTree(query(question).andExpect(status().is(expectedStatus)).andReturn().getResponse().getContentAsString());
+        if(expectedStatus==200){assertThat(result.get("aiAnswer").isNull()).isTrue();assertThat(result.get("degraded").isNull()).isFalse();}
+        else{assertThat(result.get("code").asText()).isEqualTo(change.equals("policy")?"service_unavailable":"invalid_credentials");assertThat(result.has("aiAnswer")).isFalse();assertThat(result.has("citations")).isFalse();}
+        verify(audioSignals,times(1)).verify(any(),eq(question),any(),eq(1d));verify(provider,never()).generate(any(),any(),any(),any());
+    }
+    @Test void oneAcousticRecoveryCannotIncreaseTheSharedSixCallCap()throws Exception {
+        String question="find synthetic audio";directAudioFixture(question);var fingerprints=new ArrayList<>(dispatch.approvedSourceFingerprints());
+        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),"audio");
+        for(int i=0;i<2;i++){UUID id=upload("audio");var source=sources.source(owner,note,id);fingerprints.add(ProviderDispatchPolicy.fingerprint(source.expected()));
+            tx(()->{representations.activate(source.expected(),lineage,List.of(new DerivedSegment("Generic synthetic music","transcript","Acoustic description",null,null,null,0.,1.,null,null,null,null)),List.of(vector()));return null;});}
+        when(dispatch.approvedSourceFingerprints()).thenReturn(fingerprints);var calls=new java.util.concurrent.atomic.AtomicInteger();
+        when(audioSignals.verify(any(),eq(question),any(),eq(1d))).thenAnswer(call->{if(calls.incrementAndGet()==1)throw acoustic503();return new AudioSignalPort.Verification("supported","Synthetic sounds",100,900);});
+        var result=json.readTree(query(question).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(result.get("degraded").asText()).isEqualTo("budgetExceeded");assertThat(result.get("aiAnswer").isNull()).isTrue();
+        verify(audioSignals,times(3)).embed(any(),eq(question),any());verify(audioSignals,times(3)).verify(any(),eq(question),any(),eq(1d));verify(audioSearch,times(1)).waitForVerificationRecovery();
+    }
+    @Test void acousticRecoveryTicketIsSharedAcrossDifferentAttachments()throws Exception {
+        String question="find synthetic video with background noise";directMediaFixture(question,"video");UUID second=upload("video");var source=sources.source(owner,note,second);
+        var fingerprints=new ArrayList<>(dispatch.approvedSourceFingerprints());fingerprints.add(ProviderDispatchPolicy.fingerprint(source.expected()));when(dispatch.approvedSourceFingerprints()).thenReturn(fingerprints);
+        var lineage=EmbeddingLineage.create(configuration,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,configuration.approvedPolicyFingerprint()),"video");
+        tx(()->{representations.activate(source.expected(),lineage,List.of(new DerivedSegment("Generic synthetic music","video_scene","Acoustic description",null,null,null,0.,1.,null,null,null,null)),List.of(vector()));return null;});
+        var calls=new java.util.concurrent.atomic.AtomicInteger();
+        when(audioSignals.verifyVideo(any(),eq(question),any(),eq(1d))).thenAnswer(call->{if(calls.incrementAndGet()!=2)throw acoustic503();return new AudioSignalPort.Verification("supported","Synthetic sounds",100,900);});
+        var result=json.readTree(query(question).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(result.get("degraded").asText()).isEqualTo("providerUnavailable");assertThat(result.get("aiAnswer").isNull()).isTrue();
+        verify(audioSignals,times(3)).verifyVideo(any(),eq(question),any(),eq(1d));verify(audioSearch,times(1)).waitForVerificationRecovery();
+    }
+    @Test void unsafeCoordinationReleaseCannotBeRecoveredByAnotherProviderCall()throws Exception {
+        String question="find synthetic audio";directAudioFixture(question);var current=new java.util.concurrent.atomic.AtomicReference<org.notesknowledge.DispatchCoordinator.Handle>();
+        doAnswer(call->{var handle=spy((org.notesknowledge.DispatchCoordinator.Handle)call.callRealMethod());current.set(handle);return handle;}).when(coordination).dispatch(eq(owner),eq(note));
+        when(audioSignals.verify(any(),eq(question),any(),eq(1d))).thenAnswer(call->{doReturn(false).when(current.get()).safelyReleased();throw acoustic503();});
+        var result=json.readTree(query(question).andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertThat(result.get("degraded").asText()).isEqualTo("sourceChanged");assertThat(result.get("aiAnswer").isNull()).isTrue();
+        verify(audioSignals,times(1)).verify(any(),eq(question),any(),eq(1d));verify(audioSearch,never()).waitForVerificationRecovery();
     }
     @ParameterizedTest @ValueSource(strings={"supported","contradicted","uncertain"})
     void directAudioRequiresActualSupportedVerificationRatherThanItsSimilarity(String decision) throws Exception {

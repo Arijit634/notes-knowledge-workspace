@@ -43,25 +43,42 @@ class DirectAudioSearch {
     }
     boolean excludesOnFailure(String modality,String query){return processes(modality,query)||configuration.directVideoSoundtrackSearch()&&VIDEO_QUERY.matcher(query).find()&&modality.equals("audio");}
     private record Scored(QueryEvidenceRepository.Evidence evidence,double affinity) { }
-    record Refined(List<QueryEvidenceRepository.Evidence> evidence,boolean videoVerified){Refined{evidence=List.copyOf(evidence);}}
-    private static final class Budget {
-        private final long started=System.nanoTime();private int calls;
-        void next(){if(calls>=MAX_CALLS||System.nanoTime()-started>=90_000_000_000L)throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);calls++;}
-        void check(){if(System.nanoTime()-started>=90_000_000_000L)throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);}
+    record Refined(List<QueryEvidenceRepository.Evidence> evidence,boolean videoVerified,boolean audioVerified){Refined{evidence=List.copyOf(evidence);}}
+    static final class Budget {
+        private static final long LIMIT=90_000_000_000L,IN_FLIGHT=60_000_000_000L,BACKOFF=2_000_000_000L;
+        private final java.util.function.LongSupplier clock;
+        private final long started;
+        private int calls;
+        private boolean recoveryReserved;
+        Budget(){this(System::nanoTime);}
+        Budget(java.util.function.LongSupplier clock){this.clock=clock;started=clock.getAsLong();}
+        void next(){check();if(calls>=MAX_CALLS)throw exhausted();calls++;}
+        void check(){if(elapsed()<0||elapsed()>=LIMIT)throw exhausted();}
+        boolean reserve503Recovery(DerivationFailure failure){
+            var diagnostic=failure.diagnostic;
+            if(recoveryReserved||calls<1||calls>=MAX_CALLS||elapsed()<0||elapsed()>LIMIT-IN_FLIGHT-BACKOFF
+                    ||failure.category!=KnowledgeWork.Failure.TRANSIENT_DEPENDENCY||diagnostic==null
+                    ||diagnostic.stage()!=ProviderFailureDiagnostic.Stage.MEDIA||diagnostic.kind()!=ProviderFailureDiagnostic.Kind.HTTP
+                    ||!Integer.valueOf(503).equals(diagnostic.httpStatus()))return false;
+            recoveryReserved=true;return true;
+        }
+        void recoveryNext(){if(!recoveryReserved||elapsed()>LIMIT-IN_FLIGHT)throw exhausted();next();}
+        private long elapsed(){return clock.getAsLong()-started;}
+        private static DerivationFailure exhausted(){return new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);}
     }
     Refined refine(UUID owner,String query,float[] queryVector,List<QueryEvidenceRepository.Evidence> selected) {
         return refine(owner,query,queryVector,selected,selected);
     }
     Refined refine(UUID owner,String query,float[] queryVector,List<QueryEvidenceRepository.Evidence> selected,
             List<QueryEvidenceRepository.Evidence> retrieved) {
-        if(!applies(query))return new Refined(selected,false);
+        if(!applies(query))return new Refined(selected,false,false);
         // Independently retrieved video sources must be heard before the answer's
         // small segment window can exclude them. WAV inspection retains its existing
         // selected-context scope; neither path discovers sibling Attachments.
         var inspection=new ArrayList<QueryEvidenceRepository.Evidence>();
         for(var row:retrieved)if(row.modality().equals("video")&&processes("video",query))inspection.add(row);
         for(var row:selected)if(!row.modality().equals("video")&&processes(row.modality(),query))inspection.add(row);
-        if(inspection.isEmpty())return new Refined(selected.stream().filter(e->!excludesOnFailure(e.modality(),query)).toList(),false);
+        if(inspection.isEmpty())return new Refined(selected.stream().filter(e->!excludesOnFailure(e.modality(),query)).toList(),false,false);
         var port=ports.getIfAvailable();if(port==null||!port.available())throw new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE);
         var unique=new LinkedHashMap<Object,QueryEvidenceRepository.Evidence>();
         // Preserve the selected modality order for mixed questions while allowing
@@ -82,15 +99,25 @@ class DirectAudioSearch {
         var ordered=candidates.stream().map(e->e.modality().equals("audio")?audioOrder.next().evidence():e).toList();
         var verifiedRows=new ArrayList<QueryEvidenceRepository.Evidence>();
         var supportedVideos=new java.util.HashSet<Object>();
+        boolean audioVerified=false;
         // Similarity only determines inspection order. Every claimed audio match
         // requires a supported, current raw-audio observation, including negatives.
         for(var row:ordered) {
             boolean video=row.modality().equals("video");
-            var verified=sourceEffect(owner,query,row,(bytes,seconds,permit)->{budget.next();return video?port.verifyVideo(permit,query,bytes,seconds):port.verify(permit,query,bytes,seconds);});
+            AudioSignalPort.Verification verified;
+            try{verified=verifySource(owner,query,row,port,budget,false);}
+            catch(DerivationFailure unavailable){
+                if(!budget.reserve503Recovery(unavailable))throw unavailable;
+                // The failed effect has released its handle and zeroed its bytes.
+                // Recovery reacquires both authority and material; the SDK never replays.
+                waitForVerificationRecovery();
+                verified=verifySource(owner,query,row,port,budget,true);
+            }
             budget.check();if(!verified.supported())continue;
             var observation=new DerivedSegment("Audio description (question-verified model inference, not spoken words): "+verified.description(),video?"video_scene":"transcript","Acoustic description",null,null,null,verified.startMs()/1000d,verified.endMs()/1000d,null,null,null,null);
             verifiedRows.add(new QueryEvidenceRepository.Evidence(row.segmentId(),row.representationId(),row.expected(),row.lineage(),row.modality(),row.ordinal(),observation));
             if(video)supportedVideos.add(row.expected());
+            else audioVerified=true;
         }
         // Sound verification must not erase already selected visual evidence for
         // a combined visual+audio question. Never retain an unverified sound claim.
@@ -100,7 +127,17 @@ class DirectAudioSearch {
                 &&!java.util.Set.of("Acoustic description","Transcript").contains(row.segment().heading());
             if(keep&&result.size()<KnowledgeQueryLimits.FOCUSED&&characters+row.segment().text().length()<=KnowledgeQueryLimits.CHARACTERS){result.add(row);characters+=row.segment().text().length();}
         }
-        return new Refined(result,!supportedVideos.isEmpty());
+        return new Refined(result,!supportedVideos.isEmpty(),audioVerified);
+    }
+    void waitForVerificationRecovery(){
+        try{Thread.sleep(java.util.concurrent.ThreadLocalRandom.current().nextInt(1000,2001));}
+        catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new DerivationFailure(KnowledgeWork.Failure.TRANSIENT_DEPENDENCY);}
+    }
+    private AudioSignalPort.Verification verifySource(UUID owner,String query,QueryEvidenceRepository.Evidence row,AudioSignalPort port,Budget budget,boolean recovery){
+        return sourceEffect(owner,query,row,(bytes,seconds,permit)->{
+            if(recovery)budget.recoveryNext();else budget.next();
+            return row.modality().equals("video")?port.verifyVideo(permit,query,bytes,seconds):port.verify(permit,query,bytes,seconds);
+        });
     }
     @FunctionalInterface private interface Effect<T>{T apply(byte[] bytes,double seconds,KnowledgeQueryGate.EvidencePermit permit);}
     private <T>T sourceEffect(UUID owner,String query,QueryEvidenceRepository.Evidence row,Effect<T> effect) {
@@ -124,6 +161,9 @@ class DirectAudioSearch {
                 if(bytes.length!=metadata.sizeBytes())throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
                 permit.requireGoogle(query);result=effect.apply(bytes,metadata.durationSeconds(),permit);
             }finally{Arrays.fill(bytes,(byte)0);}
+        }catch(DerivationFailure failed){
+            if(!handle.safelyReleased())throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
+            throw failed;
         }
         if(!handle.safelyReleased()){if(result instanceof float[] vector)Arrays.fill(vector,0);throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);}
         try {
