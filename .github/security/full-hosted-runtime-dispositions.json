@@ -936,7 +936,7 @@
         "setuidSetgidAbsent",
         "nativeStartupQualified",
         "ownerAndCsrfQualified",
-        "publicDenialQualified",
+        "publicPrivateSeparationQualified",
         "expat210BackportVerified"
       ],
       "references": [
