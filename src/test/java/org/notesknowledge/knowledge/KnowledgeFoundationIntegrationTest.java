@@ -420,6 +420,68 @@ class KnowledgeFoundationIntegrationTest {
             finally {release.countDown();}blocker.get(10,TimeUnit.SECONDS);
         }
     }
+    @Test void siblingDerivationsWaitWithoutSpendingTheirAttempts() {
+        var e=expectation(true);
+        work.enqueueIfAbsent(KnowledgeWork.Kind.NOTE,e);
+        enqueueSiblingAttachments(e,2);
+        var first=work.claim(new LeaseOwner("first"),3);
+        assertThat(first).hasSize(1);
+        for(int poll=0;poll<6;poll++)assertThat(work.claim(new LeaseOwner("waiting"),3)).isEmpty();
+        assertThat(jdbc.queryForObject("select count(*) from knowledge.knowledge_work_intent where source_note_id=? and state='queued' and attempt_count=0",Integer.class,e.noteId())).isEqualTo(2);
+        assertThat(work.obsolete(first.getFirst())).isTrue();
+        var next=work.claim(new LeaseOwner("next"),3);
+        assertThat(next).hasSize(1);
+        assertThat(next.getFirst().intent().attemptCount()).isEqualTo(1);
+    }
+    @Test void concurrentClaimTransactionCannotAdmitASiblingButCanAdmitAnotherNote() throws Exception {
+        var e=expectation(true);
+        work.enqueueIfAbsent(KnowledgeWork.Kind.NOTE,e);enqueueSiblingAttachments(e,2);
+        var independent=work.enqueueIfAbsent(KnowledgeWork.Kind.NOTE,expectation(true));
+        var admitted=new CountDownLatch(1);var release=new CountDownLatch(1);
+        try(var pool=Executors.newSingleThreadExecutor()) {
+            var first=pool.submit(()->tx(()->{
+                var claim=work.claim(new LeaseOwner("first"),1).getFirst();
+                assertThat(claim.intent().expected().noteId()).isEqualTo(e.noteId());
+                admitted.countDown();
+                try {assertThat(release.await(10,TimeUnit.SECONDS)).isTrue();}
+                catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new IllegalStateException(interrupted);}
+                return claim;
+            }));
+            assertThat(admitted.await(10,TimeUnit.SECONDS)).isTrue();
+            try {
+                var concurrent=work.claim(new LeaseOwner("second"),3);
+                assertThat(concurrent).hasSize(1);
+                assertThat(concurrent.getFirst().intent().id()).isEqualTo(independent.id());
+            } finally {release.countDown();}
+            assertThat(first.get(10,TimeUnit.SECONDS).intent().attemptCount()).isEqualTo(1);
+        }
+        assertThat(work.claim(new LeaseOwner("after-commit"),3)).isEmpty();
+    }
+    @Test void expiredRecoveryRotatesOneLeaseAndLeavesSiblingAttemptsUntouched() {
+        var e=expectation(true);work.enqueueIfAbsent(KnowledgeWork.Kind.NOTE,e);enqueueSiblingAttachments(e,2);
+        var old=work.claim(new LeaseOwner("first"),3).getFirst();expire(old);
+        var recovered=work.reclaim(new LeaseOwner("recovery"),3);
+        assertThat(recovered).hasSize(1);
+        var fresh=recovered.getFirst();
+        assertThat(fresh.intent().id()).isEqualTo(old.intent().id());
+        assertThat(fresh.token()).isNotEqualTo(old.token());
+        assertThat(fresh.intent().attemptCount()).isEqualTo(2);
+        assertThat(work.heartbeat(old)).isFalse();
+        assertThat(work.claim(new LeaseOwner("waiting"),3)).isEmpty();
+        assertThat(jdbc.queryForObject("select count(*) from knowledge.knowledge_work_intent where source_note_id=? and state='queued' and attempt_count=0",Integer.class,e.noteId())).isEqualTo(2);
+    }
+    private void enqueueSiblingAttachments(PrivateAiSourceCurrentness.Expected note,int count) {
+        for(int index=0;index<count;index++) {
+            var attachment=jdbc.queryForObject("select uuidv7()",UUID.class);
+            jdbc.update("""
+                insert into notes.attachment(attachment_id,note_id,owner_user_id,media_kind,object_reference,display_filename,
+                    media_type,size_bytes,width,height,storage_state,validation_state,cleanup_state,revision,processing_generation,created_at,updated_at)
+                values(?,?,?,'image',?,'synthetic.png','image/png',64,1,1,'stored','accepted','retained',1,1,clock_timestamp(),clock_timestamp())
+                """,attachment,note.noteId(),note.owner(),"private-attachment/"+attachment.toString().replace("-","").repeat(2));
+            work.enqueueIfAbsent(KnowledgeWork.Kind.ATTACHMENT,new PrivateAiSourceCurrentness.Expected(
+                note.owner(),note.noteId(),attachment,note.revision(),note.aiGeneration(),1L));
+        }
+    }
     @Test void rollbackLeavesReadyWorkUnclaimedAndNoAmbientTransactionSpansCallerEffect() {
         var first=work.enqueueIfAbsent(KnowledgeWork.Kind.NOTE,expectation(true));
         var tx=new TransactionTemplate(transactions);tx.executeWithoutResult(s->{assertThat(work.claim(new LeaseOwner("rolled"),1)).hasSize(1);s.setRollbackOnly();});

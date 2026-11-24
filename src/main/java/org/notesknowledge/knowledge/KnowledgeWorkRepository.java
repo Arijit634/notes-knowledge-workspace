@@ -64,12 +64,40 @@ class KnowledgeWorkRepository {
     List<KnowledgeWork.Claim> claim(LeaseOwner owner,LeasePolicy policy,int limit,boolean expired) {
         String predicate=expired?"state='claimed' and lease_until<=clock_timestamp()":"state in ('queued','retry_wait') and next_attempt_at<=clock_timestamp()";
         String order=expired?"lease_until":"next_attempt_at";
+        String occupied="exists(select 1 from knowledge.knowledge_work_intent sibling where "
+            +"sibling.owner_user_id=w.owner_user_id and sibling.source_note_id=w.source_note_id and sibling.work_class in ('private_note_derivation','private_attachment_derivation') "
+            +"and sibling.state='claimed'"+(expired?" and sibling.lease_until>clock_timestamp()":"")+")";
+        // Provider dispatch is exclusive per Note root, including all its Attachments.
+        // Admit only one derivation for that root rather than spending sibling attempts
+        // on the dispatch lock. This short transaction lock closes the concurrent-claimer
+        // race; it grants no source authority and is never held over provider I/O.
+        var roots=clients.getObject().sql("select owner_user_id,source_note_id from knowledge.knowledge_work_intent w where "
+            +"work_class in ('private_note_derivation','private_attachment_derivation') and "+predicate
+            +" and not "+occupied+" order by "+order+",created_at,knowledge_work_intent_id limit :candidates")
+            .param("candidates",policy.maximumBatchSize()).query((r,i)->new ClaimRoot(r.getObject("owner_user_id",UUID.class),r.getObject("source_note_id",UUID.class))).list();
+        var claims=new java.util.ArrayList<KnowledgeWork.Claim>();
+        for(var root:new java.util.LinkedHashSet<>(roots)) {
+            if(claims.size()>=limit)break;
+            boolean admitted=clients.getObject().sql("select pg_try_advisory_xact_lock(17404,hashtext(:root))")
+                .param("root",root.note().toString()).query(Boolean.class).single();
+            if(!admitted)continue;
+            // A separate READ COMMITTED statement sees a prior claimer's committed
+            // lease after acquiring the root lock. Hash collisions only defer work.
+            claims.addAll(claimRoot(owner,policy,root,predicate,order,occupied));
+        }
+        return List.copyOf(claims);
+    }
+    private record ClaimRoot(UUID owner,UUID note) {
+        @Override public String toString(){return "ClaimRoot[REDACTED]";}
+    }
+    private List<KnowledgeWork.Claim> claimRoot(LeaseOwner owner,LeasePolicy policy,ClaimRoot root,String predicate,String order,String occupied) {
         // Both successful and abandoned attempts are charged at claim time, exactly once per fresh fencing token.
         // Exhausted abandoned rows become terminal in the same bounded recovery transaction.
         return clients.getObject().sql("""
                 with picked as (select knowledge_work_intent_id,
-                """+order+" as due,created_at from knowledge.knowledge_work_intent where "
-                +"work_class in ('private_note_derivation','private_attachment_derivation') and "+predicate+" order by "+order+",created_at,knowledge_work_intent_id limit :limit for update skip locked), changed as ("
+                """+order+" as due,created_at from knowledge.knowledge_work_intent w where "
+                +"work_class in ('private_note_derivation','private_attachment_derivation') and owner_user_id=:sourceOwner and source_note_id=:root and "+predicate
+                +" and not "+occupied+" order by "+order+",created_at,knowledge_work_intent_id limit 1 for update skip locked), changed as ("
                 +"update knowledge.knowledge_work_intent w set "
                 +"state=case when w.attempt_count<w.max_attempts then 'claimed' else 'failed' end, "
                 +"attempt_count=least(w.attempt_count+1,w.max_attempts),next_attempt_at=null, "
@@ -80,7 +108,7 @@ class KnowledgeWorkRepository {
                 +"from picked where w.knowledge_work_intent_id=picked.knowledge_work_intent_id returning w.*) "
                 +"select changed.* from changed join picked using(knowledge_work_intent_id) where changed.state='claimed' "
                 +"order by picked.due,picked.created_at,knowledge_work_intent_id")
-                .param("limit",policy.checkedBatchSize(limit)).param("owner",owner.alias()).param("seconds",policy.leaseDuration().toSeconds())
+                .param("sourceOwner",root.owner()).param("root",root.note()).param("owner",owner.alias()).param("seconds",policy.leaseDuration().toSeconds())
                 .query((r,i)->new KnowledgeWork.Claim(intent(r),owner,LeaseToken.fromDatabase(r.getObject("lease_token",UUID.class)),r.getTimestamp("lease_until").toInstant())).list();
     }
     boolean transition(KnowledgeWork.Claim claim,String target,KnowledgeWork.Failure failure,boolean retry) {
