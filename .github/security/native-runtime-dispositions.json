@@ -3815,90 +3815,6 @@
       "vendorEvidenceSha256": "6e521a8e8d0cfb60d5728862844fb332dbcf8914ab357cf1cc77a5eb9809d423"
     },
     {
-      "VulnerabilityID": "CVE-2007-5686",
-      "PkgName": "login.defs",
-      "InstalledVersion": "1:4.17.4-2",
-      "FixedVersion": null,
-      "Severity": "LOW",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2007-5686",
-      "kind": "unreachable-precondition",
-      "rationale": "OS installers, system-account creation, subuid allocation and failed Unix-login logs are not application flows. Those administrative tools are removed; the service starts with a fixed numeric identity and no privilege-changing binary. HTTP account operations change product-owned database state, not Unix accounts or installer policy.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "loginAbsent"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2007-5686"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "74aff68f932445b9c62fcc5c3d3af61449dd7177a795c6107d0cf57978cf8fa1"
-    },
-    {
-      "VulnerabilityID": "CVE-2024-56433",
-      "PkgName": "login.defs",
-      "InstalledVersion": "1:4.17.4-2",
-      "FixedVersion": null,
-      "Severity": "LOW",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2024-56433",
-      "kind": "unreachable-precondition",
-      "rationale": "OS installers, system-account creation, subuid allocation and failed Unix-login logs are not application flows. Those administrative tools are removed; the service starts with a fixed numeric identity and no privilege-changing binary. HTTP account operations change product-owned database state, not Unix accounts or installer policy.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "loginAbsent"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2024-56433"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "c06502abdbac2fc24062f57659ba9dd78029cd2979d7a93537ff323db5fb3ce0"
-    },
-    {
-      "VulnerabilityID": "TEMP-0628843-DBAD28",
-      "PkgName": "login.defs",
-      "InstalledVersion": "1:4.17.4-2",
-      "FixedVersion": null,
-      "Severity": "LOW",
-      "Status": "affected",
-      "PrimaryURL": "https://security-tracker.debian.org/tracker/TEMP-0628843-DBAD28",
-      "kind": "unreachable-precondition",
-      "rationale": "OS installers, system-account creation, subuid allocation and failed Unix-login logs are not application flows. Those administrative tools are removed; the service starts with a fixed numeric identity and no privilege-changing binary. HTTP account operations change product-owned database state, not Unix accounts or installer policy.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "loginAbsent"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/TEMP-0628843-DBAD28"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "231af3192b560600c873a533e25a42a788d1584fb04364a6155782cb87a51ed4"
-    },
-    {
       "VulnerabilityID": "CVE-2026-76642",
       "PkgName": "mount",
       "InstalledVersion": "2.41.5-0+deb13u1",
@@ -4333,90 +4249,6 @@
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
       "vendorEvidenceSha256": "50f9edb6c8b63aa1b35938c7f2c2cfa430a4920db8428399fb8b148e5a1e7bec"
-    },
-    {
-      "VulnerabilityID": "CVE-2007-5686",
-      "PkgName": "passwd",
-      "InstalledVersion": "1:4.17.4-2",
-      "FixedVersion": null,
-      "Severity": "LOW",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2007-5686",
-      "kind": "unreachable-precondition",
-      "rationale": "OS installers, system-account creation, subuid allocation and failed Unix-login logs are not application flows. Those administrative tools are removed; the service starts with a fixed numeric identity and no privilege-changing binary. HTTP account operations change product-owned database state, not Unix accounts or installer policy.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "loginAbsent"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2007-5686"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "74aff68f932445b9c62fcc5c3d3af61449dd7177a795c6107d0cf57978cf8fa1"
-    },
-    {
-      "VulnerabilityID": "CVE-2024-56433",
-      "PkgName": "passwd",
-      "InstalledVersion": "1:4.17.4-2",
-      "FixedVersion": null,
-      "Severity": "LOW",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2024-56433",
-      "kind": "unreachable-precondition",
-      "rationale": "OS installers, system-account creation, subuid allocation and failed Unix-login logs are not application flows. Those administrative tools are removed; the service starts with a fixed numeric identity and no privilege-changing binary. HTTP account operations change product-owned database state, not Unix accounts or installer policy.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "loginAbsent"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2024-56433"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "c06502abdbac2fc24062f57659ba9dd78029cd2979d7a93537ff323db5fb3ce0"
-    },
-    {
-      "VulnerabilityID": "TEMP-0628843-DBAD28",
-      "PkgName": "passwd",
-      "InstalledVersion": "1:4.17.4-2",
-      "FixedVersion": null,
-      "Severity": "LOW",
-      "Status": "affected",
-      "PrimaryURL": "https://security-tracker.debian.org/tracker/TEMP-0628843-DBAD28",
-      "kind": "unreachable-precondition",
-      "rationale": "OS installers, system-account creation, subuid allocation and failed Unix-login logs are not application flows. Those administrative tools are removed; the service starts with a fixed numeric identity and no privilege-changing binary. HTTP account operations change product-owned database state, not Unix accounts or installer policy.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "loginAbsent"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/TEMP-0628843-DBAD28"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "231af3192b560600c873a533e25a42a788d1584fb04364a6155782cb87a51ed4"
     },
     {
       "VulnerabilityID": "CVE-2026-9538",
@@ -6104,68 +5936,6 @@
       "vendorEvidenceSha256": "409e5cebb8775cb69f545dc336d5ffedf126b5422854b16e247365107f352362"
     },
     {
-      "VulnerabilityID": "CVE-2026-135901",
-      "PkgName": "login.defs",
-      "InstalledVersion": "1:4.17.4-2",
-      "FixedVersion": null,
-      "Severity": "UNKNOWN",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-135901",
-      "kind": "unreachable-precondition",
-      "rationale": "Debian bug1154946 now has CVE-2026-135901, replacing the temporary scanner identifier. The privileged uid/gid-map helper write requires OS privilege. The exact image has no setuid/setgid files, runs a fixed unprivileged identity, and measures both newgidmap executable paths absent. No Product operation invokes OS identity-mapping helpers. Retain the actual vulnerable shadow version and UNKNOWN finding; no patch is claimed.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "newgidmapAbsent",
-        "newgidmapSbinAbsent"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-135901",
-        "https://github.com/shadow-maint/shadow/commit/1112ed7e741d4db15272d0fee910a5c3360c3457",
-        "https://github.com/shadow-maint/shadow/commit/ce55bdb26c42939b4c71068f92d83efe72bd64e4"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-25",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact source/package/image binding and every named measured control; preserve raw findings and severities. Missing, changed, new or expired evidence blocks release.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "44ab91b16890728772bf58db33e685c87b0735d2079a46d5ec040fd1b3f9e942"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-135901",
-      "PkgName": "passwd",
-      "InstalledVersion": "1:4.17.4-2",
-      "FixedVersion": null,
-      "Severity": "UNKNOWN",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-135901",
-      "kind": "unreachable-precondition",
-      "rationale": "Debian bug1154946 now has CVE-2026-135901, replacing the temporary scanner identifier. The privileged uid/gid-map helper write requires OS privilege. The exact image has no setuid/setgid files, runs a fixed unprivileged identity, and measures both newgidmap executable paths absent. No Product operation invokes OS identity-mapping helpers. Retain the actual vulnerable shadow version and UNKNOWN finding; no patch is claimed.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "newgidmapAbsent",
-        "newgidmapSbinAbsent"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-135901",
-        "https://github.com/shadow-maint/shadow/commit/1112ed7e741d4db15272d0fee910a5c3360c3457",
-        "https://github.com/shadow-maint/shadow/commit/ce55bdb26c42939b4c71068f92d83efe72bd64e4"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-25",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact source/package/image binding and every named measured control; preserve raw findings and severities. Missing, changed, new or expired evidence blocks release.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "44ab91b16890728772bf58db33e685c87b0735d2079a46d5ec040fd1b3f9e942"
-    },
-    {
       "VulnerabilityID": "CVE-2026-84785",
       "PkgName": "libssl3t64",
       "InstalledVersion": "3.5.9-1~deb13u1",
@@ -6220,6 +5990,265 @@
       "expiresOn": "2026-11-26",
       "compensatingControls": "Require exact source/package/image binding and every named measured control; preserve raw findings and severities. Missing, changed, new or expired evidence blocks release.",
       "remediationTarget": "Reassess supported vendor fixes, scanner data and exact image applicability by2026-11-26; no promotion without current artifact proof."
+    },
+    {
+      "VulnerabilityID": "TEMP-0628843-DBAD28",
+      "PkgName": "passwd",
+      "InstalledVersion": "1:4.17.4-2+deb13u1",
+      "FixedVersion": null,
+      "Severity": "LOW",
+      "Status": "affected",
+      "PrimaryURL": "https://security-tracker.debian.org/tracker/TEMP-0628843-DBAD28",
+      "kind": "unreachable-precondition",
+      "rationale": "OS installers, system-account creation, subuid allocation and failed Unix-login logs are not application flows. Those administrative tools are removed; the service starts with a fixed numeric identity and no privilege-changing binary. HTTP account operations change product-owned database state, not Unix accounts or installer policy.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "loginAbsent"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/TEMP-0628843-DBAD28"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-25",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "231af3192b560600c873a533e25a42a788d1584fb04364a6155782cb87a51ed4"
+    },
+    {
+      "VulnerabilityID": "TEMP-0628843-DBAD28",
+      "PkgName": "login.defs",
+      "InstalledVersion": "1:4.17.4-2+deb13u1",
+      "FixedVersion": null,
+      "Severity": "LOW",
+      "Status": "affected",
+      "PrimaryURL": "https://security-tracker.debian.org/tracker/TEMP-0628843-DBAD28",
+      "kind": "unreachable-precondition",
+      "rationale": "OS installers, system-account creation, subuid allocation and failed Unix-login logs are not application flows. Those administrative tools are removed; the service starts with a fixed numeric identity and no privilege-changing binary. HTTP account operations change product-owned database state, not Unix accounts or installer policy.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "loginAbsent"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/TEMP-0628843-DBAD28"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-25",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "231af3192b560600c873a533e25a42a788d1584fb04364a6155782cb87a51ed4"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-40558",
+      "PkgName": "perl-base",
+      "InstalledVersion": "5.40.1-6+deb13u1",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-40558",
+      "kind": "component-not-shipped",
+      "rationale": "This Net::FTP PASV flaw trusts a server-supplied data-channel address. The Perl interpreter is removed from the exact native image and no application or fixed native launcher executes Perl or Net::FTP. Require actual interpreter absence and current source/image/authorization evidence; retain perl-base inventory and the raw UNKNOWN finding. No library patch is claimed.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "perlAbsent"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-40558",
+        "https://github.com/steve-m-hay/perl-libnet/commit/4e5ce1cfa901a9bc2aad2b635b5434154983ff12"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-25",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "e658f8d65aa799cf44775a23834361e5a60e342f58203267675e6967b02fde5a"
+    },
+    {
+      "VulnerabilityID": "CVE-2007-5686",
+      "PkgName": "login.defs",
+      "InstalledVersion": "1:4.17.4-2+deb13u1",
+      "FixedVersion": null,
+      "Severity": "LOW",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2007-5686",
+      "kind": "unreachable-precondition",
+      "rationale": "OS installers, system-account creation, subuid allocation and failed Unix-login logs are not application flows. Those administrative tools are removed; the service starts with a fixed numeric identity and no privilege-changing binary. HTTP account operations change product-owned database state, not Unix accounts or installer policy.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "loginAbsent"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2007-5686"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-25",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "74aff68f932445b9c62fcc5c3d3af61449dd7177a795c6107d0cf57978cf8fa1"
+    },
+    {
+      "VulnerabilityID": "CVE-2024-56433",
+      "PkgName": "passwd",
+      "InstalledVersion": "1:4.17.4-2+deb13u1",
+      "FixedVersion": null,
+      "Severity": "LOW",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2024-56433",
+      "kind": "unreachable-precondition",
+      "rationale": "OS installers, system-account creation, subuid allocation and failed Unix-login logs are not application flows. Those administrative tools are removed; the service starts with a fixed numeric identity and no privilege-changing binary. HTTP account operations change product-owned database state, not Unix accounts or installer policy.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "loginAbsent"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2024-56433"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-25",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "c06502abdbac2fc24062f57659ba9dd78029cd2979d7a93537ff323db5fb3ce0"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-135901",
+      "PkgName": "passwd",
+      "InstalledVersion": "1:4.17.4-2+deb13u1",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-135901",
+      "kind": "upstream-fixed",
+      "rationale": "Debian DSA-6661-1 marks shadow1:4.17.4-2+deb13u1 fixed for CVE-2026-135901. The actual signed-distribution package inventory now reports exactly that version. Preserve the raw source-package match and require exact version/image/source binding plus both absent newgidmap paths and unprivileged/no-setuid controls; no application feature or helper is added.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "newgidmapAbsent",
+        "newgidmapSbinAbsent"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-135901",
+        "https://github.com/shadow-maint/shadow/commit/1112ed7e741d4db15272d0fee910a5c3360c3457",
+        "https://github.com/shadow-maint/shadow/commit/ce55bdb26c42939b4c71068f92d83efe72bd64e4"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-25",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Require exact source/package/image binding and every named measured control; preserve raw findings and severities. Missing, changed, new or expired evidence blocks release.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "44ab91b16890728772bf58db33e685c87b0735d2079a46d5ec040fd1b3f9e942"
+    },
+    {
+      "VulnerabilityID": "CVE-2024-56433",
+      "PkgName": "login.defs",
+      "InstalledVersion": "1:4.17.4-2+deb13u1",
+      "FixedVersion": null,
+      "Severity": "LOW",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2024-56433",
+      "kind": "unreachable-precondition",
+      "rationale": "OS installers, system-account creation, subuid allocation and failed Unix-login logs are not application flows. Those administrative tools are removed; the service starts with a fixed numeric identity and no privilege-changing binary. HTTP account operations change product-owned database state, not Unix accounts or installer policy.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "loginAbsent"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2024-56433"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-25",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "c06502abdbac2fc24062f57659ba9dd78029cd2979d7a93537ff323db5fb3ce0"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-135901",
+      "PkgName": "login.defs",
+      "InstalledVersion": "1:4.17.4-2+deb13u1",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-135901",
+      "kind": "upstream-fixed",
+      "rationale": "Debian DSA-6661-1 marks shadow1:4.17.4-2+deb13u1 fixed for CVE-2026-135901. The actual signed-distribution package inventory now reports exactly that version. Preserve the raw source-package match and require exact version/image/source binding plus both absent newgidmap paths and unprivileged/no-setuid controls; no application feature or helper is added.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "newgidmapAbsent",
+        "newgidmapSbinAbsent"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2026-135901",
+        "https://github.com/shadow-maint/shadow/commit/1112ed7e741d4db15272d0fee910a5c3360c3457",
+        "https://github.com/shadow-maint/shadow/commit/ce55bdb26c42939b4c71068f92d83efe72bd64e4"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-25",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Require exact source/package/image binding and every named measured control; preserve raw findings and severities. Missing, changed, new or expired evidence blocks release.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "44ab91b16890728772bf58db33e685c87b0735d2079a46d5ec040fd1b3f9e942"
+    },
+    {
+      "VulnerabilityID": "CVE-2007-5686",
+      "PkgName": "passwd",
+      "InstalledVersion": "1:4.17.4-2+deb13u1",
+      "FixedVersion": null,
+      "Severity": "LOW",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2007-5686",
+      "kind": "unreachable-precondition",
+      "rationale": "OS installers, system-account creation, subuid allocation and failed Unix-login logs are not application flows. Those administrative tools are removed; the service starts with a fixed numeric identity and no privilege-changing binary. HTTP account operations change product-owned database state, not Unix accounts or installer policy.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicDenialQualified",
+        "loginAbsent"
+      ],
+      "references": [
+        "https://security-tracker.debian.org/tracker/CVE-2007-5686"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-25",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "74aff68f932445b9c62fcc5c3d3af61449dd7177a795c6107d0cf57978cf8fa1"
     }
   ],
   "limits": [
