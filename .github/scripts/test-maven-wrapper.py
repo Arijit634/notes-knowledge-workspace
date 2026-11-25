@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class WrapperTransportTest(unittest.TestCase):
-    def run_case(self, statuses, corrupt=False):
+    def run_case(self, statuses, corrupt=False, retry_after='1'):
         self.assertIsNotNone(shutil.which('curl'))
         with tempfile.TemporaryDirectory(prefix='nkw-wrapper-test-') as temporary:
             directory = Path(temporary)
@@ -43,7 +43,7 @@ class WrapperTransportTest(unittest.TestCase):
                     self.send_response(status)
                     self.send_header('Content-Length', str(len(payload) if status == 200 else 0))
                     if status in (429, 503):
-                        self.send_header('Retry-After', '1')
+                        self.send_header('Retry-After', retry_after)
                     self.end_headers()
                     if status == 200:
                         self.wfile.write(payload)
@@ -89,6 +89,12 @@ class WrapperTransportTest(unittest.TestCase):
 
     def test_corrupted_archive_never_executes(self):
         code, executed, calls = self.run_case([200], corrupt=True)
+        self.assertNotEqual(code, 0)
+        self.assertFalse(executed)
+        self.assertEqual(calls, 1)
+
+    def test_excessive_retry_after_stops_instead_of_waiting(self):
+        code, executed, calls = self.run_case([503], retry_after='86400')
         self.assertNotEqual(code, 0)
         self.assertFalse(executed)
         self.assertEqual(calls, 1)
