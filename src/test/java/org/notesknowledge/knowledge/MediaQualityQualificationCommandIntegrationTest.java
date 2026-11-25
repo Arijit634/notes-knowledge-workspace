@@ -73,7 +73,7 @@ class MediaQualityQualificationCommandIntegrationTest {
                 else MediaQualityQualificationCommand.execute(context,directory,plan,new QualificationRequestBudget.Limits(64,64L*1024*1024,15L*8192,15),clock,
                     duration->clock.now=clock.now.plus(duration),"controlled-sdk");
                 var jdbc=context.getBean(JdbcTemplate.class);
-                if(staleIntent!=null)assertThat(jdbc.queryForObject("select state from knowledge.knowledge_work_intent where knowledge_work_intent_id=?",String.class,staleIntent)).isNotEqualTo("completed");
+                if(staleIntent!=null)assertThat(jdbc.queryForObject("select state from knowledge.knowledge_work_intent where knowledge_work_intent_id=?",String.class,staleIntent)).isEqualTo("obsolete");
                 assertThat(jdbc.queryForObject("select count(*) from knowledge.private_derived_representation where state='ready' and owner_user_id=?",Integer.class,plan.owner())).isEqualTo(selection.size());
                 assertThat(jdbc.queryForObject("select count(*) from knowledge.private_derived_segment where owner_user_id=?",Integer.class,plan.owner())).isGreaterThanOrEqualTo(selection.size());
                 for(String modality:List.of("image","audio","video","pdf")){

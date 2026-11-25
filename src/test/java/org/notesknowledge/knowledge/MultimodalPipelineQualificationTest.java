@@ -244,6 +244,7 @@ class MultimodalPipelineQualificationTest {
         assertThat(jdbc.queryForObject("select markdown from notes.note where note_id=?",String.class,note)).isEqualTo("Current fictional media library");
     }
     @Test void nonSpeechAudioReindexesWithoutLegacyReuseAndRetainsQualifiedTemporalEvidence()throws Exception {
+        jdbc.update("update notes.note set markdown=? where note_id=?",FACTS.get(0),note);
         UUID attachment=upload("tones");
         var expected=new Expected(owner,note,attachment,1,1,1L);
         var current=EmbeddingLineage.create(config,new ProcessingPolicyService.AcknowledgedProcessingPolicy(policy,1,config.approvedPolicyFingerprint()),"audio");
@@ -255,6 +256,7 @@ class MultimodalPipelineQualificationTest {
         new TransactionTemplate(transactions).executeWithoutResult(s->representations.activate(expected,legacy,
             List.of(new DerivedSegment("Prior speech-only surrogate.","transcript","",null,null,null,0.,4.,null,null,null,null)),List.of(axis(7))));
         assertThat(vectors.search(owner,"audio",axis(7),10)).isEmpty();
+        derive(null,"note");
         org.notesknowledge.knowledge.spi.PrivateDerivationSource.Cursor cursor=null;int pages=0;
         do {cursor=reconciler.page(cursor);assertThat(++pages).isLessThan(32);}while(cursor!=null);
         assertThat(jdbc.queryForObject("select count(*) from knowledge.knowledge_work_intent where owner_user_id=? and source_attachment_id=? and target_lineage_id=? and state='queued'",Integer.class,owner,attachment,current.id())).isEqualTo(1);
