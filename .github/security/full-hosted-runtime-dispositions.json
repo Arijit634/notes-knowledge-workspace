@@ -4,7 +4,7 @@
   "architectures": [
     "amd64"
   ],
-  "productionSourceSha256": "6fa8eeb89a1618cacfd855c0109c58b8637c18674dd306243e406cf55b561c03",
+  "productionSourceSha256": "b6f819ac1148d246403409dbca194c74209de037f9334f851034e732f7a2374e",
   "findings": [
     {
       "VulnerabilityID": "CVE-2026-76642",
@@ -951,6 +951,154 @@
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
       "vendorEvidenceSha256": "67e594a1d4cb195ff5c5bb668289e88ae26dbc562d77d494e655133b7385ad85"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-115506",
+      "PkgName": "libexpat1",
+      "InstalledVersion": "2.10.0-0nkw2",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-115506",
+      "kind": "upstream-fixed",
+      "rationale": "Upstream PR1433 is an ancestor of the pinned Expat2.10.0 release and fixes delayed entity-amplification accounting. Require the actual loaded2.10.0 ABI and exact pinned source/backport provenance. The original MEDIUM source-package match remains visible; no claim is based only on package naming.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "expat210BackportVerified"
+      ],
+      "references": [
+        "https://github.com/CVEProject/cvelistV5/blob/0bfcb4a0db026bd19929694234eddc30870130af/cves/2026/115xxx/CVE-2026-115506.json",
+        "https://github.com/libexpat/libexpat/pull/1433"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-25",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Retain every raw scanner finding and require exact source/package/image binding, fresh scan, every listed measured control and the unchanged expiry. Missing, changed or expired evidence blocks release.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "953aee7ee7d91d1c5c53696a547a5ba431c8557fa94360f66b68dfc8319c04d8"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-118370",
+      "PkgName": "libexpat1",
+      "InstalledVersion": "2.10.0-0nkw2",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-118370",
+      "kind": "upstream-fixed",
+      "rationale": "Upstream PR1450 is an ancestor of the pinned Expat2.10.0 release and protects storeAtts attribute counters from signed overflow. Require the actual loaded2.10.0 ABI and exact pinned source/backport provenance. Retain the raw MEDIUM finding.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "expat210BackportVerified"
+      ],
+      "references": [
+        "https://github.com/CVEProject/cvelistV5/blob/e98ad3f451b7edf8a92be54ffc1cdb140e9e907e/cves/2026/118xxx/CVE-2026-118370.json",
+        "https://github.com/libexpat/libexpat/pull/1450"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-25",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Retain every raw scanner finding and require exact source/package/image binding, fresh scan, every listed measured control and the unchanged expiry. Missing, changed or expired evidence blocks release.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "e8a87bfddf69a2dcff4fc781380f089b667b8a11d63a2e5680d5d8ad103984b3"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-124317",
+      "PkgName": "libexpat1",
+      "InstalledVersion": "2.10.0-0nkw2",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-124317",
+      "kind": "upstream-fixed",
+      "rationale": "Backport upstream PR1492: reject truncated unknown-encoding reads before calling the decoder. Retain all three checksum-pinned commits and the complete negative regression, adapted only to the stable allocation API for its fixed small payload. Expat 2.10.0 alone is NOT claimed fixed.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "expat210BackportVerified"
+      ],
+      "references": [
+        "https://github.com/CVEProject/cvelistV5/blob/9d2144085e0f85408102413348c4b0da4f020311/cves/2026/124xxx/CVE-2026-124317.json",
+        "https://github.com/libexpat/libexpat/pull/1492"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-25",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Retain every raw scanner finding and require exact source/package/image binding, fresh scan, every listed measured control and the unchanged expiry. Missing, changed or expired evidence blocks release.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "59c0d6b70bffc6bbc258fa099b28e78ee8c68a4d71f725b13165412c764e2db7"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-128241",
+      "PkgName": "libexpat1",
+      "InstalledVersion": "2.10.0-0nkw2",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-128241",
+      "kind": "component-not-shipped",
+      "rationale": "The affected code is the xmlwf CLI output writer, not the linked Expat parser API. The controlled library build uses --without-xmlwf. Both standard executable paths and a final-image xmlwf name inventory must be measured absent; no library patch is claimed.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "xmlwfAbsent",
+        "xmlwfLocalAbsent",
+        "xmlwfInventoryAbsent"
+      ],
+      "references": [
+        "https://github.com/CVEProject/cvelistV5/blob/aac4e2b5f657743bd882904515ac1df23913094f/cves/2026/128xxx/CVE-2026-128241.json",
+        "https://github.com/libexpat/libexpat/pull/1502"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-25",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Retain every raw scanner finding and require exact source/package/image binding, fresh scan, every listed measured control and the unchanged expiry. Missing, changed or expired evidence blocks release.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "7c716ec194bc942b24d20808cca3215cf1a22f38b19de22b5e7375caaa087787"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-134703",
+      "PkgName": "libexpat1",
+      "InstalledVersion": "2.10.0-0nkw2",
+      "FixedVersion": null,
+      "Severity": "MEDIUM",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-134703",
+      "kind": "unreachable-precondition",
+      "rationale": "The surrogate-pair split requires Expat XML_UNICODE output with non-native-endian UTF-16 input. The existing library is built with narrow output. Require the actual loaded target-architecture library XML_GetFeatureList to show sizeof(XML_Char)==1 and absence of XML_UNICODE/XML_UNICODE_WCHAR_T, plus ABI/backport provenance. No Unicode feature is removed by this assessment, no upstream fix is claimed, and the raw advisory remains visible.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "publicPrivateSeparationQualified",
+        "expat210BackportVerified",
+        "expatNarrowOutputVerified"
+      ],
+      "references": [
+        "https://github.com/CVEProject/cvelistV5/blob/3c1097005e2cdd7a081c8ca1534aedff617af61e/cves/2026/134xxx/CVE-2026-134703.json",
+        "https://github.com/libexpat/libexpat/pull/1519"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-25",
+      "expiresOn": "2026-11-26",
+      "compensatingControls": "Retain every raw scanner finding and require exact source/package/image binding, fresh scan, every listed measured control and the unchanged expiry. Missing, changed or expired evidence blocks release.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "vendorEvidenceSha256": "409e5cebb8775cb69f545dc336d5ffedf126b5422854b16e247365107f352362"
     }
   ]
 }
