@@ -395,6 +395,8 @@ class PrivateDerivationIntegrationTest {
         unpaidGemini();approve(noteExpected());
         assertThatThrownBy(fake::requireGoogleDispatch).isInstanceOf(DerivationFailure.class);
         }
+        assertThat(work.obsolete(syntheticClaim)).isTrue();
+        assertThat(work.heartbeat(syntheticClaim)).isFalse();
         var approvedClaim=claim(noteExpected(),"note");
         try(var handle=coordination.dispatch(owner,note)) {
         var permit=gate.issueForDispatch(approvedClaim,handle).orElseThrow();

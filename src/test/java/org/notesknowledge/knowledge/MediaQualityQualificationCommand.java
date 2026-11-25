@@ -240,9 +240,22 @@ public final class MediaQualityQualificationCommand {
                 var lineage=EmbeddingLineage.create(configuration,policies.policyPrerequisite(plan.owner()).orElseThrow(),source.metadata().modality());
                 tx(c,()->c.getBean(KnowledgeWorkRepository.class).enqueue(KnowledgeWork.Kind.ATTACHMENT,source.metadata().expected(),lineage.id()));
                 var worker=new LeaseOwner("synthetic-qualification");
-                var claims=new ArrayList<>(work.claim(worker,10));
-                claims.addAll(work.reclaim(worker,10));
-                var claim=matchingClaim(claims,source.metadata().expected(),lineage.id()).orElseThrow();
+                KnowledgeWork.Claim claim=null;
+                // Root admission can expose an older lineage before this source's
+                // current work. Retire it through the real gate, never reuse it or
+                // treat a failed provider attempt as permission for another effect.
+                for(int admission=0;admission<2&&claim==null;admission++) {
+                    var claims=new ArrayList<>(work.claim(worker,10));
+                    claims.addAll(work.reclaim(worker,10));
+                    claim=matchingClaim(claims,source.metadata().expected(),lineage.id()).orElse(null);
+                    for(var stale:claims)if(stale.intent().expected().equals(source.metadata().expected())
+                            &&!stale.intent().targetLineageId().equals(lineage.id())) {
+                        current.set(stale);
+                        try{executor.execute(stale);}finally{current.set(null);}
+                        require("obsolete".equals(jdbc.queryForObject("select state from knowledge.knowledge_work_intent where knowledge_work_intent_id=?",String.class,stale.intent().id())));
+                    }
+                }
+                require(claim!=null);
                 current.set(claim);executor.execute(claim);current.set(null);
                 require("completed".equals(jdbc.queryForObject("select state from knowledge.knowledge_work_intent where knowledge_work_intent_id=?",String.class,claim.intent().id())));
             }
