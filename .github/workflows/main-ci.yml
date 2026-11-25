@@ -44,6 +44,8 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
+      - name: Verify bounded wrapper transport and checksum rejection
+        run: python3 .github/scripts/test-maven-wrapper.py
       - name: Verify Maven Wrapper contract and package backend
         shell: bash
         run: |
