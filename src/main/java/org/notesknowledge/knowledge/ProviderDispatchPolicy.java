@@ -97,6 +97,14 @@ class ProviderDispatchPolicy {
             &&configuration.approvedPolicyFingerprint().equals(child.policySha256())
             &&(hostedConsent()||workspace(child.original().owner())||properties.approvedChildFingerprints().contains(child.approvalFingerprint()));
     }
+    boolean permitsUnpaidGeminiQuerySoundtrack(AiDerivationProperties configuration,TransformedMediaIdentity child) {
+        validate(properties);
+        return child!=null&&permitsUnpaidGemini(configuration,child.original())
+            &&"video_audio".equals(child.scope().kind())&&"media-understanding".equals(child.task())
+            &&configuration.provider().equals(child.provider())&&configuration.mediaModel().equals(child.model())
+            &&configuration.approvedPolicyFingerprint().equals(child.policySha256())
+            &&(hostedConsent()||workspace(child.original().owner())||properties.approvedChildFingerprints().contains(child.approvalFingerprint()));
+    }
     /** SHA-256 over UTF-8, LF-separated fixed fields, no trailing LF; '-' represents absent Attachment fields. */
     static String fingerprint(PrivateAiSourceCurrentness.Expected source) {
         String canonical=String.join("\n","nkw-private-source-v1",source.owner().toString(),source.noteId().toString(),

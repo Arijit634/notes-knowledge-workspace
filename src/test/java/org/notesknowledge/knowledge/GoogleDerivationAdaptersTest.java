@@ -221,16 +221,25 @@ class GoogleDerivationAdaptersTest {
     private KnowledgeQueryGate.EvidencePermit audioEvidence() {
         return gate(true).evidence(owner,query,List.of(new PrivateQuerySource.Source(new Expected(owner,note,new UUID(0,4),1,1,1L),"active",true,"audio",Instant.EPOCH,"")),mock(DispatchCoordinator.Handle.class));
     }
-    private AiDerivationProperties directVideoConfig(){
-        var c=directAudioConfig();return new AiDerivationProperties(c.enabled(),c.schedulingEnabled(),c.provider(),c.embeddingModel(),c.mediaModel(),c.modelRevision(),c.region(),c.tier(),c.configurationId(),c.adapterVersion(),c.dimension(),c.operator(),c.normalization(),c.approvedPolicyFingerprint(),false,null,false,null,null,true,true);
+    private AiDerivationProperties directVideoConfig(){return directVideoConfig(true);}
+    private AiDerivationProperties directVideoConfig(boolean enabled){
+        var c=directAudioConfig();return new AiDerivationProperties(c.enabled(),c.schedulingEnabled(),c.provider(),c.embeddingModel(),c.mediaModel(),c.modelRevision(),c.region(),c.tier(),c.configurationId(),c.adapterVersion(),c.dimension(),c.operator(),c.normalization(),c.approvedPolicyFingerprint(),false,null,true,
+            org.notesknowledge.knowledge.spi.PrivateDerivationSource.PdfChild.transformFingerprint(org.notesknowledge.knowledge.spi.PrivateDerivationSource.VideoAudioChild.PROFILE,"query-pcm-v1","b".repeat(64),"c".repeat(64)),null,true,enabled);
     }
-    private KnowledgeQueryGate.EvidencePermit videoEvidence(){return gate(true).evidence(owner,query,List.of(new PrivateQuerySource.Source(new Expected(owner,note,new UUID(0,4),1,1,1L),"active",true,"video",Instant.EPOCH,"")),mock(DispatchCoordinator.Handle.class));}
+    private KnowledgeQueryGate.EvidencePermit videoEvidence(){return gate(directVideoConfig(),true).evidence(owner,query,List.of(new PrivateQuerySource.Source(new Expected(owner,note,new UUID(0,4),1,1,1L),"active",true,"video",Instant.EPOCH,"")),mock(DispatchCoordinator.Handle.class));}
+    private TransformedMediaIdentity videoAudioIdentity(byte[] wav){
+        var c=directVideoConfig();var policy=new ProcessingPolicyService.AcknowledgedProcessingPolicy(new UUID(0,3),1,"a".repeat(64));
+        return new TransformedMediaIdentity(new Expected(owner,note,new UUID(0,4),1,1,1L),"d".repeat(64),1000,"video/mp4",
+            org.notesknowledge.knowledge.spi.PrivateDerivationSource.VideoAudioChild.PROFILE,"query-pcm-v1","b".repeat(64),"c".repeat(64),
+            TransformedMediaIdentity.digest(wav),wav.length,"audio/wav",new TransformedMediaIdentity.Scope("video_audio",0,(wav.length-44)/2,16000,0,(wav.length-44)/2),
+            KnowledgeQueryGate.videoQueryHistoryBinding(EmbeddingLineage.create(c,policy,"video").id()),c.provider(),c.mediaModel(),"media-understanding",c.approvedPolicyFingerprint());
+    }
     @org.junit.jupiter.params.ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(strings={"audio","video"})
     void acoustic503HasSanitizedMediaDiagnosticsAndTheSdkDoesNotRetry(String modality)throws Exception {
         status=503;response="{\"error\":{\"code\":503,\"status\":\"UNAVAILABLE\",\"message\":\"synthetic-private-marker\"}}";
         var port=adapters.googleAudioSignalPort(directVideoConfig(),clients,json);
-        byte[] bytes=modality.equals("audio")?DirectAudioQualificationCommand.control(true):getClass().getResourceAsStream("/attachments/synthetic-aac-video.mp4").readAllBytes();
-        var failure=catchThrowableOfType(()->{if(modality.equals("audio"))port.verify(audioEvidence(),query,bytes,1);else port.verifyVideo(videoEvidence(),query,bytes,2);},DerivationFailure.class);
+        byte[] bytes=modality.equals("audio")?DirectAudioQualificationCommand.control(true):VideoSoundtrackDerivationTest.wave(32000);
+        var failure=catchThrowableOfType(()->{if(modality.equals("audio"))port.verify(audioEvidence(),query,bytes,1);else port.verifyVideoAudio(videoEvidence(),query,videoAudioIdentity(bytes),bytes,2);},DerivationFailure.class);
         assertThat(failure.diagnostic.stage()).isEqualTo(ProviderFailureDiagnostic.Stage.MEDIA);
         assertThat(failure.diagnostic.httpStatus()).isEqualTo(503);assertThat(failure.diagnostic.kind()).isEqualTo(ProviderFailureDiagnostic.Kind.HTTP);
         assertThat(failure.diagnostic.elapsed()).isNotEqualTo(ProviderFailureDiagnostic.Elapsed.UNKNOWN);
@@ -243,25 +252,40 @@ class GoogleDerivationAdaptersTest {
         assertThat(gate(config,true).query(owner,query).matchesStoredLineage("audio",KnowledgeQueryGate.videoQueryHistoryBinding(index.id()))).isFalse();
         assertThat(EmbeddingLineage.create(config,policy,"audio")).isEqualTo(index);
     }
-    @Test void soundtrackVerificationUsesActualMp4AndNeverAReinterpretedAudioEmbedding()throws Exception {
+    @Test void soundtrackVerificationUsesBoundPcmChildAndNeverRelabelsOriginalMp4()throws Exception {
         generatedRaw("{\"decision\":\"supported\",\"description\":\"Possibly synthetic chattering-like sounds\",\"startMs\":100,\"endMs\":900}");
-        byte[] mp4=getClass().getResourceAsStream("/attachments/synthetic-aac-video.mp4").readAllBytes();
-        var port=adapters.googleAudioSignalPort(directVideoConfig(),clients,json);var result=port.verifyVideo(videoEvidence(),query,mp4,2);
+        byte[] wav=VideoSoundtrackDerivationTest.wave(32000);var child=videoAudioIdentity(wav);
+        var port=adapters.googleAudioSignalPort(directVideoConfig(),clients,json);var result=port.verifyVideoAudio(videoEvidence(),query,child,wav,2);
         assertThat(result.supported()).isTrue();assertThat(requests).hasSize(1);
         assertThat(requestPaths.getFirst()).endsWith(":generateContent");
         var body=json.readTree(requests.getFirst());var part=body.get("contents").get(0).get("parts").get(0);
-        assertThat(part.get("inlineData").get("mimeType").asText()).isEqualTo("video/mp4");
-        assertThat(part.get("inlineData").get("data").asText()).isEqualTo(Base64.getEncoder().encodeToString(mp4));
-        assertThat(part.get("videoMetadata").get("fps").asDouble()).isEqualTo(1);
-        assertThat(body.get("generationConfig").get("mediaResolution").asText()).isEqualTo("MEDIA_RESOLUTION_LOW");
-        assertThat(requests.getFirst()).contains("Never infer audible sounds from captions","LOW","8192").doesNotContain("audio/wav");
-        assertThatThrownBy(()->port.verifyVideo(audioEvidence(),query,mp4,2)).isInstanceOf(DerivationFailure.class);
-        assertThatThrownBy(()->port.verifyVideo(videoEvidence(),query,mp4,31)).isInstanceOf(DerivationFailure.class);
-        assertThatThrownBy(()->port.verifyVideo(videoEvidence(),query,new byte[14_000_000],2)).isInstanceOf(DerivationFailure.class);
+        assertThat(part.get("inlineData").get("mimeType").asText()).isEqualTo("audio/wav");
+        assertThat(part.get("inlineData").get("data").asText()).isEqualTo(Base64.getEncoder().encodeToString(wav));
+        assertThat(part.has("videoMetadata")).isFalse();
+        assertThat(requests.getFirst()).contains("Server-computed measurements","LOW","8192").doesNotContain("video/mp4");
+        assertThatThrownBy(()->port.verifyVideoAudio(audioEvidence(),query,child,wav,2)).isInstanceOf(DerivationFailure.class);
+        assertThatThrownBy(()->port.verifyVideoAudio(videoEvidence(),query,child,wav,31)).isInstanceOf(DerivationFailure.class);
+        assertThatThrownBy(()->port.verifyVideoAudio(videoEvidence(),query,child,new byte[wav.length],2)).isInstanceOf(DerivationFailure.class);
+        assertThatThrownBy(()->port.verifyVideoAudio(videoEvidence(),query+"!",child,wav,2)).isInstanceOf(DerivationFailure.class);
+        assertThatThrownBy(()->port.verifyVideoAudio(videoEvidence(),query,null,wav,2)).isInstanceOf(DerivationFailure.class);
         assertThat(requests).hasSize(1);
     }
+    @ParameterizedTest @ValueSource(strings={"owner","generation","lineage","profile","model","policy","approval"})
+    void pcmChildIdentityCannotSubstituteItsParentTransformPurposeOrApproval(String mutation){
+        byte[] wav=VideoSoundtrackDerivationTest.wave(32000);var c=videoAudioIdentity(wav);
+        var original=c.original();
+        if(mutation.equals("owner"))original=new Expected(new UUID(0,90),note,new UUID(0,4),1,1,1L);
+        if(mutation.equals("generation"))original=new Expected(owner,note,new UUID(0,4),1,2,1L);
+        var child=new TransformedMediaIdentity(original,c.originalSha256(),c.originalBytes(),c.originalType(),c.profile(),
+            mutation.equals("profile")?"other-v1":c.implementationVersion(),c.binarySha256(),c.configurationSha256(),c.childSha256(),c.childBytes(),c.childType(),c.scope(),
+            mutation.equals("lineage")?"f".repeat(64):c.lineage(),c.provider(),mutation.equals("model")?"gemini-3.6-flash":c.model(),c.task(),mutation.equals("policy")?"e".repeat(64):c.policySha256());
+        var selected=directVideoConfig();var properties=new ProviderDispatchProperties("unpaid-synthetic-demo",List.of(ProviderDispatchPolicy.fingerprint(c.original())),List.of(ProviderDispatchPolicy.queryFingerprint(query)),List.of(),null);
+        var permit=mutation.equals("approval")?gate(selected,false,properties).evidence(owner,query,List.of(new PrivateQuerySource.Source(c.original(),"active",true,"video",Instant.EPOCH,"")),mock(DispatchCoordinator.Handle.class)):videoEvidence();
+        assertThatThrownBy(()->adapters.googleAudioSignalPort(selected,clients,json).verifyVideoAudio(permit,query,child,wav,2)).isInstanceOf(DerivationFailure.class);
+        assertThat(requests).isEmpty();
+    }
     @Test void videoVerificationIsSeparatelyOptedInAndVersionsQueriesWithoutReembedding()throws Exception {
-        var audio=directAudioConfig();var video=directVideoConfig();
+        var audio=directVideoConfig(false);var video=directVideoConfig();
         var policy=new ProcessingPolicyService.AcknowledgedProcessingPolicy(new UUID(0,3),1,"a".repeat(64));
         for(String modality:List.of("note","audio","image","pdf","video"))assertThat(EmbeddingLineage.create(video,policy,modality)).isEqualTo(EmbeddingLineage.create(audio,policy,modality));
         String binding=KnowledgeQueryGate.videoQueryHistoryBinding(EmbeddingLineage.create(video,policy,"video").id());
@@ -269,8 +293,8 @@ class GoogleDerivationAdaptersTest {
         assertThat(gate(audio,true).query(owner,query).matchesStoredLineage("video",binding)).isFalse();
         assertThat(gate(video,true).query(owner,query).matchesStoredLineage("video",EmbeddingLineage.create(video,policy,"video").id())).isTrue();
         assertThat(gate(video,true).query(owner,query).matchesStoredLineage("unrecognized_key",KnowledgeQueryGate.VIDEO_QUERY_RECIPE)).isFalse();
-        byte[] mp4=getClass().getResourceAsStream("/attachments/synthetic-aac-video.mp4").readAllBytes();
-        assertThatThrownBy(()->adapters.googleAudioSignalPort(audio,clients,json).verifyVideo(videoEvidence(),query,mp4,2)).isInstanceOf(DerivationFailure.class);assertThat(requests).isEmpty();
+        byte[] wav=VideoSoundtrackDerivationTest.wave(32000);
+        assertThatThrownBy(()->adapters.googleAudioSignalPort(audio,clients,json).verifyVideoAudio(videoEvidence(),query,videoAudioIdentity(wav),wav,2)).isInstanceOf(DerivationFailure.class);assertThat(requests).isEmpty();
     }
     @Test void nativeAudioSdkUsesRawWavAndRejectsAnUnboundOrNoteOnlyPermitBeforeNetwork() {
         var port=adapters.googleAudioSignalPort(directAudioConfig(),clients,json);byte[] wav=DirectAudioQualificationCommand.control(true);

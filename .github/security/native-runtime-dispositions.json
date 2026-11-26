@@ -5,7 +5,7 @@
     "amd64",
     "arm64"
   ],
-  "productionSourceSha256": "b6f819ac1148d246403409dbca194c74209de037f9334f851034e732f7a2374e",
+  "productionSourceSha256": "71b46baccc9b85d593a9b2c65730fb2563a515195d05bd13363f50a21b2431f2",
   "findings": [
     {
       "VulnerabilityID": "CVE-2011-3374",

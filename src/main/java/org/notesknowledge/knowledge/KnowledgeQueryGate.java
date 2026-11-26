@@ -10,7 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 class KnowledgeQueryGate {
-    static final String VIDEO_QUERY_RECIPE=TransformedMediaIdentity.digest("direct-mp4-soundtrack-query/inline30-audio1fps-low/retrieved3-verify-ms-503once-v3".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    static final String VIDEO_QUERY_RECIPE=TransformedMediaIdentity.digest("direct-mp4-soundtrack-query/qualified-pcm16k-mono30-low-pcmfacts/retrieved3-verify-ms-503once-v4".getBytes(java.nio.charset.StandardCharsets.UTF_8));
     static final String AUDIO_QUERY_RECIPE=TransformedMediaIdentity.digest("direct-wav-query/native180-verify-ms-low-pcmfacts-503once-v3".getBytes(java.nio.charset.StandardCharsets.UTF_8));
     static String videoQueryHistoryBinding(String indexLineage){return TransformedMediaIdentity.digest((indexLineage+"\n"+VIDEO_QUERY_RECIPE).getBytes(java.nio.charset.StandardCharsets.UTF_8));}
     static String audioQueryHistoryBinding(String indexLineage){return TransformedMediaIdentity.digest((indexLineage+"\n"+AUDIO_QUERY_RECIPE).getBytes(java.nio.charset.StandardCharsets.UTF_8));}
@@ -53,6 +53,19 @@ class KnowledgeQueryGate {
         void requireGoogle(String value){query.requireGoogle(value);requireDispatch();if(!googleApproved||evidence.stream().anyMatch(e->!dispatch.permitsUnpaidGemini(configuration,e.expected())))throw new DerivationFailure(KnowledgeWork.Failure.POLICY_BLOCKED);}
         void requireGoogleAudio(String value){requireGoogle(value);if(evidence.size()!=1||!"audio".equals(evidence.getFirst().modality())||evidence.getFirst().expected().attachmentId()==null)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);}
         void requireGoogleVideo(String value){requireGoogle(value);if(evidence.size()!=1||!"video".equals(evidence.getFirst().modality())||evidence.getFirst().expected().attachmentId()==null)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);}
+        void requireGoogleVideoAudio(String value,TransformedMediaIdentity child,byte[] bytes){
+            requireGoogleVideo(value);
+            if(child==null||!configuration.videoChildren()||!configuration.directVideoSoundtrackSearch()
+                    ||!child.original().equals(evidence.getFirst().expected())
+                    ||!child.lineage().equals(videoQueryHistoryBinding(query.lineage("video").id()))
+                    ||!"video_audio".equals(child.scope().kind())||child.scope().last()>30L*16000
+                    ||child.originalBytes()>20_000_000||child.childBytes()>960_044
+                    ||!org.notesknowledge.knowledge.spi.PrivateDerivationSource.PdfChild.transformFingerprint(
+                        child.profile(),child.implementationVersion(),child.binarySha256(),child.configurationSha256()).equals(configuration.videoTransformFingerprint()))
+                throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
+            child.requireBytes(bytes);
+            if(!dispatch.permitsUnpaidGeminiQuerySoundtrack(configuration,child))throw new DerivationFailure(KnowledgeWork.Failure.POLICY_BLOCKED);
+        }
         @Override public String toString(){return "QueryEvidencePermit[REDACTED]";}
     }
     @Transactional(timeout=3)
