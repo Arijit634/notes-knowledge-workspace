@@ -5940,11 +5940,11 @@
       "PkgName": "libssl3t64",
       "InstalledVersion": "3.5.9-1~deb13u1",
       "FixedVersion": null,
-      "Severity": "UNKNOWN",
+      "Severity": "MEDIUM",
       "Status": "affected",
       "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-84785",
       "kind": "unreachable-precondition",
-      "rationale": "The OpenSSL advisory requires accepting incoming peer-initiated QUIC streams and buffering out-of-order fragments. The media build disables OpenSSL/TLS, exact linkage excludes libssl/libcrypto and neither is loaded in the observed Java workload. Application TLS uses Java. Retain the installed vulnerable package and UNKNOWN scanner severity; no vendor fix is claimed.",
+      "rationale": "The OpenSSL advisory requires accepting incoming peer-initiated QUIC streams and buffering out-of-order fragments. The media build disables OpenSSL/TLS, exact linkage excludes libssl/libcrypto and neither is loaded in the observed Java workload. Application TLS uses Java. Retain the installed vulnerable package and MEDIUM scanner severity; no vendor fix is claimed.",
       "requiredControls": [
         "numericUnprivilegedImage",
         "setuidSetgidAbsent",
@@ -5968,11 +5968,11 @@
       "PkgName": "openssl-provider-legacy",
       "InstalledVersion": "3.5.9-1~deb13u1",
       "FixedVersion": null,
-      "Severity": "UNKNOWN",
+      "Severity": "MEDIUM",
       "Status": "affected",
       "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-84785",
       "kind": "unreachable-precondition",
-      "rationale": "The OpenSSL advisory requires accepting incoming peer-initiated QUIC streams and buffering out-of-order fragments. The media build disables OpenSSL/TLS, exact linkage excludes libssl/libcrypto and neither is loaded in the observed Java workload. Application TLS uses Java. Retain the installed vulnerable package and UNKNOWN scanner severity; no vendor fix is claimed.",
+      "rationale": "The OpenSSL advisory requires accepting incoming peer-initiated QUIC streams and buffering out-of-order fragments. The media build disables OpenSSL/TLS, exact linkage excludes libssl/libcrypto and neither is loaded in the observed Java workload. Application TLS uses Java. Retain the installed vulnerable package and MEDIUM scanner severity; no vendor fix is claimed.",
       "requiredControls": [
         "numericUnprivilegedImage",
         "setuidSetgidAbsent",
@@ -6133,37 +6133,6 @@
       "vendorEvidenceSha256": "c06502abdbac2fc24062f57659ba9dd78029cd2979d7a93537ff323db5fb3ce0"
     },
     {
-      "VulnerabilityID": "CVE-2026-135901",
-      "PkgName": "passwd",
-      "InstalledVersion": "1:4.17.4-2+deb13u1",
-      "FixedVersion": null,
-      "Severity": "UNKNOWN",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-135901",
-      "kind": "upstream-fixed",
-      "rationale": "Debian DSA-6661-1 marks shadow1:4.17.4-2+deb13u1 fixed for CVE-2026-135901. The actual signed-distribution package inventory now reports exactly that version. Preserve the raw source-package match and require exact version/image/source binding plus both absent newgidmap paths and unprivileged/no-setuid controls; no application feature or helper is added.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "newgidmapAbsent",
-        "newgidmapSbinAbsent"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-135901",
-        "https://github.com/shadow-maint/shadow/commit/1112ed7e741d4db15272d0fee910a5c3360c3457",
-        "https://github.com/shadow-maint/shadow/commit/ce55bdb26c42939b4c71068f92d83efe72bd64e4"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-25",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact source/package/image binding and every named measured control; preserve raw findings and severities. Missing, changed, new or expired evidence blocks release.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "44ab91b16890728772bf58db33e685c87b0735d2079a46d5ec040fd1b3f9e942"
-    },
-    {
       "VulnerabilityID": "CVE-2024-56433",
       "PkgName": "login.defs",
       "InstalledVersion": "1:4.17.4-2+deb13u1",
@@ -6190,37 +6159,6 @@
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
       "vendorEvidenceSha256": "c06502abdbac2fc24062f57659ba9dd78029cd2979d7a93537ff323db5fb3ce0"
-    },
-    {
-      "VulnerabilityID": "CVE-2026-135901",
-      "PkgName": "login.defs",
-      "InstalledVersion": "1:4.17.4-2+deb13u1",
-      "FixedVersion": null,
-      "Severity": "UNKNOWN",
-      "Status": "affected",
-      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-135901",
-      "kind": "upstream-fixed",
-      "rationale": "Debian DSA-6661-1 marks shadow1:4.17.4-2+deb13u1 fixed for CVE-2026-135901. The actual signed-distribution package inventory now reports exactly that version. Preserve the raw source-package match and require exact version/image/source binding plus both absent newgidmap paths and unprivileged/no-setuid controls; no application feature or helper is added.",
-      "requiredControls": [
-        "numericUnprivilegedImage",
-        "setuidSetgidAbsent",
-        "nativeStartupQualified",
-        "ownerAndCsrfQualified",
-        "publicDenialQualified",
-        "newgidmapAbsent",
-        "newgidmapSbinAbsent"
-      ],
-      "references": [
-        "https://security-tracker.debian.org/tracker/CVE-2026-135901",
-        "https://github.com/shadow-maint/shadow/commit/1112ed7e741d4db15272d0fee910a5c3360c3457",
-        "https://github.com/shadow-maint/shadow/commit/ce55bdb26c42939b4c71068f92d83efe72bd64e4"
-      ],
-      "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-25",
-      "expiresOn": "2026-11-26",
-      "compensatingControls": "Require exact source/package/image binding and every named measured control; preserve raw findings and severities. Missing, changed, new or expired evidence blocks release.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
-      "vendorEvidenceSha256": "44ab91b16890728772bf58db33e685c87b0735d2079a46d5ec040fd1b3f9e942"
     },
     {
       "VulnerabilityID": "CVE-2007-5686",
