@@ -94,7 +94,7 @@ class KnowledgeQueryIntegrationTest {
                     return queryVideoChild(plan);
                 }
             };
-        }).when(derivationSources).acquire(any());
+        }).when(org.springframework.test.util.AopTestUtils.<org.notesknowledge.knowledge.spi.PrivateDerivationSource>getUltimateTargetObject(derivationSources)).acquire(any());
         doNothing().when(audioSearch).waitForVerificationRecovery();
         when(configuration.configured()).thenReturn(true);when(configuration.provider()).thenReturn("synthetic");
         when(configuration.embeddingModel()).thenReturn("synthetic-embedding");when(configuration.mediaModel()).thenReturn("synthetic-media");
