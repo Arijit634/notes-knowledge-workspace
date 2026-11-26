@@ -89,7 +89,7 @@ class DirectAudioSearch {
         var candidates=unique.values().stream().limit(MAX_SOURCES).toList();
         for(var row:candidates) {
             if(!row.modality().equals("audio"))continue; // Video embeddings omit sound; never use them as acoustic evidence.
-            float[] vector=sourceEffect(owner,query,row,(bytes,seconds,permit)->{budget.next();return port.embed(permit,query,bytes);});
+            float[] vector=sourceEffect(owner,query,row,budget,input->{budget.next();return port.embed(input.permit(),query,input.bytes());});
             try{budget.check();ranked.add(new Scored(row,cosine(queryVector,vector)));}finally{Arrays.fill(vector,0);}
         }
         ranked.sort(Comparator.comparingDouble(Scored::affinity).reversed());
@@ -134,21 +134,29 @@ class DirectAudioSearch {
         catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw new DerivationFailure(KnowledgeWork.Failure.TRANSIENT_DEPENDENCY);}
     }
     private AudioSignalPort.Verification verifySource(UUID owner,String query,QueryEvidenceRepository.Evidence row,AudioSignalPort port,Budget budget,boolean recovery){
-        return sourceEffect(owner,query,row,(bytes,seconds,permit)->{
+        return sourceEffect(owner,query,row,budget,input->{
+            if(row.modality().equals("video")&&input.child()==null)
+                return new AudioSignalPort.Verification("contradicted","No audio track is present in this video.",0,0);
             if(recovery)budget.recoveryNext();else budget.next();
-            return row.modality().equals("video")?port.verifyVideo(permit,query,bytes,seconds):port.verify(permit,query,bytes,seconds);
+            return row.modality().equals("video")?port.verifyVideoAudio(input.permit(),query,input.child(),input.bytes(),input.seconds())
+                :port.verify(input.permit(),query,input.bytes(),input.seconds());
         });
     }
-    @FunctionalInterface private interface Effect<T>{T apply(byte[] bytes,double seconds,KnowledgeQueryGate.EvidencePermit permit);}
-    private <T>T sourceEffect(UUID owner,String query,QueryEvidenceRepository.Evidence row,Effect<T> effect) {
+    private record SoundInput(byte[] bytes,double seconds,KnowledgeQueryGate.EvidencePermit permit,TransformedMediaIdentity child) {
+        @Override public String toString(){return "SoundInput[REDACTED]";}
+    }
+    @FunctionalInterface private interface Effect<T>{T apply(SoundInput input);}
+    private KnowledgeQueryGate.EvidencePermit freshPermit(UUID owner,String query,QueryEvidenceRepository.Evidence row,DispatchCoordinator.Handle handle){
+        return tx(()->{
+            var source=sources.source(owner,row.expected().noteId(),row.expected().attachmentId());var qp=gate.query(owner,query);
+            if(!source.expected().equals(row.expected())||!evidence.current(row,qp.lineage(row.modality())))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
+            return gate.evidence(owner,query,List.of(source),handle);
+        });
+    }
+    private <T>T sourceEffect(UUID owner,String query,QueryEvidenceRepository.Evidence row,Budget budget,Effect<T> effect) {
         var handle=coordination.dispatch(owner,row.expected().noteId());T result;
         try(handle) {
-            var source=tx(()->sources.source(owner,row.expected().noteId(),row.expected().attachmentId()));
-            var permit=tx(()->{
-                var qp=gate.query(owner,query);
-                if(!source.expected().equals(row.expected())||!evidence.current(row,qp.lineage(row.modality())))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
-                return gate.evidence(owner,query,List.of(source),handle);
-            });
+            budget.check();var permit=freshPermit(owner,query,row,handle);
             var metadata=tx(()->media.noteSources(owner,row.expected().noteId())).stream().filter(m->m.expected().equals(row.expected())).findFirst().orElseThrow(()->new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE));
             boolean video=row.modality().equals("video");
             if(!metadata.modality().equals(row.modality())||!metadata.mediaType().equals(video?"video/mp4":"audio/wav")||metadata.durationSeconds()==null
@@ -159,7 +167,9 @@ class DirectAudioSearch {
             try(var input=material.open()){bytes=input.readNBytes((int)metadata.sizeBytes()+1);}catch(java.io.IOException unavailable){throw new DerivationFailure(KnowledgeWork.Failure.TRANSIENT_DEPENDENCY);}
             try {
                 if(bytes.length!=metadata.sizeBytes())throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
-                permit.requireGoogle(query);result=effect.apply(bytes,metadata.durationSeconds(),permit);
+                budget.check();permit.requireGoogle(query);
+                result=video?videoSoundtrack(owner,query,row,handle,material,bytes,metadata.durationSeconds(),budget,effect)
+                    :effect.apply(new SoundInput(bytes,metadata.durationSeconds(),permit,null));
             }finally{Arrays.fill(bytes,(byte)0);}
         }catch(DerivationFailure failed){
             if(!handle.safelyReleased())throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
@@ -171,6 +181,31 @@ class DirectAudioSearch {
             if(!current)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
         }catch(RuntimeException changed){if(result instanceof float[] vector)Arrays.fill(vector,0);throw changed;}
         return result;
+    }
+    private <T>T videoSoundtrack(UUID owner,String query,QueryEvidenceRepository.Evidence row,DispatchCoordinator.Handle handle,
+            PrivateDerivationSource.Material material,byte[] original,double seconds,Budget budget,Effect<T> effect){
+        if(!configuration.videoChildren())throw new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE);
+        budget.check();freshPermit(owner,query,row,handle).requireGoogleVideo(query);
+        var plan=material.videoAudioPlan(original);budget.check();
+        if(plan==null||Double.compare(plan.durationSeconds(),seconds)!=0)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
+        var permit=freshPermit(owner,query,row,handle);permit.requireGoogleVideo(query);
+        if(!plan.hasAudio())return effect.apply(new SoundInput(new byte[0],seconds,permit,null));
+        try(var child=material.videoAudioChild(original,plan)){
+            budget.check();
+            if(child==null||!child.plan().equals(plan)||!child.transformFingerprint().equals(configuration.videoTransformFingerprint()))
+                throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
+            var bytes=child.bytes();
+            try {
+                var identity=new TransformedMediaIdentity(row.expected(),TransformedMediaIdentity.digest(original),original.length,
+                    "video/mp4",child.profile(),child.implementationVersion(),child.artifactSha256(),child.configurationSha256(),
+                    TransformedMediaIdentity.digest(bytes),bytes.length,"audio/wav",
+                    new TransformedMediaIdentity.Scope("video_audio",0,plan.samples(),16000,0,plan.samples()),
+                    KnowledgeQueryGate.videoQueryHistoryBinding(row.lineage()),configuration.provider(),configuration.mediaModel(),
+                    "media-understanding",configuration.approvedPolicyFingerprint());
+                permit=freshPermit(owner,query,row,handle);permit.requireGoogleVideoAudio(query,identity,bytes);budget.check();
+                return effect.apply(new SoundInput(bytes,(double)plan.samples()/16000,permit,identity));
+            }finally{Arrays.fill(bytes,(byte)0);}
+        }
     }
     private <T>T tx(java.util.function.Supplier<T> body){var transactions=new TransactionTemplate(managers.getObject());transactions.setTimeout(3);return transactions.execute(s->body.get());}
     static double cosine(float[] a,float[] b) {

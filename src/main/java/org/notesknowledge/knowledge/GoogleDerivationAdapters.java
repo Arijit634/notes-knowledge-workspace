@@ -111,9 +111,12 @@ class GoogleDerivationAdapters {
                 if(!available()||!c.directAudioSearch())throw new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE);
                 permit.requireGoogleAudio(query);return observed(org.notesknowledge.BackendTelemetry.Operation.MEDIA_UNDERSTANDING,()->signals.verify(wav,seconds,query,()->permit.requireGoogleAudio(query)));
             }
-            public Verification verifyVideo(KnowledgeQueryGate.EvidencePermit permit,String query,byte[] mp4,double seconds){
+            public Verification verifyVideoAudio(KnowledgeQueryGate.EvidencePermit permit,String query,TransformedMediaIdentity child,byte[] wav,double seconds){
                 if(!available()||!c.directVideoSoundtrackSearch())throw new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE);
-                permit.requireGoogleVideo(query);return observed(org.notesknowledge.BackendTelemetry.Operation.MEDIA_UNDERSTANDING,()->signals.verifyVideo(mp4,seconds,query,()->permit.requireGoogleVideo(query)));
+                if(child==null)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
+                permit.requireGoogleVideoAudio(query,child,wav);
+                if(Double.compare(seconds,(double)child.scope().last()/16000)!=0)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
+                return observed(org.notesknowledge.BackendTelemetry.Operation.MEDIA_UNDERSTANDING,()->signals.verify(wav,seconds,query,()->permit.requireGoogleVideoAudio(query,child,wav)));
             }
         };
     }

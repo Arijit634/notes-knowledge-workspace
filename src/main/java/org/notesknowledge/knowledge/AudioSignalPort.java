@@ -8,5 +8,5 @@ interface AudioSignalPort {
     boolean available();
     float[] embed(KnowledgeQueryGate.EvidencePermit permit,String query,byte[] wav);
     Verification verify(KnowledgeQueryGate.EvidencePermit permit,String query,byte[] wav,double seconds);
-    default Verification verifyVideo(KnowledgeQueryGate.EvidencePermit permit,String query,byte[] mp4,double seconds){throw new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE);}
+    default Verification verifyVideoAudio(KnowledgeQueryGate.EvidencePermit permit,String query,TransformedMediaIdentity child,byte[] wav,double seconds){throw new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE);}
 }
