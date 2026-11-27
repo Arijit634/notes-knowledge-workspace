@@ -146,7 +146,7 @@ describe('Attachment panel', () => {
     if (status === 201) {
       await screen.findByText('File added.'); await screen.findByText('second.png', { selector: 'strong' })
     } else {
-      expect((await screen.findByRole('alert')).textContent).toBe('File storage is temporarily unavailable. Try again later.')
+      expect((await screen.findByRole('alert')).textContent).toBe('Files are temporarily unavailable. Try again shortly.')
       expect(screen.queryByText('File added.')).toBeNull()
     }
     expect(screen.getByText('synthetic.png', { selector: 'strong' })).toBeTruthy()
