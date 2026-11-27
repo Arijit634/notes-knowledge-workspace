@@ -51,6 +51,17 @@ jobs:
         with:
           distribution: temurin
           java-version: '25.0.5'
+          cache: maven
+          cache-dependency-path: |
+            pom.xml
+            .mvn/wrapper/maven-wrapper.properties
+            mvnw
+            mvnw.cmd
+            .github/workflows/pr-ci.yml
+            .github/workflows/main-ci.yml
+            .github/workflows/codeql.yml
+            .github/workflows/managed-preview-release.yml
+            .github/workflows/managed-preview.yml
       - name: Verify exact protected green main
         env:
           GH_TOKEN: ${{ github.token }}

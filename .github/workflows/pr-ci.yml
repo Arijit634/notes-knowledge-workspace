@@ -42,6 +42,17 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
+          cache: maven
+          cache-dependency-path: |
+            pom.xml
+            .mvn/wrapper/maven-wrapper.properties
+            mvnw
+            mvnw.cmd
+            .github/workflows/pr-ci.yml
+            .github/workflows/main-ci.yml
+            .github/workflows/codeql.yml
+            .github/workflows/managed-preview-release.yml
+            .github/workflows/managed-preview.yml
       - name: Verify bounded wrapper transport and checksum rejection
         run: python3 .github/scripts/test-maven-wrapper.py
       - name: Verify Maven Wrapper contract
@@ -84,6 +95,17 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
+          cache: maven
+          cache-dependency-path: |
+            pom.xml
+            .mvn/wrapper/maven-wrapper.properties
+            mvnw
+            mvnw.cmd
+            .github/workflows/pr-ci.yml
+            .github/workflows/main-ci.yml
+            .github/workflows/codeql.yml
+            .github/workflows/managed-preview-release.yml
+            .github/workflows/managed-preview.yml
       - name: Run FAST suite
         run: ./mvnw --batch-mode --no-transfer-progress -Dgroups=FAST test
 
@@ -101,6 +123,17 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
+          cache: maven
+          cache-dependency-path: |
+            pom.xml
+            .mvn/wrapper/maven-wrapper.properties
+            mvnw
+            mvnw.cmd
+            .github/workflows/pr-ci.yml
+            .github/workflows/main-ci.yml
+            .github/workflows/codeql.yml
+            .github/workflows/managed-preview-release.yml
+            .github/workflows/managed-preview.yml
       - name: Run PostgreSQL DATABASE suite
         run: ./mvnw --batch-mode --no-transfer-progress -Dgroups=DATABASE test
 
@@ -118,6 +151,17 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
+          cache: maven
+          cache-dependency-path: |
+            pom.xml
+            .mvn/wrapper/maven-wrapper.properties
+            mvnw
+            mvnw.cmd
+            .github/workflows/pr-ci.yml
+            .github/workflows/main-ci.yml
+            .github/workflows/codeql.yml
+            .github/workflows/managed-preview-release.yml
+            .github/workflows/managed-preview.yml
       - name: Verify Flyway migration and Spring Session schema
         run: ./mvnw --batch-mode --no-transfer-progress -Dtest=SpringSessionSchemaMigrationTest test
 
@@ -135,6 +179,17 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
+          cache: maven
+          cache-dependency-path: |
+            pom.xml
+            .mvn/wrapper/maven-wrapper.properties
+            mvnw
+            mvnw.cmd
+            .github/workflows/pr-ci.yml
+            .github/workflows/main-ci.yml
+            .github/workflows/codeql.yml
+            .github/workflows/managed-preview-release.yml
+            .github/workflows/managed-preview.yml
       - name: Run SECURITY suite
         run: ./mvnw --batch-mode --no-transfer-progress -Dgroups=SECURITY test
 
@@ -152,6 +207,17 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
+          cache: maven
+          cache-dependency-path: |
+            pom.xml
+            .mvn/wrapper/maven-wrapper.properties
+            mvnw
+            mvnw.cmd
+            .github/workflows/pr-ci.yml
+            .github/workflows/main-ci.yml
+            .github/workflows/codeql.yml
+            .github/workflows/managed-preview-release.yml
+            .github/workflows/managed-preview.yml
       - name: Run API suite
         run: ./mvnw --batch-mode --no-transfer-progress -Dgroups=API test
 
@@ -205,6 +271,17 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
+          cache: maven
+          cache-dependency-path: |
+            pom.xml
+            .mvn/wrapper/maven-wrapper.properties
+            mvnw
+            mvnw.cmd
+            .github/workflows/pr-ci.yml
+            .github/workflows/main-ci.yml
+            .github/workflows/codeql.yml
+            .github/workflows/managed-preview-release.yml
+            .github/workflows/managed-preview.yml
       - name: Verify seven-module architecture
         run: ./mvnw --batch-mode --no-transfer-progress -Dtest=ModularityTest test
 
