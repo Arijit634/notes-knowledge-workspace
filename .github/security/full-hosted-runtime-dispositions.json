@@ -4,7 +4,7 @@
   "architectures": [
     "amd64"
   ],
-  "productionSourceSha256": "71b46baccc9b85d593a9b2c65730fb2563a515195d05bd13363f50a21b2431f2",
+  "productionSourceSha256": "2de60a58a1299f8fb1be6a9a3fef6739b048f929d9f0f5a2b1284f11b09c9bf4",
   "findings": [
     {
       "VulnerabilityID": "CVE-2026-76642",
@@ -26,10 +26,10 @@
         "nsenterAbsent"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
+      "reviewedOn": "2026-11-27",
+      "expiresOn": "2026-11-28",
       "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-28; no promotion without fresh artifact, raw scan and all measured controls.",
       "references": [
         "https://github.com/canonical/ubuntu-security-notices/blob/b9b5a497948ae9666169cc3b653107d32fba085d/osv/cve/2026/UBUNTU-CVE-2026-76642.json"
       ],
@@ -54,10 +54,10 @@
         "restrictedLocaleInputs"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
+      "reviewedOn": "2026-11-27",
+      "expiresOn": "2026-11-28",
       "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-28; no promotion without fresh artifact, raw scan and all measured controls.",
       "references": [
         "https://github.com/canonical/ubuntu-security-notices/blob/b9b5a497948ae9666169cc3b653107d32fba085d/osv/cve/2026/UBUNTU-CVE-2026-102473.json"
       ],
@@ -82,10 +82,10 @@
         "restrictedLocaleInputs"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
+      "reviewedOn": "2026-11-27",
+      "expiresOn": "2026-11-28",
       "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-28; no promotion without fresh artifact, raw scan and all measured controls.",
       "references": [
         "https://github.com/canonical/ubuntu-security-notices/blob/b9b5a497948ae9666169cc3b653107d32fba085d/osv/cve/2026/UBUNTU-CVE-2026-102474.json"
       ],
@@ -111,10 +111,10 @@
         "nsenterAbsent"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
+      "reviewedOn": "2026-11-27",
+      "expiresOn": "2026-11-28",
       "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-28; no promotion without fresh artifact, raw scan and all measured controls.",
       "references": [
         "https://github.com/canonical/ubuntu-security-notices/blob/b9b5a497948ae9666169cc3b653107d32fba085d/osv/cve/2026/UBUNTU-CVE-2026-76642.json"
       ],
@@ -139,10 +139,10 @@
         "elfBpfNotLinkedInFullBundle"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
+      "reviewedOn": "2026-11-27",
+      "expiresOn": "2026-11-28",
       "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-28; no promotion without fresh artifact, raw scan and all measured controls.",
       "references": [
         "https://github.com/canonical/ubuntu-security-notices/blob/b9b5a497948ae9666169cc3b653107d32fba085d/osv/cve/2025/UBUNTU-CVE-2025-29481.json"
       ],
@@ -168,10 +168,10 @@
         "boundedFontConfiguration"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
+      "reviewedOn": "2026-11-27",
+      "expiresOn": "2026-11-28",
       "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-28; no promotion without fresh artifact, raw scan and all measured controls.",
       "references": [
         "https://github.com/canonical/ubuntu-security-notices/blob/b9b5a497948ae9666169cc3b653107d32fba085d/osv/cve/2025/UBUNTU-CVE-2025-66382.json"
       ],
@@ -196,10 +196,10 @@
         "gnutlsNotLinkedInFullBundle"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
+      "reviewedOn": "2026-11-27",
+      "expiresOn": "2026-11-28",
       "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-28; no promotion without fresh artifact, raw scan and all measured controls.",
       "references": [
         "https://github.com/canonical/ubuntu-security-notices/blob/b9b5a497948ae9666169cc3b653107d32fba085d/osv/cve/2026/UBUNTU-CVE-2026-67693.json"
       ],
@@ -224,10 +224,10 @@
         "gnutlsNotLinkedInFullBundle"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
+      "reviewedOn": "2026-11-27",
+      "expiresOn": "2026-11-28",
       "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-28; no promotion without fresh artifact, raw scan and all measured controls.",
       "references": [
         "https://github.com/canonical/ubuntu-security-notices/blob/b9b5a497948ae9666169cc3b653107d32fba085d/osv/cve/2026/UBUNTU-CVE-2026-88647.json"
       ],
@@ -252,10 +252,10 @@
         "gnutlsNotLinkedInFullBundle"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
+      "reviewedOn": "2026-11-27",
+      "expiresOn": "2026-11-28",
       "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-28; no promotion without fresh artifact, raw scan and all measured controls.",
       "references": [
         "https://github.com/canonical/ubuntu-security-notices/blob/b9b5a497948ae9666169cc3b653107d32fba085d/osv/cve/2026/UBUNTU-CVE-2026-88648.json"
       ],
@@ -280,10 +280,10 @@
         "gnutlsNotLinkedInFullBundle"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
+      "reviewedOn": "2026-11-27",
+      "expiresOn": "2026-11-28",
       "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-28; no promotion without fresh artifact, raw scan and all measured controls.",
       "references": [
         "https://github.com/canonical/ubuntu-security-notices/blob/b9b5a497948ae9666169cc3b653107d32fba085d/osv/cve/2026/UBUNTU-CVE-2026-95184.json"
       ],
@@ -308,10 +308,10 @@
         "gnutlsNotLinkedInFullBundle"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
+      "reviewedOn": "2026-11-27",
+      "expiresOn": "2026-11-28",
       "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-28; no promotion without fresh artifact, raw scan and all measured controls.",
       "references": [
         "https://github.com/canonical/ubuntu-security-notices/blob/b9b5a497948ae9666169cc3b653107d32fba085d/osv/cve/2026/UBUNTU-CVE-2026-95210.json"
       ],
@@ -337,10 +337,10 @@
         "nsenterAbsent"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
+      "reviewedOn": "2026-11-27",
+      "expiresOn": "2026-11-28",
       "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-28; no promotion without fresh artifact, raw scan and all measured controls.",
       "references": [
         "https://github.com/canonical/ubuntu-security-notices/blob/b9b5a497948ae9666169cc3b653107d32fba085d/osv/cve/2026/UBUNTU-CVE-2026-76642.json"
       ],
@@ -365,10 +365,10 @@
         "upstreamOpenH26426Verified"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
+      "reviewedOn": "2026-11-27",
+      "expiresOn": "2026-11-28",
       "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-28; no promotion without fresh artifact, raw scan and all measured controls.",
       "references": [
         "https://github.com/canonical/ubuntu-security-notices/blob/b9b5a497948ae9666169cc3b653107d32fba085d/osv/cve/2025/UBUNTU-CVE-2025-27091.json",
         "https://github.com/cisco/openh264/security/advisories/GHSA-m99q-5j7x-7m9x"
@@ -395,10 +395,10 @@
         "nsenterAbsent"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
+      "reviewedOn": "2026-11-27",
+      "expiresOn": "2026-11-28",
       "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-28; no promotion without fresh artifact, raw scan and all measured controls.",
       "references": [
         "https://github.com/canonical/ubuntu-security-notices/blob/b9b5a497948ae9666169cc3b653107d32fba085d/osv/cve/2026/UBUNTU-CVE-2026-76642.json"
       ],
@@ -423,10 +423,10 @@
         "systemdJournaldAbsent"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-20",
-      "expiresOn": "2026-11-26",
+      "reviewedOn": "2026-11-27",
+      "expiresOn": "2026-11-28",
       "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-28; no promotion without fresh artifact, raw scan and all measured controls.",
       "references": [
         "https://github.com/canonical/ubuntu-security-notices/blob/b9b5a497948ae9666169cc3b653107d32fba085d/osv/cve/2026/UBUNTU-CVE-2026-40228.json"
       ],
@@ -451,10 +451,10 @@
         "systemdJournaldAbsent"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-20",
-      "expiresOn": "2026-11-26",
+      "reviewedOn": "2026-11-27",
+      "expiresOn": "2026-11-28",
       "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-28; no promotion without fresh artifact, raw scan and all measured controls.",
       "references": [
         "https://github.com/canonical/ubuntu-security-notices/blob/b9b5a497948ae9666169cc3b653107d32fba085d/osv/cve/2026/UBUNTU-CVE-2026-40228.json"
       ],
@@ -480,10 +480,10 @@
         "nsenterAbsent"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
+      "reviewedOn": "2026-11-27",
+      "expiresOn": "2026-11-28",
       "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-28; no promotion without fresh artifact, raw scan and all measured controls.",
       "references": [
         "https://github.com/canonical/ubuntu-security-notices/blob/b9b5a497948ae9666169cc3b653107d32fba085d/osv/cve/2026/UBUNTU-CVE-2026-76642.json"
       ],
@@ -508,10 +508,10 @@
         "loginAbsent"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
+      "reviewedOn": "2026-11-27",
+      "expiresOn": "2026-11-28",
       "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-28; no promotion without fresh artifact, raw scan and all measured controls.",
       "references": [
         "https://github.com/canonical/ubuntu-security-notices/blob/b9b5a497948ae9666169cc3b653107d32fba085d/osv/cve/2024/UBUNTU-CVE-2024-56433.json"
       ],
@@ -537,10 +537,10 @@
         "nsenterAbsent"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
+      "reviewedOn": "2026-11-27",
+      "expiresOn": "2026-11-28",
       "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-28; no promotion without fresh artifact, raw scan and all measured controls.",
       "references": [
         "https://github.com/canonical/ubuntu-security-notices/blob/b9b5a497948ae9666169cc3b653107d32fba085d/osv/cve/2026/UBUNTU-CVE-2026-76642.json"
       ],
@@ -565,10 +565,10 @@
         "loginAbsent"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
+      "reviewedOn": "2026-11-27",
+      "expiresOn": "2026-11-28",
       "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-28; no promotion without fresh artifact, raw scan and all measured controls.",
       "references": [
         "https://github.com/canonical/ubuntu-security-notices/blob/b9b5a497948ae9666169cc3b653107d32fba085d/osv/cve/2024/UBUNTU-CVE-2024-56433.json"
       ],
@@ -593,10 +593,10 @@
         "tarAbsent"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
+      "reviewedOn": "2026-11-27",
+      "expiresOn": "2026-11-28",
       "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-28; no promotion without fresh artifact, raw scan and all measured controls.",
       "references": [
         "https://github.com/canonical/ubuntu-security-notices/blob/b9b5a497948ae9666169cc3b653107d32fba085d/osv/cve/2026/UBUNTU-CVE-2026-18477.json"
       ],
@@ -621,10 +621,10 @@
         "tarAbsent"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
+      "reviewedOn": "2026-11-27",
+      "expiresOn": "2026-11-28",
       "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-28; no promotion without fresh artifact, raw scan and all measured controls.",
       "references": [
         "https://github.com/canonical/ubuntu-security-notices/blob/b9b5a497948ae9666169cc3b653107d32fba085d/osv/cve/2026/UBUNTU-CVE-2026-18508.json"
       ],
@@ -650,10 +650,10 @@
         "nsenterAbsent"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
+      "reviewedOn": "2026-11-27",
+      "expiresOn": "2026-11-28",
       "compensatingControls": "Require exact source, image, package, raw scan and every listed measured control; reject changed/new/expired or missing evidence.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-28; no promotion without fresh artifact, raw scan and all measured controls.",
       "references": [
         "https://github.com/canonical/ubuntu-security-notices/blob/b9b5a497948ae9666169cc3b653107d32fba085d/osv/cve/2026/UBUNTU-CVE-2026-76642.json"
       ],
@@ -681,10 +681,10 @@
         "systemdGptAutoGeneratorLegacyAbsent"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-20",
-      "expiresOn": "2026-11-26",
+      "reviewedOn": "2026-11-27",
+      "expiresOn": "2026-11-28",
       "compensatingControls": "Require exact source/image/package/raw scan and both measured generator absences; reject missing, present, changed or expired evidence. Preserve all raw scanner findings.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-28; no promotion without fresh artifact, raw scan and all measured controls.",
       "references": [
         "https://github.com/canonical/ubuntu-security-notices/blob/b9b5a497948ae9666169cc3b653107d32fba085d/osv/cve/2026/UBUNTU-CVE-2026-121876.json"
       ],
@@ -712,10 +712,10 @@
         "systemdGptAutoGeneratorLegacyAbsent"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-20",
-      "expiresOn": "2026-11-26",
+      "reviewedOn": "2026-11-27",
+      "expiresOn": "2026-11-28",
       "compensatingControls": "Require exact source/image/package/raw scan and both measured generator absences; reject missing, present, changed or expired evidence. Preserve all raw scanner findings.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-28; no promotion without fresh artifact, raw scan and all measured controls.",
       "references": [
         "https://github.com/canonical/ubuntu-security-notices/blob/b9b5a497948ae9666169cc3b653107d32fba085d/osv/cve/2026/UBUNTU-CVE-2026-121876.json"
       ],
@@ -746,10 +746,10 @@
         "https://github.com/gpg/gnupg/commit/7a2692fe5e580ae3bbb2a47abc4baaf1af65aa88"
       ],
       "owner": "repository-maintainers",
-      "reviewedOn": "2026-11-19",
-      "expiresOn": "2026-11-26",
+      "reviewedOn": "2026-11-27",
+      "expiresOn": "2026-11-28",
       "compensatingControls": "Require exact source/package/image binding, both affected-tool path checks and the scoped inventory; retain the raw LOW finding and fail when a tool is present, evidence is missing, or the review expires.",
-      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-26; no promotion without fresh artifact, raw scan and all measured controls.",
+      "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-28; no promotion without fresh artifact, raw scan and all measured controls.",
       "vendorEvidenceSha256": "4a0481ddab16b27b8f9e0b97337dee510e163fd3bcf7623a4fe3dd779c81f75e"
     }
   ]
