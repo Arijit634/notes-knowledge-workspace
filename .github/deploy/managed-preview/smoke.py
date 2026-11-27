@@ -179,6 +179,14 @@ def run(*args,timeout=240):
     # or JSON response must never be parsed from a merged diagnostic stream.
     return subprocess.run(args,capture_output=True,text=True,check=True,timeout=timeout).stdout.strip()
 
+def idle_parser_process_count(processes):
+    """Inspect Docker's process listing without retaining or emitting arguments."""
+    lines=processes.splitlines()
+    if not lines or lines[0].strip() not in ('COMMAND','ARGS'):
+        raise ValueError('Parser lifecycle observation unavailable')
+    return sum(any(re.fullmatch(r'org\.apache\.tika\.pipes\.[\w.$]+',arg)
+                   for arg in line.split()) for line in lines[1:])
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self,*args,**kwargs):return None
 
@@ -685,7 +693,9 @@ def main():
                 if json_request('/api/me/publications/'+publication+'/unpublish',{},if_match=require_core_validator(headers))[0]!=200:
                     raise ValueError('Full workload unpublish failed')
                 if request(public_path)[0]!=404 or request(public_media)[0]!=404:raise ValueError('Full workload public denial failed')
-                print(json.dumps(dict(fullPublicationUnpublished=True,liveMediaParserRetained=True)),flush=True)
+                idle_parsers=idle_parser_process_count(run('docker','top',app,'-eo','args',timeout=15))
+                if idle_parsers!=0:raise ValueError('Compact upload parser remained resident after complete workload')
+                print(json.dumps(dict(fullPublicationUnpublished=True,idleMediaParserProcesses=idle_parsers)),flush=True)
                 for password_index in range(3):
                     code,headers,body=request('/api/auth/csrf')
                     if code!=200:raise ValueError('Password fixture CSRF unavailable')
@@ -762,7 +772,7 @@ def main():
                 result.update(passed=True,productionJar=True,deploymentImage=image,resourceMeasurements=samples,
                     fullCostPasswordLoginsAfterCompleteWorkload=3,argon2MemoryKiB=65536,argon2Passes=3,
                     passwordAuthenticationAfterPublishAndUnpublish=True,
-                    passwordAuthenticationWithLiveMediaParser=True,
+                    passwordAuthenticationAfterParserRelease=True,idleMediaParserProcesses=idle_parsers,
                     primaryOidcRecentAuthDenialAndIndependentPasswordProof=True,
                     immutableParserClasspathVerified=True,
                     projectedDisclosureSnapshotQualified=True,projectedDisclosureColdStarts=2,
