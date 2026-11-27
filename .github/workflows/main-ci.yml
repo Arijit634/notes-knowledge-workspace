@@ -54,7 +54,6 @@ jobs:
             .github/workflows/main-ci.yml
             .github/workflows/codeql.yml
             .github/workflows/managed-preview-release.yml
-            .github/workflows/managed-preview.yml
       - name: Verify bounded wrapper transport and checksum rejection
         run: python3 .github/scripts/test-maven-wrapper.py
       - name: Verify Maven Wrapper contract and package backend
@@ -106,7 +105,6 @@ jobs:
             .github/workflows/main-ci.yml
             .github/workflows/codeql.yml
             .github/workflows/managed-preview-release.yml
-            .github/workflows/managed-preview.yml
       - name: Run FAST suite
         run: ./mvnw --batch-mode --no-transfer-progress -Dgroups=FAST test
 
@@ -134,7 +132,6 @@ jobs:
             .github/workflows/main-ci.yml
             .github/workflows/codeql.yml
             .github/workflows/managed-preview-release.yml
-            .github/workflows/managed-preview.yml
       - name: Run PostgreSQL DATABASE suite
         run: ./mvnw --batch-mode --no-transfer-progress -Dgroups=DATABASE test
 
@@ -162,7 +159,6 @@ jobs:
             .github/workflows/main-ci.yml
             .github/workflows/codeql.yml
             .github/workflows/managed-preview-release.yml
-            .github/workflows/managed-preview.yml
       - name: Verify Flyway migration and Spring Session schema
         run: ./mvnw --batch-mode --no-transfer-progress -Dtest=SpringSessionSchemaMigrationTest test
 
@@ -190,7 +186,6 @@ jobs:
             .github/workflows/main-ci.yml
             .github/workflows/codeql.yml
             .github/workflows/managed-preview-release.yml
-            .github/workflows/managed-preview.yml
       - name: Run SECURITY suite
         run: ./mvnw --batch-mode --no-transfer-progress -Dgroups=SECURITY test
 
@@ -218,7 +213,6 @@ jobs:
             .github/workflows/main-ci.yml
             .github/workflows/codeql.yml
             .github/workflows/managed-preview-release.yml
-            .github/workflows/managed-preview.yml
       - name: Run API suite
         run: ./mvnw --batch-mode --no-transfer-progress -Dgroups=API test
 
@@ -272,7 +266,6 @@ jobs:
             .github/workflows/main-ci.yml
             .github/workflows/codeql.yml
             .github/workflows/managed-preview-release.yml
-            .github/workflows/managed-preview.yml
       - name: Verify seven-module architecture
         run: ./mvnw --batch-mode --no-transfer-progress -Dtest=ModularityTest test
 

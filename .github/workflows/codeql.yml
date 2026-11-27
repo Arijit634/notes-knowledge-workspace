@@ -55,7 +55,6 @@ jobs:
             .github/workflows/main-ci.yml
             .github/workflows/codeql.yml
             .github/workflows/managed-preview-release.yml
-            .github/workflows/managed-preview.yml
       - name: Verify Maven Wrapper contract for Java/Kotlin analysis
         if: matrix.language == 'java-kotlin'
         shell: bash
