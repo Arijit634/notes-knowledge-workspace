@@ -11,6 +11,7 @@ import java.util.function.BooleanSupplier;
 final class DerivationLeaseRenewal implements AutoCloseable {
     private final Object lock=new Object();
     private final Thread owner=Thread.currentThread();
+    private final boolean initiallyInterrupted=owner.isInterrupted();
     private final BooleanSupplier renew;
     private final ScheduledExecutorService scheduler;
     private final ScheduledFuture<?> task;
@@ -37,7 +38,11 @@ final class DerivationLeaseRenewal implements AutoCloseable {
     @Override public void close() {
         // An in-flight short heartbeat may finish, but cannot interrupt a
         // caller after this scope has ended or keep scheduling more renewals.
-        synchronized(lock){if(closed)return;closed=true;}
+        boolean ownCancellation;
+        synchronized(lock){if(closed)return;closed=true;ownCancellation=lost;}
         task.cancel(true);scheduler.shutdownNow();
+        // Consume this attempt's lease-loss signal before reusing the caller.
+        // Preserve pre-existing interruption and external-only cancellation.
+        if(ownCancellation&&!initiallyInterrupted&&Thread.currentThread()==owner)Thread.interrupted();
     }
 }

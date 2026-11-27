@@ -42,6 +42,7 @@ class DerivationLeaseRenewalTest {
     private void failedRenewal(boolean unavailable) throws Exception {
         var manual=new ManualScheduler();var entered=new CountDownLatch(1);
         var closed=new AtomicBoolean();var dispatched=new AtomicInteger();var renewed=new AtomicInteger();
+        var interruptAfterClose=new AtomicBoolean(true);
         try(var tasks=Executors.newVirtualThreadPerTaskExecutor()) {
             var result=tasks.submit(()->{
                 try(var renewal=new DerivationLeaseRenewal(()->{
@@ -52,12 +53,28 @@ class DerivationLeaseRenewalTest {
                     assertThatThrownBy(renewal::requireCurrent).isInstanceOfSatisfying(DerivationFailure.class,
                             e->{assertThat(e.category).isEqualTo(KnowledgeWork.Failure.INVALID_SOURCE);assertThat(e.getCause()).isNull();});
                     if(!Thread.currentThread().isInterrupted())dispatched.incrementAndGet();
-                }finally{closed.set(true);}
+                }finally{interruptAfterClose.set(Thread.currentThread().isInterrupted());closed.set(true);}
             });
             assertThat(entered.await(5,TimeUnit.SECONDS)).isTrue();manual.pulse.get().run();result.get(5,TimeUnit.SECONDS);
         }
         assertThat(closed).isTrue();assertThat(dispatched).hasValue(0);assertThat(renewed).hasValue(1);
+        assertThat(interruptAfterClose).isFalse();
         manual.pulse.get().run();assertThat(renewed).hasValue(1);
+    }
+
+    @Test void externalCancellationRemainsInterruptedAfterScopeCleanup() throws Exception {
+        var manual=new ManualScheduler();var entered=new CountDownLatch(1);var finished=new CountDownLatch(1);
+        var interrupted=new AtomicBoolean();
+        try(var tasks=Executors.newVirtualThreadPerTaskExecutor()) {
+            var result=tasks.submit(()->{
+                try(var renewal=new DerivationLeaseRenewal(()->true,manual.executor)) {
+                    entered.countDown();try{new CountDownLatch(1).await();}
+                    catch(InterruptedException cancelled){Thread.currentThread().interrupt();}
+                }finally{interrupted.set(Thread.currentThread().isInterrupted());finished.countDown();}
+            });
+            assertThat(entered.await(5,TimeUnit.SECONDS)).isTrue();result.cancel(true);
+            assertThat(finished.await(5,TimeUnit.SECONDS)).isTrue();assertThat(interrupted).isTrue();
+        }
     }
 
     @Test void heartbeatFinishingAfterCloseCannotInterruptTheCaller() throws Exception {
