@@ -15,7 +15,7 @@ final class DerivationLeaseRenewal implements AutoCloseable {
     private final BooleanSupplier renew;
     private final ScheduledExecutorService scheduler;
     private final ScheduledFuture<?> task;
-    private boolean closed,lost;
+    private boolean closed,lost,budgetExceeded;
 
     DerivationLeaseRenewal(BooleanSupplier renew) {
         this(renew,Executors.newSingleThreadScheduledExecutor(Thread.ofVirtual().name("derivation-lease-",0).factory()));
@@ -26,15 +26,18 @@ final class DerivationLeaseRenewal implements AutoCloseable {
     }
     private void pulse() {
         synchronized(lock){if(closed||lost)return;}
-        boolean current;
-        try{current=renew.getAsBoolean();}catch(RuntimeException unavailable){current=false;}
+        boolean current,exhausted=false;
+        try{current=renew.getAsBoolean();}
+        catch(DerivationFailure failure){current=false;exhausted=failure.category==KnowledgeWork.Failure.BUDGET_EXCEEDED;}
+        catch(RuntimeException unavailable){current=false;}
         synchronized(lock){
-            if(!closed&&!current){lost=true;owner.interrupt();}
+            if(!closed&&!current){lost=true;budgetExceeded=exhausted;owner.interrupt();}
         }
     }
     void requireCurrent() {
-        synchronized(lock){if(closed||lost)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);}
+        synchronized(lock){if(closed||lost)throw new DerivationFailure(budgetExceeded?KnowledgeWork.Failure.BUDGET_EXCEEDED:KnowledgeWork.Failure.INVALID_SOURCE);}
     }
+    boolean budgetExceeded(){synchronized(lock){return budgetExceeded;}}
     @Override public void close() {
         // An in-flight short heartbeat may finish, but cannot interrupt a
         // caller after this scope has ended or keep scheduling more renewals.

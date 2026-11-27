@@ -32,26 +32,34 @@ class DerivationLeaseRenewalTest {
     }
 
     @Test void lostLeaseInterruptsLocalWorkAndCannotReachDispatchOrActivation() throws Exception {
-        failedRenewal(false);
+        failedRenewal("lost");
     }
 
     @Test void unavailableHeartbeatFailsClosedWithoutRetainingItsException() throws Exception {
-        failedRenewal(true);
+        failedRenewal("unavailable");
     }
 
-    private void failedRenewal(boolean unavailable) throws Exception {
+    @Test void expiredAttemptBudgetRemainsTerminalRatherThanBecomingARetry() throws Exception {
+        failedRenewal("budget");
+    }
+
+    private void failedRenewal(String mode) throws Exception {
         var manual=new ManualScheduler();var entered=new CountDownLatch(1);
         var closed=new AtomicBoolean();var dispatched=new AtomicInteger();var renewed=new AtomicInteger();
         var interruptAfterClose=new AtomicBoolean(true);
         try(var tasks=Executors.newVirtualThreadPerTaskExecutor()) {
             var result=tasks.submit(()->{
                 try(var renewal=new DerivationLeaseRenewal(()->{
-                    renewed.incrementAndGet();if(unavailable)throw new IllegalStateException("synthetic-unavailable");return false;
+                    renewed.incrementAndGet();
+                    if(mode.equals("unavailable"))throw new IllegalStateException("synthetic-unavailable");
+                    if(mode.equals("budget"))throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);
+                    return false;
                 },manual.executor)) {
                     entered.countDown();
                     try{new CountDownLatch(1).await();}catch(InterruptedException cancelled){Thread.currentThread().interrupt();}
                     assertThatThrownBy(renewal::requireCurrent).isInstanceOfSatisfying(DerivationFailure.class,
-                            e->{assertThat(e.category).isEqualTo(KnowledgeWork.Failure.INVALID_SOURCE);assertThat(e.getCause()).isNull();});
+                            e->{assertThat(e.category).isEqualTo(mode.equals("budget")?KnowledgeWork.Failure.BUDGET_EXCEEDED:KnowledgeWork.Failure.INVALID_SOURCE);assertThat(e.getCause()).isNull();});
+                    assertThat(renewal.budgetExceeded()).isEqualTo(mode.equals("budget"));
                     if(!Thread.currentThread().isInterrupted())dispatched.incrementAndGet();
                 }finally{interruptAfterClose.set(Thread.currentThread().isInterrupted());closed.set(true);}
             });
