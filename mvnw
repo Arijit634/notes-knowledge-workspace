@@ -205,7 +205,17 @@ if [ -z "${MVNW_USERNAME-}" ] && command -v curl >/dev/null; then
   verbose "Found curl ... using curl"
   # Retry only this build-tool transfer, never Maven goals. The pinned checksum
   # below remains mandatory before any downloaded executable is extracted/run.
-  curl ${__MVNW_QUIET_CURL:+"$__MVNW_QUIET_CURL"} --show-error -f -L --retry 2 --retry-delay 2 --retry-max-time 120 --connect-timeout 10 --max-time 60 -o "$TMP_DOWNLOAD_DIR/$distributionUrlName" "$distributionUrl" || die "curl: Failed to fetch $distributionUrl"
+  if ! mvnw_http_status=$(curl ${__MVNW_QUIET_CURL:+"$__MVNW_QUIET_CURL"} --show-error -f -L --retry 2 --retry-delay 2 --retry-max-time 120 --connect-timeout 10 --max-time 60 --write-out '%{http_code}' -o "$TMP_DOWNLOAD_DIR/$distributionUrlName" "$distributionUrl"); then
+    # Central can throttle shared CI addresses. Only this exact public archive
+    # may use Apache's archive, once; the same checksum below still gates execution.
+    case "$distributionUrl:$mvnw_http_status" in
+    https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.9.16/apache-maven-3.9.16-bin.zip:429)
+      [ -n "${distributionSha256Sum-}" ] || die "Pinned checksum required for Apache archive recovery"
+      curl ${__MVNW_QUIET_CURL:+"$__MVNW_QUIET_CURL"} --show-error -f -L --retry 0 --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 60 -o "$TMP_DOWNLOAD_DIR/$distributionUrlName" 'https://archive.apache.org/dist/maven/maven-3/3.9.16/binaries/apache-maven-3.9.16-bin.zip' || die "curl: Failed to fetch the pinned Apache archive"
+      ;;
+    *) die "curl: Failed to fetch $distributionUrl" ;;
+    esac
+  fi
 elif [ -z "${MVNW_USERNAME-}" ] && command -v wget >/dev/null; then
   verbose "Found wget ... using wget"
   wget ${__MVNW_QUIET_WGET:+"$__MVNW_QUIET_WGET"} --tries=3 --waitretry=2 --timeout=30 "$distributionUrl" -O "$TMP_DOWNLOAD_DIR/$distributionUrlName" || die "wget: Failed to fetch $distributionUrl"
