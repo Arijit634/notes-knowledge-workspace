@@ -149,8 +149,9 @@ class GoogleDerivationAdapters {
                 if(model==null)throw new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE);
                 String instruction=mediaInstruction(request);
                 String schema=mediaSchema(request);
-                // Video soundtrack children retain their separately versioned input recipe.
-                if(request.mediaType().equals("audio/wav")&&!videoSoundtrack)instruction+=GoogleAudioSignals.pcmObservation(bytes,json);
+                // The same PCM facts apply to standalone audio and an authorized
+                // video soundtrack child; they never identify a sound source.
+                if(request.mediaType().equals("audio/wav"))instruction+=GoogleAudioSignals.pcmObservation(bytes,json);
                 request.requireInlineBudget(bytes.length,instruction,schema);
                 String selectedModel=videoSoundtrack?c.soundtrackModel():c.mediaModel();
                 var callOptions=GoogleGenAiChatOptions.builder().model(selectedModel).maxOutputTokens(8192)
@@ -170,15 +171,26 @@ class GoogleDerivationAdapters {
                 }
                 catch(DerivationFailure blocked){throw blocked;}
                 catch(RuntimeException providerFailure){throw providerFailure(providerFailure,ProviderFailureDiagnostic.Stage.MEDIA,started);}
-                if(videoOutput==null&&(response==null||response.getResult()==null||response.getResult().getOutput()==null
-                        ||response.getResult().getMetadata()==null
-                        ||!"STOP".equals(response.getResult().getMetadata().getFinishReason())))throw invalidOutput(ProviderFailureDiagnostic.Stage.MEDIA,started);
+                if(videoOutput==null) {
+                    if(response==null||response.getResult()==null||response.getResult().getOutput()==null)
+                        throw invalidMedia(ProviderFailureDiagnostic.Detail.RESPONSE_SHAPE,started);
+                    String finish=response.getResult().getMetadata()==null?null:response.getResult().getMetadata().getFinishReason();
+                    if(!"STOP".equals(finish))throw invalidMedia(finish==null?ProviderFailureDiagnostic.Detail.COMPLETION:switch(finish){
+                        case "MAX_TOKENS"->ProviderFailureDiagnostic.Detail.COMPLETION_MAX_TOKENS;
+                        case "SAFETY","RECITATION","BLOCKLIST","PROHIBITED_CONTENT","SPII"->ProviderFailureDiagnostic.Detail.COMPLETION_POLICY;
+                        default->ProviderFailureDiagnostic.Detail.COMPLETION_OTHER;
+                    },started);
+                }
                 String output=videoOutput==null?response.getResult().getOutput().getText():videoOutput;
                 if(output==null||output.length()>256000)throw invalidOutput(ProviderFailureDiagnostic.Stage.MEDIA,started);
                 try {
                     var result=request.mediaType().equals("video/mp4")?decodeVideoOutput(request,output,json,started):json.readValue(output,MediaOutput.class);
                     return validateMediaOutput(request,result);
-                } catch(DerivationFailure invalid){throw invalid;}
+                } catch(DerivationFailure invalid){
+                    if(invalid.category==KnowledgeWork.Failure.INVALID_OUTPUT&&invalid.diagnostic==null)
+                        throw invalidMedia(ProviderFailureDiagnostic.Detail.RESPONSE_SHAPE,started);
+                    throw invalid;
+                }
                 catch(RuntimeException malformed){throw invalidMedia(ProviderFailureDiagnostic.Detail.JSON_SCHEMA,started);}
             }
         };
@@ -378,12 +390,13 @@ class GoogleDerivationAdapters {
                     qualified.add(new DerivedSegment(text,segment.kind(),segment.heading(),segment.start(),segment.end(),segment.page(),
                         segment.timeStart(),segment.timeEnd(),segment.x(),segment.y(),segment.width(),segment.height()));
                 } else {
-                    if(result.noSpeech()||!java.util.Set.of("","Transcript").contains(segment.heading()))
-                        throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
+                    if(result.noSpeech())throw invalidMedia(ProviderFailureDiagnostic.Detail.FLAG_SCOPE,0);
+                    if(!java.util.Set.of("","Transcript").contains(segment.heading()))
+                        throw invalidMedia(ProviderFailureDiagnostic.Detail.SEGMENT_HEADING,0);
                     hasSpeech=true;qualified.add(segment);
                 }
             }
-            if(!result.noSpeech()&&!segments.isEmpty()&&!hasSpeech)throw new DerivationFailure(KnowledgeWork.Failure.INVALID_OUTPUT);
+            if(!result.noSpeech()&&!segments.isEmpty()&&!hasSpeech)throw invalidMedia(ProviderFailureDiagnostic.Detail.FLAG_SCOPE,0);
             segments=List.copyOf(qualified);
         }
         if(request.mediaType().equals("video/mp4")) {
@@ -448,7 +461,7 @@ class GoogleDerivationAdapters {
                 +"For bounded non-speech or music observations use kind transcript with heading Acoustic description: these are model observations, not spoken words. "
                 +soundDescriptionInstruction()
                 +"Never infer a specific song, performer or source identity from sound alone. Do not invent speech for music. "
-                +"noSpeech=true means no intelligible speech; it may still contain Acoustic description segments. Silence or unrecognizable content may use segments=[]. "
+                +"noSpeech=true means no intelligible speech; it may still contain Acoustic description segments. If every segment is Acoustic description, set noSpeech=true. If any segment is Transcript, set noSpeech=false. Never label sounds as spoken words merely to satisfy a flag. Silence or unrecognizable content may use segments=[]. "
                 +"If timing/content cannot be supported or the interval is incomplete, complete=false.";
             case "video/mp4" -> request.soundtrackOnly()
                 ?"This is a dedicated listening pass over the entire accepted MP4 soundtrack (duration "+request.durationSeconds()+" seconds). "
@@ -478,7 +491,7 @@ class GoogleDerivationAdapters {
             +"Each segment has bounded text,kind,"
             +(request.mediaType().equals("audio/wav")||request.soundtrackOnly()?"heading (Transcript or Acoustic description), ":
                 request.mediaType().equals("video/mp4")?"heading (Visual description, On-screen text, Transcript or Acoustic description when supported by the supplied bytes), ":"heading(empty), ")
-            +(request.mediaType().equals("video/mp4")?"Each video segment contains exactly text,kind,heading,startMs,endMs. Times MUST be whole INTEGER MILLISECONDS, never seconds or clock strings: 0 <= startMs <= endMs <= "+request.videoMillis()+". Do not round beyond that bound. If only the whole clip supports an observation, use [0,"+request.videoMillis()+"] and explicitly describe it as a whole-clip observation rather than precise event timing. Omit all page, character-offset and image-region fields entirely. ":"null unused locations, actual page/time/region as applicable. ")
+            +(request.mediaType().equals("video/mp4")?"Each video segment contains exactly text,kind,heading,startMs,endMs. Times MUST be whole INTEGER MILLISECONDS, never seconds or clock strings: 0 <= startMs <= endMs <= "+request.videoMillis()+". Do not round beyond that bound. If only the whole clip supports an observation, use [0,"+request.videoMillis()+"] and explicitly describe it as a whole-clip observation rather than precise event timing. Omit all page, character-offset and image-region fields entirely. ":request.mediaType().equals("audio/wav")?"Each audio segment contains exactly text,kind,heading,timeStart,timeEnd. Both times are required numbers in seconds within the supplied interval, with timeStart <= timeEnd. Omit page, character-offset and image-region fields. ":"null unused locations, actual page/time/region as applicable. ")
             +(request.mediaType().equals("video/mp4")?"Be concise; do not repeat observations. At most16 segments and1200 characters per segment. ":"At most 128 segments, at most 12000 characters per segment and 48000 total text characters. ")
             +(request.mediaType().equals("video/mp4")?"No URLs, tool calls, fabricated locations, inferred plot facts or off-screen events. Recognizable object and fictional-character labels must be grounded in visible features. ":"No URLs/tools/actions, fabricated locations or outside knowledge. ")+scope;
     }
@@ -506,6 +519,18 @@ class GoogleDerivationAdapters {
             """;
     }
     static String mediaSchema(MediaUnderstandingRequest request) {
+        if(request.mediaType().equals("audio/wav")) {
+            // The nullable multi-modality union allowed transcript records with
+            // no times or unrelated page/region fields. Ask only for the shape
+            // that the unchanged audio provenance validator can accept.
+            return "{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"complete\",\"checkedPages\",\"noSpeech\",\"segments\"],\"properties\":{"
+                +"\"complete\":{\"type\":\"boolean\"},\"checkedPages\":{\"type\":\"array\",\"maxItems\":0,\"items\":{\"type\":\"integer\"}},\"noSpeech\":{\"type\":\"boolean\"},"
+                +"\"segments\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"additionalProperties\":false,\"required\":[\"text\",\"kind\",\"heading\",\"timeStart\",\"timeEnd\"],\"properties\":{"
+                +"\"text\":{\"type\":\"string\"},\"kind\":{\"type\":\"string\",\"enum\":[\"transcript\"]},"
+                +"\"heading\":{\"type\":\"string\",\"enum\":[\"Transcript\",\"Acoustic description\",\"\"]},"
+                +"\"timeStart\":{\"type\":\"number\",\"minimum\":0,\"maximum\":"+request.durationSeconds()+"},"
+                +"\"timeEnd\":{\"type\":\"number\",\"minimum\":0,\"maximum\":"+request.durationSeconds()+"}}}}}}";
+        }
         if(request.mediaType().equals("video/mp4")) {
             // Video has one location kind and five actual segment fields. Do not
             // ask the model to emit the PDF/image nullable-location union. All

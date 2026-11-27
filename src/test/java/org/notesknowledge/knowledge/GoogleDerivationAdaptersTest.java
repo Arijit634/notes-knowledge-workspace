@@ -721,6 +721,10 @@ class GoogleDerivationAdaptersTest {
             assertThat(segmentProperties.size()).isEqualTo(5);
             assertThat(segmentProperties.has("page")).isFalse();
             assertThat(segmentProperties.get("startMs").get("type").asText()).isEqualTo("integer");
+        } else if(type.equals("audio/wav")) {
+            assertThat(segmentProperties.size()).isEqualTo(5);
+            assertThat(segmentProperties.has("page")).isFalse();
+            assertThat(segmentProperties.get("timeEnd").get("type").asText()).isEqualTo("number");
         } else assertThat(segmentProperties.get("page").has("anyOf")).isTrue();
         assertThat(requests.getFirst()).contains("responseJsonSchema").doesNotContain("fileUri","candidateCount","googleSearch","cachedContent","nullable");
         assertThat(requestPaths).hasSize(1).allSatisfy(path->assertThat(path).endsWith(":generateContent").doesNotContain("files","upload"));
@@ -922,7 +926,7 @@ class GoogleDerivationAdaptersTest {
         assertThat(Base64.getDecoder().decode(parts.get(1).get("inlineData").get("data").asText())).isEqualTo(wav);
         assertThat(wire.has("tools")).isFalse();assertThat(requests.getFirst()).doesNotContain("fileUri","cachedContent");
     }
-    @Test void videoSoundtrackChildKeepsItsExistingPromptAndProvenanceRecipe()throws Exception {
+    @Test void videoSoundtrackChildUsesMeasuredPcmAndRequiredAudioProvenance()throws Exception {
         byte[] original=getClass().getResourceAsStream("/attachments/synthetic-aac-video.mp4").readAllBytes();
         short[] samples=new short[32000];for(int i=0;i<samples.length;i++)samples[i]=(short)(2000*Math.sin(2*Math.PI*440*i/16000));
         byte[] wav=PcmMeasurementsTest.wav(samples,1,16000);
@@ -937,8 +941,39 @@ class GoogleDerivationAdaptersTest {
             .describeChild(permit,child,original,wav,new MediaUnderstandingRequest("audio/wav",null,null,2.));
         assertThat(output).hasSize(1);assertThat(requests).hasSize(1);
         assertThat(requests.getFirst()).contains(Base64.getEncoder().encodeToString(wav))
-            .doesNotContain("Server-computed measurements","allSamplesZero");
+            .contains("Server-computed measurements","allSamplesZero","zeroCrossings");
+        var schema=json.readTree(requests.getFirst()).path("generationConfig").path("responseSchema");
+        if(schema.isMissingNode())schema=json.readTree(requests.getFirst()).path("generationConfig").path("responseJsonSchema");
+        var item=schema.path("properties").path("segments").path("items");
+        assertThat(item.path("required").toString()).contains("timeStart","timeEnd");
+        assertThat(item.path("properties").path("kind").path("enum").toString()).isEqualTo("[\"transcript\"]");
+        assertThat(item.path("properties").has("page")).isFalse();
+        assertThat(item.path("properties").path("timeEnd").path("maximum").asDouble()).isEqualTo(2.);
         verify(permit,times(3)).requireGoogleChildDispatch(child,original,wav);
+    }
+    @ParameterizedTest @ValueSource(strings={"missing-times","wrong-speech-flag","transcript-with-no-speech","unknown-heading"})
+    void audioOutputRejectionsStayFailClosedAndHaveContentFreeDetails(String mode) {
+        String segment="{\"text\":\"synthetic-private-output\",\"kind\":\"transcript\",\"heading\":\"Acoustic description\",\"timeStart\":0,\"timeEnd\":1}";
+        boolean noSpeech=true;
+        switch(mode) {
+            case "missing-times"->segment="{\"text\":\"synthetic-private-output\",\"kind\":\"transcript\",\"heading\":\"Acoustic description\"}";
+            case "wrong-speech-flag"->noSpeech=false;
+            case "transcript-with-no-speech"->segment=segment.replace("Acoustic description","Transcript");
+            case "unknown-heading"->{noSpeech=false;segment=segment.replace("Acoustic description","Unrecognized");}
+        }
+        generated("{\"complete\":true,\"checkedPages\":[],\"noSpeech\":"+noSpeech+",\"segments\":["+segment+"]}");
+        assertThatThrownBy(()->adapters.googleMediaUnderstandingPort(config("gemini-embedding-2"),clients,json)
+            .describe(sourcePermit(),PcmMeasurementsTest.wav(new short[16000],1,16000),new MediaUnderstandingRequest("audio/wav",null,null,1.)))
+            .isInstanceOfSatisfying(DerivationFailure.class,f->{
+                assertThat(f.category).isEqualTo(KnowledgeWork.Failure.INVALID_OUTPUT);
+                assertThat(f.diagnostic.detail()).isEqualTo(switch(mode){
+                    case "wrong-speech-flag","transcript-with-no-speech"->ProviderFailureDiagnostic.Detail.FLAG_SCOPE;
+                    case "unknown-heading"->ProviderFailureDiagnostic.Detail.SEGMENT_HEADING;
+                    default->ProviderFailureDiagnostic.Detail.JSON_SCHEMA;
+                });
+                assertThat(f.diagnostic.toString()).doesNotContain("synthetic-private-output");
+            }).hasCause(null);
+        assertThat(requests).hasSize(1);
     }
     @ParameterizedTest @ValueSource(strings={"missing","null","MAX_TOKENS","SAFETY","empty-candidates","missing-content","thought-only","tool-only"})
     void nativeVideoCompletionMustBeExplicitStopWithBoundedText(String mode) {
@@ -975,7 +1010,7 @@ class GoogleDerivationAdaptersTest {
         for(String modality:List.of("note","image","audio","video","pdf")) {
             var lineage=EmbeddingLineage.create(config("gemini-embedding-2"),policy,modality);
             String legacy=lineage.configuration().replace("media-scoped-coverage-surrogate-v2","media-typed-bounded-v1")
-                .replace("audio-layered-listening-low-language-pcmfacts-surrogate-v6","media-typed-bounded-v1")
+                .replace("audio-scoped-times-low-language-pcmfacts-surrogate-v7","media-typed-bounded-v1")
                 .replace("video-segments-only-audio1fps-low-millis-surrogate-v14","media-typed-bounded-v1");
             String hash=java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(legacy.getBytes(StandardCharsets.UTF_8)));
             if(modality.equals("note"))assertThat(lineage.id()).isEqualTo(hash);
@@ -991,9 +1026,9 @@ class GoogleDerivationAdaptersTest {
         unchanged.forEach((modality,hash)->assertThat(EmbeddingLineage.create(config("gemini-embedding-2"),policy,modality).id()).isEqualTo(hash));
         var audio=EmbeddingLineage.create(config("gemini-embedding-2"),policy,"audio");
         assertThat(audio.id()).isNotEqualTo("517832f7fad262113cf18c388374cdd5b31045270e500308d9fb4ebbfc66b411");
-        assertThat(audio.configuration()).contains("audio-layered-listening-low-language-pcmfacts-surrogate-v6");
+        assertThat(audio.configuration()).contains("audio-scoped-times-low-language-pcmfacts-surrogate-v7");
         try {
-            String priorAudio=audio.configuration().replace("audio-layered-listening-low-language-pcmfacts-surrogate-v6",
+            String priorAudio=audio.configuration().replace("audio-scoped-times-low-language-pcmfacts-surrogate-v7",
                 "audio-layered-listening-low-language-surrogate-v5");
             assertThat(audio.id()).isNotEqualTo(java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
                 .digest(priorAudio.getBytes(StandardCharsets.UTF_8))));
@@ -1011,6 +1046,22 @@ class GoogleDerivationAdaptersTest {
         assertThatThrownBy(()->port.embedQuery(gate().query(owner,query),query+"!")).isInstanceOf(DerivationFailure.class);
         assertThat(adapters.derivationGoogleClient(config("gemini-embedding-2"),new MockEnvironment())).isNull();
         assertThat(requests).isEmpty();
+    }
+    @Test void scopedAudioSchemaAndSoundtrackFactsHaveDistinctIndexRecipes() throws Exception {
+        var policy=new ProcessingPolicyService.AcknowledgedProcessingPolicy(new UUID(0,3),1,"a".repeat(64));
+        var c=config("gemini-embedding-2");
+        var children=new AiDerivationProperties(c.enabled(),c.schedulingEnabled(),c.provider(),c.embeddingModel(),c.mediaModel(),
+            c.modelRevision(),c.region(),c.tier(),c.configurationId(),c.adapterVersion(),c.dimension(),c.operator(),
+            c.normalization(),c.approvedPolicyFingerprint(),false,null,true,"a".repeat(64));
+        var video=EmbeddingLineage.create(children,policy,"video");
+        String previousVideo=video.configuration().replace("video-scenes-pcm16k-scoped-times-pcmfacts-v3","video-scenes-pcm16k-preserve-time-v2");
+        var audio=EmbeddingLineage.create(c,policy,"audio");
+        String previousAudio=audio.configuration().replace("audio-scoped-times-low-language-pcmfacts-surrogate-v7","audio-layered-listening-low-language-pcmfacts-surrogate-v6");
+        for(var pair:List.of(Map.entry(video,previousVideo),Map.entry(audio,previousAudio)))
+            assertThat(pair.getKey().id()).isNotEqualTo(java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                .digest(pair.getValue().getBytes(StandardCharsets.UTF_8))));
+        for(String modality:List.of("note","image","audio","pdf"))
+            assertThat(EmbeddingLineage.create(children,policy,modality)).isEqualTo(EmbeddingLineage.create(c,policy,modality));
     }
     @Test void diagnosticsDiscardMessagesAndClassifyTransportWithoutClaimingProviderReceipt() {
         var failure=new com.google.genai.errors.GenAiIOException("synthetic-private-message",
