@@ -75,7 +75,7 @@ export function attachmentIssue(error: unknown): string {
       case 415: return 'That file type isn’t supported.'
       case 422: return 'This file could not pass media validation. Check supported files and sizes, then try again. PDFs must not be password-protected or contain active forms or embedded files.'
       case 429: return 'Too many uploads right now. Try again shortly.'
-      case 503: return 'File storage is temporarily unavailable. Try again later.'
+      case 503: return 'Files are temporarily unavailable. Try again shortly.'
     }
   }
   return 'Could not complete this file request. Try again.'
