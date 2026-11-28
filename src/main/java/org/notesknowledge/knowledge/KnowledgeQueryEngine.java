@@ -229,7 +229,27 @@ class KnowledgeQueryEngine {
         for(int i=start;i<chunks.size()&&result.size()<KnowledgeQueryLimits.EXTRACTION+1;i++)result.add(QueryEvidenceRepository.Evidence.noteSnapshot(source.expected(),lineage.id(),i,chunks.get(i)));
         return List.copyOf(result);
     }
+    // A saved locator is not evidence about content we have never inspected.
+    // Keep explicit link lookup and textual annotations, without fetching URLs.
+    static boolean supportsMediaContent(String query,String modality,String text) {
+        if(!"note".equals(modality)||!query.matches("(?is).*\\b(videos?|clips?|memes?|audio|music|sounds?|songs?|images?|photos?|pictures?|pdfs?)\\b.*")
+                ||query.matches("(?is).*\\b(urls?|links?|bookmarks?|websites?|addresses?)\\b.*"))return true;
+        String value=text.strip().replaceFirst("^Note title: +","");
+        if(value.isEmpty())return false;
+        for(String token:value.split("\\s+")) {
+            token=token.replaceAll("^[<>\\[\\]()`*#]+|[<>\\[\\]()`*#]+$","");
+            if(token.isEmpty())continue;
+            if(!token.matches("(?i)(?:https?://|www\\.|(?:[a-z0-9-]+\\.)+[a-z]{2,63}/)\\S+"))return true;
+        }
+        return false;
+    }
     Generated generate(UUID owner,String query,String task,List<QueryEvidenceRepository.Evidence> selected,java.util.function.BooleanSupplier currentWork) {
+        if(selected.size()>KnowledgeQueryLimits.evidence(task))throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);
+        var grounded="tags".equals(task)?selected:selected.stream().filter(e->supportsMediaContent(query,e.modality(),e.segment().text())).toList();
+        if(grounded.isEmpty())return empty(List.of(),null,true);
+        return generateGrounded(owner,query,task,grounded,currentWork);
+    }
+    private Generated generateGrounded(UUID owner,String query,String task,List<QueryEvidenceRepository.Evidence> selected,java.util.function.BooleanSupplier currentWork) {
         if(selected.size()>KnowledgeQueryLimits.evidence(task))throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);
         var provider=providers.getIfAvailable();if(provider==null||!provider.available())return empty(List.of(),"providerUnavailable",false);
         var provenance=selected.stream().map(e->sources.source(owner,e.expected().noteId(),e.expected().attachmentId())).distinct().toList();
