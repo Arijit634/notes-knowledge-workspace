@@ -3,7 +3,7 @@ import argparse
 import base64
 import hashlib
 import hmac
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import ipaddress
 import json
 from pathlib import Path
@@ -22,6 +22,39 @@ CLIENT = 'synthetic.apps.googleusercontent.com'
 CLIENT_SECRET = 'synthetic-client-secret'
 
 
+class FixtureServer(ThreadingHTTPServer):
+    """A bounded slow connection must not stall every synthetic provider."""
+    def __init__(self, address, handler_type, tls=None):
+        self.tls = tls
+        self.slots = threading.BoundedSemaphore(8)
+        super().__init__(address, handler_type)
+
+    def process_request(self, request, address):
+        if not self.slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            request.settimeout(10)
+            super().process_request(request, address)
+        except Exception:
+            self.slots.release()
+            raise
+
+    def process_request_thread(self, request, address):
+        try:
+            super().process_request_thread(request, address)
+        finally:
+            self.slots.release()
+
+    def finish_request(self, request, address):
+        if self.tls is None:
+            return super().finish_request(request, address)
+        # TLS negotiation belongs to this connection's worker, not accept().
+        with self.tls.wrap_socket(request, server_side=True, do_handshake_on_connect=False) as secured:
+            secured.do_handshake()
+            return super().finish_request(secured, address)
+
+
 def encoded(value):
     return base64.urlsafe_b64encode(value).decode().rstrip('=')
 
@@ -33,13 +66,44 @@ class Fixture:
         self.codes = {}
         self.objects = {}
         self.counts = {'metadata': 0, 'token': 0, 'jwks': 0, 'objectPut': 0, 'objectGet': 0}
+        self.lock = threading.Lock()
+
+    def count(self, name):
+        with self.lock:
+            self.counts[name] += 1
+
+    def snapshot_counts(self):
+        with self.lock:
+            return dict(self.counts)
+
+    def put_if_absent(self, path, body):
+        with self.lock:
+            if path in self.objects:
+                return 412
+            if len(self.objects) >= 8:
+                return 507
+            self.objects[path] = body
+            self.counts['objectPut'] += 1
+            return 200
+
+    def get_object(self, path):
+        with self.lock:
+            body = self.objects.get(path)
+            if body is not None:
+                self.counts['objectGet'] += 1
+            return body
+
+    def remove_object(self, path):
+        with self.lock:
+            self.objects.pop(path, None)
 
     def authorize(self, nonce, challenge, identity):
         if identity not in ('owner', 'other') or not all(isinstance(v, str) and re.fullmatch(r'[A-Za-z0-9_-]{32,128}', v)
                 for v in (nonce, challenge)):
             raise ValueError('Invalid synthetic authorization input')
         code = secrets.token_urlsafe(24)
-        self.codes[code] = (nonce, challenge, identity)
+        with self.lock:
+            self.codes[code] = (nonce, challenge, identity)
         return code
 
     def exchange(self, authorization, form):
@@ -47,7 +111,8 @@ class Fixture:
         if not hmac.compare_digest(authorization, expected):
             raise ValueError('Invalid synthetic client')
         code = form.get('code', [''])[0]
-        record = self.codes.pop(code, None)
+        with self.lock:
+            record = self.codes.pop(code, None)
         verifier = form.get('code_verifier', [''])[0]
         if record is None or form.get('grant_type') != ['authorization_code'] or not re.fullmatch(r'[A-Za-z0-9._~-]{43,128}', verifier):
             raise ValueError('Invalid synthetic grant')
@@ -64,7 +129,7 @@ class Fixture:
         header = encoded(json.dumps(dict(alg='RS256', kid='fixture-key', typ='JWT')).encode())
         payload = encoded(json.dumps(claims).encode())
         content = (header + '.' + payload).encode()
-        self.counts['token'] += 1
+        self.count('token')
         return dict(access_token='synthetic-access-with-no-external-authority', token_type='Bearer',
             expires_in=300, scope='openid email', id_token=content.decode() + '.' + encoded(self.sign(content)))
 
@@ -99,21 +164,21 @@ def handler(fixture, control=False):
                     value = json.loads(self.read_body(8192))
                     self.json_reply({'code': fixture.authorize(value['nonce'], value['challenge'], value['identity'])})
                 elif self.command == 'GET' and path == '/counts':
-                    self.json_reply(fixture.counts)
+                    self.json_reply(fixture.snapshot_counts())
                 else:
                     self.reply(404)
                 return
             host = self.headers.get('Host', '').split(':')[0]
             if host == 'accounts.google.com':
                 if self.command == 'GET' and path == '/.well-known/openid-configuration':
-                    fixture.counts['metadata'] += 1
+                    fixture.count('metadata')
                     self.json_reply(dict(issuer=ISSUER, authorization_endpoint=ISSUER + '/fixture/authorize',
                         token_endpoint=ISSUER + '/fixture/token', jwks_uri=ISSUER + '/fixture/jwks',
                         response_types_supported=['code'], subject_types_supported=['public'],
                         id_token_signing_alg_values_supported=['RS256'], code_challenge_methods_supported=['S256'],
                         token_endpoint_auth_methods_supported=['client_secret_basic']))
                 elif self.command == 'GET' and path == '/fixture/jwks':
-                    fixture.counts['jwks'] += 1
+                    fixture.count('jwks')
                     self.json_reply({'keys': [dict(kty='RSA', kid='fixture-key', use='sig', alg='RS256', n=fixture.modulus, e='AQAB')]})
                 elif self.command == 'POST' and path == '/fixture/token':
                     form = urllib.parse.parse_qs(self.read_body(8192).decode())
@@ -133,21 +198,16 @@ def handler(fixture, control=False):
                 if self.headers.get('Content-MD5')!=checksum or self.headers.get('If-None-Match')!='*':
                     self.reply(400)
                     return
-                if path in fixture.objects and self.headers.get('If-None-Match') == '*':
-                    self.reply(412)
+                status = fixture.put_if_absent(path, body)
+                if status != 200:
+                    self.reply(status)
                     return
-                if len(fixture.objects) >= 8:
-                    self.reply(507)
-                    return
-                fixture.objects[path] = body
-                fixture.counts['objectPut'] += 1
                 self.reply(200, headers={'ETag': '"' + hashlib.md5(body, usedforsecurity=False).hexdigest() + '"'})
             elif self.command in ('GET', 'HEAD'):
-                body = fixture.objects.get(path)
+                body = fixture.get_object(path)
                 if body is None:
                     self.reply(404)
                 else:
-                    fixture.counts['objectGet'] += 1
                     headers={'ETag': '"' + hashlib.md5(body, usedforsecurity=False).hexdigest() + '"',
                         'Content-Type': 'application/octet-stream', 'Last-Modified': 'Mon, 09 Nov 2026 00:00:00 GMT'}
                     requested=self.headers.get('Range')
@@ -161,7 +221,7 @@ def handler(fixture, control=False):
                         self.reply(206,body[start:end+1],headers)
                     else:self.reply(200,body,headers)
             elif self.command == 'DELETE':
-                fixture.objects.pop(path, None)
+                fixture.remove_object(path)
                 self.reply(204)
             else:
                 self.reply(405)
@@ -189,9 +249,8 @@ def main():
             input=value, capture_output=True, check=True, timeout=10).stdout
     fixture = Fixture(encoded(bytes.fromhex(public)), sign)
     tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); tls.load_cert_chain(args.certificate, args.key)
-    provider = HTTPServer((args.gateway, 443), handler(fixture))
-    provider.socket = tls.wrap_socket(provider.socket, server_side=True)
-    control = HTTPServer(('127.0.0.1', 0), handler(fixture, True))
+    provider = FixtureServer((args.gateway, 443), handler(fixture), tls)
+    control = FixtureServer(('127.0.0.1', 0), handler(fixture, True))
     done = threading.Event()
     signal.signal(signal.SIGTERM, lambda *args: done.set())
     signal.signal(signal.SIGINT, lambda *args: done.set())

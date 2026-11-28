@@ -20,7 +20,7 @@ test('one credential-free bounded status fetch and no body retention', async () 
     assert.equal(options.method, 'GET'); assert.equal(options.redirect, 'manual');
     assert.equal(options.credentials, 'omit'); assert.deepEqual(options.headers, { Accept: 'application/json' });
     assert.equal(options.body, undefined); assert.ok(options.signal instanceof AbortSignal);
-    return { status: 200, body: { cancel: async () => { cancelled++; } } };
+    return { status: 200, headers: new Headers({ 'Content-Type': 'application/json' }), body: { cancel: async () => { cancelled++; } } };
   }, time);
   assert.equal(result, 'checked'); assert.equal(calls, 1); assert.equal(cancelled, 1);
 });
@@ -45,13 +45,28 @@ test('worker has no public trigger and no retry loop or payload diagnostics', as
   assert.equal(worker.fetch().status, 404);
 });
 
+test('200 hosting HTML or a missing content type never proves application liveness', async () => {
+  const time = stamp('09:00');
+  for (const type of ['text/html; charset=utf-8', 'application/problem+json', '']) {
+    let cancelled = false;
+    await assert.rejects(heartbeat({ scheduledTime: time }, { ENABLED: 'true' }, async () => ({
+      status: 200, headers: new Headers(type ? { 'Content-Type': type } : {}),
+      body: { cancel: async () => { cancelled = true; } },
+    }), time), /preview_liveness_unavailable/);
+    assert.equal(cancelled, true);
+  }
+  assert.equal(await heartbeat({ scheduledTime: time }, { ENABLED: 'true' }, async () => ({
+    status: 200, headers: new Headers({ 'Content-Type': 'application/vnd.spring-boot.actuator.v3+json; charset=UTF-8' }), body: null,
+  }), time), 'checked');
+});
+
 test('real cron timestamps with seconds and milliseconds use the scheduled IST minute', async () => {
   const observed = Date.parse('2026-11-17T09:30:55.714Z');
   assert.equal(inWindow(observed), true);
   let calls = 0;
   assert.equal(await heartbeat({ scheduledTime: observed }, { ENABLED: 'true' }, async () => {
     calls++;
-    return { status: 200, body: null };
+    return { status: 200, headers: new Headers({ 'Content-Type': 'application/json' }), body: null };
   }, observed + 654), 'checked');
   assert.equal(calls, 1);
   for (const time of ['08:50', '09:00', '23:50']) {

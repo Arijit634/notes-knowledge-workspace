@@ -18,7 +18,12 @@ export async function heartbeat(event, env, fetcher = fetch, now = Date.now()) {
   });
   // Do not follow redirects or retain response bodies, including failures.
   if (response.body) await response.body.cancel();
-  if (response.status !== 200) throw new Error('preview_liveness_unavailable');
+  // Hosting startup/interstitial HTML can also return 200. Only the actual
+  // status endpoint's JSON representation qualifies as a successful check.
+  const type = response.headers?.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase();
+  if (response.status !== 200 || !['application/json', 'application/vnd.spring-boot.actuator.v3+json'].includes(type)) {
+    throw new Error('preview_liveness_unavailable');
+  }
   return 'checked';
 }
 export default {
