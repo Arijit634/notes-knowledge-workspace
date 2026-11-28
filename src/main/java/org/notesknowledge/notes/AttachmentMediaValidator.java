@@ -32,9 +32,15 @@ final class AttachmentMediaValidator implements AutoCloseable {
     static final int DIMENSION = 4096, PAGES = 100, SECONDS = 300;
     static final long PIXELS = 8_294_400;
     private AttachmentParserRuntime runtime;
+    private final String parserProfile;
     private final io.micrometer.core.instrument.MeterRegistry meters;
     AttachmentMediaValidator(){this(null);}
-    AttachmentMediaValidator(io.micrometer.core.instrument.MeterRegistry meters){this.meters=meters;}
+    AttachmentMediaValidator(io.micrometer.core.instrument.MeterRegistry meters){
+        this(meters,System.getProperty("nkw.attachment-parser.profile","standard"));
+    }
+    AttachmentMediaValidator(io.micrometer.core.instrument.MeterRegistry meters,String parserProfile){
+        this.meters=meters;this.parserProfile=parserProfile;
+    }
 
     record Validated(String kind, String mediaType, long sizeBytes, Integer width, Integer height,
             Double durationSeconds, Integer pageCount) { }
@@ -66,14 +72,18 @@ final class AttachmentMediaValidator implements AutoCloseable {
             hints(validated.mediaType(), displayFilename, declaredType);
             outcome=org.notesknowledge.BackendTelemetry.Outcome.SUCCESS;
             return validated;
-        } catch (ApiFailureException failure) { throw failure; }
+        } catch (ApiFailureException failure) {
+            if(failure.kind()==ApiFailureException.Kind.SERVICE_UNAVAILABLE)
+                outcome=org.notesknowledge.BackendTelemetry.Outcome.UNAVAILABLE;
+            throw failure;
+        }
         catch (IOException failure) {outcome=org.notesknowledge.BackendTelemetry.Outcome.UNAVAILABLE;throw unavailable();}
         finally{org.notesknowledge.BackendTelemetry.record(meters,org.notesknowledge.BackendTelemetry.Event.VALIDATION,operation,outcome,System.nanoTime()-started);}
     }
 
     private Validated video(Path path, long size) {
         var structural = new StrictMp4StructureValidator().validateUpload(path);
-        Metadata metadata = parser().parse(path);
+        Metadata metadata = metadata(path);
         requireType(metadata, "video/mp4");
         try {
             int width = Integer.parseInt(metadata.get(TIFF.IMAGE_WIDTH));
@@ -89,7 +99,7 @@ final class AttachmentMediaValidator implements AutoCloseable {
     }
 
     private Validated pdf(Path path, long size) {
-        Metadata metadata = parser().parse(path);
+        Metadata metadata = metadata(path);
         requireType(metadata, "application/pdf");
         Integer pages = boundedInteger(metadata, PagedText.N_PAGES);
         if (pages == null || pages < 1 || pages > PAGES || !"false".equals(metadata.get(PDF.IS_ENCRYPTED))) throw invalid();
@@ -187,9 +197,15 @@ final class AttachmentMediaValidator implements AutoCloseable {
         if (!match) throw invalid();
     }
 
-    private synchronized AttachmentParserRuntime parser() {
-        if (runtime == null) runtime = new AttachmentParserRuntime();
-        return runtime;
+    private synchronized Metadata metadata(Path path) {
+        // The constrained host cannot retain an idle admission JVM alongside
+        // subsequent media workers. Close it on success and failure, while
+        // keeping the same validation, memory, IPC and execution limits.
+        if("compact-v1".equals(parserProfile)) {
+            try(var parser=new AttachmentParserRuntime(false,parserProfile)){return parser.parse(path);}
+        }
+        if (runtime == null) runtime = new AttachmentParserRuntime(false,parserProfile);
+        return runtime.parse(path);
     }
     @Override @PreDestroy public synchronized void close() { if (runtime != null) runtime.close(); runtime = null; }
     private static void requireType(Metadata metadata, String expected) { if (!expected.equals(metadata.get("Content-Type"))) throw invalid(); }

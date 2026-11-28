@@ -27,7 +27,8 @@ class DerivationExecutor {
     void execute(KnowledgeWork.Claim claim) {
         String outcome="deferred";
         var budget=new DerivationAttemptBudget();
-        try {
+        var renewal=new DerivationLeaseRenewal(()->{budget.check();return work.heartbeat(claim);});
+        try(renewal) {
             var initial=gate.issue(claim).orElseThrow(()->new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE));
             var embed=embeddings.getIfAvailable();
             if(embed==null||!embed.available())throw new DerivationFailure(KnowledgeWork.Failure.PROVIDER_UNAVAILABLE);
@@ -112,15 +113,26 @@ class DerivationExecutor {
                 } else if(initial.source().modality().equals("video")&&configuration.videoChildren()) {
                     if(!work.heartbeat(claim))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
                     var soundtrack=coordinated(claim,dispatches,permit->material.videoAudioPlan(bytes));
+                    renewal.requireCurrent();
+                    if(!work.heartbeat(claim))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
                     var plan=coordinated(claim,dispatches,permit->material.videoPlan(bytes));
+                    renewal.requireCurrent();
                     var extracted=new ArrayList<>(VideoDerivation.derive(initial,bytes,plan,soundtrack,configuration,(timeline,first,last)->{
+                        renewal.requireCurrent();
                         if(!work.heartbeat(claim))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
                         return coordinated(claim,dispatches,permit->material.videoChild(bytes,timeline,first,last));
-                    },(identity,payload,request)->understandChild(claim,dispatches,understand,identity,bytes,payload,request,budget),budget));
+                    },(identity,payload,request)->{
+                        renewal.requireCurrent();
+                        return understandChild(claim,dispatches,understand,identity,bytes,payload,request,budget);
+                    },budget));
                     extracted.addAll(VideoSoundtrackDerivation.derive(initial,bytes,soundtrack,configuration,audio->{
+                        renewal.requireCurrent();
                         if(!work.heartbeat(claim))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
                         return coordinated(claim,dispatches,permit->material.videoAudioChild(bytes,audio));
-                    },(identity,payload,request)->understandChild(claim,dispatches,understand,identity,bytes,payload,request,budget),budget));
+                    },(identity,payload,request)->{
+                        renewal.requireCurrent();
+                        return understandChild(claim,dispatches,understand,identity,bytes,payload,request,budget);
+                    },budget));
                     segments=List.copyOf(extracted);
                 } else {
                     // The full accepted WAV (<=10 MiB) fits the encoded budget. Keep its
@@ -140,12 +152,14 @@ class DerivationExecutor {
                 validateMedia(initial,segments);
                 } finally {java.util.Arrays.fill(bytes,(byte)0);}
             }
+            renewal.requireCurrent();
             if(segments.isEmpty()||segments.size()>512)throw new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);
             var vectors=new ArrayList<float[]>();
             // Embedding 2 sends one SDK request per chunk. Do not carry a short-lived
             // permit across sequential network calls; each obtains fresh coordinated authority.
             int batchSize=GeminiTextEmbeddings.embedding2(configuration)?1:16;
             for(int start=0;start<segments.size();start+=batchSize) {
+                renewal.requireCurrent();
                 if(!work.heartbeat(claim))throw new DerivationFailure(KnowledgeWork.Failure.INVALID_SOURCE);
                 var batch=segments.subList(start,Math.min(start+batchSize,segments.size()));
                 // JSON escaping can expand control characters sixfold. Account conservatively
@@ -162,9 +176,12 @@ class DerivationExecutor {
                 for(float[] vector:output)vectors.add(initial.lineage().prepare(vector));
             }
             budget.check();
+            renewal.requireCurrent();
+            renewal.close();
             if(!transactions.activate(claim,initial.lineage(),segments,vectors,List.copyOf(dispatches))){outcome=work.obsolete(claim)?"obsolete":"rejected";}
             else outcome="activated";
         } catch(DerivationFailure failure) {
+            if(renewal.budgetExceeded())failure=new DerivationFailure(KnowledgeWork.Failure.BUDGET_EXCEEDED);
             if(failure.diagnostic!=null&&failure.diagnostic.stage()==ProviderFailureDiagnostic.Stage.MEDIA)
                 org.slf4j.LoggerFactory.getLogger(DerivationExecutor.class).warn("knowledge_media_rejected detail={}",failure.diagnostic.detail());
             switch(failure.category) {
@@ -175,7 +192,8 @@ class DerivationExecutor {
         } catch(org.notesknowledge.websupport.ApiFailureException boundary) {
             // Source/policy adapters expose only registered failures, never parser
             // or storage diagnostics. A missing source cannot be retried as eligible.
-            if(boundary.kind()==org.notesknowledge.websupport.ApiFailureException.Kind.RESOURCE_NOT_FOUND
+            if(renewal.budgetExceeded()){outcome=work.fail(claim,KnowledgeWork.Failure.BUDGET_EXCEEDED)?"failed":"rejected";}
+            else if(boundary.kind()==org.notesknowledge.websupport.ApiFailureException.Kind.RESOURCE_NOT_FOUND
                     ||boundary.kind()==org.notesknowledge.websupport.ApiFailureException.Kind.INVALID_CREDENTIALS){outcome=work.obsolete(claim)?"obsolete":"rejected";}
             else if(boundary.kind()==org.notesknowledge.websupport.ApiFailureException.Kind.SERVICE_UNAVAILABLE){outcome=work.retry(claim)?"retry":"rejected";}
             else {outcome=work.fail(claim,KnowledgeWork.Failure.INVALID_OUTPUT)?"failed":"rejected";}

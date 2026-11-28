@@ -917,11 +917,58 @@ describe('private Notes browser journey', () => {
     await waitFor(() => expect((screen.getByRole('checkbox', { name: 'Use this note with AI' }) as HTMLInputElement).disabled).toBe(false))
     fireEvent.change(screen.getByLabelText('Choose files for new note'), { target: { files: [new File(['synthetic'], 'synthetic.png', { type: 'image/png' })] } })
     fireEvent.click(screen.getByRole('button', { name: /^Create note$/ }))
-    await screen.findByText(/Note created. A file could not be uploaded/)
+    await screen.findByText(/Note created. Files are temporarily unavailable/)
     expect(calls.filter(c => c.method === 'POST' && c.path === '/api/notes')).toHaveLength(1)
     fireEvent.click(screen.getByRole('button', { name: 'Retry remaining uploads' }))
     await waitFor(() => expect(window.location.pathname).toBe(`/notes/${id}`))
     expect(uploads).toHaveLength(2); expect(calls.filter(c => c.method === 'POST' && c.path === '/api/notes')).toHaveLength(1)
+  })
+
+  it.each([
+    [413, 'That file is too large.'],
+    [415, 'That file type isn’t supported.'],
+    [422, 'This file could not pass media validation.'],
+    [429, 'Too many uploads right now.'],
+  ])('shows the upload failure reason after creating the Note (%s)', async (status, message) => {
+    const uploads: AttachmentXhrDouble[] = []
+    vi.stubGlobal('XMLHttpRequest', class extends AttachmentXhrDouble {
+      constructor() { super(xhr => { uploads.push(xhr); void xhr.respond(problem(Number(status), 'synthetic_failure')) }) }
+    })
+    const { calls } = mount('/notes/new', 'authenticated', (method, path, body) => method === 'POST' && path === '/api/notes'
+      ? json({ ...initial, ...body as object }, 201, { ETag: '"e1"', Location: `/api/notes/${id}` }) : undefined)
+    await screen.findByRole('dialog', { name: 'New note' })
+    await waitFor(() => expect((screen.getByRole('checkbox', { name: 'Use this note with AI' }) as HTMLInputElement).disabled).toBe(false))
+    fireEvent.change(screen.getByLabelText('Choose files for new note'), { target: { files: [new File(['synthetic'], 'synthetic.mp4', { type: 'video/mp4' })] } })
+    fireEvent.click(screen.getByRole('button', { name: /^Create note$/ }))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain(`Note created. ${message}`))
+    expect(screen.getByRole('alert').textContent).toContain('Check its files before retrying')
+    expect(screen.getByRole('button', { name: 'Open note' })).toBeTruthy()
+    expect(calls.filter(c => c.method === 'POST' && c.path === '/api/notes')).toHaveLength(1)
+    expect(uploads).toHaveLength(1)
+  })
+
+  it('retries only the remaining file after an uncertain upload, preserving the saved Note', async () => {
+    const uploads: AttachmentXhrDouble[] = []
+    vi.stubGlobal('XMLHttpRequest', class extends AttachmentXhrDouble {
+      constructor() { super(xhr => {
+        uploads.push(xhr)
+        if (uploads.length === 2) xhr.onerror?.(new ProgressEvent('error'))
+        else void xhr.respond(json(syntheticAttachment, 201, { ETag: '"a1"', Location: `/api/notes/${id}/attachments/${syntheticAttachment.id}` }))
+      }) }
+    })
+    const { calls } = mount('/notes/new', 'authenticated', (method, path, body) => method === 'POST' && path === '/api/notes'
+      ? json({ ...initial, ...body as object }, 201, { ETag: '"e1"', Location: `/api/notes/${id}` }) : undefined)
+    await screen.findByRole('dialog', { name: 'New note' })
+    await waitFor(() => expect((screen.getByRole('checkbox', { name: 'Use this note with AI' }) as HTMLInputElement).disabled).toBe(false))
+    const first = new File(['synthetic'], 'first.mp4', { type: 'video/mp4' }), second = new File(['synthetic'], 'second.mp4', { type: 'video/mp4' })
+    fireEvent.change(screen.getByLabelText('Choose files for new note'), { target: { files: [first, second] } })
+    fireEvent.click(screen.getByRole('button', { name: /^Create note$/ }))
+    await screen.findByText(/Note created. Could not complete this file request/)
+    expect(screen.getByRole('alert').textContent).toContain('Check its files before retrying')
+    fireEvent.click(screen.getByRole('button', { name: 'Retry remaining uploads' }))
+    await waitFor(() => expect(window.location.pathname).toBe(`/notes/${id}`))
+    expect(uploads.map(xhr => (xhr.body?.get('file') as File).name)).toEqual(['first.mp4', 'second.mp4', 'second.mp4'])
+    expect(calls.filter(c => c.method === 'POST' && c.path === '/api/notes')).toHaveLength(1)
   })
 
 })

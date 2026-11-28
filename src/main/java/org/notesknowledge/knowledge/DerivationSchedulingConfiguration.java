@@ -8,7 +8,7 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.notesknowledge.LeaseOwner;
 import org.notesknowledge.knowledge.spi.PrivateDerivationSource;
 
-/** Opt-in same-deployable worker: two threads, no queue, at most two outstanding claims. */
+/** Opt-in same-deployable worker: one or two threads, no in-memory queue. */
 @Configuration(proxyBeanMethods=false)
 @EnableScheduling
 @ConditionalOnProperty(name="knowledge.derivation.scheduling-enabled",havingValue="true")
@@ -23,6 +23,7 @@ class DerivationSchedulingConfiguration implements AutoCloseable {
     private final TextEmbeddingPort embeddings;
     private final io.micrometer.core.instrument.MeterRegistry metrics;
     private final ThreadPoolTaskExecutor pool=new ThreadPoolTaskExecutor();
+    private final int workerThreads;
     private PrivateDerivationSource.Cursor cursor;
     private boolean stopping;
     private long cycleVersion=-1,completedVersion=-1;
@@ -39,9 +40,17 @@ class DerivationSchedulingConfiguration implements AutoCloseable {
     synchronized void stopClaiming(org.springframework.context.event.ContextClosedEvent event){stopping=true;}
     DerivationSchedulingConfiguration(DerivationReconciler reconciler,KnowledgeWorkService work,DerivationExecutor executor,
             org.springframework.beans.factory.ObjectProvider<TextEmbeddingPort> embeddings,io.micrometer.core.instrument.MeterRegistry metrics) {
+        this(reconciler,work,executor,embeddings,metrics,2);
+    }
+    @org.springframework.beans.factory.annotation.Autowired
+    DerivationSchedulingConfiguration(DerivationReconciler reconciler,KnowledgeWorkService work,DerivationExecutor executor,
+            org.springframework.beans.factory.ObjectProvider<TextEmbeddingPort> embeddings,io.micrometer.core.instrument.MeterRegistry metrics,
+            @org.springframework.beans.factory.annotation.Value("${knowledge.derivation.worker-threads:2}") int workerThreads) {
+        if(workerThreads<1||workerThreads>2)throw new IllegalArgumentException("Invalid derivation worker capacity");
+        this.workerThreads=workerThreads;
         this.reconciler=reconciler;this.work=work;this.executor=executor;this.embeddings=embeddings.getIfAvailable();
         this.metrics=metrics;
-        pool.setCorePoolSize(2);pool.setMaxPoolSize(2);pool.setQueueCapacity(0);pool.setThreadNamePrefix("knowledge-derivation-");
+        pool.setCorePoolSize(workerThreads);pool.setMaxPoolSize(workerThreads);pool.setQueueCapacity(0);pool.setThreadNamePrefix("knowledge-derivation-");
         pool.setWaitForTasksToCompleteOnShutdown(true);pool.setAwaitTerminationSeconds(30);pool.initialize();
     }
     @Scheduled(fixedDelayString="${knowledge.derivation.poll-delay-ms:5000}")
@@ -64,7 +73,7 @@ class DerivationSchedulingConfiguration implements AutoCloseable {
         if(cursor==null)completedVersion=cycleVersion;
         long now=ticker.getAsLong();
         if(lastClaimStarted!=null&&now-lastClaimStarted<claimPauseNanos)return;
-        int capacity=2-pool.getActiveCount();if(capacity<=0)return;
+        int capacity=workerThreads-pool.getActiveCount();if(capacity<=0)return;
         var owner=new LeaseOwner("knowledge-local");
         var claims=work.reclaim(owner,capacity);
         if(claims.isEmpty())claims=work.claim(owner,capacity);

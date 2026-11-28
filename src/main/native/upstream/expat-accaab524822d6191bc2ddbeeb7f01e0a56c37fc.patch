@@ -1,0 +1,43 @@
+From accaab524822d6191bc2ddbeeb7f01e0a56c37fc Mon Sep 17 00:00:00 2001
+From: Sebastian Pipping <sebastian@pipping.org>
+Date: Fri, 27 Nov 2026 14:45:53 +0100
+Subject: [PATCH] lib: Fix incomplete attribute list duplicate detection
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Reported-by: Bartłomiej Dmitruk  <bartek.dmitruk@gmail.com>
+---
+ expat/lib/xmlparse.c | 19 +++++++++----------
+ 1 file changed, 9 insertions(+), 10 deletions(-)
+
+diff --git a/expat/lib/xmlparse.c b/expat/lib/xmlparse.c
+index c252bce84..6af41a62f 100644
+--- a/expat/lib/xmlparse.c
++++ b/expat/lib/xmlparse.c
+@@ -8218,16 +8218,15 @@ static int
+ defineAttribute(ELEMENT_TYPE *type, ATTRIBUTE_ID *attId, bool isCdata,
+                 bool isId, const XML_Char *value, XML_Parser parser) {
+   DEFAULT_ATTRIBUTE *att;
+-  if (value || isId) {
+-    /* The handling of default attributes gets messed up if we have
+-       a default which duplicates a non-default. */
+-    NAMED *const nameFound
+-        = lookup(parser, &(type->defaultAttForName), attId->name, 0);
+-    if (nameFound)
+-      return 1;
+-    if (isId && ! type->idAtt && ! attId->xmlns)
+-      type->idAtt = attId;
+-  }
++
++  NAMED *const nameFound
++      = lookup(parser, &(type->defaultAttForName), attId->name, 0);
++  if (nameFound)
++    return 1;
++
++  if (isId && ! type->idAtt && ! attId->xmlns)
++    type->idAtt = attId;
++
+   if (type->nDefaultAtts == type->allocDefaultAtts) {
+     /* Detect and prevent integer overflow */
+     if (type->allocDefaultAtts > SIZE_MAX / 2) {

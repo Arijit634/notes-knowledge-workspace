@@ -19,7 +19,7 @@ import org.notesknowledge.websupport.ApiFailureException;
  */
 final class SupervisedVideoClipRuntime implements VideoClipRuntime,AutoCloseable {
     static final String PROFILE=VideoAudioChild.PROFILE;
-    static final String CONFIGURATION="frame-trim;preserve-vfr-ticks;max1280x720;avc-constrained-baseline;600k;gop25;visual-child-silent;whole-source-aac-to-pcm16k-mono;sample-timeline-zero-fill;no-metadata;unspecified-sar;no-btrt;20s-target;4MiB-visual-child;9600044-audio-child;30s-wall;25s-cpu;x64-as1GiB-arm64-as2GiB;data512MiB;container-ram2GiB-cpu2-pids512;single-child;v2";
+    static final String CONFIGURATION="frame-trim;preserve-vfr-ticks;max1280x720;avc-constrained-baseline;600k;gop25;visual-child-silent;whole-source-aac-to-pcm16k-mono;sample-timeline-zero-fill;no-metadata;unspecified-sar;no-btrt;20s-target;4MiB-visual-child;9600044-audio-child;30s-plan-and-audio-wall;120s-visual-wall;25s-cpu;x64-as1GiB-arm64-as2GiB;data512MiB;container-ram2GiB-cpu2-pids512;single-child;v3";
     private final Path helper,runtime,artifacts,tools,scratch;
     private final String identity,version;
     private final PdfWorkerAttemptStore journal;
@@ -140,7 +140,9 @@ final class SupervisedVideoClipRuntime implements VideoClipRuntime,AutoCloseable
                 try{record=journal.record(child);}catch(IOException uncertain){poisoned=true;throw uncertain;}
                 child.getOutputStream().write(0xa5);child.getOutputStream().close();
                 var future=tasks.submit(()->read.apply(child));
-                try {T result=future.get(30,TimeUnit.SECONDS);
+                // A throttled host needs more elapsed time for the same bounded
+                // visual encode. The native 25-second CPU ceiling is unchanged.
+                try {T result=future.get("clip".equals(mode)?120:30,TimeUnit.SECONDS);
                     if(!child.waitFor(1,TimeUnit.SECONDS)||child.exitValue()!=0)throw unavailable();return result;
                 }finally{terminate(child);future.cancel(true);}
             }finally {
@@ -186,7 +188,7 @@ final class SupervisedVideoClipRuntime implements VideoClipRuntime,AutoCloseable
         closed=true;boolean acquired=false;
         try {
             // A render has at most three individually bounded child processes.
-            acquired=capacity.tryAcquire(110,TimeUnit.SECONDS);
+            acquired=capacity.tryAcquire(200,TimeUnit.SECONDS);
             if(!acquired){poisoned=true;throw unavailable();}
             journal.close();
         }catch(InterruptedException cancelled){Thread.currentThread().interrupt();throw unavailable();}

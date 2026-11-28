@@ -75,7 +75,13 @@ def controls(facts, smoke):
             and facts.get('expatBackportPatchSha256')=={
                 'bf26290d2f021111cf806753dcb87d165f53571b':'56b71deecec296aba42cd80ebde30215527aec9fa5c3ea183d0a056f2bb1520e',
                 '3d77567612994172f9d09b46f31bb604e16fb08d':'42caed50fae3f88186155b0c4280025a89913a83aed2a02986b545e0a8d1e7ed',
-                '05075975dc246f5f6c0757d532f22f518850e7af':'89d6e66a1c346ffcb57abfaf5fc6b251b351d6dcc778270e09ea513ab9e4eb89'},
+                '05075975dc246f5f6c0757d532f22f518850e7af':'89d6e66a1c346ffcb57abfaf5fc6b251b351d6dcc778270e09ea513ab9e4eb89',
+                'accaab524822d6191bc2ddbeeb7f01e0a56c37fc':'1fdb79a47cb5e5c57b5f39f4e462541d2fb5784bf6d4fcdc0496bcbb28e6a2a0'},
+        'expatAttributeDeduplicationVerified':facts.get('expatAttributeRegression')==dict(
+            negativeControl=dict(unpatchedDuplicateAttributeGrowthObserved=True,duplicates=8192,cases=2),
+            regression=dict(expatDuplicateAttributeRegression=True,duplicates=8192,cases=3,
+                allocationCeilingBytes=65536,firstDeclarationPreserved=True),
+            sourceSha256=hashlib.sha256((ROOT/'src/main/native/expat-attribute-regression.c').read_bytes()).hexdigest()),
         'sqliteNotLinkedOrPackaged':facts['nativeLinkageMentionsSqlite'] is False
             and facts['sqliteApplicationDependencyPresent'] is False,
         'sqliteNotLoadedInWorkload':bool(smoke['resourceMeasurements']) and all(

@@ -88,7 +88,7 @@ assert package_versions['perl-base']=='5.40.1-6+deb13u1'
 assert package_versions['libpcre2-8-0']=='10.46-1~deb13u3'
 assert package_versions['libopenh264-8']=='2.6.0+dfsg-2'
 assert package_versions['libfreetype6']=='2.15.0-0nkw1'
-assert package_versions['libexpat1']=='2.10.0-0nkw2'
+assert package_versions['libexpat1']=='2.10.0-0nkw3'
 assert not any(p.startswith(('nodejs','npm')) for p in package_versions)
 # Preserve the raw scanner finding. This independently inspects the shipped
 # binary for the specific contrib/minizip entry point described by Debian.

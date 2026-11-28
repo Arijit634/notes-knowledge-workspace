@@ -4,7 +4,7 @@
   "architectures": [
     "amd64"
   ],
-  "productionSourceSha256": "fd88e13495a493e885c16e5e3f544afe69fa288ba64270e15742a2b4ccb13b13",
+  "productionSourceSha256": "2d5ff49cdbb4af9f5f40bce19a5fceee40a3f170ba5171629a61968c51c38cff",
   "findings": [
     {
       "VulnerabilityID": "CVE-2026-76642",
@@ -151,7 +151,7 @@
     {
       "VulnerabilityID": "CVE-2025-66382",
       "PkgName": "libexpat1",
-      "InstalledVersion": "2.10.0-0nkw2",
+      "InstalledVersion": "2.10.0-0nkw3",
       "FixedVersion": null,
       "Severity": "MEDIUM",
       "Status": "affected",

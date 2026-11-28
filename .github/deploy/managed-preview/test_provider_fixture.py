@@ -3,6 +3,10 @@ import base64
 import hashlib
 import importlib.util
 import json
+import concurrent.futures
+import http.client
+import socket
+import threading
 from pathlib import Path
 import unittest
 
@@ -41,5 +45,48 @@ class GrantTests(unittest.TestCase):
 
     def test_unapproved_fixture_identity_is_rejected(self):
         with self.assertRaises(ValueError):self.state.authorize(self.nonce,'c'*43,'unapproved')
+
+    def test_concurrent_conditional_put_has_one_winner(self):
+        ready=threading.Barrier(8)
+        def put(index):
+            ready.wait(timeout=5)
+            return self.state.put_if_absent('/synthetic-private-bucket/fixture',bytes([index]))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+            statuses=list(pool.map(put,range(8)))
+        self.assertEqual(1,statuses.count(200));self.assertEqual(7,statuses.count(412))
+        self.assertEqual(1,self.state.snapshot_counts()['objectPut'])
+        self.assertEqual(1,len(self.state.objects))
+
+    def test_slow_tls_handshake_does_not_block_another_connection(self):
+        blocked=threading.Event();release=threading.Event();lock=threading.Lock();accepted=0
+        class Connection:
+            def __init__(self,raw,first):self.raw=raw;self.first=first
+            def __getattr__(self,name):return getattr(self.raw,name)
+            def __enter__(self):return self
+            def __exit__(self,*args):self.raw.close()
+            def do_handshake(self):
+                if self.first:
+                    blocked.set()
+                    if not release.wait(5):raise TimeoutError('Synthetic handshake coordination expired')
+        class Tls:
+            def wrap_socket(self,raw,*,server_side,do_handshake_on_connect):
+                nonlocal accepted
+                assert server_side and not do_handshake_on_connect
+                with lock:
+                    accepted+=1;first=accepted==1
+                return Connection(raw,first)
+        server=fixture.FixtureServer(('127.0.0.1',0),fixture.handler(self.state,True),Tls())
+        worker=threading.Thread(target=server.serve_forever,daemon=True);worker.start()
+        idle=socket.create_connection(server.server_address,timeout=5)
+        client=http.client.HTTPConnection(*server.server_address,timeout=5)
+        try:
+            self.assertTrue(blocked.wait(5))
+            client.request('GET','/counts');response=client.getresponse()
+            self.assertEqual(200,response.status)
+            self.assertEqual(self.state.snapshot_counts(),json.loads(response.read()))
+            self.assertFalse(release.is_set())
+        finally:
+            client.close();idle.close();release.set();server.shutdown();server.server_close();worker.join(timeout=5)
+        self.assertFalse(worker.is_alive())
 
 if __name__=='__main__':unittest.main()

@@ -27,6 +27,23 @@ reconciliation = load('image_reconciliation', 'reconcile-image-security.py')
 
 
 class ImageReconciliationContracts(unittest.TestCase):
+    def test_expat_attribute_fix_requires_real_negative_and_positive_evidence(self):
+        negative=dict(unpatchedDuplicateAttributeGrowthObserved=True,duplicates=8192,cases=2)
+        regression=dict(expatDuplicateAttributeRegression=True,duplicates=8192,cases=3,
+            allocationCeilingBytes=65536,firstDeclarationPreserved=True)
+        source=__import__('hashlib').sha256((facts.ROOT/'src/main/native/expat-attribute-regression.c').read_bytes()).hexdigest()
+        result=facts.validate_expat_attribute_regression(negative,regression,source)
+        self.assertTrue(result['regression']['firstDeclarationPreserved'])
+        for field in negative:
+            bad=dict(negative);bad.pop(field)
+            with self.subTest(negative=field),self.assertRaises(ValueError):
+                facts.validate_expat_attribute_regression(bad,regression,source)
+        for field in regression:
+            bad=dict(regression);bad.pop(field)
+            with self.subTest(regression=field),self.assertRaises(ValueError):
+                facts.validate_expat_attribute_regression(negative,bad,source)
+        with self.assertRaises(ValueError):facts.validate_expat_attribute_regression(negative,regression,'0'*64)
+
     def test_loaded_expat_abi_requires_narrow_output_and_complete_feature_evidence(self):
         abi=dict(mediaLibraryVersions=True,freetype='2.15.0',expat='2.10.0',
             expatXmlCharBytes=1,expatUnicodeOutput=False,abiProbePassed=True)
@@ -95,6 +112,23 @@ class ImageReconciliationContracts(unittest.TestCase):
 
     def run_policy(self):
         return reconciliation.reconcile(self.scan,self.facts,self.smoke,self.policy,self.today)
+
+    def test_expat_duplicate_attribute_assessment_rejects_incomplete_proof(self):
+        self.rule['requiredControls']=['expatAttributeDeduplicationVerified']
+        source=__import__('hashlib').sha256((facts.ROOT/'src/main/native/expat-attribute-regression.c').read_bytes()).hexdigest()
+        proof=facts.validate_expat_attribute_regression(
+            dict(unpatchedDuplicateAttributeGrowthObserved=True,duplicates=8192,cases=2),
+            dict(expatDuplicateAttributeRegression=True,duplicates=8192,cases=3,
+                allocationCeilingBytes=65536,firstDeclarationPreserved=True),source)
+        self.facts['expatAttributeRegression']=proof
+        self.assertTrue(self.run_policy()['releaseSecurityReconciled'])
+        for field in proof:
+            bad=copy.deepcopy(proof);bad.pop(field);self.facts['expatAttributeRegression']=bad
+            with self.subTest(field=field),self.assertRaisesRegex(ValueError,'required_control_missing'):
+                self.run_policy()
+        self.facts['expatAttributeRegression']=copy.deepcopy(proof)
+        self.facts['expatAttributeRegression']['regression']['firstDeclarationPreserved']=False
+        with self.assertRaisesRegex(ValueError,'required_control_missing'):self.run_policy()
 
     def test_source_package_unpacker_review_requires_each_affected_component_absent(self):
         components=('dpkgSource','dpkgSourceV2','perl','tar')
@@ -474,9 +508,9 @@ class NativeArtifactFactContracts(unittest.TestCase):
         with self.assertRaises(ValueError): facts.validate_images([image],source)
 
     def test_version_facts_reject_old_or_ambiguous_security_libraries(self):
-        packages='libfreetype6:arm64\t2.15.0-0nkw1\tlibfreetype6\nlibexpat1:arm64\t2.10.0-0nkw2\tlibexpat1\n'
+        packages='libfreetype6:arm64\t2.15.0-0nkw1\tlibfreetype6\nlibexpat1:arm64\t2.10.0-0nkw3\tlibexpat1\n'
         self.assertEqual(2,len(facts.package_inventory(packages)))
-        for invalid in (packages.replace('2.10.0-0nkw2','2.7.1-1'),packages.replace('2.10.0-0nkw2','2.10.0-0nkw1'),
+        for invalid in (packages.replace('2.10.0-0nkw3','2.7.1-1'),packages.replace('2.10.0-0nkw3','2.10.0-0nkw1'),
                         packages.splitlines()[0],packages+packages.splitlines()[0]+'\n'):
             with self.subTest(invalid=invalid),self.assertRaises(ValueError): facts.package_inventory(invalid)
 

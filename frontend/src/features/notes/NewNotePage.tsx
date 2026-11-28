@@ -12,6 +12,7 @@ import { noteKeys, notePreferenceKeys } from './NotesKeys'
 import { notesApi } from './NotesApi'
 import { attachmentPreflight } from './AttachmentAcceptance'
 import { uploadAttachment } from './AttachmentUploadTransport'
+import { attachmentIssue } from './AttachmentsApi'
 import { featureError } from '../../app/ui/featureError'
 import { safeDestination } from '../auth/SafeDestination'
 import { ApiProblemError } from '../../app/api/ProblemDetailsDecoder'
@@ -74,7 +75,7 @@ export function NewNotePage({ auth }: { auth: AuthRuntime }) {
       if (current()) { allowLeave.current = true; navigate(`/notes/${id}`, { replace: true }) }
     } catch (e) {
       if (!current()) return
-      if (id) setError('Note created. A file could not be uploaded. Check its files before retrying the remaining uploads.')
+      if (id) setError(`Note created. ${attachmentIssue(e)} Check its files before retrying the remaining uploads.`)
       else { dispatch({ type: 'failed' }); setError(featureError(e)); if (!(e instanceof ApiProblemError) || e.problem.status >= 500) { setAmbiguous(true); setError('Creation could not be confirmed. Check your Notes before trying again.') } }
     } finally { busyRef.current = false; if (current()) { setBusy(false); void auth.queries.invalidateQueries({ queryKey: noteKeys.lists(scope) }) } }
   }
