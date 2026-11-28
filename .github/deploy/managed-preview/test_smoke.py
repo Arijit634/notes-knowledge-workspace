@@ -13,14 +13,14 @@ smoke=importlib.util.module_from_spec(spec);spec.loader.exec_module(smoke)
 
 class ParserLifecycleTests(unittest.TestCase):
     def test_released_parser_does_not_confuse_application_or_native_worker(self):
-        self.assertEqual(smoke.idle_parser_process_count('COMMAND\njava -cp /app/application.jar org.springframework.boot.loader.launch.JarLauncher\n/video-worker clip'),0)
+        self.assertEqual(smoke.idle_parser_process_count('PID COMMAND\n100 java -cp /app/application.jar org.springframework.boot.loader.launch.JarLauncher\n101 /video-worker clip'),0)
 
     def test_live_tika_worker_is_counted_without_echoing_arguments(self):
-        processes='COMMAND\njava -cp /app/tika.jar org.apache.tika.pipes.core.server.PipesServer --config /private/config\njava org.apache.tika.pipes.fork.PipesForkServer\n'
+        processes='PID COMMAND\n100 java -cp /app/tika.jar org.apache.tika.pipes.core.server.PipesServer --config /private/config\n101 java org.apache.tika.pipes.fork.PipesForkServer\n'
         self.assertEqual(smoke.idle_parser_process_count(processes),2)
 
     def test_missing_process_observation_fails_closed(self):
-        for processes in ('','permission denied','PID COMMAND\n1 java'):
+        for processes in ('','permission denied','COMMAND\njava','PID COMMAND\nnot-a-pid java','PID COMMAND\n100'):
             with self.subTest(processes=processes),self.assertRaises(ValueError):
                 smoke.idle_parser_process_count(processes)
 
