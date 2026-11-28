@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { App } from '../../app/App'
 import { AuthRuntime } from '../auth/AuthRuntime'
-import type { NoteCore } from './NotesApi'
+import { notesApi, type NoteCore } from './NotesApi'
 import { noteKeys } from './NotesKeys'
 import { AttachmentXhrDouble, syntheticAttachment } from './AttachmentUpload.test-support'
 
@@ -969,6 +969,61 @@ describe('private Notes browser journey', () => {
     await waitFor(() => expect(window.location.pathname).toBe(`/notes/${id}`))
     expect(uploads.map(xhr => (xhr.body?.get('file') as File).name)).toEqual(['first.mp4', 'second.mp4', 'second.mp4'])
     expect(calls.filter(c => c.method === 'POST' && c.path === '/api/notes')).toHaveLength(1)
+  })
+
+  it.each(['leave', 'complete'])('shows transfer and validation progress without trapping the user (%s)', async action => {
+    const uploads: AttachmentXhrDouble[] = []
+    vi.stubGlobal('XMLHttpRequest', class extends AttachmentXhrDouble { constructor() { super(xhr => { uploads.push(xhr) }) } })
+    const { calls } = mount('/notes/new', 'authenticated', (method, path, body) => method === 'POST' && path === '/api/notes'
+      ? json({ ...initial, ...body as object }, 201, { ETag: '"e1"', Location: `/api/notes/${id}` }) : undefined)
+    await screen.findByRole('dialog', { name: 'New note' })
+    await waitFor(() => expect((screen.getByRole('checkbox', { name: 'Use this note with AI' }) as HTMLInputElement).disabled).toBe(false))
+    fireEvent.change(screen.getByLabelText('Choose files for new note'), { target: { files: [new File(['synthetic'], 'synthetic.mp4', { type: 'video/mp4' })] } })
+    fireEvent.click(screen.getByRole('button', { name: /^Create note$/ }))
+    await waitFor(() => expect(uploads).toHaveLength(1))
+    expect(screen.getByRole('button', { name: 'Open note' }).hasAttribute('disabled')).toBe(false)
+    act(() => uploads[0].progress(42, 100))
+    expect(screen.getByRole('progressbar', { name: 'File upload' }).getAttribute('value')).toBe('42')
+    act(() => uploads[0].uploaded())
+    expect(screen.getByRole('progressbar', { name: 'Checking file' }).hasAttribute('value')).toBe(false)
+    expect(window.location.pathname).toBe('/notes/new')
+    if (action === 'leave') {
+      fireEvent.click(screen.getByRole('button', { name: 'Open note' }))
+      await screen.findByRole('dialog', { name: 'Stop waiting?' })
+      fireEvent.click(screen.getByRole('button', { name: 'Keep waiting' }))
+      expect(uploads[0].abort).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByRole('button', { name: 'Open note' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Open saved note' }))
+      await waitFor(() => expect(window.location.pathname).toBe(`/notes/${id}`))
+      expect(uploads[0].abort).toHaveBeenCalledTimes(1)
+    } else {
+      await act(() => uploads[0].respond(json(syntheticAttachment, 201, { ETag: '"a1"', Location: `/api/notes/${id}/attachments/${syntheticAttachment.id}` })))
+      await waitFor(() => expect(window.location.pathname).toBe(`/notes/${id}`))
+      expect(uploads[0].abort).not.toHaveBeenCalled()
+    }
+    expect(calls.filter(c => c.method === 'POST' && c.path === '/api/notes')).toHaveLength(1)
+    expect(uploads).toHaveLength(1)
+  })
+
+  it('allows leaving an unconfirmed save without claiming cancellation or issuing a second create', async () => {
+    mount('/notes/new')
+    await screen.findByRole('dialog', { name: 'New note' })
+    await waitFor(() => expect((screen.getByRole('checkbox', { name: 'Use this note with AI' }) as HTMLInputElement).disabled).toBe(false))
+    let finish!: (response: Awaited<ReturnType<typeof notesApi.create>>) => void, creates = 0
+    vi.spyOn(notesApi, 'create').mockImplementation(() => { creates++; return new Promise(resolve => { finish = resolve }) })
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Synthetic pending save' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create note' }))
+    await screen.findByRole('button', { name: 'Saving…' })
+    fireEvent.click(screen.getByRole('button', { name: 'Leave' }))
+    await screen.findByText(/Saving may still finish on the server/)
+    fireEvent.click(screen.getByRole('button', { name: 'Keep waiting' }))
+    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Synthetic pending save')
+    fireEvent.click(screen.getByRole('button', { name: 'Leave' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Leave and check Notes' }))
+    await waitFor(() => expect(window.location.pathname).toBe('/notes'))
+    await act(async () => { finish({ value: initial, etag: '"e1"' }) })
+    expect(creates).toBe(1)
+    expect(window.location.pathname).toBe('/notes')
   })
 
 })
