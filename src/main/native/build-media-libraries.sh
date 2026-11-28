@@ -15,15 +15,17 @@ printf '%s  %s\n' 93cd47eb719c325107f2d3cf087d06299e944c3b48a40b55537302304dea1d
 curl --fail --location --retry 0 --max-time 90 --max-filesize 20000000 --proto '=https' --tlsv1.2 \
   https://github.com/libexpat/libexpat/releases/download/R_2_10_0/expat-2.10.0.tar.xz -o expat-2.10.0.tar.xz
 printf '%s  %s\n' c624ba2998fc65df1163a49641ff3f9ab73138b11641d92c86bee0fb01b1bc7f expat-2.10.0.tar.xz | sha256sum --check --strict -
-# Upstream merged the unknown-encoding overread fix after 2.10.0. Backport
-# the complete reviewed fix and its regression test, not an unreleased branch.
+# Pin the merged unknown-encoding overread fix and its regression, then the
+# separately reviewed maintainer-proposed attribute fix from upstream PR1537.
+# No branch head is fetched during the build.
 # These exact reviewed patch bytes are retained with the source: GitHub's
 # generated .patch index abbreviations can change without changing the commit.
 # Upstream origin: https://github.com/libexpat/libexpat/commit/<commit>.patch
 for pin in \
   bf26290d2f021111cf806753dcb87d165f53571b:56b71deecec296aba42cd80ebde30215527aec9fa5c3ea183d0a056f2bb1520e \
   3d77567612994172f9d09b46f31bb604e16fb08d:42caed50fae3f88186155b0c4280025a89913a83aed2a02986b545e0a8d1e7ed \
-  05075975dc246f5f6c0757d532f22f518850e7af:89d6e66a1c346ffcb57abfaf5fc6b251b351d6dcc778270e09ea513ab9e4eb89; do
+  05075975dc246f5f6c0757d532f22f518850e7af:89d6e66a1c346ffcb57abfaf5fc6b251b351d6dcc778270e09ea513ab9e4eb89 \
+  accaab524822d6191bc2ddbeeb7f01e0a56c37fc:1fdb79a47cb5e5c57b5f39f4e462541d2fb5784bf6d4fcdc0496bcbb28e6a2a0; do
   commit=${pin%%:*}; digest=${pin#*:}
   cp "/native/upstream/expat-$commit.patch" "expat-$commit.patch"
   printf '%s  %s\n' "$digest" "expat-$commit.patch" | sha256sum --check --strict -
@@ -49,7 +51,18 @@ cp /native/expat-2.10-regression-compat.patch /media-library-build/
   && make -j2 && make DESTDIR=/media-library-build/freetype-stage install)
 (cd expat-2.10.0 && ./configure --prefix=/usr --libdir="/usr/lib/$triplet" \
   --enable-shared --disable-static --without-docbook --without-examples --without-xmlwf \
+  && make -j2)
+# Reproduce CVE-2026-137992 before the maintainer-proposed fix, then require
+# bounded allocation and first-declaration semantics with that exact patch.
+gcc -std=c11 -O2 -Wall -Wextra -Werror -Iexpat-2.10.0/lib \
+  /native/expat-attribute-regression.c -Lexpat-2.10.0/lib/.libs -lexpat \
+  -o /media-library-build/expat-attribute-regression
+LD_LIBRARY_PATH=/media-library-build/expat-2.10.0/lib/.libs \
+  /media-library-build/expat-attribute-regression --negative > /media-library-build/expat-attribute-negative.json
+(cd expat-2.10.0 && patch --batch --fuzz=0 -p2 < ../expat-accaab524822d6191bc2ddbeeb7f01e0a56c37fc.patch \
   && make -j2 && make check && make DESTDIR=/media-library-build/expat-stage install)
+LD_LIBRARY_PATH=/media-library-build/expat-2.10.0/lib/.libs \
+  /media-library-build/expat-attribute-regression > /media-library-build/expat-attribute-regression.json
 
 package_library() {
   package="$1"; source_name="$2"; version="$3"; stage="$4"; stem="$5"; dependencies="$6"; revision="$7"
@@ -66,7 +79,7 @@ package_library() {
   dpkg-deb --root-owner-group --build "$directory" "/media-library-packages/$package.deb"
 }
 package_library libfreetype6 freetype 2.15.0 /media-library-build/freetype-stage libfreetype "$freetype_dependencies" 1
-package_library libexpat1 expat 2.10.0 /media-library-build/expat-stage libexpat "$expat_dependencies" 2
+package_library libexpat1 expat 2.10.0 /media-library-build/expat-stage libexpat "$expat_dependencies" 3
 dpkg -i /media-library-packages/libexpat1.deb /media-library-packages/libfreetype6.deb
 ldconfig
 mkdir -p /native-diagnostics
@@ -109,8 +122,9 @@ gcc -std=c11 -O2 -Wall -Wextra -Werror \
   /media-library-build/versions.c "/usr/lib/$triplet/libfreetype.so.6" "/usr/lib/$triplet/libexpat.so.1" \
   -o /native-diagnostics/media-library-versions
 mkdir -p /provenance/media-libraries
+cp /media-library-build/expat-attribute-*.json /native/expat-attribute-regression.c /provenance/media-libraries/
 /native-diagnostics/media-library-versions > /provenance/media-libraries/abi-probe.json
 cp freetype-2.15.0.tar.xz expat-2.10.0.tar.xz /provenance/media-libraries/
 cp expat-*.patch /provenance/media-libraries/
-sha256sum /media-library-packages/*.deb /provenance/media-libraries/*.tar.xz /provenance/media-libraries/*.patch > /provenance/media-libraries/build-inputs.sha256
+sha256sum /media-library-packages/*.deb /provenance/media-libraries/*.tar.xz /provenance/media-libraries/*.patch /provenance/media-libraries/*.c /provenance/media-libraries/*.json > /provenance/media-libraries/build-inputs.sha256
 dpkg-query -W libfreetype6 libexpat1 > /provenance/media-libraries/package-versions.txt

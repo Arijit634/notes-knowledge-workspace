@@ -5,7 +5,7 @@
     "amd64",
     "arm64"
   ],
-  "productionSourceSha256": "fc9783dc8e5bc183e6cf4a6d2a1339660d2f664a9a29473389355aee2733b218",
+  "productionSourceSha256": "9dcae99050c0c16748a9a61a546889d08fede80256605a13b84899d0cd5a6102",
   "findings": [
     {
       "VulnerabilityID": "CVE-2011-3374",
@@ -1357,7 +1357,7 @@
     {
       "VulnerabilityID": "CVE-2026-113351",
       "PkgName": "libexpat1",
-      "InstalledVersion": "2.10.0-0nkw2",
+      "InstalledVersion": "2.10.0-0nkw3",
       "FixedVersion": null,
       "Severity": "HIGH",
       "Status": "affected",
@@ -1386,7 +1386,7 @@
     {
       "VulnerabilityID": "CVE-2026-115506",
       "PkgName": "libexpat1",
-      "InstalledVersion": "2.10.0-0nkw2",
+      "InstalledVersion": "2.10.0-0nkw3",
       "FixedVersion": null,
       "Severity": "HIGH",
       "Status": "affected",
@@ -1415,7 +1415,7 @@
     {
       "VulnerabilityID": "CVE-2026-117610",
       "PkgName": "libexpat1",
-      "InstalledVersion": "2.10.0-0nkw2",
+      "InstalledVersion": "2.10.0-0nkw3",
       "FixedVersion": null,
       "Severity": "HIGH",
       "Status": "affected",
@@ -1444,7 +1444,7 @@
     {
       "VulnerabilityID": "CVE-2026-118370",
       "PkgName": "libexpat1",
-      "InstalledVersion": "2.10.0-0nkw2",
+      "InstalledVersion": "2.10.0-0nkw3",
       "FixedVersion": null,
       "Severity": "HIGH",
       "Status": "affected",
@@ -1473,7 +1473,7 @@
     {
       "VulnerabilityID": "CVE-2025-66382",
       "PkgName": "libexpat1",
-      "InstalledVersion": "2.10.0-0nkw2",
+      "InstalledVersion": "2.10.0-0nkw3",
       "FixedVersion": null,
       "Severity": "MEDIUM",
       "Status": "fix_deferred",
@@ -5846,7 +5846,7 @@
     {
       "VulnerabilityID": "CVE-2026-124317",
       "PkgName": "libexpat1",
-      "InstalledVersion": "2.10.0-0nkw2",
+      "InstalledVersion": "2.10.0-0nkw3",
       "FixedVersion": null,
       "Severity": "MEDIUM",
       "Status": "affected",
@@ -5876,7 +5876,7 @@
     {
       "VulnerabilityID": "CVE-2026-128241",
       "PkgName": "libexpat1",
-      "InstalledVersion": "2.10.0-0nkw2",
+      "InstalledVersion": "2.10.0-0nkw3",
       "FixedVersion": null,
       "Severity": "MEDIUM",
       "Status": "affected",
@@ -5908,7 +5908,7 @@
     {
       "VulnerabilityID": "CVE-2026-134703",
       "PkgName": "libexpat1",
-      "InstalledVersion": "2.10.0-0nkw2",
+      "InstalledVersion": "2.10.0-0nkw3",
       "FixedVersion": null,
       "Severity": "MEDIUM",
       "Status": "affected",
@@ -6187,6 +6187,65 @@
       "compensatingControls": "Require exact production-source/package/image binding and every listed measured control; retain raw findings; fail on changed, missing, new or expired evidence.",
       "remediationTarget": "Reassess stable vendor fixes/backports and exact shipped applicability by 2026-11-28; no promotion without fresh artifact, raw scan and all measured controls.",
       "vendorEvidenceSha256": "74aff68f932445b9c62fcc5c3d3af61449dd7177a795c6107d0cf57978cf8fa1"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-137951",
+      "PkgName": "libexpat1",
+      "InstalledVersion": "2.10.0-0nkw3",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-137951",
+      "kind": "unreachable-precondition",
+      "rationale": "The advisory requires XML_GE=0 together with XML_UNICODE. The actual target-architecture loaded library reports one-byte XML_Char and Unicode output disabled. Require that measured ABI; no feature is disabled for this assessment and no upstream patch is claimed.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "expat210BackportVerified",
+        "expatNarrowOutputVerified"
+      ],
+      "references": [
+        "https://github.com/CVEProject/cvelistV5/blob/191513d1b7664f9f30b2c6d6599541cf8c4fd597/cves/2026/137xxx/CVE-2026-137951.json",
+        "https://github.com/libexpat/libexpat/pull/1534"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-28",
+      "expiresOn": "2026-11-29",
+      "compensatingControls": "Require the exact source/package/image, all named measured controls and regression provenance. Preserve the original scanner findings and severities; missing, changed or expired evidence blocks release.",
+      "remediationTarget": "Reassess the stable upstream release or merged vendor patch and qualify the exact new image by2026-11-29; no unreviewed patch or severity suppression.",
+      "vendorEvidenceSha256": "74058995dd12ce640f3f8dcdf2c0cccbf1765c12476b27bff0eeb630c996a422"
+    },
+    {
+      "VulnerabilityID": "CVE-2026-137992",
+      "PkgName": "libexpat1",
+      "InstalledVersion": "2.10.0-0nkw3",
+      "FixedVersion": null,
+      "Severity": "UNKNOWN",
+      "Status": "affected",
+      "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-137992",
+      "kind": "upstream-fixed",
+      "rationale": "Backport the exact maintainer-proposed upstream commit accaab524822d6191bc2ddbeeb7f01e0a56c37fc onto Expat2.10.0. The upstream PR1537 is open, not a released fix. The build first reproduces duplicate non-ID declaration growth without this patch, then requires bounded allocations and first-declaration semantics with it, plus the full upstream suite. Package revision0nkw3 identifies this additional patch.",
+      "requiredControls": [
+        "numericUnprivilegedImage",
+        "setuidSetgidAbsent",
+        "nativeStartupQualified",
+        "ownerAndCsrfQualified",
+        "expat210BackportVerified",
+        "expatAttributeDeduplicationVerified"
+      ],
+      "references": [
+        "https://github.com/CVEProject/cvelistV5/blob/f7eec5e1236b9a6bf77af0a1841bd048c012e8c3/cves/2026/137xxx/CVE-2026-137992.json",
+        "https://github.com/libexpat/libexpat/pull/1537",
+        "https://github.com/libexpat/libexpat/commit/accaab524822d6191bc2ddbeeb7f01e0a56c37fc"
+      ],
+      "owner": "repository-maintainers",
+      "reviewedOn": "2026-11-28",
+      "expiresOn": "2026-11-29",
+      "compensatingControls": "Require the exact source/package/image, all named measured controls and regression provenance. Preserve the original scanner findings and severities; missing, changed or expired evidence blocks release.",
+      "remediationTarget": "Reassess the stable upstream release or merged vendor patch and qualify the exact new image by2026-11-29; no unreviewed patch or severity suppression.",
+      "vendorEvidenceSha256": "155590400deab2dc5dd931b84e2d52bb0aa132a82390f7806299b31147a08a7a"
     }
   ],
   "limits": [

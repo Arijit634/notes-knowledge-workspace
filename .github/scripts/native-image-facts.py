@@ -6,7 +6,8 @@ ROOT=pathlib.Path(__file__).resolve().parents[2]
 EXPAT_SECURITY_PATCHES={
     'bf26290d2f021111cf806753dcb87d165f53571b':'56b71deecec296aba42cd80ebde30215527aec9fa5c3ea183d0a056f2bb1520e',
     '3d77567612994172f9d09b46f31bb604e16fb08d':'42caed50fae3f88186155b0c4280025a89913a83aed2a02986b545e0a8d1e7ed',
-    '05075975dc246f5f6c0757d532f22f518850e7af':'89d6e66a1c346ffcb57abfaf5fc6b251b351d6dcc778270e09ea513ab9e4eb89'}
+    '05075975dc246f5f6c0757d532f22f518850e7af':'89d6e66a1c346ffcb57abfaf5fc6b251b351d6dcc778270e09ea513ab9e4eb89',
+    'accaab524822d6191bc2ddbeeb7f01e0a56c37fc':'1fdb79a47cb5e5c57b5f39f4e462541d2fb5784bf6d4fcdc0496bcbb28e6a2a0'}
 FFMPEG_SECURITY_PATCHES={
     '969c7eb091989a664cb7bf66a1f02051cc46cb52':'594a0cbca9527bc1edab7f76679af5a73cee23aadc878e2cc6a9001e22742c45',
     'd1434518fbd03789e3e5dc0657a7a9f1123ce074':'1fd3c8a2b37bb24fe4c8500422090453e18a06634e2647d8fb50216beb5332b8',
@@ -14,6 +15,15 @@ FFMPEG_SECURITY_PATCHES={
 
 def require(condition,code):
     if not condition:raise ValueError(code)
+
+def validate_expat_attribute_regression(negative,regression,source_hash):
+    require(negative==dict(unpatchedDuplicateAttributeGrowthObserved=True,duplicates=8192,cases=2),
+        'expat_attribute_negative_control_missing')
+    require(regression==dict(expatDuplicateAttributeRegression=True,duplicates=8192,cases=3,
+        allocationCeilingBytes=65536,firstDeclarationPreserved=True),'expat_attribute_regression_missing')
+    require(source_hash==hashlib.sha256((ROOT/'src/main/native/expat-attribute-regression.c').read_bytes()).hexdigest(),
+        'expat_attribute_probe_source_mismatch')
+    return dict(negativeControl=negative,regression=regression,sourceSha256=source_hash)
 
 def validate_nginx_configuration(edge,source,custody):
     require(edge==source.rstrip(b'\n'),'nginx_configuration_source_mismatch')
@@ -50,7 +60,7 @@ def package_inventory(packages):
         require(name not in versions,'duplicate_package_identity')
         versions[name]=dict(version=version,source=source)
     require(versions.get('libfreetype6',{}).get('version')=='2.15.0-0nkw1'
-        and versions.get('libexpat1',{}).get('version')=='2.10.0-0nkw2','security_library_version_mismatch')
+        and versions.get('libexpat1',{}).get('version')=='2.10.0-0nkw3','security_library_version_mismatch')
     return versions
 
 def validate_images(metadata,source):
@@ -115,6 +125,10 @@ def main():
     for commit,digest in backport.items():
         require(inspect('sha256sum /provenance/media-libraries/expat-'+commit+'.patch').split()[0]==digest,
             'expat_backport_provenance_mismatch')
+    attribute_regression=validate_expat_attribute_regression(
+        json.loads(inspect('cat /provenance/media-libraries/expat-attribute-negative.json')),
+        json.loads(inspect('cat /provenance/media-libraries/expat-attribute-regression.json')),
+        inspect('sha256sum /provenance/media-libraries/expat-attribute-regression.c').split()[0])
     compatibility='6f71b7c60c0fedd8de8840ebaadd17fd3401b5b33a501655de8d2c7538b74418'
     require(inspect('sha256sum /provenance/media-libraries/expat-2.10-regression-compat.patch').split()[0]==compatibility,
         'expat_regression_compatibility_provenance_mismatch')
@@ -228,7 +242,7 @@ def main():
         architecture=architecture,imageUser='65533:65533',productionSourceFingerprint=production_fingerprint(),
         packageInventorySha256=hashlib.sha256(packages.encode()).hexdigest(),packages=versions,
         mediaLibraryAbi=abi,expatBackportPatchSha256=backport,alignedAllocationCheck=allocation,
-        expatRegressionApiCompatibilitySha256=compatibility,
+        expatRegressionApiCompatibilitySha256=compatibility,expatAttributeRegression=attribute_regression,
         ffmpegSecurity=ffmpeg_security,
         components=components,setuidSetgidFilesAbsent=not privileged,
         fontConfigurationRootOwnedAndNotWritable=not fonts,defaultLocaleInputsRestricted=locale_safe,
